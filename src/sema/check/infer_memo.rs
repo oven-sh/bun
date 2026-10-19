@@ -40,16 +40,16 @@ use smallvec::SmallVec;
 pub const INFERENCE_WALK_COUNTS: [&str; 16] = [
     "walks",
     "long",
-    "to the target of a long walk",
+    "to a long-walk target",
     "in an instantiation",
     "in a variance computation",
-    "otherwise not at rest",
+    "otherwise not idle",
     "keyed",
-    "left out",
-    "calls left out",
-    "of an earlier generation",
-    "not confirmed",
-    "without room",
+    "skipped",
+    "calls skipped",
+    "stale",
+    "unconfirmed",
+    "near a limit",
     "not settled",
     "left a trace",
     "stored",
@@ -77,7 +77,7 @@ pub(in super::super) enum Count {
     /// The matching entry still needs a second walk to confirm it. See `InferenceMemo::store`.
     NotConfirmed,
     /// The walk behind the matching entry would hit the `instantiation_count` limit or run out of native stack.
-    WithoutRoom,
+    NearLimit,
     /// No entry could be replayed, and `is_settled_for_inference` returned `false`.
     NotSettled,
     /// Long walks that weren't stored because they left a trace.
@@ -162,10 +162,10 @@ const DISTURBANCES: [&str; 9] = [
     "limits",
     "times_cut_short",
     "in_progress_variance_reads",
-    "unmarked_refusals",
+    "unmarked_rejections",
     "any_signature_reads",
     "commits",
-    "times_forgotten",
+    "restrictive_resets",
 ];
 
 /// The index in `DISTURBANCES` of the counter for other tasks' commits.
@@ -180,7 +180,7 @@ struct Readings {
     /// Always `usize::MAX` before the walk.
     lowest_taint: usize,
     /// Always `false` before the walk.
-    has_met_contextual_function: bool,
+    has_reached_contextual_function: bool,
     /// Decreases only when it's reset, which is a trace. An increase is recorded in `Entry::instantiations`.
     instantiation_count: u32,
 }
@@ -190,7 +190,7 @@ impl Readings {
         self.traces == before.traces
             && self.disturbances == before.disturbances
             && self.lowest_taint == before.lowest_taint
-            && self.has_met_contextual_function == before.has_met_contextual_function
+            && self.has_reached_contextual_function == before.has_reached_contextual_function
             && self.instantiation_count >= before.instantiation_count
     }
 }
@@ -381,7 +381,7 @@ impl<'p, 's> Checker<'p, 's> {
             let found = match () {
                 _ if is_disturbed => Count::Disturbed,
                 _ if !entry.is_confirmed => Count::NotConfirmed,
-                _ if !has_room => Count::WithoutRoom,
+                _ if !has_room => Count::NearLimit,
                 _ => Count::Skipped,
             };
             if !matches!(found, Count::Skipped) {
@@ -517,7 +517,7 @@ impl<'p, 's> Checker<'p, 's> {
             traces: self.traces_of_inference(),
             disturbances: self.inference_disturbances(),
             lowest_taint: self.lowest_taint,
-            has_met_contextual_function: n.has_met_contextual_function,
+            has_reached_contextual_function: n.has_reached_contextual_function,
             instantiation_count: self.instantiation_count,
         }
     }
@@ -559,10 +559,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.limits_in_earlier_files + self.limits + self.instantiation_limit_hits,
             self.times_cut_short.get(),
             self.in_progress_variance_reads,
-            self.unmarked_refusals,
+            self.unmarked_rejections,
             u64::from(self.any_signature_reads),
             self.state_of_commits(),
-            u64::from(self.links.times_forgotten()),
+            u64::from(self.links.restrictive_resets()),
         ]
     }
 }
@@ -642,7 +642,7 @@ mod tests {
             traces: [5; TRACES.len()],
             disturbances: [7; DISTURBANCES.len()],
             lowest_taint: usize::MAX,
-            has_met_contextual_function: false,
+            has_reached_contextual_function: false,
             instantiation_count: 10,
         };
         let mut after = Readings {
@@ -665,7 +665,7 @@ mod tests {
                 ..before
             },
             Readings {
-                has_met_contextual_function: true,
+                has_reached_contextual_function: true,
                 ..before
             },
         ] {
@@ -696,8 +696,8 @@ mod tests {
         n.candidates[1].contravariant.push(TypeId(5));
         let (key, state_at) = key_of_walk(&n, TypeId(20), TypeId(21));
         assert_ne!(key, key_of_walk(&fresh, TypeId(20), TypeId(21)).0);
-        let mut written = fresh;
-        write_state(&key[state_at..], &mut written);
-        assert_eq!(key, key_of_walk(&written, TypeId(20), TypeId(21)).0);
+        let mut restored = fresh;
+        write_state(&key[state_at..], &mut restored);
+        assert_eq!(key, key_of_walk(&restored, TypeId(20), TypeId(21)).0);
     }
 }

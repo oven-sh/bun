@@ -421,7 +421,7 @@ impl<'a> EarlierMembers<'a> {
     /// Upstream's `isBlockedByEarlierMemberReferences`. `earlier` holds the positions in `members` of the members that
     /// `member` would have to move in front of. From one call to the next, it starts either at the same position or at
     /// or after the previous end, so each member is visited once.
-    fn block(&mut self, member: Member<'a>, members: &[Member<'a>], earlier: std::ops::Range<usize>) -> bool {
+    fn is_blocked(&mut self, member: Member<'a>, members: &[Member<'a>], earlier: std::ops::Range<usize>) -> bool {
         let Some(initializer) = get_member_initializer(member) else {
             return false;
         };
@@ -587,12 +587,12 @@ struct Validation<'c, 'a> {
 }
 
 impl<'a> Validation<'_, 'a> {
-    /// Returns the members by group if `wants_groups`. `None` if a group is out of place.
+    /// Returns the members by group if `collect_groups`. `None` if a group is out of place.
     fn check_group_sort(
         &self,
         members: &[Member<'a>],
         types: &MemberTypes,
-        wants_groups: bool,
+        collect_groups: bool,
     ) -> Option<Vec<Vec<Member<'a>>>> {
         let mut previous_ranks: SmallVec<[i32; 16]> = SmallVec::new();
         let mut member_groups: Vec<Vec<Member<'a>>> = Vec::new();
@@ -617,7 +617,7 @@ impl<'a> Validation<'_, 'a> {
                 }
                 _ => {
                     previous_ranks.push(rank);
-                    if wants_groups {
+                    if collect_groups {
                         member_groups.push(vec![member]);
                     }
                 }
@@ -636,7 +636,7 @@ impl<'a> Validation<'_, 'a> {
                 continue;
             }
             if natural_out_of_order(&name, &previous_name, order) {
-                if earlier.block(member, members, previous_index..index) {
+                if earlier.is_blocked(member, members, previous_index..index) {
                     continue;
                 }
                 self.cx

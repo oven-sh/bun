@@ -210,11 +210,11 @@ pub fn with_parsed<T>(
     };
     let Some(root) = root else {
         let first = log.msgs.first().map(|it| &it.data);
-        let place = first.and_then(|it| it.location.as_ref());
+        let error_location = first.and_then(|it| it.location.as_ref());
         return Err(SyntaxError {
             message: first.map_or_else(|| b"Syntax error".to_vec(), |it| it.text.to_vec()),
-            line: place.map_or(1, |it| it.line),
-            column: place.map_or(1, |it| it.column),
+            line: error_location.map_or(1, |it| it.line),
+            column: error_location.map_or(1, |it| it.column),
         });
     };
     Ok(read(&root))

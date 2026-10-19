@@ -202,11 +202,11 @@ impl Parser<'_> {
                 self.at += 1;
             }
         }
-        let written: String = self.text[start..self.at]
+        let number_text: String = self.text[start..self.at]
             .iter()
             .map(|&c| c as u8 as char)
             .collect();
-        Ok(Json::Number(written.parse().unwrap_or(f64::NAN)))
+        Ok(Json::Number(number_text.parse().unwrap_or(f64::NAN)))
     }
 
     /// Starts after the opening quote.

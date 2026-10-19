@@ -86,11 +86,11 @@ describe.concurrent.each([
     const { stdout, stderr, exitCode } = await run(command, "--help", "--all");
     expect(stdout.match(/^\S.*:$/gm)).toEqual([...headings.map(heading => `${heading}:`), "Examples:"]);
     const params = readFileSync(join(root, source), "utf8").matchAll(/clap::param!\(\s*"(?:-\w, )?(--[^\s"]+)/g);
-    const taken = [...params].flatMap(it => it[1].split("/"));
-    expect(taken.length).toBeGreaterThan(70);
+    const acceptedFlags = [...params].flatMap(it => it[1].split("/"));
+    expect(acceptedFlags.length).toBeGreaterThan(70);
     const mentioned = new Set(stdout.match(/--[\w-]+/g));
     // Listing `--no-semi` covers `--semi` too.
-    const missing = taken.filter(flag => !mentioned.has(flag) && !mentioned.has(flag.replace("--", "--no-")));
+    const missing = acceptedFlags.filter(flag => !mentioned.has(flag) && !mentioned.has(flag.replace("--", "--no-")));
     expect(missing).toEqual([]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -533,7 +533,7 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
         /^error: .+\n {4}at .+package\.json:3:\d+$/m,
       ],
     ] as [string, string, RegExp][])("one that %s", (_, text, error) => {
-      const places: [string, Record<string, string>, string][] = [
+      const scriptLocations: [string, Record<string, string>, string][] = [
         ["in the working directory", { "package.json": text }, "."],
         [
           "in a workspace whose root has the script",
@@ -543,20 +543,23 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
       ];
 
       // `bun lint --fix` and `bun fmt` can both write `a.ts`.
-      test.skipIf(command === "check").each(places)("%s: fails without running anything", async (_, files, cwd) => {
-        // Candidates that are tried after package.json.
-        const others = {
-          [posix.join(cwd, `${command}.ts`)]: 'console.log("the file");',
-          [posix.join(cwd, "node_modules/.bin", command)]: executable,
-        };
-        const result = await bun({ ...files, ...others }, command === "lint" ? ["lint", "--fix"] : ["fmt"], cwd);
-        expect(result.stderr).toMatch(error);
-        expect(result.stderr).toContain(join(cwd, "package.json"));
-        expect(result.stderr).toEndWith(note);
-        expect(result).toMatchObject({ stdout: "", source, exitCode: 2 });
-      });
+      test.skipIf(command === "check").each(scriptLocations)(
+        "%s: fails without running anything",
+        async (_, files, cwd) => {
+          // Candidates that are tried after package.json.
+          const others = {
+            [posix.join(cwd, `${command}.ts`)]: 'console.log("the file");',
+            [posix.join(cwd, "node_modules/.bin", command)]: executable,
+          };
+          const result = await bun({ ...files, ...others }, command === "lint" ? ["lint", "--fix"] : ["fmt"], cwd);
+          expect(result.stderr).toMatch(error);
+          expect(result.stderr).toContain(join(cwd, "package.json"));
+          expect(result.stderr).toEndWith(note);
+          expect(result).toMatchObject({ stdout: "", source, exitCode: 2 });
+        },
+      );
 
-      test.skipIf(command !== "check").each(places)("%s: the type checker runs", async (_, files, cwd) => {
+      test.skipIf(command !== "check").each(scriptLocations)("%s: the type checker runs", async (_, files, cwd) => {
         expect(await whatRan(files, [command, ...flags, "a.ts"], cwd)).toBe("the command");
       });
 

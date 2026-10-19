@@ -92,8 +92,8 @@ fn setting(file: &File, key: &[u8]) -> Option<Vec<u8>> {
 
 /// `defaultVersion`, as `readDefaultReactVersionFromContext` sets it.
 fn default_version(file: &File) -> Version {
-    let written = setting(file, b"defaultVersion");
-    (written.and_then(|it| convert_conf_ver_to_semver(&it))).unwrap_or(ULTIMATE_LATEST_SEMVER)
+    let configured = setting(file, b"defaultVersion");
+    (configured.and_then(|it| convert_conf_ver_to_semver(&it))).unwrap_or(ULTIMATE_LATEST_SEMVER)
 }
 
 pub(crate) fn get_react_version_from_context<'a>(file: &'a File<'a>) -> Version {

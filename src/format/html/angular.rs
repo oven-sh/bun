@@ -161,10 +161,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
     ) -> bool {
         match &expression.code {
-            Code::TypeScript { code, shown } => {
+            Code::TypeScript { code, display_code } => {
                 let expression = AngularExpression {
                     code,
-                    shown: shown.as_deref(),
+                    display_code: display_code.as_deref(),
                     ignored,
                 };
                 self.out.foreign(|f| {

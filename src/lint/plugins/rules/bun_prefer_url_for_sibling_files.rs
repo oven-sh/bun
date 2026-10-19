@@ -59,8 +59,8 @@ fn can_be_file_path(end: &[u8]) -> bool {
 }
 
 /// `/a.txt`, to be appended to a directory.
-fn is_path_suffix(written: Option<Name>) -> bool {
-    written.is_some_and(|it| it.bytes().starts_with(b"/") && can_be_file_path(it.bytes()))
+fn is_path_suffix(literal: Option<Name>) -> bool {
+    literal.is_some_and(|it| it.bytes().starts_with(b"/") && can_be_file_path(it.bytes()))
 }
 
 impl Rule for PreferUrlForSiblingFiles {

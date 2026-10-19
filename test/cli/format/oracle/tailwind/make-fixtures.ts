@@ -26,7 +26,7 @@ const real = join(tailwind, "node_modules/tailwindcss");
 const root = mkdtempSync(join(tmpdir(), "tailwind-fixtures-"));
 try {
   // A wrapper that replaces the package and logs every class it's asked about.
-  const asked = join(root, "asked.txt");
+  const lookups = join(root, "asked.txt");
   const wrapper = join(root, "node_modules/tailwindcss");
   mkdirSync(wrapper, { recursive: true });
   cpSync(join(real, "theme.css"), join(wrapper, "theme.css"));
@@ -40,11 +40,11 @@ try {
 import * as real from ${JSON.stringify(pathToFileURL(join(real, "dist/lib.mjs")).href)};
 export async function __unstable__loadDesignSystem(...args) {
   const design = await real.__unstable__loadDesignSystem(...args);
-  return { getClassOrder(classes) { appendFileSync(${JSON.stringify(asked)}, classes.join("\\n") + "\\n"); return design.getClassOrder(classes); } };
+  return { getClassOrder(classes) { appendFileSync(${JSON.stringify(lookups)}, classes.join("\\n") + "\\n"); return design.getClassOrder(classes); } };
 }
 `,
   );
-  writeFileSync(asked, "");
+  writeFileSync(lookups, "");
   for (const [index, it] of cases.entries()) {
     const file = join(root, String(index), it.filename);
     mkdirSync(dirname(file), { recursive: true });
@@ -56,7 +56,7 @@ export async function __unstable__loadDesignSystem(...args) {
     if (done.status !== 0) throw new Error(`${it.name}: ${done.stderr}${done.stdout}`);
     it.output = readFileSync(file, "utf8");
   }
-  const classes = [...new Set(readFileSync(asked, "utf8").split("\n"))].sort();
+  const classes = [...new Set(readFileSync(lookups, "utf8").split("\n"))].sort();
   const { __unstable__loadDesignSystem } = await import(pathToFileURL(join(real, "dist/lib.mjs")).href);
   const design = await __unstable__loadDesignSystem(readFileSync(join(real, "theme.css"), "utf8"), { base: real });
   const known = (design.getClassOrder(classes) as [string, bigint | null][]).filter(it => it[1] !== null);

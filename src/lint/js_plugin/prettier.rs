@@ -40,8 +40,8 @@ impl Host<'_> {
         message.extend_from_slice(text);
         let mut returned = Err(PLUGIN_PROTOCOL_ERROR.to_vec());
         self.engine.with_vm(text.len(), &mut |vm| {
-            let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| {
-                self.serve_common(asked, details, out);
+            let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| {
+                self.serve_common(request, details, out);
             };
             returned = vm.call(call::FORMAT, &message, &mut serve);
         })?;

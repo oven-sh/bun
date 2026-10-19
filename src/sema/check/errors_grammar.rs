@@ -337,8 +337,8 @@ impl Checker<'_, '_> {
         };
         // `DeclarationNameToString`: the source text, including escapes.
         let start = hir.start(node);
-        let written = &hir.text[start as usize..self.end_of_name_at(file, start) as usize];
-        self.error(file, node, code, &[Arg::Bytes(written)]);
+        let raw_name = &hir.text[start as usize..self.end_of_name_at(file, start) as usize];
+        self.error(file, node, code, &[Arg::Bytes(raw_name)]);
     }
 
     /// `checkStrictModeEvalOrArguments` for `name`, which is `eval` or `arguments`, wherever binder.go calls it.

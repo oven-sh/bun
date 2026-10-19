@@ -59,7 +59,7 @@ struct Context {
     ecma_version: u32,
     jsx: bool,
     experimental_decorators: bool,
-    is_of_eslint_8: bool,
+    is_eslint_8: bool,
 }
 
 /// The state upstream keeps across files. Upstream updates it with every file it lints, for editors. This doesn't.
@@ -84,7 +84,7 @@ struct Used<'a> {
 pub struct Usage(OnceCell<Option<Arc<Exports>>>);
 
 impl Context {
-    fn of(language: &LanguageOptions) -> Context {
+    fn from_language(language: &LanguageOptions) -> Context {
         Context {
             settings: Arc::clone(&language.settings),
             parser_options: language.parser_options.clone(),
@@ -93,7 +93,7 @@ impl Context {
             ecma_version: language.ecma_version,
             jsx: language.jsx,
             experimental_decorators: language.experimental_decorators,
-            is_of_eslint_8: language.eslint_8.is_some(),
+            is_eslint_8: language.eslint_8.is_some(),
         }
     }
 
@@ -103,7 +103,7 @@ impl Context {
             && self.ecma_version == language.ecma_version
             && self.jsx == language.jsx
             && self.experimental_decorators == language.experimental_decorators
-            && self.is_of_eslint_8 == language.eslint_8.is_some()
+            && self.is_eslint_8 == language.eslint_8.is_some()
             && self.settings == language.settings
             && self.parser_options == language.parser_options
     }
@@ -249,7 +249,7 @@ impl NoUnusedModules {
     /// `doPreparation`. If `listFilesToProcess` throws, no files are found.
     fn prepare<'a>(&self, file: &'a File<'a>) -> Prepared {
         let mut prepared = Prepared {
-            context: Context::of(file.configured_language()),
+            context: Context::from_language(file.configured_language()),
             is_listed: false,
             ignored_files: FxHashSet::default(),
             export_list: FxHashMap::default(),

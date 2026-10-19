@@ -148,7 +148,7 @@ impl Program {
 struct Tables {
     is_case_sensitive: bool,
     /// Maps a `tspath.Path` to its program's index in `lists`.
-    of_file: FxHashMap<Vec<u8>, usize>,
+    list_by_file: FxHashMap<Vec<u8>, usize>,
     /// Each list comes with its `ProgramGlobals::checks_javascript`.
     lists: Vec<(Vec<InferredGlobal>, bool)>,
 }
@@ -172,9 +172,9 @@ impl<'e> Inferred<'e> {
     /// Called once, before the first file is linted, and not from a pool thread. Without `ByOptions`, every file looks
     /// up its globals in the types, so the request is made here, where it has the pool to itself.
     pub(crate) fn files(&self, paths: Vec<Vec<u8>>) {
-        let is_asked = self.by_options.is_none() && !paths.is_empty();
+        let loads_now = self.by_options.is_none() && !paths.is_empty();
         let _ = self.paths.set(paths);
-        if is_asked {
+        if loads_now {
             self.tables.get_or_init(|| self.load_all());
         }
     }
@@ -274,20 +274,20 @@ impl<'e> Inferred<'e> {
         bun_sema_driver::check_provided_then(&request, Provided::default(), |report| {
             let mut tables = Tables {
                 is_case_sensitive: report.is_case_sensitive,
-                of_file: FxHashMap::default(),
+                list_by_file: FxHashMap::default(),
                 lists: Vec::with_capacity(report.globals.len()),
             };
-            for of_program in report.globals {
+            for program_report in report.globals {
                 let at = tables.lists.len();
-                let files = of_program.files.into_iter();
-                tables.of_file.extend(files.map(|file| (file, at)));
-                let names = of_program.names.into_iter().map(|it| InferredGlobal {
+                let files = program_report.files.into_iter();
+                tables.list_by_file.extend(files.map(|file| (file, at)));
+                let names = program_report.names.into_iter().map(|it| InferredGlobal {
                     name: it.name,
                     is_value: it.is_value,
                     is_type: it.is_type,
                     is_writable: it.is_writable,
                 });
-                (tables.lists).push((names.collect(), of_program.checks_javascript));
+                (tables.lists).push((names.collect(), program_report.checks_javascript));
             }
             tables
         })
@@ -322,7 +322,7 @@ impl InferredGlobals for Inferred<'_> {
         }
         let tables = self.tables.get_or_init(|| self.load_all());
         let path = from_native(&crate::paths::to_native(path.to_vec()));
-        let at = *(tables.of_file).get(&*to_path(&path, tables.is_case_sensitive))?;
+        let at = *(tables.list_by_file).get(&*to_path(&path, tables.is_case_sensitive))?;
         let (names, checks_javascript) = &tables.lists[at];
         Some(ProgramGlobals {
             names,

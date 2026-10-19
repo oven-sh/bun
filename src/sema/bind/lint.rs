@@ -133,17 +133,17 @@ struct Yields<'l, S: Storage> {
     f: &'l FileIn<S>,
     b: &'l mut BoundBuilder,
     /// For each node that a walk has passed through, the function where that walk ended.
-    of_expr: Vec<Option<FnId>>,
-    of_stmt: Vec<Option<FnId>>,
-    of_pat: Vec<Option<FnId>>,
+    fn_of_expr: Vec<Option<FnId>>,
+    fn_of_stmt: Vec<Option<FnId>>,
+    fn_of_pat: Vec<Option<FnId>>,
 }
 
 impl<'l, S: Storage> Yields<'l, S> {
     fn new(f: &'l FileIn<S>, b: &'l mut BoundBuilder) -> Self {
         Yields {
-            of_expr: vec![None; f.exprs.len()],
-            of_stmt: vec![None; f.stmts.len()],
-            of_pat: vec![None; f.pats.len()],
+            fn_of_expr: vec![None; f.exprs.len()],
+            fn_of_stmt: vec![None; f.stmts.len()],
+            fn_of_pat: vec![None; f.pats.len()],
             f,
             b,
         }
@@ -162,10 +162,10 @@ impl<'l, S: Storage> Yields<'l, S> {
             }
         }
         found.shared_sort_unstable_by_key(|it| (it.0.0, it.1));
-        for of_one in found.chunk_by(|a, b| a.0 == b.0) {
-            if let Some(info) = self.b.fns.get_mut(of_one[0].0.idx()) {
-                info.yields = IdList::new(self.b.ids.len() as u32, of_one.len() as u32);
-                self.b.ids.extend(of_one.iter().map(|it| it.1));
+        for yields_of_fn in found.chunk_by(|a, b| a.0 == b.0) {
+            if let Some(info) = self.b.fns.get_mut(yields_of_fn[0].0.idx()) {
+                info.yields = IdList::new(self.b.ids.len() as u32, yields_of_fn.len() as u32);
+                self.b.ids.extend(yields_of_fn.iter().map(|it| it.1));
             }
         }
     }
@@ -176,9 +176,9 @@ impl<'l, S: Storage> Yields<'l, S> {
         let mut at = Ancestor::Expr(e);
         let function = loop {
             let known = match at {
-                Ancestor::Expr(it) => self.of_expr.get_mut(it.idx()),
-                Ancestor::Stmt(it) => self.of_stmt.get_mut(it.idx()),
-                Ancestor::Pat(it) => self.of_pat.get_mut(it.idx()),
+                Ancestor::Expr(it) => self.fn_of_expr.get_mut(it.idx()),
+                Ancestor::Stmt(it) => self.fn_of_stmt.get_mut(it.idx()),
+                Ancestor::Pat(it) => self.fn_of_pat.get_mut(it.idx()),
             };
             match known {
                 None => break FnId::NONE,
@@ -194,9 +194,9 @@ impl<'l, S: Storage> Yields<'l, S> {
         };
         for ancestor in passed.drain(..) {
             match ancestor {
-                Ancestor::Expr(it) => self.of_expr[it.idx()] = Some(function),
-                Ancestor::Stmt(it) => self.of_stmt[it.idx()] = Some(function),
-                Ancestor::Pat(it) => self.of_pat[it.idx()] = Some(function),
+                Ancestor::Expr(it) => self.fn_of_expr[it.idx()] = Some(function),
+                Ancestor::Stmt(it) => self.fn_of_stmt[it.idx()] = Some(function),
+                Ancestor::Pat(it) => self.fn_of_pat[it.idx()] = Some(function),
             }
         }
         function

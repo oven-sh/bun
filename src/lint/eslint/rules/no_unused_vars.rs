@@ -1,4 +1,4 @@
-use bun_lint::fix::Around;
+use bun_lint::fix::Removal;
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::oxlint::has_module_syntax;
@@ -220,7 +220,7 @@ fn is_used_variable(variable: Variable) -> bool {
 
 /// Fast path: true if the first reference that reads `symbol` is enough to prove [`is_used_variable`]. That's the case
 /// for nearly every variable.
-fn is_plainly_used(symbol: Symbol) -> bool {
+fn is_obviously_used(symbol: Symbol) -> bool {
     let kinds = symbol.declaration_kinds();
     // A variable that's never modified is never an assignment's left side, so it's never read just to update itself.
     if kinds.contains(DeclarationKinds::CLASS_NAME) || symbol.has_modifying_references() {
@@ -318,7 +318,7 @@ impl<'a> Estree<'a> {
     }
 
     /// Returns the pattern that contains a `PatProp` or `PatElem` whose parent is `node`.
-    fn of_owner(node: Node<'a>) -> Self {
+    fn from_owner(node: Node<'a>) -> Self {
         match node {
             Node::Pat(pat) => Estree::of(pat),
             _ => Estree::Other,
@@ -349,7 +349,7 @@ impl<'a> Estree<'a> {
                     Node::PatElem(it) if it.default().is_some() => {
                         Estree::AssignmentPattern(Holder::Elem(it))
                     }
-                    Node::PatElem(it) => Estree::of_owner(it.parent()),
+                    Node::PatElem(it) => Estree::from_owner(it.parent()),
                     Node::Param(it) if it.is_rest() => Estree::RestElement(Holder::Param(it)),
                     Node::Param(it) if it.default().is_some() => {
                         Estree::AssignmentPattern(Holder::Param(it))
@@ -364,10 +364,10 @@ impl<'a> Estree<'a> {
             }
             Estree::AssignmentPattern(Holder::Prop(it)) => Estree::Property(it),
             Estree::Property(it) | Estree::RestElement(Holder::Prop(it)) => {
-                Estree::of_owner(it.parent())
+                Estree::from_owner(it.parent())
             }
             Estree::RestElement(Holder::Elem(it)) | Estree::AssignmentPattern(Holder::Elem(it)) => {
-                Estree::of_owner(it.parent())
+                Estree::from_owner(it.parent())
             }
             Estree::RestElement(Holder::Param(it))
             | Estree::AssignmentPattern(Holder::Param(it)) => Estree::above_param(it),
@@ -1051,16 +1051,16 @@ impl NoUnusedVars {
         if !self.ignore_rest_siblings {
             return false;
         }
-        let is_defined_beside_rest = variable.declarations().any(|def| match def {
+        let is_defined_next_to_rest = variable.declarations().any(|def| match def {
             Declaration::Var(pat) | Declaration::Param(pat) => has_rest_sibling(Node::Pat(pat)),
             _ => false,
         });
-        is_defined_beside_rest || variable.references().any(|it| has_rest_sibling(it.node()))
+        is_defined_next_to_rest || variable.references().any(|it| has_rest_sibling(it.node()))
     }
 
     fn check<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
         // Without `reportUsedIgnorePattern`, a used variable is never reported.
-        if !self.report_used_ignore_pattern && is_plainly_used(symbol) {
+        if !self.report_used_ignore_pattern && is_obviously_used(symbol) {
             return;
         }
         let Some(def) = symbol
@@ -1188,7 +1188,7 @@ impl NoUnusedVars {
                 }
                 // If the statement was the only thing on its lines, remove the lines too.
                 Some(Fix {
-                    span: Around::of(cx.text(), fix.span).without_leftovers(),
+                    span: Removal::of(cx.text(), fix.span).without_leftovers(),
                     ..fix
                 })
             });

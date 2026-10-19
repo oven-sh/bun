@@ -56,7 +56,7 @@ fn contains<'a>(
         }
     };
     match !is_constituents && types.len() > 1 {
-        true => known.get_or_ask(ty, ask),
+        true => known.get_or_compute(ty, ask),
         false => ask(known),
     }
 }
@@ -110,7 +110,7 @@ fn contains_as_tsgolint<'a>(
         }
     };
     match bases.len() > 1 {
-        true => known.get_or_ask(ty, ask),
+        true => known.get_or_compute(ty, ask),
         false => ask(known),
     }
 }

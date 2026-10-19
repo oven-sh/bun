@@ -257,12 +257,12 @@ pub(crate) fn oxlint_problem(
     let expected = case.get(b"messages").and_then(Json::as_array);
     for message in messages {
         // Several messages can have the same text at the same position.
-        let there = expected.unwrap_or_default().iter().filter(|it| {
+        let matching = expected.unwrap_or_default().iter().filter(|it| {
             (number_of(it, b"line"), number_of(it, b"column"))
                 == (Some(message.line), Some(message.column))
                 && message_of(it, b"message") == message.message
         });
-        let helps = there.filter_map(|it| string_of(it.get(b"oxlint")?, b"help"));
+        let helps = matching.filter_map(|it| string_of(it.get(b"oxlint")?, b"help"));
         let helps: Vec<&bstr::BStr> = helps.map(bstr::BStr::new).collect();
         match message.help() {
             "" => {

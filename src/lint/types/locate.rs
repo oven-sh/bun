@@ -281,9 +281,9 @@ impl<'a> Expr<'a> {
 
     /// The type of a call, a `new` or a tagged template without a contextual type, so no type argument is inferred from
     /// its position. The call is re-resolved every time.
-    pub fn context_free_type_of_call_resolved_afresh(self) -> Type<'a> {
+    pub fn context_free_type_of_freshly_resolved_call(self) -> Type<'a> {
         self.ts_node()
-            .get_context_free_type_of_call_resolved_afresh()
+            .get_context_free_type_of_freshly_resolved_call()
     }
 
     /// `checker.getContextualType(node)`: the type the expression's position expects. It uses

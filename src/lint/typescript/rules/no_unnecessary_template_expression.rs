@@ -259,7 +259,7 @@ fn is_wrapped_by_tsgolint(template: Expr, moved: Expr) -> bool {
     if moved.is_parenthesized() {
         return false;
     }
-    let around = match template.parent() {
+    let parent_precedence = match template.parent() {
         Node::Func(func) if func.is_arrow() => P::Assignment,
         Node::Expr(parent) => match get_operator_precedence_of_ts_parent(template) {
             // For TypeScript the parent isn't an expression: a `TemplateSpan`, a `JsxExpression`.
@@ -271,11 +271,11 @@ fn is_wrapped_by_tsgolint(template: Expr, moved: Expr) -> bool {
                 Some(BinOp::And | BinOp::Or) => return true,
                 _ => P::LogicalOR,
             },
-            around => around,
+            parent_precedence => parent_precedence,
         },
         _ => return false,
     };
-    get_expression_precedence(moved) <= around
+    get_expression_precedence(moved) <= parent_precedence
 }
 
 /// True if the `TemplateLiteralType`'s parent is an expression for typescript-go, which includes the

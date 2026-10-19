@@ -26,29 +26,29 @@ fn gap(text: &[u8], from: u32, to: u32) -> Option<u8> {
     Some(breaks.min(2) as u8)
 }
 
-/// True if the imports `written` and `printed` have the same tokens, apart from a `,` before a `}` and a `;` at the
+/// True if the imports `source` and `printed` have the same tokens, apart from a `,` before a `}` and a `;` at the
 /// end. Neither contains comments.
-fn has_same_tokens(written: &[u8], printed: &[u8]) -> bool {
-    let (mut written, mut printed) = (written.trim_ascii_start(), printed.trim_ascii_start());
+fn has_same_tokens(source: &[u8], printed: &[u8]) -> bool {
+    let (mut source, mut printed) = (source.trim_ascii_start(), printed.trim_ascii_start());
     loop {
-        match (written, printed) {
+        match (source, printed) {
             ([], []) | ([], [b';']) => return true,
             ([quote @ (b'"' | b'\''), ..], [other, ..]) if quote == other => {
-                let len = bun_lint::tokens::token_len(written);
-                if written.get(..len) != printed.get(..len) {
+                let len = bun_lint::tokens::token_len(source);
+                if source.get(..len) != printed.get(..len) {
                     return false;
                 }
-                (written, printed) = (&written[len..], &printed[len..]);
+                (source, printed) = (&source[len..], &printed[len..]);
             }
-            ([a, rest_written @ ..], [b, rest_printed @ ..]) if a == b => {
-                (written, printed) = (rest_written, rest_printed)
+            ([a, rest_source @ ..], [b, rest_printed @ ..]) if a == b => {
+                (source, printed) = (rest_source, rest_printed)
             }
             ([b',', rest @ ..], [b'}', ..]) if rest.trim_ascii_start().starts_with(b"}") => {
-                written = rest
+                source = rest
             }
             _ => return false,
         }
-        (written, printed) = (written.trim_ascii_start(), printed.trim_ascii_start());
+        (source, printed) = (source.trim_ascii_start(), printed.trim_ascii_start());
     }
 }
 
@@ -125,7 +125,7 @@ pub(super) fn is_unchanged(
             return false;
         }
         is_first = false;
-        let (written, printed) = (
+        let (source, printed) = (
             model.file.slice(span),
             new_text
                 .get(piece.start as usize..piece.end as usize)
@@ -147,12 +147,12 @@ pub(super) fn is_unchanged(
                     )
                     .is_some()
                 });
-                written == printed || (!is_exact && !is_broken && has_same_tokens(written, printed))
+                source == printed || (!is_exact && !is_broken && has_same_tokens(source, printed))
             }
             PieceKind::Directive(_) => {
-                written == printed || (!is_exact && has_same_tokens(written, printed))
+                source == printed || (!is_exact && has_same_tokens(source, printed))
             }
-            PieceKind::Interpreter | PieceKind::Comment(_) => written == printed,
+            PieceKind::Interpreter | PieceKind::Comment(_) => source == printed,
         };
         if !is_same {
             return false;

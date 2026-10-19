@@ -5,7 +5,7 @@
 //! with `generateDifferences()` from prettier-linter-helpers 1.0.1.
 
 use bun_core::strings;
-use bun_lint::formats::{Formatted, Like, Reason, Request};
+use bun_lint::formats::{Formatted, FormatterKind, Reason, Request};
 use bun_lint::prelude::*;
 use bun_text_diff::{CharDiff, Hunk};
 
@@ -20,9 +20,9 @@ const UNCHECKED: Message = Message::new(
     "This file was not checked because {{ reason }}.",
 );
 
-fn show_invisibles(shown: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(shown.len() * 2);
-    for &byte in shown {
+fn show_invisibles(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len() * 2);
+    for &byte in input {
         match byte {
             b' ' => out.extend_from_slice("\u{B7}".as_bytes()),
             b'\n' => out.extend_from_slice("\u{23CE}".as_bytes()),
@@ -106,13 +106,13 @@ impl Settings {
     /// `None` if they don't differ.
     fn compare(
         &self,
-        like: Like,
+        formatter_kind: FormatterKind,
         file: &File,
         source: &[u8],
     ) -> Result<Option<(Vec<u8>, Vec<Hunk>)>, Reason> {
         let formatted = match file.formatter() {
             Some(formatter) => formatter.formats.formatted(&Request {
-                like,
+                formatter_kind,
                 path_on_disk: formatter.path_on_disk,
                 path: file.path(),
                 text: source,
@@ -134,16 +134,17 @@ impl Settings {
         }
     }
 
-    pub(crate) fn check<R: Rule>(&self, like: Like, cx: &Cx<'_, R>) {
+    pub(crate) fn check<R: Rule>(&self, formatter_kind: FormatterKind, cx: &Cx<'_, R>) {
         let file = cx.file();
         // ESLint's text doesn't include the byte order mark.
         let skipped = if file.has_bom() { 3 } else { 0 };
         let source = file.text().get(skipped..).unwrap_or_default();
-        let (formatted, hunks) = match self.compare(like, file, source) {
+        let (formatted, hunks) = match self.compare(formatter_kind, file, source) {
             Ok(Some(it)) => it,
             Ok(None) | Err(Reason::NoFormatter) => return,
             Err(reason)
-                if like == Like::InstalledPrettier && !file.language().has_no_foreign_config =>
+                if formatter_kind == FormatterKind::InstalledPrettier
+                    && !file.language().has_no_foreign_config =>
             {
                 return file.hand_back(reason);
             }

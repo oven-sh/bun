@@ -139,8 +139,10 @@ impl ParameterProperties {
                 properties.insert(name, member);
             }
         }
-        let place = |name: &Name<'a>| properties.get(name).map(|it| it.span().start);
-        for name in utils::sort::collect_sorted_by_key(assigned, |it| (place(it), it.bytes())) {
+        let property_start = |name: &Name<'a>| properties.get(name).map(|it| it.span().start);
+        for name in
+            utils::sort::collect_sorted_by_key(assigned, |it| (property_start(it), it.bytes()))
+        {
             if let (Some(parameter), Some(property)) =
                 (parameters.get(&name), properties.get(&name))
                 && type_annotations_match(*property, *parameter)

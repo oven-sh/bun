@@ -11,8 +11,8 @@
 use super::enclosing_declaration::Enclosing;
 use super::errors_isolated_declarations::Emit;
 use super::print::{
-    DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
-    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, Written, YieldModuleSymbol,
+    DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, ReusedNode, SymbolTracker,
+    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, YieldModuleSymbol,
 };
 use super::sink::held;
 use super::*;
@@ -60,7 +60,7 @@ pub(super) enum Meaning {
 impl Meaning {
     /// Converts `SymFlags::TYPE`, `NAMESPACE` or `VALUE`. `with_export_value` means `SymbolFlagsValue |
     /// SymbolFlagsExportValue`.
-    pub(super) fn of(meaning: SymFlags, with_export_value: bool) -> Meaning {
+    pub(super) fn from_flags(meaning: SymFlags, with_export_value: bool) -> Meaning {
         if meaning == SymFlags::TYPE {
             Meaning::Type
         } else if meaning == SymFlags::NAMESPACE {
@@ -159,7 +159,7 @@ enum Context {
 }
 
 /// An error.
-struct Found {
+struct TrackerDiagnostic {
     start: u32,
     end: u32,
     code: u32,
@@ -171,7 +171,7 @@ struct Found {
 /// can hold a pointer to the second. The checker is passed to it.
 struct SymbolTrackerImpl {
     current_source_file: FileId,
-    diagnostics: Vec<Found>,
+    diagnostics: Vec<TrackerDiagnostic>,
     get_symbol_accessibility_diagnostic: Context,
     error_name_node: Node,
     fallback_stack: Vec<Node>,
@@ -358,20 +358,20 @@ pub(super) fn is_reserved_word(word: &[u8]) -> bool {
 /// `OnlyPrintJSDocStyle`. They're emitted at the start of a line indented by `indent` levels, and so is the text that
 /// follows them.
 pub(super) fn comments_text(text: &[u8], comments: Vec<(usize, usize)>, indent: usize) -> Vec<u8> {
-    let mut written = Vec::new();
+    let mut buffer = Vec::new();
     for (start, end) in comments {
         if !should_write_comment(&text[start..end]) {
             continue;
         }
-        write_comment_range(text, start, end, indent, &mut written);
+        write_comment_range(text, start, end, indent, &mut buffer);
         if has_trailing_new_line(text, end) {
-            written.push(b'\n');
-            written.extend_from_slice(&b"    ".repeat(indent));
+            buffer.push(b'\n');
+            buffer.extend_from_slice(&b"    ".repeat(indent));
         } else {
-            written.push(b' ');
+            buffer.push(b' ');
         }
     }
-    written
+    buffer
 }
 
 /// `shouldWriteComment`, under `OnlyPrintJSDocStyle`: `isJSDocLikeText`, `IsPinnedComment`.
@@ -477,9 +477,9 @@ impl<'a> Writer<'a> {
 
     /// `emitComment`
     fn emit_comment(&mut self, (start, end): (usize, usize)) {
-        let mut written = Vec::new();
-        write_comment_range(self.source, start, end, self.indent, &mut written);
-        self.write(&written);
+        let mut buffer = Vec::new();
+        write_comment_range(self.source, start, end, self.indent, &mut buffer);
+        self.write(&buffer);
     }
 
     /// `emitLeadingComments`
@@ -620,13 +620,7 @@ impl<'a> Writer<'a> {
 }
 
 /// `writeCommentRangeWorker` for a `/* */`.
-fn write_comment_range(
-    text: &[u8],
-    start: usize,
-    end: usize,
-    indent: usize,
-    written: &mut Vec<u8>,
-) {
+fn write_comment_range(text: &[u8], start: usize, end: usize, indent: usize, buffer: &mut Vec<u8>) {
     // `calculateIndent`
     let indent_of = |line: &[u8]| {
         let mut indent = 0;
@@ -639,11 +633,11 @@ fn write_comment_range(
     let first_line_indent = indent_of(&text[line_start..start]);
     for (i, line) in bun_core::strings::split(&text[start..end], b"\n").enumerate() {
         if i != 0 {
-            written.push(b'\n');
+            buffer.push(b'\n');
             let spaces = indent as isize * 4 - first_line_indent + indent_of(line);
-            written.extend_from_slice(&b" ".repeat(spaces.max(0) as usize));
+            buffer.extend_from_slice(&b" ".repeat(spaces.max(0) as usize));
         }
-        written.extend_from_slice(line.trim_ascii());
+        buffer.extend_from_slice(line.trim_ascii());
     }
 }
 
@@ -726,7 +720,7 @@ struct DeclarationEmit<'c, 'p, 's> {
     suppresses_new_contexts: bool,
     in_class_expression: bool,
     /// `lateStatementReplacementMap`: the statements that have emitted output, and that output.
-    written: FxHashMap<StmtId, Vec<Statement>>,
+    emitted_statements: FxHashMap<StmtId, Vec<Statement>>,
     writes: Writes,
     needs_declare: bool,
     needs_scope_fix_marker: bool,
@@ -860,7 +854,7 @@ impl<'p, 's> Checker<'p, 's> {
             text.extend_from_slice(&[b"//# sourceMappingURL=", name, b".map"].concat());
         }
         for error in found {
-            let Found {
+            let TrackerDiagnostic {
                 start,
                 end,
                 code,
@@ -894,7 +888,7 @@ impl<'c, 'p, 's> DeclarationEmit<'c, 'p, 's> {
             enclosing: top,
             suppresses_new_contexts: false,
             in_class_expression: false,
-            written: FxHashMap::default(),
+            emitted_statements: FxHashMap::default(),
             writes: Writes::No,
             needs_declare: true,
             needs_scope_fix_marker: false,
@@ -1006,7 +1000,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 impl<'p, 's> Checker<'p, 's> {
     /// `IsSymbolAccessible(symbol, enclosingDeclaration, meaning, false)`. For `meaning` and `with_export_value`, see
-    /// `Meaning::of`.
+    /// `Meaning::from_flags`.
     pub(super) fn is_symbol_accessible_at(
         &mut self,
         symbol: Sym,
@@ -1014,7 +1008,7 @@ impl<'p, 's> Checker<'p, 's> {
         with_export_value: bool,
         at: Enclosing,
     ) -> bool {
-        let meaning = Meaning::of(meaning, with_export_value);
+        let meaning = Meaning::from_flags(meaning, with_export_value);
         self.is_symbol_accessible(symbol, at, meaning, false)
             .is_accessible()
     }
@@ -1207,14 +1201,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `compareSymbols`: by the position of their first declaration.
     pub(super) fn compare_symbols_of_chain(&self, a: Sym, b: Sym) -> std::cmp::Ordering {
-        let place = |symbol: Sym| match self.decls_of(symbol).first() {
+        let sort_key = |symbol: Sym| match self.decls_of(symbol).first() {
             Some(&(file, decl)) => {
                 let start = self.declaration_name_start(file, decl).unwrap_or(0);
                 (0, self.position_in_program_order(file, start))
             }
             None => (1, (false, 0, 0)),
         };
-        place(a).cmp(&place(b)).then(a.cmp(&b))
+        sort_key(a).cmp(&sort_key(b)).then(a.cmp(&b))
     }
 
     fn compare_symbol_chains(&self, a: &[Sym], b: &[Sym]) -> std::cmp::Ordering {
@@ -1315,15 +1309,15 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     // `GetDeclarationContainer`: the declarations in a loop header belong to the loop's container.
                     let container = match bound.parent_of_stmt(statement) {
-                        Parent::Stmt(around)
+                        Parent::Stmt(loop_statement)
                             if matches!(
-                                hir[around].kind,
+                                hir[loop_statement].kind,
                                 StmtKind::For { .. }
                                     | StmtKind::ForIn { .. }
                                     | StmtKind::ForOf { .. }
                             ) =>
                         {
-                            bound.parent_of_stmt(around)
+                            bound.parent_of_stmt(loop_statement)
                         }
                         container => container,
                     };
@@ -1373,8 +1367,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return true;
         }
-        let is_in_ambient_block = matches!(container, Parent::Module(around)
-            if hir[around].flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration);
+        let is_in_ambient_block = matches!(container, Parent::Module(enclosing_module)
+            if hir[enclosing_module].flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration);
         if !flags.contains(Flags::EXPORT)
             && !(is_in_ambient_block && !matches!(decl, Decl::ImportEquals(_)))
         {
@@ -1480,9 +1474,9 @@ impl<'p, 's> Checker<'p, 's> {
                     // `ast.IsVariableStatement`: not a loop header, and not a catch variable.
                     if statement.is_none()
                         || !matches!(hir[statement].kind, StmtKind::Var(_))
-                        || matches!(bound.parent_of_stmt(statement), Parent::Stmt(around)
+                        || matches!(bound.parent_of_stmt(statement), Parent::Stmt(loop_statement)
                         if matches!(
-                            hir[around].kind,
+                            hir[loop_statement].kind,
                             StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
                         ))
                     {
@@ -1942,8 +1936,8 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     })
             }
-            PropSource::Literal(file, written) => matches!(
-                self.hir(*file)[*written].kind,
+            PropSource::Literal(file, literal_prop) => matches!(
+                self.hir(*file)[*literal_prop].kind,
                 PropKind::Method | PropKind::Getter | PropKind::Setter
             ),
             _ => false,
@@ -2423,9 +2417,10 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 meaning
             };
-            let of_parent = self.is_any_symbol_accessible(&containers, at, initial, next, paints);
-            if of_parent.is_some() {
-                return of_parent;
+            let parent_access =
+                self.is_any_symbol_accessible(&containers, at, initial, next, paints);
+            if parent_access.is_some() {
+                return parent_access;
             }
         }
         if early_module_bail {
@@ -2495,7 +2490,7 @@ impl SymbolTrackerImpl {
     }
 
     fn add_diagnostic(&mut self, range: (u32, u32), code: u32, args: Vec<Vec<u8>>) {
-        self.diagnostics.push(Found {
+        self.diagnostics.push(TrackerDiagnostic {
             start: range.0,
             end: range.1,
             code,
@@ -2529,15 +2524,16 @@ impl SymbolTrackerImpl {
             false => private_name,
         };
         // The codes for a static member, for any other member of a class declaration, and for the rest.
-        let by_place = |member: Node, of_static: [u32; 3], in_class: [u32; 3], other: [u32; 2]| {
-            if hir.is_static(member) {
-                by_module(of_static)
-            } else if hir.kind(hir.parent(member)) == Kind::ClassDeclaration {
-                by_module(in_class)
-            } else {
-                no_name_check(other)
-            }
-        };
+        let by_member_kind =
+            |member: Node, static_codes: [u32; 3], in_class: [u32; 3], other: [u32; 2]| {
+                if hir.is_static(member) {
+                    by_module(static_codes)
+                } else if hir.kind(hir.parent(member)) == Kind::ClassDeclaration {
+                    by_module(in_class)
+                } else {
+                    no_name_check(other)
+                }
+            };
         let (node, is_for_name) = match self.get_symbol_accessibility_diagnostic {
             Context::ForNode(node) => (node, false),
             Context::ForNodeName(node) => (node, true),
@@ -2551,7 +2547,8 @@ impl SymbolTrackerImpl {
             hir.parent(node),
             get_name_of_declaration(hir, node),
         );
-        let of_property = || by_place(node, [4026, 4027, 4028], [4029, 4030, 4031], [4032, 4033]);
+        let property_code =
+            || by_member_kind(node, [4026, 4027, 4028], [4029, 4030, 4031], [4032, 4033]);
         Some(match kind {
             // `getVariableDeclarationTypeVisibilityDiagnosticMessage`
             Kind::VariableDeclaration | Kind::BindingElement => {
@@ -2561,12 +2558,13 @@ impl SymbolTrackerImpl {
             | Kind::PropertySignature
             | Kind::PropertyAccessExpression
             | Kind::ElementAccessExpression
-            | Kind::BinaryExpression => (of_property(), name, node),
+            | Kind::BinaryExpression => (property_code(), name, node),
             // `getAccessorNameVisibilityDiagnosticMessage`
-            Kind::GetAccessor | Kind::SetAccessor if is_for_name => (of_property(), name, node),
+            Kind::GetAccessor | Kind::SetAccessor if is_for_name => (property_code(), name, node),
             // `getMethodNameVisibilityDiagnosticMessage`
             Kind::MethodDeclaration | Kind::MethodSignature if is_for_name => {
-                let code = by_place(node, [4095, 4096, 4097], [4098, 4099, 4100], [4101, 4102]);
+                let code =
+                    by_member_kind(node, [4095, 4096, 4097], [4098, 4099, 4100], [4101, 4102]);
                 (code, name, node)
             }
             // `getAccessorDeclarationTypeVisibilityDiagnosticMessage`
@@ -2586,7 +2584,7 @@ impl SymbolTrackerImpl {
                     Kind::CallSignature => no_name_check([4046, 4047]),
                     Kind::IndexSignature => no_name_check([4048, 4049]),
                     Kind::FunctionDeclaration => by_module([4058, 4059, 4060]),
-                    _ => by_place(node, [4050, 4051, 4052], [4053, 4054, 4055], [4056, 4057]),
+                    _ => by_member_kind(node, [4050, 4051, 4052], [4053, 4054, 4055], [4056, 4057]),
                 };
                 (code, Node::NONE, if name.is_some() { name } else { node })
             }
@@ -2605,7 +2603,7 @@ impl SymbolTrackerImpl {
                     Kind::CallSignature => no_name_check([4066, 4067]),
                     Kind::IndexSignature => no_name_check([4091, 4092]),
                     Kind::MethodDeclaration | Kind::MethodSignature => {
-                        by_place(parent, [4068, 4069, 4070], [4071, 4072, 4073], [4074, 4075])
+                        by_member_kind(parent, [4068, 4069, 4070], [4071, 4072, 4073], [4074, 4075])
                     }
                     Kind::FunctionDeclaration | Kind::FunctionType => by_module([4076, 4077, 4078]),
                     Kind::SetAccessor | Kind::GetAccessor => by_module([4108, 4107, 4106]),
@@ -2740,7 +2738,7 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
             self.class_symbol_tracked = true;
             return false;
         }
-        let meaning = Meaning::of(meaning, false);
+        let meaning = Meaning::from_flags(meaning, false);
         let access = c.is_symbol_accessible(symbol, at, meaning, true);
         self.handle_symbol_accessibility_error(c, access)
     }
@@ -2848,10 +2846,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let directives = self.reference_directives();
         // `emitDetachedCommentsAfterStatementList`: `statements.Loc.End()` is the end of the file's last token.
-        let written = hir
+        let source_statements = hir
             .ids(hir.body)
             .filter(|&s| !hir.is_in_jsdoc(hir[s].start));
-        let end = written.map(|s| hir[s].loc.end).max().unwrap_or(0);
+        let end = source_statements.map(|s| hir[s].loc.end).max().unwrap_or(0);
         let mut after = self.leading_comments(end);
         if after.ends_with(b" ") {
             after.push(b'\n');
@@ -2920,7 +2918,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     // ───────────────────────────── emitted text ─────────────────────────────
 
-    fn text_of(&mut self, what: Written) -> Vec<u8> {
+    fn text_of(&mut self, what: ReusedNode) -> Vec<u8> {
         if !self.writes() {
             return Vec::new();
         }
@@ -3052,22 +3050,22 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         text
     }
 
-    /// `ensureModifiers`, `ensureModifierFlags`, `maskModifierFlags`. `written` is `node.Modifiers()`.
-    fn ensure_modifiers(&self, written: Span<ModifierId>, node: ModifiedNode) -> Vec<Flags> {
-        self.ensure_modifiers_of_statement(written, Flags::empty(), Parent::None, node)
+    /// `ensureModifiers`, `ensureModifierFlags`, `maskModifierFlags`. `modifier_nodes` is `node.Modifiers()`.
+    fn ensure_modifiers(&self, modifier_nodes: Span<ModifierId>, node: ModifiedNode) -> Vec<Flags> {
+        self.ensure_modifiers_of_statement(modifier_nodes, Flags::empty(), Parent::None, node)
     }
 
     /// Same as `ensure_modifiers`, for a statement in `container`. `declared` are its declaration's flags. A statement
     /// synthesized by the reparser has clones of its host's modifiers, which aren't HIR nodes.
     fn ensure_modifiers_of_statement(
         &self,
-        written: Span<ModifierId>,
+        modifier_nodes: Span<ModifierId>,
         declared: Flags,
         container: Parent,
         node: ModifiedNode,
     ) -> Vec<Flags> {
         let hir = self.c.hir(self.file());
-        let mut in_order: Vec<Flags> = (written.iter())
+        let mut in_order: Vec<Flags> = (modifier_nodes.iter())
             .filter_map(|m| match hir[m].kind {
                 ModifierKind::Keyword(modifier) => Some(modifier - Flags::REPARSED),
                 ModifierKind::Decorator(_) => None,
@@ -3101,7 +3099,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         // `canReuseModifierNodes`
         let is_reparsed = |m: ModifierId| matches!(hir[m].kind, ModifierKind::Keyword(modifier) if modifier.contains(Flags::REPARSED));
-        if flags == current && !written.iter().any(is_reparsed) {
+        if flags == current && !modifier_nodes.iter().any(is_reparsed) {
             return in_order;
         }
         let created = MODIFIERS.iter().filter(|it| flags.contains(it.0));
@@ -3113,9 +3111,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let hir = self.c.hir(self.file());
         let (from, to) = (hir[s].start, hir[s].loc.end);
         let mut uses = hir.specifier_uses.iter();
-        let written = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
+        let specifier_use = uses.find(|it| it.spec == spec && (from..to).contains(&it.pos));
         let text = &hir.text[..];
-        if let Some(start) = written.map(|it| it.pos as usize)
+        if let Some(start) = specifier_use.map(|it| it.pos as usize)
             && let Some(&quote) = text.get(start)
             && matches!(quote, b'"' | b'\'')
         {
@@ -3219,7 +3217,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
     fn type_arguments_text(&mut self, arguments: IdList<TypeNodeId>) -> Vec<u8> {
         let mut texts = Vec::with_capacity(arguments.len());
         for argument in self.c.hir(self.file()).ids(arguments) {
-            texts.push(self.text_of(Written::Type(argument)));
+            texts.push(self.text_of(ReusedNode::Type(argument)));
         }
         if texts.is_empty() {
             return Vec::new();
@@ -3365,9 +3363,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     self.tracker.get_symbol_accessibility_diagnostic = saved;
                     let host = self.expando_host(statement, name, &signature);
                     self.expando_hosts.insert(statement, host.clone());
-                    if self.written.contains_key(&statement) {
+                    if self.emitted_statements.contains_key(&statement) {
                         let block = self.create_full_expando_block(statement, host);
-                        self.written.insert(statement, block);
+                        self.emitted_statements.insert(statement, block);
                     }
                     if let Some(isolated_declarations) = &mut self.tracker.isolated_declarations {
                         self.c
@@ -3401,9 +3399,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 if let Some(ty) = self.c.type_of_property(holder, property) {
                     self.tracker.error_name_node = Node::NONE;
                     // It's emitted in its host's namespace.
-                    let around = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
+                    let host_parent = root.map_or(Parent::None, |root| bound.parent_of_stmt(root));
                     let outer = self.indent;
-                    self.set_indent(self.indent_of_statements(around) + 1);
+                    self.set_indent(self.indent_of_statements(host_parent) + 1);
                     let ty = self.create_type_of_declaration(
                         Some(hir.node(e)),
                         ty,
@@ -3539,10 +3537,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
                 self.result_has_external_module_indicator |= parent_is_file;
                 self.result_has_scope_marker = true;
-                let mut written = self.export_declaration(s);
-                written.comments = self.leading_comments(statement.loc.pos);
-                written.text = self.with_comments((None, statement.loc.end), &written.text);
-                Visited::Statements(vec![written])
+                let mut emitted = self.export_declaration(s);
+                emitted.comments = self.leading_comments(statement.loc.pos);
+                emitted.text = self.with_comments((None, statement.loc.end), &emitted.text);
+                Visited::Statements(vec![emitted])
             }
             // `VisitEachChild`
             StmtKind::ExportAsNamespace(name) => {
@@ -3568,10 +3566,10 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             | StmtKind::Module(_)
             | StmtKind::Var(_)
             | StmtKind::ImportEquals(_) => {
-                if !self.written.contains_key(&s)
-                    && let Some(written) = self.transform_top_level_declaration(s)
+                if !self.emitted_statements.contains_key(&s)
+                    && let Some(emitted) = self.transform_top_level_declaration(s)
                 {
-                    self.written.insert(s, written);
+                    self.emitted_statements.insert(s, emitted);
                 }
                 Visited::Late(s)
             }
@@ -3606,12 +3604,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // It's emitted among the statements of its own container.
             let outer = self.indent;
             self.set_indent(self.indent_of_statements(parent));
-            let written = self.transform_top_level_declaration(next);
+            let emitted = self.transform_top_level_declaration(next);
             self.set_indent(outer);
             self.needs_declare = saved;
-            match written {
-                Some(written) => self.written.insert(next, written),
-                None => self.written.remove(&next),
+            match emitted {
+                Some(emitted) => self.emitted_statements.insert(next, emitted),
+                None => self.emitted_statements.remove(&next),
             };
         }
         let mut results = Vec::with_capacity(visited.len());
@@ -3619,7 +3617,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             match visited {
                 Visited::Statements(mut statements) => results.append(&mut statements),
                 Visited::Late(s) => {
-                    for statement in self.written.get(&s).into_iter().flatten() {
+                    for statement in self.emitted_statements.get(&s).into_iter().flatten() {
                         self.needs_scope_fix_marker |= statement.needs_scope_marker();
                         self.result_has_external_module_indicator |=
                             parent_is_file && statement.is_external_module_indicator();
@@ -3842,14 +3840,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let kind = hir[s].kind;
         let decl = match kind {
             StmtKind::ImportEquals(_) | StmtKind::Import(_) => {
-                let mut written = match kind {
+                let mut emitted = match kind {
                     StmtKind::ImportEquals(i) => self.transform_import_equals(i, s)?,
                     StmtKind::Import(i) => self.transform_import_declaration(i, s)?,
                     _ => return None,
                 };
-                written.comments = self.leading_comments(hir[s].loc.pos);
-                written.text = self.with_comments((None, hir[s].loc.end), &written.text);
-                return Some(vec![written]);
+                emitted.comments = self.leading_comments(hir[s].loc.pos);
+                emitted.text = self.with_comments((None, hir[s].loc.end), &emitted.text);
+                return Some(vec![emitted]);
             }
             StmtKind::Fn(f) => Some(Decl::Fn(f)),
             StmtKind::Class(c) => Some(Decl::Class(c)),
@@ -3890,18 +3888,22 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 text,
             }])
         };
-        let written = match kind {
+        let emitted = match kind {
             StmtKind::TypeAlias(a) => {
                 self.enter(bound.alias_scope[a.idx()]);
                 self.tracker.get_symbol_accessibility_diagnostic = Context::ForNode(hir.node(s));
                 self.needs_declare = false;
                 let container = bound.parent_of_stmt(s);
-                let written = hir.stmt_modifiers(s);
-                let modifiers =
-                    self.ensure_modifiers_of_statement(written, hir[a].flags, container, modified);
+                let modifier_nodes = hir.stmt_modifiers(s);
+                let modifiers = self.ensure_modifiers_of_statement(
+                    modifier_nodes,
+                    hir[a].flags,
+                    container,
+                    modified,
+                );
                 let type_parameters = self.visit_type_parameters(hir[a].type_params);
                 self.visit_type(hir[a].ty, true);
-                let ty = self.text_of(Written::Type(hir[a].ty));
+                let ty = self.text_of(ReusedNode::Type(hir[a].ty));
                 let name = self.name(hir[a].name);
                 Some(vec![Statement {
                     kind: match hir[a].flags.contains(Flags::REPARSED) {
@@ -3928,7 +3930,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     self.visit_heritage_type(node);
                     // `transformHeritageClause`
                     if matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
-                        extends.push(self.text_of(Written::Type(node)));
+                        extends.push(self.text_of(ReusedNode::Type(node)));
                     }
                 }
                 self.set_indent(self.indent + 1);
@@ -3959,9 +3961,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     Some(self.expando_host(s, hir[f].name, &signature))
                 } else {
                     // A function isn't `IsImplicitlyExportedJSDocDeclaration`.
-                    let (written, declared) = (hir.stmt_modifiers(s), hir[f].flags);
+                    let (modifier_nodes, declared) = (hir.stmt_modifiers(s), hir[f].flags);
                     let modifiers = self.ensure_modifiers_of_statement(
-                        written,
+                        modifier_nodes,
                         declared,
                         Parent::None,
                         modified,
@@ -3992,17 +3994,17 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.tracker.error_name_node,
             self.needs_declare,
         ) = saved;
-        let mut written = written?;
+        let mut emitted = emitted?;
         let comments = self.leading_comments(hir[s].loc.pos);
         let preserves_comments = match kind {
-            StmtKind::Class(_) => written.last_mut(),
-            _ => written.first_mut(),
+            StmtKind::Class(_) => emitted.last_mut(),
+            _ => emitted.first_mut(),
         };
         if let Some(statement) = preserves_comments {
             statement.comments = comments;
             statement.text = self.with_comments((None, hir[s].loc.end), &statement.text);
         }
-        Some(self.create_full_expando_block(s, written))
+        Some(self.create_full_expando_block(s, emitted))
     }
 
     /// `transformExpandoHost` for a function: the function `name` with `signature`, replacing the statement `s`.
@@ -4080,7 +4082,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if !self.writes() || self.c.should_strip_internal(file, hir[m].loc.pos) {
                 continue;
             }
-            let mut member = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
+            let mut member = self.text_of(ReusedNode::PropertyName(hir.name(hir.node(m))));
             // "Rewrite enum values to their constants, if available"
             match self.c.enum_member_value(file, m) {
                 Some(EnumValue::Number(bits)) => {
@@ -4124,9 +4126,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.enter(bound.module_scope[m.idx()]);
         let container = bound.parent_of_stmt(s);
         let modified = ModifiedNode::new(container == Parent::File);
-        let written = hir.stmt_modifiers(s);
+        let modifier_nodes = hir.stmt_modifiers(s);
         let modifiers =
-            self.ensure_modifiers_of_statement(written, module.flags, container, modified);
+            self.ensure_modifiers_of_statement(modifier_nodes, module.flags, container, modified);
         self.needs_declare = false;
         let is_nested = matches!(container, Parent::Module(outer)
             if nested_module_declaration(hir, outer) == Some(s));
@@ -4134,8 +4136,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             // `IsAmbientModule`, which includes `IsGlobalScopeAugmentation`.
             ModuleName::Global => (StatementKind::AmbientModule, b"global".to_vec()),
             ModuleName::String(name) => {
-                let written = hir.text.get(module.name_pos as usize).copied();
-                let quote = written.filter(|&it| it == b'\'').unwrap_or(b'"');
+                let source_quote = hir.text.get(module.name_pos as usize).copied();
+                let quote = source_quote.filter(|&it| it == b'\'').unwrap_or(b'"');
                 let name = super::print::quoted(self.name(name), quote, false);
                 (
                     StatementKind::AmbientModule,
@@ -4154,7 +4156,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         // "eagerly transform nested namespaces (the nesting doesn't need any elision or painting done)"
         if let Some(inner) = nested_module_declaration(hir, m) {
             self.visit_statement(inner);
-            let body = self.written.remove(&inner).unwrap_or_default();
+            let body = self.emitted_statements.remove(&inner).unwrap_or_default();
             let text = match body.first() {
                 Some(body) => [&head[..], b".", &body.text[..]].concat(),
                 None => [&head[..], b";"].concat(),
@@ -4514,20 +4516,20 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             self.tracker.get_symbol_accessibility_diagnostic = saved;
         }
-        let mut written: Vec<Vec<u8>> = Vec::new();
+        let mut member_texts: Vec<Vec<u8>> = Vec::new();
         // "When the class has at least one private identifier, create a unique constant identifier to retain the
         // nominal typing behavior"
         if (members.iter()).any(|m| matches!(hir[m].key, PropKey::Private(_))) {
-            written.push(b"#private;".to_vec());
+            member_texts.push(b"#private;".to_vec());
         }
-        written.append(&mut self.create_late_bound_index_signatures(c));
-        written.append(&mut parameter_properties);
-        written.append(&mut self.collect_this_property_assignments(c));
+        member_texts.append(&mut self.create_late_bound_index_signatures(c));
+        member_texts.append(&mut parameter_properties);
+        member_texts.append(&mut self.collect_this_property_assignments(c));
         for m in members.iter() {
-            written.extend(self.visit_member(m));
+            member_texts.extend(self.visit_member(m));
         }
         self.set_indent(self.indent - 1);
-        written
+        member_texts
     }
 
     /// `CreateLateBoundIndexSignatures`
@@ -4535,7 +4537,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let file = self.file();
         let files = self.c.files();
         let class = self.c.class_sym(file, c);
-        let mut written: Vec<Vec<u8>> = Vec::new();
+        let mut signature_texts: Vec<Vec<u8>> = Vec::new();
         for is_static in [true, false] {
             let holder = if is_static {
                 self.c.type_of_symbol(class)
@@ -4608,7 +4610,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                             DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                             Some(&mut self.tracker),
                         );
-                        let name = self.text_of(Written::EntityName(name));
+                        let name = self.text_of(ReusedNode::EntityName(name));
                         // `c.QuestionToken()`
                         let question: &[u8] = match component {
                             IndexComponent::Member(of, m)
@@ -4619,7 +4621,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                             _ => b"",
                         };
                         let name = [modifiers, b"[", &name[..], b"]", question].concat();
-                        written.push([&name[..], b": ", &ty[..], b";"].concat());
+                        signature_texts.push([&name[..], b": ", &ty[..], b";"].concat());
                     }
                     continue;
                 }
@@ -4637,10 +4639,11 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     DECLARATION_EMIT_NODE_BUILDER_FLAGS,
                     None,
                 );
-                written.push([modifiers, b"[x: ", &key[..], b"]: ", &value[..], b";"].concat());
+                signature_texts
+                    .push([modifiers, b"[x: ", &key[..], b"]: ", &value[..], b";"].concat());
             }
         }
-        written
+        signature_texts
     }
 
     /// The heritage clauses of a class, each preceded by a space. If a class declaration extends an expression that
@@ -4663,7 +4666,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     self.visit_type(argument, false);
                 }
                 self.tracker.get_symbol_accessibility_diagnostic = saved;
-                let name = self.text_of(Written::EntityName(class.extends));
+                let name = self.text_of(ReusedNode::EntityName(class.extends));
                 let arguments = self.type_arguments_text(class.extends_args);
                 heritage = [b" extends ", &name[..], &arguments[..]].concat();
             } else if matches!(hir[class.extends].kind, ExprKind::Null) {
@@ -4705,7 +4708,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.visit_heritage_type(node);
             // `transformHeritageClause`
             if matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
-                implements.push(self.text_of(Written::Type(node)));
+                implements.push(self.text_of(ReusedNode::Type(node)));
             }
         }
         if !implements.is_empty() {
@@ -4758,9 +4761,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             && !is_parenthesized(self.c.hir(self.file()), e)
             && matches!(parent, Parent::File | Parent::Module(_))
         {
-            let mut written = export_of(self.name(name));
-            written.comments = comments(self);
-            return vec![written];
+            let mut emitted = export_of(self.name(name));
+            emitted.comments = comments(self);
+            return vec![emitted];
         }
         // `SkipOuterExpressions(expression, OEKExpressionTypePassthrough)`
         let mut unwrapped = e;
@@ -5029,7 +5032,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let name = if self.c.is_this_parameter(file, p) {
             b"this".to_vec()
         } else {
-            self.text_of(Written::BindingName(hir[p].pat))
+            self.text_of(ReusedNode::BindingName(hir[p].pat))
         };
         [rest, &name[..], question, &ensured.text()[..]].concat()
     }
@@ -5068,7 +5071,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         self.visit_type(hir[tp].constraint, false);
         self.visit_type(hir[tp].default, false);
         self.tracker.get_symbol_accessibility_diagnostic = saved;
-        self.text_of(Written::TypeParameter(tp))
+        self.text_of(ReusedNode::TypeParameter(tp))
     }
 
     /// `visitDeclarationSubtree` for a member of a class, an interface or a type literal. Returns `None` if nothing is
@@ -5129,11 +5132,11 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let is_private = member.flags.contains(Flags::PRIVATE);
         let is_written = !matches!(member.key, PropKey::Private(_));
-        let mut written = None;
+        let mut member_text = None;
         if is_written {
             let modified = ModifiedNode::Nested;
             let modifiers = modifiers_text(&self.ensure_modifiers(member.modifiers, modified));
-            let name = self.text_of(Written::PropertyName(hir.name(hir.node(m))));
+            let name = self.text_of(ReusedNode::PropertyName(hir.name(hir.node(m))));
             let head = match member.kind {
                 MemberKind::Method if member.flags.contains(Flags::REPARSED) => {
                     self.head_of_reparsed_method(m, &modifiers, &name)
@@ -5145,7 +5148,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             } else {
                 b""
             };
-            written = match member.kind {
+            member_text = match member.kind {
                 MemberKind::Property => {
                     let ensured = self.ensure_type(hir.node(m), false);
                     Some([&head[..], question, &ensured.text()[..], b";"].concat())
@@ -5186,7 +5189,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 }
                 MemberKind::IndexSignature => {
                     self.visit_type(hir[f].ret, false);
-                    let value = self.text_of(Written::Type(hir[f].ret));
+                    let value = self.text_of(ReusedNode::Type(hir[f].ret));
                     let parameters = self.update_param_list(f);
                     let key = [&modifiers[..], b"[", &parameters[..], b"]: "].concat();
                     Some([&key[..], &value[..], b";"].concat())
@@ -5211,8 +5214,8 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             self.tracker.error_name_node,
             self.suppresses_new_contexts,
         ) = saved;
-        let written = self.with_comments((None, member.loc.end), &written?);
-        Some([self.leading_comments(member.loc.pos), written].concat())
+        let member_text = self.with_comments((None, member.loc.end), &member_text?);
+        Some([self.leading_comments(member.loc.pos), member_text].concat())
     }
 
     /// The modifiers and the name of the method `m`, which `reparseJSDocSignature` makes from an `@overload` tag. The
@@ -5450,7 +5453,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         {
             if !hir.is_js {
                 self.visit_type(annotation, false);
-                return Ensured::Type(self.text_of(Written::Type(annotation)));
+                return Ensured::Type(self.text_of(ReusedNode::Type(annotation)));
             }
             let flags = if self.in_class_expression {
                 DECLARATION_EMIT_NODE_BUILDER_FLAGS & !WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL
@@ -5594,7 +5597,7 @@ enum Matching {
 
 impl Matching {
     /// How a key of `exports` or `imports` is matched.
-    fn of_key(key: &[u8]) -> Matching {
+    fn from_key(key: &[u8]) -> Matching {
         if key.ends_with(b"/") {
             Matching::Directory
         } else if strings::contains_char(key, b'*') {
@@ -5689,7 +5692,9 @@ fn get_declaration_emit_extension_for_path(path: &[u8]) -> Vec<u8> {
 fn change_full_extension(path: &[u8], extension: &[u8]) -> Vec<u8> {
     match get_declaration_file_extension(path) {
         b"" => change_extension(path, extension),
-        of_declaration => [&path[..path.len() - of_declaration.len()], extension].concat(),
+        declaration_extension => {
+            [&path[..path.len() - declaration_extension.len()], extension].concat()
+        }
     }
 }
 
@@ -5905,7 +5910,7 @@ fn try_get_module_name_from_exports(
                 &normalized_name(&[package_name, b"/", key.as_slice()].concat()),
                 value,
                 conditions,
-                Matching::of_key(key),
+                Matching::from_key(key),
             );
             if !name.is_empty() {
                 return name;
@@ -6253,7 +6258,7 @@ impl<'p, 's> Checker<'p, 's> {
                 key,
                 value,
                 &conditions,
-                Matching::of_key(key),
+                Matching::from_key(key),
             );
             if !name.is_empty() {
                 return name;
@@ -6627,15 +6632,15 @@ impl<'p, 's> Checker<'p, 's> {
         target: FileId,
         importing: FileId,
     ) -> &'a [u8] {
-        let of_target = self.package_json_directory(target);
+        let target_directory = self.package_json_directory(target);
         if path == self.files().module(target).file_name() {
-            return of_target;
+            return target_directory;
         }
-        let of_files = [of_target, self.package_json_directory(importing)];
+        let known_directories = [target_directory, self.package_json_directory(importing)];
         let package_root = node_module_path_parts(path).map(|parts| parts.2);
         ancestors(dirname::<Posix>(path))
             .find(|&directory| {
-                of_files.contains(&directory)
+                known_directories.contains(&directory)
                     || package_root == Some(directory.len())
                     || self.files().package_jsons.contains_key(directory)
             })

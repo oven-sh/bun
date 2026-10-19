@@ -12,11 +12,11 @@
 //! or the order of a list differs, [`render`] produces the plugin's version.
 
 use crate::finding::{Detail, Finding, Suggestion};
-use crate::oxlint::{find, property_around};
+use crate::oxlint::{enclosing_property, find};
 use bun_core::strings;
 use bun_lint::ast::{BinOp, File};
 use bun_lint::span::{Position, Span};
-use bun_lint::utils::code_frame::{self, Frame, Place};
+use bun_lint::utils::code_frame::{self, Frame, LineColumn};
 use bun_lint::utils::sort;
 use bun_react_compiler::diagnostics::{
     CompilerSuggestionOperation, ErrorCategory, format_category_heading,
@@ -47,9 +47,9 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
     let has_list = is_parsed_by_babel || !is_about_dependencies;
     // The plugin doesn't say where a function accesses a ref.
     let is_plugin_detail = |it: &&Detail| {
-        !matches!(it, Detail::Error { message: Some(said), .. }
+        !matches!(it, Detail::Error { message: Some(detail_message), .. }
             if finding.category == ErrorCategory::Refs
-                && matches!(&**said, "The ref is accessed here" | "The ref is updated here"))
+                && matches!(&**detail_message, "The ref is accessed here" | "The ref is updated here"))
     };
     let details = finding.details.iter().filter(is_plugin_detail);
     let details = details.filter(|it| has_list || inferred_dependencies(it).is_none());
@@ -88,7 +88,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
         message.push(b'.');
     }
     for detail in details {
-        let (span, said) = match detail {
+        let (span, label) = match detail {
             Detail::Hint { message: hint } => {
                 message.extend_from_slice(b"\n\n");
                 match inferred_dependencies(detail) {
@@ -104,14 +104,14 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
             Detail::Error { span: None, .. } => continue,
             Detail::Error {
                 span: Some(span),
-                message: said,
-            } => (plugin_span(file, finding, *span), said.as_deref()),
+                message: label,
+            } => (plugin_span(file, finding, *span), label.as_deref()),
         };
         // `CompilerError.invariant()` repeats the reason if there's no other message.
-        let said = match said {
+        let label = match label {
             _ if is_error_detail => reason,
             None if finding.category == ErrorCategory::Invariant => reason,
-            said => said.unwrap_or_default(),
+            label => label.unwrap_or_default(),
         };
         let (start, end) = (file.position(span.start), file.position(span.end));
         message.extend_from_slice(b"\n\n");
@@ -119,8 +119,8 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
             write_path(&mut message, file.path());
             let _ = writeln!(message, ":{}:{}", start.line, start.column + 1);
         }
-        if !write_frame(&mut message, file, start, end, said.as_bytes()) && !is_error_detail {
-            message.extend_from_slice(said.as_bytes());
+        if !write_frame(&mut message, file, start, end, label.as_bytes()) && !is_error_detail {
+            message.extend_from_slice(label.as_bytes());
         }
         if is_error_detail {
             message.extend_from_slice(b"\n\n");
@@ -180,7 +180,7 @@ fn plugin_span<'a>(file: &'a File<'a>, finding: &Finding, at: Span) -> Span {
         && finding.reason
             == "(BuildHIR::lowerAssignment) Handle computed properties in ObjectPattern";
     match is_computed_key {
-        true => property_around(file, at).unwrap_or(at),
+        true => enclosing_property(file, at).unwrap_or(at),
         false => at,
     }
 }
@@ -337,13 +337,13 @@ fn write_frame(
     end: Position,
     message: &[u8],
 ) -> bool {
-    let place = |at: Position| Place {
+    let frame_position = |at: Position| LineColumn {
         line: at.line,
         column: Some(at.column + 1),
     };
     let frame = Frame {
-        start: place(start),
-        end: Some(place(end)),
+        start: frame_position(start),
+        end: Some(frame_position(end)),
         message,
         lines_above: LINES_ABOVE,
         lines_below: LINES_BELOW,
@@ -363,29 +363,29 @@ fn write_frame(
     if !code_frame::write_rows_of(out, file, &frame, &(top..top + first_rows)) {
         return false;
     }
-    let written = out.get(from..).unwrap_or_default();
-    let gutter = strings::index_of_char_usize(written, b'|').unwrap_or(0);
-    let mut kept = 0;
+    let rendered = out.get(from..).unwrap_or_default();
+    let gutter = strings::index_of_char_usize(rendered, b'|').unwrap_or(0);
+    let mut head_len = 0;
     for _ in 0..first_rows {
-        let rest = written.get(kept..).unwrap_or_default();
-        kept += strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()) + 1;
+        let rest = rendered.get(head_len..).unwrap_or_default();
+        head_len += strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()) + 1;
     }
-    out.truncate(from + kept - 1);
+    out.truncate(from + head_len - 1);
     out.push(b'\n');
     out.resize(out.len() + gutter, b' ');
     out.extend_from_slice("…\n".as_bytes());
 
     let from = out.len();
-    let shown = bottom.saturating_sub(last_rows - 1)..bottom + 1;
-    code_frame::write_rows_of(out, file, &frame, &shown);
-    let mut kept = out.len();
+    let tail_lines = bottom.saturating_sub(last_rows - 1)..bottom + 1;
+    code_frame::write_rows_of(out, file, &frame, &tail_lines);
+    let mut tail_start = out.len();
     for _ in 0..last_rows {
-        let before = out.get(from..kept).unwrap_or_default();
+        let before = out.get(from..tail_start).unwrap_or_default();
         match strings::last_index_of_char(before, b'\n') {
-            Some(at) => kept = from + at,
+            Some(at) => tail_start = from + at,
             None => return true,
         }
     }
-    out.drain(from..=kept);
+    out.drain(from..=tail_start);
     true
 }

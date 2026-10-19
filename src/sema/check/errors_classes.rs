@@ -89,7 +89,7 @@ impl<'p> Checker<'p, '_> {
                 let all_the_same = returns
                     .iter()
                     .all(|&returned| self.is_identical(returned, base));
-                if !all_the_same && let Some(at) = self.place_to_report_base_at(file, c) {
+                if !all_the_same && let Some(at) = self.span_to_report_base_at(file, c) {
                     self.error_at(at, 2510, &[]);
                 }
             }
@@ -151,7 +151,7 @@ impl<'p> Checker<'p, '_> {
             && let Some(symbol) = self.symbol_of_type(apparent).and_then(|it| it.as_binder_symbol())
             // `GetClassLikeDeclarationOfSymbol(t.symbol)` is nil for an interface.
             && !(self.enclosing_classes(file, hir[c].extends).into_iter())
-                .any(|around| self.class_sym(file, around) == symbol)
+                .any(|enclosing_class| self.class_sym(file, enclosing_class) == symbol)
         {
             let name = super::errors_names_and_exports::fully_qualified_name(self, symbol, None);
             self.error(
@@ -314,7 +314,7 @@ impl<'p> Checker<'p, '_> {
             ClassBase::Nothing => {
                 if has_override {
                     let class_type = self.declared_type(sym);
-                    let at = self.place_of_overrider(file, member);
+                    let at = self.span_of_overrider(file, member);
                     self.error_at(at, code(4112), &[Arg::Type(class_type)]);
                 }
                 return;
@@ -325,7 +325,7 @@ impl<'p> Checker<'p, '_> {
             && let PropKey::Computed(name) = member.key
             && self.is_non_bindable_dynamic_name(file, name)
         {
-            let at = self.place_of_overrider(file, member);
+            let at = self.span_of_overrider(file, member);
             self.error_at(at, code(4127), &[]);
             return;
         }
@@ -354,7 +354,7 @@ impl<'p> Checker<'p, '_> {
         };
         let Some(base_prop) = base_prop else {
             if has_override {
-                let at = self.place_of_overrider(file, member);
+                let at = self.span_of_overrider(file, member);
                 match self.suggested_member(base_type, name) {
                     Some(suggestion) => {
                         let suggestion = self.prop_to_string(suggestion);
@@ -374,7 +374,7 @@ impl<'p> Checker<'p, '_> {
         let Some((true, is_abstract)) = self.declarations_of_base_property(base_prop) else {
             return;
         };
-        let at = self.place_of_overrider(file, member);
+        let at = self.span_of_overrider(file, member);
         if !is_abstract {
             let must = if member.param.is_some() { 4115 } else { 4114 };
             self.error_at(at, code(must), &[Arg::Type(base)]);
@@ -384,7 +384,7 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// `GetErrorRangeForNode` for the argument of `checkMemberForOverrideModifier`.
-    fn place_of_overrider(&self, file: FileId, member: Overrider) -> (FileId, u32, u32) {
+    fn span_of_overrider(&self, file: FileId, member: Overrider) -> (FileId, u32, u32) {
         if member.param.is_some() {
             let start = self.hir(file)[member.param].pos;
             return (file, start, self.end_of_param(file, member.param));
@@ -411,11 +411,11 @@ impl<'p> Checker<'p, '_> {
     /// `getSuggestedSymbolForNonexistentClassMember`
     fn suggested_member(&mut self, ty: TypeId, name: Atom) -> Option<&'p Prop<'p>> {
         // `ast.SymbolName`: a private name is compared by its source text.
-        let written = self.written_name(name);
+        let source_name = self.written_name(name);
         // A symbol-keyed member's name is compared like any other. In tsgo it's `\xFE@description@<symbol id>`
         // (`getESSymbolLikeTypeForNode`). Here the id is assumed to have two digits, the fewest it has in a program
         // with a default library.
-        let late_bound = written
+        let late_bound = source_name
             .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
             .map(|described| {
                 let description =
@@ -423,7 +423,7 @@ impl<'p> Checker<'p, '_> {
                         .unwrap_or(described.len())];
                 [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@00"[..]].concat()
             });
-        let text = late_bound.as_deref().unwrap_or(written);
+        let text = late_bound.as_deref().unwrap_or(source_name);
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
         let members = self.members(apparent)?;

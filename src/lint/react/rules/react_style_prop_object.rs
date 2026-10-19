@@ -76,7 +76,7 @@ impl StylePropObject {
             };
             // oxlint reports at the value.
             let whole = if is_oxlint { value.span() } else { attribute.span() };
-            let place = match value {
+            let report_span = match value {
                 AttributeValue::StringLiteral(_) => Some(whole),
                 AttributeValue::ExpressionContainer(_) => {
                     value.as_expression().and_then(|it| invalid_value_span(it, whole, cx))
@@ -84,7 +84,7 @@ impl StylePropObject {
                 // oxlint allows an element.
                 AttributeValue::Element(_) | AttributeValue::Fragment(_) => (!is_oxlint).then_some(whole),
             };
-            let Some(place) = place else {
+            let Some(report_span) = report_span else {
                 continue;
             };
             let name = match jsx.tag().map(Expr::kind) {
@@ -96,7 +96,7 @@ impl StylePropObject {
             };
             // oxlint doesn't check `<a.b>`, `<a:b>` or `<this>`.
             if !name.map_or(is_oxlint, |name| self.allows(name)) {
-                cx.report(place, message(is_oxlint));
+                cx.report(report_span, message(is_oxlint));
             }
         }
     }
@@ -140,8 +140,8 @@ impl StylePropObject {
         // Upstream only checks the first one.
         let check_limit = if is_oxlint { usize::MAX } else { 1 };
         for value in properties.iter().filter(is_style).take(check_limit).filter_map(Prop::value) {
-            if let Some(place) = invalid_value_span(value, value.span(), cx) {
-                cx.report(place, message(is_oxlint));
+            if let Some(report_span) = invalid_value_span(value, value.span(), cx) {
+                cx.report(report_span, message(is_oxlint));
             }
         }
     }

@@ -93,8 +93,8 @@ impl NoDangerWithChildren {
         if arguments.len() <= 1 || !is_create_element() {
             return;
         }
-        let is_seen = |it: &Expr| it.tag() != ExprTag::Spread && !(is_oxlint && it.is_parenthesized());
-        let Some(props) = arguments.get(1).filter(is_seen) else {
+        let is_plain = |it: &Expr| it.tag() != ExprTag::Spread && !(is_oxlint && it.is_parenthesized());
+        let Some(props) = arguments.get(1).filter(is_plain) else {
             return;
         };
         let known = &mut cx.state.props_of_variables;
@@ -131,12 +131,12 @@ fn prop(name: &[u8]) -> u8 {
 }
 
 fn is_line_break<'a>(file: &'a File<'a>, child: JsxChild<'a>) -> bool {
-    let (written, value) = match child {
+    let (raw_text, value) = match child {
         JsxChild::Whitespace(span) => (file.slice(span), None),
         JsxChild::Expr(e) if e.is_jsx_text() => (e.text(), e.jsx_text_value()),
         JsxChild::Expr(_) => return false,
     };
-    strings::contains_js_line_break(written) && strings::is_all_js_whitespace(value.as_deref().unwrap_or(written))
+    strings::contains_js_line_break(raw_text) && strings::is_all_js_whitespace(value.as_deref().unwrap_or(raw_text))
 }
 
 /// Returns the flags for the element's own attributes plus the properties of the variables it spreads.

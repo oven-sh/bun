@@ -213,8 +213,8 @@ fn get_component_type_annotation(node: Node<'_>) -> Option<TypeNode<'_>> {
     {
         return Some(annotation);
     }
-    let written = node.as_written().as_expr().filter(|it| !it.is_chain_root())?;
-    let Node::VarDecl(declarator) = estree_parent(Node::Expr(written)) else {
+    let source_expr = node.owner_or_self().as_expr().filter(|it| !it.is_chain_root())?;
+    let Node::VarDecl(declarator) = estree_parent(Node::Expr(source_expr)) else {
         return None;
     };
     let annotation = declarator.ty().filter(|_| declarator.pat().as_ident().is_some())?;

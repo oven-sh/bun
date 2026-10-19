@@ -95,7 +95,7 @@ pub enum Missing {
     Unknown(Option<Vec<u8>>),
 }
 
-fn written(prefix: &str, name: &str) -> Vec<u8> {
+fn rule_id(prefix: &str, name: &str) -> Vec<u8> {
     match prefix {
         "" => name.into(),
         prefix => [prefix, "/", name].concat().into(),
@@ -473,10 +473,10 @@ impl Registry {
     /// Returns the names of `meta`'s rule. If [`Registry::find_by_any_name`] prefers another version of the rule,
     /// returns that version's names.
     pub fn names_of(&self, meta: &Meta) -> Names {
-        let own = written(meta.plugin.prefix(), meta.name);
+        let own = rule_id(meta.plugin.prefix(), meta.name);
         let meta = self.find_by_any_name(&own).map_or(meta, |it| it.meta);
         let prefixes = meta.plugin.spellings().iter();
-        let mut names = prefixes.map(|it| written(it, meta.name));
+        let mut names = prefixes.map(|it| rule_id(it, meta.name));
         let id = names.next().unwrap_or(own);
         Names {
             modes: Modes {
@@ -492,8 +492,8 @@ impl Registry {
     /// Explains why [`Registry::find_by_any_name`] didn't find `id`.
     pub fn why_missing(&self, id: &[u8]) -> Missing {
         let (prefix, name) = parse_rule_id(id);
-        let of_eslint = if prefix == b"eslint" { name } else { id };
-        if formatting_rule(of_eslint).is_some() || prefix.starts_with(b"@stylistic") {
+        let eslint_id = if prefix == b"eslint" { name } else { id };
+        if formatting_rule(eslint_id).is_some() || prefix.starts_with(b"@stylistic") {
             return Missing::Formatting;
         }
         if let Some(plugin) = Plugin::spelled(prefix).find(|it| it.has_no_rules()) {
@@ -502,19 +502,21 @@ impl Registry {
         // The rule name has to be close. Keep the user's plugin prefix if it's close to a real spelling. Otherwise, if
         // the name matches exactly or no prefix was typed, suggest the ID that reports print.
         let distance = |a: &[u8], b: &str| strings::edit_distance(a.iter().copied(), b.as_bytes());
-        let is_close = |distance: usize, written: &[u8]| distance <= written.len().max(3) / 3;
+        let is_close = |distance: usize, typed: &[u8]| distance <= typed.len().max(3) / 3;
         let close = self.rules.iter().flat_map(|it| {
             let other = it.meta.name;
             let name_distance = Some(distance(name, other)).filter(|it| is_close(*it, name));
             let prefixes = it.meta.plugin.spellings().iter().enumerate();
             prefixes.filter_map(move |(nth, it)| {
-                let from_prefix = match prefix {
+                let prefix_distance = match prefix {
                     b"" => 0,
                     prefix => distance(prefix, it),
                 };
-                let is_meant = !prefix.is_empty() && is_close(from_prefix, prefix);
-                let is_usual = nth == 0 && (name_distance == Some(0) || prefix.is_empty());
-                (is_meant || is_usual).then_some((name_distance? + from_prefix, written(it, other)))
+                let prefix_is_close = !prefix.is_empty() && is_close(prefix_distance, prefix);
+                let is_canonical_prefix =
+                    nth == 0 && (name_distance == Some(0) || prefix.is_empty());
+                (prefix_is_close || is_canonical_prefix)
+                    .then_some((name_distance? + prefix_distance, rule_id(it, other)))
             })
         });
         Missing::Unknown(close.min_by_key(|it| it.0).map(|it| it.1))

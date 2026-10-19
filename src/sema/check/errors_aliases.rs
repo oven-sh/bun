@@ -51,15 +51,15 @@ pub(super) struct SpecifierSite {
 }
 
 /// `directivesByLine` of a file that has comment directives.
-struct DirectivesOfFile {
+struct FileDirectives {
     line_starts: Vec<u32>,
     /// (line, start of the directive, is `@ts-expect-error`). One entry per line, because the last directive on a line
     /// wins.
     by_line: Vec<(usize, u32, bool)>,
 }
 
-impl DirectivesOfFile {
-    fn new(hir: &hir::File) -> Option<DirectivesOfFile> {
+impl FileDirectives {
+    fn new(hir: &hir::File) -> Option<FileDirectives> {
         if hir.comment_directives.is_empty() {
             return None;
         }
@@ -72,7 +72,7 @@ impl DirectivesOfFile {
             }
             by_line.push((line, start, kind == CommentDirectiveKind::ExpectError));
         }
-        Some(DirectivesOfFile {
+        Some(FileDirectives {
             line_starts,
             by_line,
         })
@@ -97,16 +97,16 @@ impl DirectivesOfFile {
     }
 }
 
-/// `DirectivesOfFile` for each file that a list of diagnostics touches, built once per file.
+/// `FileDirectives` for each file that a list of diagnostics touches, built once per file.
 #[derive(Default)]
-pub(super) struct Directives(FxHashMap<FileId, Option<DirectivesOfFile>>);
+pub(super) struct Directives(FxHashMap<FileId, Option<FileDirectives>>);
 
 impl Directives {
     /// The start of the directive in `file`, whose HIR is `hir`, that suppresses a diagnostic at `start`, or
     /// `NO_DIRECTIVE` if none does.
     pub(super) fn preceding(&mut self, file: FileId, hir: &hir::File, start: u32) -> u32 {
-        let of_file = self.0.entry(file);
-        match of_file.or_insert_with(|| DirectivesOfFile::new(hir)) {
+        let file_entry = self.0.entry(file);
+        match file_entry.or_insert_with(|| FileDirectives::new(hir)) {
             Some(directives) => directives.preceding(&hir.text, start),
             None => NO_DIRECTIVE,
         }
@@ -167,7 +167,7 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode` of `decl`, a declaration of the alias `sym` in `sym`'s file. Returns `None` if it doesn't
     /// declare an alias.
-    pub(super) fn place_of_alias_declaration(
+    pub(super) fn span_of_alias_declaration(
         &self,
         sym: Sym,
         decl: Decl,
@@ -194,15 +194,15 @@ impl Checker<'_, '_> {
         is_export: bool,
         name: Vec<u8>,
     ) -> Vec<Reported> {
-        let place = match type_only {
+        let declaration_span = match type_only {
             TypeOnlyDeclaration::ExportStar(file, star) => {
                 Some(self.aliases_span_of_export_star((file, star)))
             }
             TypeOnlyDeclaration::Alias(alias, _, decl) => {
-                self.place_of_alias_declaration(alias, decl)
+                self.span_of_alias_declaration(alias, decl)
             }
         };
-        match place {
+        match declaration_span {
             Some(at) => vec![Reported::new(
                 at,
                 if is_export { 1377 } else { 1376 },
@@ -557,7 +557,7 @@ impl Checker<'_, '_> {
                 Decl::ImportEquals(x) => hir[x].name_pos,
                 _ => binding_element.map_or(start, |p| hir[p].key_pos),
             };
-            let at = self.place_of_token(file, name_start);
+            let at = self.span_of_token(file, name_start);
             if is_export_specifier {
                 // The `@typedef` in this file that already exports it.
                 let exported = target.symbol().and_then(|target| {
@@ -571,7 +571,7 @@ impl Checker<'_, '_> {
                     })
                 });
                 let related = exported.map(|(pos, name)| {
-                    let at = self.place_of_token(file, pos);
+                    let at = self.span_of_token(file, pos);
                     self.new_diagnostic(at, 18044, &[Arg::Atom(name)])
                 });
                 self.error_at(at, 18043, &[])
@@ -580,10 +580,10 @@ impl Checker<'_, '_> {
                 return;
             }
             // A name that isn't an Identifier uses the symbol's name.
-            let written = hir.text.get(name_start as usize).copied();
+            let first_byte = hir.text.get(name_start as usize).copied();
             let name = files.symbol(sym).name;
             let identifier = match decl {
-                _ if !written.is_some_and(is_identifier_part) => name,
+                _ if !first_byte.is_some_and(is_identifier_part) => name,
                 Decl::ImportSpec(s) => hir[s].imported,
                 _ => binding_element.map_or(name, |p| hir[p].key.name().unwrap_or(name)),
             };
@@ -847,7 +847,7 @@ impl Checker<'_, '_> {
         // `IsTypeOnlyImportDeclaration`
         if let Some(import) = import
             && !files.is_type_only_import_or_export_declaration(file, import)
-            && let Some(at) = self.place_of_alias_declaration(Sym { file, id }, import)
+            && let Some(at) = self.span_of_alias_declaration(Sym { file, id }, import)
         {
             self.error_at(at, 2866, &[Arg::Atom(name)]);
         }
@@ -996,7 +996,7 @@ impl Checker<'_, '_> {
             // The symbol's first alias declaration.
             let declarations = self.files().symbol(root).decls.iter();
             let related = { declarations }
-                .find_map(|&d| self.place_of_alias_declaration(root, d))
+                .find_map(|&d| self.span_of_alias_declaration(root, d))
                 .map(|at| self.new_diagnostic(at, 1376, &[Arg::Atom(hir[name.at(0)].text)]));
             self.error(file, name, 1272, &[])
                 .related_information
@@ -1074,24 +1074,24 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── module specifiers ─────────────────────────────
 
-    /// `resolveExternalModule` with an `errorNode`, for the specifier `written` in `file`. Returns true if the module
-    /// is found.
+    /// `resolveExternalModule` with an `errorNode`, for the specifier `specifier_use` in `file`. Returns true if the
+    /// module is found.
     pub(super) fn resolve_external_module(
         &mut self,
         file: FileId,
-        written: SpecifierUse,
+        specifier_use: SpecifierUse,
         site: SpecifierSite,
     ) -> bool {
-        let at = self.place_of_token(file, written.pos);
-        self.resolve_external_module_at(file, written, site, at, None)
+        let at = self.span_of_token(file, specifier_use.pos);
+        self.resolve_external_module_at(file, specifier_use, site, at, None)
     }
 
     /// `resolveExternalModule` with the `errorNode` at `at`. `module_not_found_error` is `moduleNotFoundError`. `None`
-    /// selects the code that the callers pass for a specifier like `written`.
+    /// selects the code that the callers pass for a specifier like `specifier_use`.
     pub(super) fn resolve_external_module_at(
         &mut self,
         file: FileId,
-        written: SpecifierUse,
+        specifier_use: SpecifierUse,
         site: SpecifierSite,
         at: (FileId, u32, u32),
         module_not_found_error: Option<u32>,
@@ -1103,7 +1103,7 @@ impl Checker<'_, '_> {
             pos: start,
             kind,
             ..
-        } = written;
+        } = specifier_use;
         let is_side_effect = kind == SpecifierKind::SideEffect;
         // `checkImportDeclaration` doesn't resolve the module.
         if is_side_effect && !options.no_unchecked_side_effect_imports {
@@ -1112,7 +1112,7 @@ impl Checker<'_, '_> {
         let mode = crate::program::mode_for_usage_location(
             files.compiler_options_for_file(file),
             importing.default_mode,
-            &written,
+            &specifier_use,
         );
         let key = (spec, mode);
         let text = self.atoms().bytes(spec);
@@ -1248,7 +1248,7 @@ impl Checker<'_, '_> {
                 && !(matches!(
                     kind,
                     SpecifierKind::SideEffect | SpecifierKind::Import | SpecifierKind::ImportType
-                ) && self.has_resolution_mode_override(file, written))
+                ) && self.has_resolution_mode_override(file, specifier_use))
             {
                 let (code, details) = match kind {
                     SpecifierKind::Require => (1471, None),
@@ -1465,7 +1465,7 @@ impl Checker<'_, '_> {
         {
             return Vec::new();
         }
-        let Some(DirectivesOfFile { by_line, .. }) = DirectivesOfFile::new(hir) else {
+        let Some(FileDirectives { by_line, .. }) = FileDirectives::new(hir) else {
             return Vec::new();
         };
         let mut expected = Vec::new();
@@ -1483,14 +1483,14 @@ impl Checker<'_, '_> {
 /// True if `TypeEraserTransformer` drops something around `node`: an ambient node, a type, an overload, an abstract
 /// member. A non-abstract accessor without a body gets a body.
 fn is_erased(hir: &hir::File, node: Node) -> bool {
-    let is_dropped = |around: Node| {
-        let is_abstract = hir.flags(around).contains(Flags::ABSTRACT);
-        match hir.fns.get(hir.function_of(around).idx()) {
+    let is_dropped = |ancestor: Node| {
+        let is_abstract = hir.flags(ancestor).contains(Flags::ABSTRACT);
+        match hir.fns.get(hir.function_of(ancestor).idx()) {
             Some(function) => {
                 matches!(function.body, FnBody::None)
                     && (is_abstract || !matches!(function.kind, FnKind::Getter | FnKind::Setter))
             }
-            None => is_abstract && matches!(hir.data(around), NodeData::Member(_)),
+            None => is_abstract && matches!(hir.data(ancestor), NodeData::Member(_)),
         }
     };
     hir.is_in_ambient_or_type_node(node) || hir.find_ancestor(node, is_dropped).is_some()

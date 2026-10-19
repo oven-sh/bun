@@ -157,7 +157,7 @@ impl<'s> Resolvers<'s> {
             core_modules,
         };
         match (settings.get(b"import/resolver")).filter(|it| it.is_truthy()) {
-            Some(written) => resolvers.resolver_reducer(written)?,
+            Some(configured) => resolvers.resolver_reducer(configured)?,
             // "backward compatibility"
             None => resolvers.set(b"node", settings.get(b"import/resolve"))?,
         }

@@ -37,7 +37,7 @@ impl<'a> State<'a> {
 
 /// `node` awaits something, so this marks its innermost enclosing function as having an `await`.
 #[inline(never)]
-pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(
+pub fn mark_enclosing_function<'a, R: Rule<State<'a> = State<'a>>>(
     node: Node<'a>,
     cx: &mut Cx<'a, R>,
 ) {
@@ -157,20 +157,20 @@ impl Rule for RequireAwait {
         let is_key_in_type = cx.language().is_oxlint
             && matches!(e.parent(), Node::Member(member) if !matches!(member.parent(), Node::Class(_)));
         if !is_key_in_type {
-            mark_function_around(e.into(), cx);
+            mark_enclosing_function(e.into(), cx);
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if statement.as_for_of().is_some_and(|(.., is_await)| is_await) {
-            mark_function_around(statement.into(), cx);
+            mark_enclosing_function(statement.into(), cx);
         }
     }
 
     #[inline]
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if declaration.var_kind() == VarKind::AwaitUsing {
-            mark_function_around(declaration.into(), cx);
+            mark_enclosing_function(declaration.into(), cx);
         }
     }
 

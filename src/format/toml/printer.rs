@@ -589,9 +589,9 @@ impl Printer<'_> {
         let is_multiline = match &self.flat {
             Some(flat) => {
                 // Breaking doesn't help a line that is too long before the array starts.
-                let stays = flat[node] != NOT_FLAT
+                let stays_flat = flat[node] != NOT_FLAT
                     && (context.keeps_flat || self.column(context, out) >= self.column_width);
-                !stays
+                !stays_flat
                     && !self.fits(node, context, out)
                     && !self.hugs_last_value(node, context, out)
             }

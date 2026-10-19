@@ -186,12 +186,12 @@ impl<'o> Sink<'o> {
     }
 
     fn column(&self) -> usize {
-        let written = self
+        let line_so_far = self
             .printer
             .as_ref()
             .and_then(|printer| printer.out.get(self.line_start..))
             .unwrap_or_default();
-        self.line_start_column + crate::ir::width::string_width(written) as usize
+        self.line_start_column + crate::ir::width::string_width(line_so_far) as usize
     }
 
     /// Called when the current line is complete. The unit fails if the line has a flat group on it and is too long.

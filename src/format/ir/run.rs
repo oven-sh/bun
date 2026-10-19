@@ -104,7 +104,7 @@ fn write_document<'a>(
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
     }
-    let comments = comments::of_file(file, options);
+    let comments = comments::for_file(file, options);
     let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
     context.comments_without_printer = comments_without_printer;

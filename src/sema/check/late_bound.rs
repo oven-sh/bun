@@ -10,7 +10,7 @@ use crate::program::get_excluded_symbol_flags;
 pub(super) enum LateBoundConflict {
     /// From `lateBindMember`. Fields: the name, the declarations of the early- and late-bound
     /// symbols with that name, and the declaration that conflicts with them.
-    Refused(Atom, Vec<(FileId, Decl)>, (FileId, Decl)),
+    Duplicate(Atom, Vec<(FileId, Decl)>, (FileId, Decl)),
     /// From `reportMergeSymbolError`. Fields: the early-bound symbol's declarations, the late-bound
     /// symbol's declarations, and both symbols' flags.
     NotMerged(Vec<(FileId, Decl)>, Vec<(FileId, Decl)>, SymFlags),
@@ -362,7 +362,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut declarations =
                     early_symbol(name).map_or(Vec::new(), |it| files.decls_of(it).into_vec());
                 declarations.extend_from_slice(&there.declarations);
-                conflicts.push(LateBoundConflict::Refused(
+                conflicts.push(LateBoundConflict::Duplicate(
                     name,
                     declarations,
                     (file, declaration),
@@ -435,9 +435,10 @@ impl<'p, 's> Checker<'p, 's> {
                     merged.is_late = false;
                     merged.flags |= target_flags;
                     merged.declarations.splice(0..0, files.decls_of(target));
-                    let of_target = files.value_declaration(target);
-                    let of_source = std::mem::replace(&mut merged.value_declaration, of_target);
-                    if let Some(node) = of_source {
+                    let target_value_declaration = files.value_declaration(target);
+                    let source_value_declaration =
+                        std::mem::replace(&mut merged.value_declaration, target_value_declaration);
+                    if let Some(node) = source_value_declaration {
                         set_value_declaration(&mut merged.value_declaration, node);
                     }
                 }

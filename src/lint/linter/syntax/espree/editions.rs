@@ -77,9 +77,9 @@ fn statement_starting_with<'a>(it: Expr<'a>) -> Option<Stmt<'a>> {
     found.flatten()
 }
 
-/// acorn's message for the first thing in the string literal `written` that needs an edition later than `edition`.
-fn newer_in_string(written: &[u8], edition: u32) -> Option<&'static str> {
-    let mut rest = written;
+/// acorn's message for the first thing in the string literal `source` that needs an edition later than `edition`.
+fn newer_in_string(source: &[u8], edition: u32) -> Option<&'static str> {
+    let mut rest = source;
     loop {
         let at = rest.iter().position(|it| matches!(it, b'\\' | 0xE2))?;
         rest = match rest.get(at..)? {
@@ -612,15 +612,15 @@ impl<'a> Checks<'a, '_> {
         let ExprKind::ImportCall { args } = it.kind() else {
             return;
         };
-        let mut written = args.iter().filter(|it| !it.is_missing());
-        let Some(first) = written.next() else {
+        let mut provided = args.iter().filter(|it| !it.is_missing());
+        let Some(first) = provided.next() else {
             return;
         };
         let comma = skip_trivia(text, first.outer_span().end);
         if text.get(comma as usize) != Some(&b',') {
             return;
         }
-        match written.next() {
+        match provided.next() {
             Some(_) => self.unexpected(comma),
             None => self.fail(comma, "Trailing comma is not allowed in import()"),
         }
@@ -636,13 +636,13 @@ impl<'a> Checks<'a, '_> {
         }
         for tag in [ExprTag::Number, ExprTag::BigInt] {
             for it in file.exprs_of_kind(tag) {
-                let written = file.slice(it.span());
+                let source = file.slice(it.span());
                 let has_newer_prefix =
-                    edition < 6 && matches!(written, [b'0', b'b' | b'B' | b'o' | b'O', ..]);
+                    edition < 6 && matches!(source, [b'0', b'b' | b'B' | b'o' | b'O', ..]);
                 // Where the tokenizer thinks the number ends.
-                let end = match strings::index_of_char_usize(written, b'_') {
+                let end = match strings::index_of_char_usize(source, b'_') {
                     _ if has_newer_prefix => Some(1),
-                    None if edition < 11 && written.ends_with(b"n") => Some(written.len() - 1),
+                    None if edition < 11 && source.ends_with(b"n") => Some(source.len() - 1),
                     separator => separator,
                 };
                 if let Some(end) = end {
@@ -661,11 +661,11 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::String) {
-            let written = file.slice(it.span());
-            if !matches!(written.first(), Some(b'"' | b'\'')) {
+            let source = file.slice(it.span());
+            if !matches!(source.first(), Some(b'"' | b'\'')) {
                 continue;
             }
-            if let Some(message) = newer_in_string(written, edition) {
+            if let Some(message) = newer_in_string(source, edition) {
                 self.fail(it.span().start, message);
             }
         }
@@ -690,7 +690,7 @@ impl<'a> Checks<'a, '_> {
                 self.fail(at, "Invalid regular expression flag");
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
-                regex::Mode::of_flags(flags),
+                regex::Mode::from_flags(flags),
                 regex::Options::ecma_version(year),
                 &mut regex::Ignore,
             ) {

@@ -313,7 +313,7 @@ pub(crate) fn can_be_parsed(text: &[u8], parser: Parser) -> bool {
 }
 
 /// The result of writing a document.
-struct Written {
+struct DocumentSummary {
     /// The part of the text around the cursor, which is marked in the document.
     region: Option<Region>,
     /// The number of top-level nodes.
@@ -344,7 +344,7 @@ pub(crate) fn write_document(
         Flavor::Prettier,
         f,
     )
-    .map(|written| written.top_level_count)
+    .map(|summary| summary.top_level_count)
 }
 
 /// Like `write_document`. `cursor_offset` is the cursor's offset in `text`, and `script_flavor` is the flavor that
@@ -360,7 +360,7 @@ fn write_document_with_cursor(
     cursor_offset: Option<u32>,
     script_flavor: Flavor,
     f: &mut Formatter<'_>,
-) -> Result<Written, FormatError> {
+) -> Result<DocumentSummary, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
     parse::parse(&content, front_matter_len, parser, &mut tree).map_err(|error| match error {
@@ -399,7 +399,7 @@ fn write_document_with_cursor(
     printer.out.finish();
     match is_nested_too_deeply {
         true => Err(FormatError::NestedTooDeeply),
-        false => Ok(Written {
+        false => Ok(DocumentSummary {
             region: cursor.region(&tree),
             top_level_count: tree.children(tree.root).count(),
         }),
@@ -589,7 +589,7 @@ pub fn format_with(
             script_flavor,
             f,
         )
-        .map(|written| written.region);
+        .map(|summary| summary.region);
     });
     let printed_from = out.len();
     let region = result

@@ -110,7 +110,7 @@ fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
     }
     let start = out.len();
     let mut is_after_blank = false;
-    let mut put = |out: &mut Vec<u8>, part: &str| {
+    let mut push_part = |out: &mut Vec<u8>, part: &str| {
         if part.starts_with(char::is_whitespace) {
             is_after_blank = true;
             return;
@@ -128,11 +128,11 @@ fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
             let Some((part, after)) = rest.split_at_checked(len.max(first.len_utf8())) else {
                 break;
             };
-            put(out, part);
+            push_part(out, part);
             rest = after;
         }
         if !chunk.invalid().is_empty() {
-            put(out, "\u{FFFD}");
+            push_part(out, "\u{FFFD}");
         }
     }
 }

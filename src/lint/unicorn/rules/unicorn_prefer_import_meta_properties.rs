@@ -115,8 +115,8 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
             _ => break false,
         }
     };
-    for (symbol, of_module) in visited {
-        known[of_module as usize].insert(symbol, answer);
+    for (symbol, visited_as_module) in visited {
+        known[visited_as_module as usize].insert(symbol, answer);
     }
     answer
 }

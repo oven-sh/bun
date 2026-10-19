@@ -78,13 +78,13 @@ fn is_constant_boolean_call(call: Call<'_>) -> bool {
 
 /// This rule's own `isNullOrUndefined` in ESLint, which knows that `undefined` can be redefined.
 fn is_null_or_undefined(e: Expr<'_>) -> bool {
-    let is_one = match e.tag() {
+    let is_nullish_literal = match e.tag() {
         ExprTag::Null => true,
         ExprTag::Unary => e.unary_op() == Some(UnOp::Void),
         ExprTag::Ident => is_undefined(e),
         _ => false,
     };
-    is_one && !oxlint_is_hidden_by_parentheses(e)
+    is_nullish_literal && !oxlint_is_hidden_by_parentheses(e)
 }
 
 /// ESLint's `hasConstantNullishness`: `e` is always nullish or never. With `non_nullish`, never.
@@ -421,17 +421,17 @@ impl NoConstantBinaryExpression {
     #[inline(never)]
     fn check<'a>(e: Expr<'a>, (op, left, right): (BinOp, Expr<'a>, Expr<'a>), cx: &mut Cx<'a, Self>) {
         // oxlint reports the whole expression.
-        let (left_place, right_place) = if cx.language().is_oxlint { (e, e) } else { (left, right) };
+        let (left_target, right_target) = if cx.language().is_oxlint { (e, e) } else { (left, right) };
         match op {
             BinOp::And | BinOp::Or => {
-                cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
+                cx.report(left_target, CONSTANT_SHORT_CIRCUIT)
                     .data("property", "truthiness")
                     .data("operator", bin_op_text(op))
                     .hint(why_short_circuit(op, left));
             }
             BinOp::Nullish => {
                 if has_constant_nullishness(left, false) {
-                    cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
+                    cx.report(left_target, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "nullishness")
                         .data("operator", bin_op_text(op))
                         .hint(why_short_circuit(op, left));
@@ -440,24 +440,24 @@ impl NoConstantBinaryExpression {
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 let is_strict = matches!(op, BinOp::EqEqEq | BinOp::NotEqEq);
                 if is_constant_operand(left, right, is_strict) {
-                    cx.report(right_place, CONSTANT_BINARY_OPERAND)
+                    cx.report(right_target, CONSTANT_BINARY_OPERAND)
                         .data("operator", bin_op_text(op))
                         .data("otherSide", "left")
                         .hint(SAME_RESULT);
                 } else if is_constant_operand(right, left, is_strict) {
-                    cx.report(left_place, CONSTANT_BINARY_OPERAND)
+                    cx.report(left_target, CONSTANT_BINARY_OPERAND)
                         .data("operator", bin_op_text(op))
                         .data("otherSide", "right")
                         .hint(SAME_RESULT);
                 } else if is_strict {
                     if is_always_new(left) {
-                        cx.report(left_place, ALWAYS_NEW);
+                        cx.report(left_target, ALWAYS_NEW);
                     } else if is_always_new(right) {
-                        cx.report(right_place, ALWAYS_NEW);
+                        cx.report(right_target, ALWAYS_NEW);
                     }
                 } else if is_always_new(left) && is_always_new(right) {
                     // Both are objects, which `==` compares by reference too.
-                    cx.report(left_place, BOTH_ALWAYS_NEW);
+                    cx.report(left_target, BOTH_ALWAYS_NEW);
                 }
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {

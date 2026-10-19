@@ -174,7 +174,7 @@ estree_schema! {
         data SourceType = source_type(v.file());
     }
     ExpressionStatement [StmtTag::Expr] (v) {
-        node Expression = VNode::of_expr(of!(stmt v, StmtKind::Expr(e) => e));
+        node Expression = VNode::from_expr(of!(stmt v, StmtKind::Expr(e) => e));
         data Directive = directive(v.stmt()?)?;
     }
     BlockStatement [StmtTag::Block, NodeTags::FUNC] (v) {
@@ -186,15 +186,15 @@ estree_schema! {
     EmptyStatement [StmtTag::Empty] (v) {}
     DebuggerStatement [StmtTag::Debugger] (v) {}
     WithStatement [StmtTag::Block] (v) {
-        node Object = VNode::of_expr(of!(stmt v, StmtKind::With { object, .. } => object));
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::With { body, .. } => body));
+        node Object = VNode::from_expr(of!(stmt v, StmtKind::With { object, .. } => object));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::With { body, .. } => body));
     }
     ReturnStatement [StmtTag::Return] (v) {
-        node Argument = of!(stmt v, StmtKind::Return(argument) => argument).and_then(VNode::of_expr);
+        node Argument = of!(stmt v, StmtKind::Return(argument) => argument).and_then(VNode::from_expr);
     }
     LabeledStatement [StmtTag::Labeled] (v) {
         part Label = v.with(Part::Name);
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::Labeled { body, .. } => body));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::Labeled { body, .. } => body));
     }
     BreakStatement [StmtTag::Break] (v) {
         part Label = v.stmt()?.label().map(|_| v.with(Part::Name));
@@ -203,53 +203,53 @@ estree_schema! {
         part Label = v.stmt()?.label().map(|_| v.with(Part::Name));
     }
     IfStatement [StmtTag::If] (v) {
-        node Test = VNode::of_expr(of!(stmt v, StmtKind::If { test, .. } => test));
-        node Consequent = VNode::of_stmt(of!(stmt v, StmtKind::If { yes, .. } => yes));
-        node Alternate = of!(stmt v, StmtKind::If { no, .. } => no).map(VNode::of_stmt);
+        node Test = VNode::from_expr(of!(stmt v, StmtKind::If { test, .. } => test));
+        node Consequent = VNode::from_stmt(of!(stmt v, StmtKind::If { yes, .. } => yes));
+        node Alternate = of!(stmt v, StmtKind::If { no, .. } => no).map(VNode::from_stmt);
     }
     SwitchStatement [StmtTag::Switch] (v) {
-        node Discriminant = VNode::of_expr(of!(stmt v, StmtKind::Switch { expr, .. } => expr));
+        node Discriminant = VNode::from_expr(of!(stmt v, StmtKind::Switch { expr, .. } => expr));
         node Cases = Nodes::cases(of!(stmt v, StmtKind::Switch { cases, .. } => cases));
     }
     SwitchCase [NodeTags::CASE] (v) {
-        node Test = case(v)?.test().and_then(VNode::of_expr);
+        node Test = case(v)?.test().and_then(VNode::from_expr);
         node Consequent = Nodes::stmts(case(v)?.body());
     }
     ThrowStatement [StmtTag::Throw] (v) {
-        node Argument = VNode::of_expr(of!(stmt v, StmtKind::Throw(argument) => argument));
+        node Argument = VNode::from_expr(of!(stmt v, StmtKind::Throw(argument) => argument));
     }
     TryStatement [StmtTag::Try] (v) {
-        node Block = VNode::of_stmt(of!(stmt v, StmtKind::Try { block, .. } => block));
+        node Block = VNode::from_stmt(of!(stmt v, StmtKind::Try { block, .. } => block));
         part Handler = of!(stmt v, StmtKind::Try { handler, .. } => handler).map(|_| v.with(Part::Catch));
-        node Finalizer = of!(stmt v, StmtKind::Try { finalizer, .. } => finalizer).map(VNode::of_stmt);
+        node Finalizer = of!(stmt v, StmtKind::Try { finalizer, .. } => finalizer).map(VNode::from_stmt);
     }
     CatchClause [StmtTag::Try] (v) {
-        node Param = of!(stmt v, StmtKind::Try { param, .. } => param).and_then(|it| VNode::of_pat(it.pat()));
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::Try { handler, .. } => handler)?);
+        node Param = of!(stmt v, StmtKind::Try { param, .. } => param).and_then(|it| VNode::from_pat(it.pat()));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::Try { handler, .. } => handler)?);
     }
     WhileStatement [StmtTag::While] (v) {
-        node Test = VNode::of_expr(of!(stmt v, StmtKind::While { test, .. } => test));
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::While { body, .. } => body));
+        node Test = VNode::from_expr(of!(stmt v, StmtKind::While { test, .. } => test));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::While { body, .. } => body));
     }
     DoWhileStatement [StmtTag::DoWhile] (v) {
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::DoWhile { body, .. } => body));
-        node Test = VNode::of_expr(of!(stmt v, StmtKind::DoWhile { test, .. } => test));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::DoWhile { body, .. } => body));
+        node Test = VNode::from_expr(of!(stmt v, StmtKind::DoWhile { test, .. } => test));
     }
     ForStatement [StmtTag::For] (v) {
-        node Init = of!(stmt v, StmtKind::For { init, .. } => init).and_then(VNode::of_for_head);
-        node Test = of!(stmt v, StmtKind::For { test, .. } => test).and_then(VNode::of_expr);
-        node Update = of!(stmt v, StmtKind::For { update, .. } => update).and_then(VNode::of_expr);
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::For { body, .. } => body));
+        node Init = of!(stmt v, StmtKind::For { init, .. } => init).and_then(VNode::from_for_head);
+        node Test = of!(stmt v, StmtKind::For { test, .. } => test).and_then(VNode::from_expr);
+        node Update = of!(stmt v, StmtKind::For { update, .. } => update).and_then(VNode::from_expr);
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::For { body, .. } => body));
     }
     ForInStatement [StmtTag::ForIn] (v) {
-        node Left = VNode::of_for_head(of!(stmt v, StmtKind::ForIn { left, .. } => left));
-        node Right = VNode::of_expr(of!(stmt v, StmtKind::ForIn { expr, .. } => expr));
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::ForIn { body, .. } => body));
+        node Left = VNode::from_for_head(of!(stmt v, StmtKind::ForIn { left, .. } => left));
+        node Right = VNode::from_expr(of!(stmt v, StmtKind::ForIn { expr, .. } => expr));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::ForIn { body, .. } => body));
     }
     ForOfStatement [StmtTag::ForOf] (v) {
-        node Left = VNode::of_for_head(of!(stmt v, StmtKind::ForOf { left, .. } => left));
-        node Right = VNode::of_expr(of!(stmt v, StmtKind::ForOf { expr, .. } => expr));
-        node Body = VNode::of_stmt(of!(stmt v, StmtKind::ForOf { body, .. } => body));
+        node Left = VNode::from_for_head(of!(stmt v, StmtKind::ForOf { left, .. } => left));
+        node Right = VNode::from_expr(of!(stmt v, StmtKind::ForOf { expr, .. } => expr));
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::ForOf { body, .. } => body));
         data Await = of!(stmt v, StmtKind::ForOf { is_await, .. } => is_await);
     }
     VariableDeclaration [StmtTag::Var] (v) {
@@ -266,8 +266,8 @@ estree_schema! {
         };
     }
     VariableDeclarator [NodeTags::VAR_DECL] (v) {
-        node Id = VNode::of_pat(var_decl(v)?.pat());
-        node Init = var_decl(v)?.init().and_then(VNode::of_expr);
+        node Id = VNode::from_pat(var_decl(v)?.pat());
+        node Init = var_decl(v)?.init().and_then(VNode::from_expr);
         ts_data Definite = var_decl(v)?.is_definite();
     }
 
@@ -323,7 +323,7 @@ estree_schema! {
         node Params = params(v)?;
         ts_node ReturnType = return_type(v)?;
         part Body = match v.func()?.body() {
-            FnBody::Expr(e) => VNode::of_expr(e),
+            FnBody::Expr(e) => VNode::from_expr(e),
             _ => Some(v.with(Part::Body)),
         };
         data Async = v.func()?.is_async();
@@ -335,7 +335,7 @@ estree_schema! {
         ts_part Decorators = Nodes::decorators(v.base, class(v)?.modifiers());
         part Id = class(v)?.name().map(|_| v.with(Part::Name));
         ts_part TypeParameters = class(v)?.type_params().first().map(|_| v.with(Part::TypeParams))?;
-        node SuperClass = class(v)?.extends().and_then(VNode::of_expr);
+        node SuperClass = class(v)?.extends().and_then(VNode::from_expr);
         ts_part SuperTypeArguments = class(v)?.extends_args().first().map(|_| v.with(Part::TypeArgs))?;
         ts_node Implements = Nodes::heritage(class(v)?.implements());
         part Body = v.with(Part::Body);
@@ -346,7 +346,7 @@ estree_schema! {
         ts_part Decorators = Nodes::decorators(v.base, class(v)?.modifiers());
         part Id = class(v)?.name().map(|_| v.with(Part::Name));
         ts_part TypeParameters = class(v)?.type_params().first().map(|_| v.with(Part::TypeParams))?;
-        node SuperClass = class(v)?.extends().and_then(VNode::of_expr);
+        node SuperClass = class(v)?.extends().and_then(VNode::from_expr);
         ts_part SuperTypeArguments = class(v)?.extends_args().first().map(|_| v.with(Part::TypeArgs))?;
         ts_node Implements = Nodes::heritage(class(v)?.implements());
         part Body = v.with(Part::Body);
@@ -382,7 +382,7 @@ estree_schema! {
         ts_part Decorators = member_decorators(v)?;
         part Key = member_key(v)?;
         ts_node TypeAnnotation = VNode::annotation(member(v)?.ty()?);
-        node Value = member(v)?.init().and_then(VNode::of_expr);
+        node Value = member(v)?.init().and_then(VNode::from_expr);
         ts_data Accessibility = accessibility(member_keywords(v)?)?;
         data Computed = is_computed(member(v)?.key());
         ts_data Declare = member_keywords(v)?.contains(Flags::AMBIENT);
@@ -396,7 +396,7 @@ estree_schema! {
         part Decorators = member_decorators(v)?;
         part Key = member_key(v)?;
         node TypeAnnotation = VNode::annotation(member(v)?.ty()?);
-        node Value = member(v)?.init().and_then(VNode::of_expr);
+        node Value = member(v)?.init().and_then(VNode::from_expr);
         data Accessibility = accessibility(member_keywords(v)?)?;
         data Computed = is_computed(member(v)?.key());
         data Declare = member_keywords(v)?.contains(Flags::AMBIENT);
@@ -438,7 +438,7 @@ estree_schema! {
         node Body = Nodes::stmts(member(v)?.func()?.body_statements()?);
     }
     Decorator [NodeTags::CLASS, NodeTags::MEMBER, NodeTags::PARAM] (v) {
-        node Expression = VNode::of_expr(v.modifier()?.decorator()?);
+        node Expression = VNode::from_expr(v.modifier()?.decorator()?);
     }
 
     // ───────────────────────────── patterns ─────────────────────────────
@@ -482,11 +482,11 @@ estree_schema! {
     RestElement [NodeTags::PARAM, NodeTags::PAT_ELEM, NodeTags::PAT_PROP, NodeTags::PROP, ExprTag::Spread] (v) {
         ts_part Decorators = binding(v).decorators;
         node Argument = match v.base {
-            Node::Param(param) => VNode::of_pat(param.pat()),
-            Node::PatElem(element) => VNode::of_pat(element.pat()?),
-            Node::PatProp(prop) => VNode::of_pat(prop.value()),
-            Node::Prop(prop) => VNode::of_expr(prop.value()?),
-            _ => VNode::of_expr(of!(expr v, ExprKind::Spread(argument) => argument)),
+            Node::Param(param) => VNode::from_pat(param.pat()),
+            Node::PatElem(element) => VNode::from_pat(element.pat()?),
+            Node::PatProp(prop) => VNode::from_pat(prop.value()),
+            Node::Prop(prop) => VNode::from_expr(prop.value()?),
+            _ => VNode::from_expr(of!(expr v, ExprKind::Spread(argument) => argument)),
         };
         ts_node TypeAnnotation = VNode::annotation(binding(v).ty?);
         ts_data Optional = binding(v).is_optional;
@@ -494,12 +494,12 @@ estree_schema! {
     AssignmentPattern [NodeTags::PARAM, NodeTags::PAT_ELEM, NodeTags::PAT_PROP, ExprTag::Assign] (v) {
         ts_part Decorators = binding(v).decorators;
         node Left = match v.base {
-            Node::Param(param) => VNode::of_pat(param.pat()),
-            Node::PatElem(element) => VNode::of_pat(element.pat()?),
-            Node::PatProp(prop) => VNode::of_pat(prop.value()),
-            _ => VNode::of_expr(of!(expr v, ExprKind::Assign { target, .. } => target)),
+            Node::Param(param) => VNode::from_pat(param.pat()),
+            Node::PatElem(element) => VNode::from_pat(element.pat()?),
+            Node::PatProp(prop) => VNode::from_pat(prop.value()),
+            _ => VNode::from_expr(of!(expr v, ExprKind::Assign { target, .. } => target)),
         };
-        node Right = VNode::of_expr(match v.base {
+        node Right = VNode::from_expr(match v.base {
             Node::Param(param) => param.default()?,
             Node::PatElem(element) => element.default()?,
             Node::PatProp(prop) => prop.default()?,
@@ -566,9 +566,9 @@ estree_schema! {
         data Value = Value::Object(Object::Template { cooked: quasi(v)?.cooked, raw: quasi(v)?.raw });
     }
     TaggedTemplateExpression [ExprTag::TaggedTemplate] (v) {
-        node Tag = VNode::of_expr(call(v)?.callee());
+        node Tag = VNode::from_expr(call(v)?.callee());
         ts_part TypeArguments = type_arguments(v)?;
-        node Quasi = VNode::of_expr(call(v)?.template()?);
+        node Quasi = VNode::from_expr(call(v)?.template()?);
     }
     ArrayExpression [ExprTag::Array] (v) {
         node Elements = Nodes::exprs(of!(expr v, ExprKind::Array(elements) => elements));
@@ -582,16 +582,16 @@ estree_schema! {
     }
     Property [NodeTags::PROP, NodeTags::PAT_PROP, TypeTag::Import] (v) {
         part Key = match (v.base, v.part) {
-            (Node::Prop(prop), _) => VNode::of_key(prop, prop.key()?),
-            (Node::PatProp(prop), _) => VNode::of_key(prop, prop.key()?),
+            (Node::Prop(prop), _) => VNode::from_key(prop, prop.key()?),
+            (Node::PatProp(prop), _) => VNode::from_key(prop, prop.key()?),
             (_, Part::Attribute(id)) => Some(v.with(Part::AttributeKey(id))),
             _ => Some(v.with(Part::OptionsKey)),
         };
         part Value = match (v.base, v.part) {
-            (Node::Prop(prop), _) => VNode::of_expr(prop.value()?),
+            (Node::Prop(prop), _) => VNode::from_expr(prop.value()?),
             (Node::PatProp(prop), _) if prop.default().is_some() => Some(v.with(Part::Value)),
-            (Node::PatProp(prop), _) => VNode::of_pat(prop.value()),
-            (_, Part::Attribute(_)) => VNode::of_expr(v.attribute()?.value()?),
+            (Node::PatProp(prop), _) => VNode::from_pat(prop.value()),
+            (_, Part::Attribute(_)) => VNode::from_expr(v.attribute()?.value()?),
             _ => Some(v.with(Part::OptionsValue)),
         };
         data Computed = match v.base {
@@ -614,19 +614,19 @@ estree_schema! {
     }
     SpreadElement [ExprTag::Spread, NodeTags::PROP] (v) {
         node Argument = match v.base {
-            Node::Prop(prop) => VNode::of_expr(prop.value()?),
-            _ => VNode::of_expr(of!(expr v, ExprKind::Spread(argument) => argument)),
+            Node::Prop(prop) => VNode::from_expr(prop.value()?),
+            _ => VNode::from_expr(of!(expr v, ExprKind::Spread(argument) => argument)),
         };
     }
     MemberExpression [ExprTag::Dot, ExprTag::Index, TypeTag::Ref] (v) {
         part Object = match v.part {
-            Part::MemberName(i) => VNode::of_entity_name(v.base, i as usize, true),
-            _ => VNode::of_expr(of!(expr v, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj)),
+            Part::MemberName(i) => VNode::from_entity_name(v.base, i as usize, true),
+            _ => VNode::from_expr(of!(expr v, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj)),
         };
         part Property = match v.part {
             Part::MemberName(i) => Some(v.with(Part::NamePart(i))),
             _ => match v.expr()?.kind() {
-                ExprKind::Index { index, .. } => VNode::of_expr(index),
+                ExprKind::Index { index, .. } => VNode::from_expr(index),
                 _ => Some(v.with(Part::Property)),
             },
         };
@@ -637,21 +637,21 @@ estree_schema! {
         part Expression = v.with(Part::Main);
     }
     CallExpression [ExprTag::Call] (v) {
-        node Callee = VNode::of_expr(call(v)?.callee());
+        node Callee = VNode::from_expr(call(v)?.callee());
         ts_part TypeArguments = type_arguments(v)?;
         node Arguments = Nodes::exprs(call(v)?.args());
         data Optional = call(v)?.is_optional();
     }
     NewExpression [ExprTag::New] (v) {
-        node Callee = VNode::of_expr(call(v)?.callee());
+        node Callee = VNode::from_expr(call(v)?.callee());
         ts_part TypeArguments = type_arguments(v)?;
         node Arguments = Nodes::exprs(call(v)?.args());
     }
     ImportExpression [ExprTag::ImportCall] (v) {
-        node Source = of!(expr v, ExprKind::ImportCall { args } => args).get(0).and_then(VNode::of_expr);
-        node Options = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::of_expr);
+        node Source = of!(expr v, ExprKind::ImportCall { args } => args).get(0).and_then(VNode::from_expr);
+        node Options = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::from_expr);
         ts_data Phase = v.expr()?.import_call_phase();
-        ts_hidden Attributes = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::of_expr);
+        ts_hidden Attributes = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::from_expr);
     }
     MetaProperty [ExprTag::ImportMeta, ExprTag::NewTarget] (v) {
         part Meta = v.with(Part::Meta);
@@ -660,7 +660,7 @@ estree_schema! {
     UnaryExpression [ExprTag::Unary, TypeTag::NumberLit, TypeTag::BigIntLit] (v) {
         part Argument = match v.base {
             Node::Type(_) => Some(v.with(Part::LiteralArgument)),
-            _ => VNode::of_expr(of!(expr v, ExprKind::Unary { operand, .. } => operand)),
+            _ => VNode::from_expr(of!(expr v, ExprKind::Unary { operand, .. } => operand)),
         };
         data Operator = match v.base {
             Node::Type(_) => "-",
@@ -669,50 +669,50 @@ estree_schema! {
         data Prefix = true;
     }
     UpdateExpression [ExprTag::Unary] (v) {
-        node Argument = VNode::of_expr(of!(expr v, ExprKind::Unary { operand, .. } => operand));
+        node Argument = VNode::from_expr(of!(expr v, ExprKind::Unary { operand, .. } => operand));
         data Operator = un_op_text(of!(expr v, ExprKind::Unary { op, .. } => op));
         data Prefix = !matches!(of!(expr v, ExprKind::Unary { op, .. } => op), UnOp::PostInc | UnOp::PostDec);
     }
     BinaryExpression [ExprTag::Binary] (v) {
-        node Left = VNode::of_expr(of!(expr v, ExprKind::Binary { left, .. } => left));
-        node Right = VNode::of_expr(of!(expr v, ExprKind::Binary { right, .. } => right));
+        node Left = VNode::from_expr(of!(expr v, ExprKind::Binary { left, .. } => left));
+        node Right = VNode::from_expr(of!(expr v, ExprKind::Binary { right, .. } => right));
         data Operator = bin_op_text(of!(expr v, ExprKind::Binary { op, .. } => op));
     }
     LogicalExpression [ExprTag::Binary] (v) {
-        node Left = VNode::of_expr(of!(expr v, ExprKind::Binary { left, .. } => left));
-        node Right = VNode::of_expr(of!(expr v, ExprKind::Binary { right, .. } => right));
+        node Left = VNode::from_expr(of!(expr v, ExprKind::Binary { left, .. } => left));
+        node Right = VNode::from_expr(of!(expr v, ExprKind::Binary { right, .. } => right));
         data Operator = bin_op_text(of!(expr v, ExprKind::Binary { op, .. } => op));
     }
     SequenceExpression [ExprTag::Binary] (v) {
         node Expressions = Nodes::sequence(v.expr()?);
     }
     AssignmentExpression [ExprTag::Assign] (v) {
-        node Left = VNode::of_expr(of!(expr v, ExprKind::Assign { target, .. } => target));
-        node Right = VNode::of_expr(of!(expr v, ExprKind::Assign { value, .. } => value));
+        node Left = VNode::from_expr(of!(expr v, ExprKind::Assign { target, .. } => target));
+        node Right = VNode::from_expr(of!(expr v, ExprKind::Assign { value, .. } => value));
         data Operator = assign_op_text(of!(expr v, ExprKind::Assign { op, .. } => op));
     }
     ConditionalExpression [ExprTag::Cond] (v) {
-        node Test = VNode::of_expr(of!(expr v, ExprKind::Cond { test, .. } => test));
-        node Consequent = VNode::of_expr(of!(expr v, ExprKind::Cond { yes, .. } => yes));
-        node Alternate = VNode::of_expr(of!(expr v, ExprKind::Cond { no, .. } => no));
+        node Test = VNode::from_expr(of!(expr v, ExprKind::Cond { test, .. } => test));
+        node Consequent = VNode::from_expr(of!(expr v, ExprKind::Cond { yes, .. } => yes));
+        node Alternate = VNode::from_expr(of!(expr v, ExprKind::Cond { no, .. } => no));
     }
     AwaitExpression [ExprTag::Await] (v) {
-        node Argument = VNode::of_expr(of!(expr v, ExprKind::Await(argument) => argument));
+        node Argument = VNode::from_expr(of!(expr v, ExprKind::Await(argument) => argument));
     }
     YieldExpression [ExprTag::Yield] (v) {
-        node Argument = of!(expr v, ExprKind::Yield { value, .. } => value).and_then(VNode::of_expr);
+        node Argument = of!(expr v, ExprKind::Yield { value, .. } => value).and_then(VNode::from_expr);
         data Delegate = of!(expr v, ExprKind::Yield { star, .. } => star);
     }
     TSAsExpression [ExprTag::As, ExprTag::AsConst] (v) {
-        node Expression = VNode::of_expr(asserted(v)?);
+        node Expression = VNode::from_expr(asserted(v)?);
         part TypeAnnotation = assertion_type(v)?;
     }
     TSTypeAssertion [ExprTag::As, ExprTag::AsConst] (v) {
         part TypeAnnotation = assertion_type(v)?;
-        node Expression = VNode::of_expr(asserted(v)?);
+        node Expression = VNode::from_expr(asserted(v)?);
     }
     TSSatisfiesExpression [ExprTag::Satisfies] (v) {
-        node Expression = VNode::of_expr(asserted(v)?);
+        node Expression = VNode::from_expr(asserted(v)?);
         node TypeAnnotation = assertion_type(v)?;
     }
     TSNonNullExpression [ExprTag::NonNull] (v) {
@@ -724,12 +724,12 @@ estree_schema! {
             };
             match inner.checked_sub(1) {
                 Some(next) => Some(v.with(Part::NonNull(next))),
-                None => VNode::of_expr(of!(expr v, ExprKind::NonNull(e) => e)),
+                None => VNode::from_expr(of!(expr v, ExprKind::NonNull(e) => e)),
             }
         };
     }
     TSInstantiationExpression [ExprTag::Instantiation] (v) {
-        node Expression = VNode::of_expr(of!(expr v, ExprKind::Instantiation { expr, .. } => expr));
+        node Expression = VNode::from_expr(of!(expr v, ExprKind::Instantiation { expr, .. } => expr));
         part TypeArguments = type_arguments(v)?;
     }
 
@@ -766,7 +766,7 @@ estree_schema! {
             Part::Attribute(id) => v.with(Part::AttributeKey(id)),
             _ => return None,
         };
-        node Value = VNode::of_expr(v.attribute()?.value()?);
+        node Value = VNode::from_expr(v.attribute()?.value()?);
     }
     ExportNamedDeclaration [exportable(), StmtTag::ExportNamed] (v) {
         part Declaration = match v.part {
@@ -800,7 +800,7 @@ estree_schema! {
     ExportDefaultDeclaration [exportable(), StmtTag::ExportDefault] (v) {
         part Declaration = match v.part {
             Part::Export => Some(VNode::main_of_stmt(v.stmt()?)),
-            _ => VNode::of_expr(of!(stmt v, StmtKind::ExportDefault(e) => e)),
+            _ => VNode::from_expr(of!(stmt v, StmtKind::ExportDefault(e) => e)),
         };
         ts_data ExportKind = "value";
     }
@@ -824,7 +824,7 @@ estree_schema! {
         };
     }
     TSExportAssignment [StmtTag::ExportAssign] (v) {
-        node Expression = VNode::of_expr(of!(stmt v, StmtKind::ExportAssign(e) => e));
+        node Expression = VNode::from_expr(of!(stmt v, StmtKind::ExportAssign(e) => e));
     }
     TSNamespaceExportDeclaration [StmtTag::ExportAsNamespace] (v) {
         part Id = v.with(Part::Name);
@@ -832,7 +832,7 @@ estree_schema! {
     TSImportEqualsDeclaration [StmtTag::ImportEquals] (v) {
         part Id = v.with(Part::Name);
         part ModuleReference = match v.entity_name() {
-            Some(name) => VNode::of_entity_name(v.base, name.len(), false),
+            Some(name) => VNode::from_entity_name(v.base, name.len(), false),
             None => Some(v.with(Part::Reference)),
         };
         data ImportKind = match of!(stmt v, StmtKind::ImportEquals(import) => import).flags().contains(Flags::TYPE_ONLY) {
@@ -867,7 +867,7 @@ estree_schema! {
     TSTypeAliasDeclaration [StmtTag::TypeAlias] (v) {
         part Id = v.with(Part::Name);
         part TypeParameters = of!(stmt v, StmtKind::TypeAlias(it) => it).type_params().first().map(|_| v.with(Part::TypeParams))?;
-        node TypeAnnotation = VNode::of_type(of!(stmt v, StmtKind::TypeAlias(it) => it).ty());
+        node TypeAnnotation = VNode::from_type(of!(stmt v, StmtKind::TypeAlias(it) => it).ty());
         data Declare = is_declared(v.stmt()?);
     }
     TSEnumDeclaration [StmtTag::Enum] (v) {
@@ -882,11 +882,11 @@ estree_schema! {
     }
     TSEnumMember [NodeTags::ENUM_MEMBER] (v) {
         part Id = match v.base {
-            Node::EnumMember(member) => VNode::of_key(member, member.key()?),
+            Node::EnumMember(member) => VNode::from_key(member, member.key()?),
             _ => return None,
         };
         node Initializer = match v.base {
-            Node::EnumMember(member) => VNode::of_expr(member.init()?)?,
+            Node::EnumMember(member) => VNode::from_expr(member.init()?)?,
             _ => return None,
         };
         ts_data Computed = match v.base {
@@ -895,7 +895,7 @@ estree_schema! {
         };
     }
     TSModuleDeclaration [StmtTag::Module] (v) {
-        part Id = VNode::of_entity_name(v.base, module_depth(of!(stmt v, StmtKind::Module(it) => it)), false);
+        part Id = VNode::from_entity_name(v.base, module_depth(of!(stmt v, StmtKind::Module(it) => it)), false);
         part Body = of!(stmt v, StmtKind::Module(it) => it).innermost().body_span().map(|_| v.with(Part::Body))?;
         data Declare = is_declared(v.stmt()?);
         data Global = matches!(of!(stmt v, StmtKind::Module(it) => it).name(), ModuleName::Global);
@@ -978,8 +978,8 @@ estree_schema! {
     }
     TSTypeParameter [NodeTags::TYPE_PARAM] (v) {
         part Name = v.with(Part::Name);
-        node Constraint = VNode::of_type(type_param(v)?.constraint()?);
-        node Default = VNode::of_type(type_param(v)?.default()?);
+        node Constraint = VNode::from_type(type_param(v)?.constraint()?);
+        node Default = VNode::from_type(type_param(v)?.default()?);
         data Const = type_param(v)?.flags().contains(Flags::CONST);
         data In = type_param(v)?.flags().contains(Flags::IN);
         data Out = type_param(v)?.flags().contains(Flags::OUT);
@@ -1001,7 +1001,7 @@ estree_schema! {
     TSTypeReference [TypeTag::Ref, ExprTag::AsConst] (v) {
         part TypeName = match v.base {
             Node::Expr(_) => Some(v.with(Part::ConstName)),
-            _ => VNode::of_entity_name(v.base, v.entity_name()?.len(), false),
+            _ => VNode::from_entity_name(v.base, v.entity_name()?.len(), false),
         };
         part TypeArguments = match v.base {
             Node::Expr(_) => return None,
@@ -1010,8 +1010,8 @@ estree_schema! {
     }
     TSQualifiedName [TypeTag::Ref, TypeTag::Import, StmtTag::Module, StmtTag::ImportEquals, ExprTag::Dot] (v) {
         part Left = match v.part {
-            Part::Qualified(i) => VNode::of_entity_name(v.base, i as usize, false),
-            _ => VNode::of_expr(of!(expr v, ExprKind::Dot { obj, .. } => obj)),
+            Part::Qualified(i) => VNode::from_entity_name(v.base, i as usize, false),
+            _ => VNode::from_expr(of!(expr v, ExprKind::Dot { obj, .. } => obj)),
         };
         part Right = match v.part {
             Part::Qualified(i) => v.with(Part::NamePart(i)),
@@ -1029,18 +1029,18 @@ estree_schema! {
         node Types = Nodes::types(v.ty()?.as_template()?.types());
     }
     TSArrayType [TypeTag::Array] (v) {
-        node ElementType = VNode::of_type(of!(ty v, TypeKind::Array(element) => element));
+        node ElementType = VNode::from_type(of!(ty v, TypeKind::Array(element) => element));
     }
     TSTupleType [TypeTag::Tuple] (v) {
         node ElementTypes = Nodes::tuple_elems(of!(ty v, TypeKind::Tuple(elements) => elements));
     }
     TSNamedTupleMember [NodeTags::TUPLE_ELEM] (v) {
         part Label = v.with(Part::Name);
-        node ElementType = VNode::of_type(tuple_elem(v)?.ty());
+        node ElementType = VNode::from_type(tuple_elem(v)?.ty());
         data Optional = tuple_elem(v)?.is_optional();
     }
     TSOptionalType [NodeTags::TUPLE_ELEM] (v) {
-        node TypeAnnotation = VNode::of_type(tuple_elem(v)?.ty());
+        node TypeAnnotation = VNode::from_type(tuple_elem(v)?.ty());
     }
     TSRestType [NodeTags::TUPLE_ELEM] (v) {
         part TypeAnnotation = VNode::in_rest(tuple_elem(v)?);
@@ -1066,19 +1066,19 @@ estree_schema! {
         node Members = Nodes::members(of!(ty v, TypeKind::Object(members) => members));
     }
     TSConditionalType [TypeTag::Cond] (v) {
-        node CheckType = VNode::of_type(of!(ty v, TypeKind::Cond { check, .. } => check));
-        node ExtendsType = VNode::of_type(of!(ty v, TypeKind::Cond { extends, .. } => extends));
-        node TrueType = VNode::of_type(of!(ty v, TypeKind::Cond { yes, .. } => yes));
-        node FalseType = VNode::of_type(of!(ty v, TypeKind::Cond { no, .. } => no));
+        node CheckType = VNode::from_type(of!(ty v, TypeKind::Cond { check, .. } => check));
+        node ExtendsType = VNode::from_type(of!(ty v, TypeKind::Cond { extends, .. } => extends));
+        node TrueType = VNode::from_type(of!(ty v, TypeKind::Cond { yes, .. } => yes));
+        node FalseType = VNode::from_type(of!(ty v, TypeKind::Cond { no, .. } => no));
     }
     TSInferType [TypeTag::Infer] (v) {
         node TypeParameter = VNode::new(of!(ty v, TypeKind::Infer(parameter) => parameter), Part::Main);
     }
     TSMappedType [TypeTag::Mapped] (v) {
         node Key = VNode::new(of!(ty v, TypeKind::Mapped(mapped) => mapped).param(), Part::Name);
-        node Constraint = of!(ty v, TypeKind::Mapped(mapped) => mapped).param().constraint().map(VNode::of_type);
-        node NameType = of!(ty v, TypeKind::Mapped(mapped) => mapped).name_type().map(VNode::of_type);
-        node TypeAnnotation = VNode::of_type(of!(ty v, TypeKind::Mapped(mapped) => mapped).ty()?);
+        node Constraint = of!(ty v, TypeKind::Mapped(mapped) => mapped).param().constraint().map(VNode::from_type);
+        node NameType = of!(ty v, TypeKind::Mapped(mapped) => mapped).name_type().map(VNode::from_type);
+        node TypeAnnotation = VNode::from_type(of!(ty v, TypeKind::Mapped(mapped) => mapped).ty()?);
         data Optional = match of!(ty v, TypeKind::Mapped(mapped) => mapped) {
             it if it.optional() == MappedModifier::None => Value::Bool(false),
             it if it.optional() == MappedModifier::Remove => Value::Str(b"-"),
@@ -1094,12 +1094,12 @@ estree_schema! {
         ts_hidden TypeParameter = VNode::new(of!(ty v, TypeKind::Mapped(mapped) => mapped).param(), Part::Main);
     }
     TSIndexedAccessType [TypeTag::IndexedAccess] (v) {
-        node ObjectType = VNode::of_type(of!(ty v, TypeKind::IndexedAccess { obj, .. } => obj));
-        node IndexType = VNode::of_type(of!(ty v, TypeKind::IndexedAccess { index, .. } => index));
+        node ObjectType = VNode::from_type(of!(ty v, TypeKind::IndexedAccess { obj, .. } => obj));
+        node IndexType = VNode::from_type(of!(ty v, TypeKind::IndexedAccess { index, .. } => index));
     }
     TSTypeOperator [TypeTag::Keyof, TypeTag::Readonly, TypeTag::UniqueSymbol, TypeTag::Unique] (v) {
         part TypeAnnotation = match v.ty()?.kind() {
-            TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => VNode::of_type(operand),
+            TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => VNode::from_type(operand),
             _ => v.with(Part::Operand),
         };
         data Operator = match v.ty()?.kind() {
@@ -1110,7 +1110,7 @@ estree_schema! {
     }
     TSTypeQuery [TypeTag::Typeof, TypeTag::Import] (v) {
         part ExprName = match v.ty()?.kind() {
-            TypeKind::Typeof { expr, .. } => VNode::of_expr(expr),
+            TypeKind::Typeof { expr, .. } => VNode::from_expr(expr),
             _ => Some(v.with(Part::ImportType)),
         };
         part TypeArguments = match v.ty()?.kind() {
@@ -1121,7 +1121,7 @@ estree_schema! {
     TSImportType [TypeTag::Import] (v) {
         part Source = source(v);
         part Options = v.ty()?.import_attributes().map(|_| v.with(Part::Options));
-        part Qualifier = VNode::of_entity_name(v.base, v.entity_name()?.len(), false);
+        part Qualifier = VNode::from_entity_name(v.base, v.entity_name()?.len(), false);
         part TypeArguments = type_arguments(v);
         ts_hidden Argument = source(v).map(|_| v.with(Part::Argument));
     }
@@ -1144,13 +1144,13 @@ estree_schema! {
         part ClosingFragment = v.with(Part::Closing);
     }
     JSXOpeningElement [ExprTag::Jsx] (v) {
-        node Name = VNode::of_expr(jsx(v)?.tag()?);
+        node Name = VNode::from_expr(jsx(v)?.tag()?);
         ts_part TypeArguments = type_arguments(v)?;
         node Attributes = Nodes::props(jsx(v)?.attrs());
         data SelfClosing = jsx(v)?.is_self_closing();
     }
     JSXClosingElement [ExprTag::Jsx] (v) {
-        node Name = VNode::of_expr(jsx(v)?.close_tag()?);
+        node Name = VNode::from_expr(jsx(v)?.close_tag()?);
     }
     JSXOpeningFragment [ExprTag::Jsx] (v) {
         es_data Attributes = Nodes::EMPTY;
@@ -1161,7 +1161,7 @@ estree_schema! {
         data Name = v.file().slice(v.span());
     }
     JSXMemberExpression [ExprTag::Dot] (v) {
-        node Object = VNode::of_expr(of!(expr v, ExprKind::Dot { obj, .. } => obj));
+        node Object = VNode::from_expr(of!(expr v, ExprKind::Dot { obj, .. } => obj));
         part Property = v.with(Part::Property);
     }
     JSXNamespacedName [ExprTag::String, NodeTags::PROP] (v) {
@@ -1176,10 +1176,10 @@ estree_schema! {
     }
     JSXAttribute [NodeTags::PROP] (v) {
         part Name = v.with(Part::Key);
-        node Value = prop(v)?.value().and_then(VNode::of_expr);
+        node Value = prop(v)?.value().and_then(VNode::from_expr);
     }
     JSXSpreadAttribute [NodeTags::PROP] (v) {
-        node Argument = VNode::of_expr(prop(v)?.value()?);
+        node Argument = VNode::from_expr(prop(v)?.value()?);
     }
     JSXExpressionContainer [all_exprs()] (v) {
         part Expression = match v.expr()? {
@@ -1188,7 +1188,7 @@ estree_schema! {
         };
     }
     JSXSpreadChild [ExprTag::Spread] (v) {
-        node Expression = VNode::of_expr(of!(expr v, ExprKind::Spread(argument) => argument));
+        node Expression = VNode::from_expr(of!(expr v, ExprKind::Spread(argument) => argument));
     }
     JSXEmptyExpression [ExprTag::Missing, ExprTag::Jsx] (v) {}
     JSXText [ExprTag::String, ExprTag::Jsx] (v) {

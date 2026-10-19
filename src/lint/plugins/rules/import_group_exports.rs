@@ -108,8 +108,11 @@ impl Rule for GroupExports {
         {
             cx.report(*span, COMMONJS);
         }
-        let of_sources = source_records.into_iter().flat_map(in_map_order);
-        for span in of_sources.filter(|it| it.1.len() > 1).flat_map(|it| it.1) {
+        let source_groups = source_records.into_iter().flat_map(in_map_order);
+        for span in source_groups
+            .filter(|it| it.1.len() > 1)
+            .flat_map(|it| it.1)
+        {
             cx.report(span, ES_MODULE);
         }
     }

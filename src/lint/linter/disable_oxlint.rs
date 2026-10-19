@@ -127,9 +127,9 @@ fn removal_of(text: &[u8], comment: Span) -> Span {
     let line_start = strings::last_index_of_char(&text[..start], b'\n').map_or(0, |it| it + 1);
     let line_end =
         strings::index_of_char_usize(&text[end..], b'\n').map_or(text.len(), |it| end + it + 1);
-    let is_alone = strings::trim_unicode_whitespace_end(&text[line_start..start]).is_empty()
+    let is_only_on_line = strings::trim_unicode_whitespace_end(&text[line_start..start]).is_empty()
         && strings::trim_unicode_whitespace_end(&text[end..line_end]).is_empty();
-    match is_alone {
+    match is_only_on_line {
         true => Span::new(line_start as u32, line_end as u32),
         false => comment,
     }
@@ -412,9 +412,9 @@ pub(crate) fn apply<'a>(
         let Some(id) = &problem.rule_id else {
             continue;
         };
-        let shown = (problem.line, problem.column);
-        let (start, end) =
-            (problem.comments_apply_at).unwrap_or_else(|| (shown, problem.end.unwrap_or(shown)));
+        let reported_start = (problem.line, problem.column);
+        let (start, end) = (problem.comments_apply_at)
+            .unwrap_or_else(|| (reported_start, problem.end.unwrap_or(reported_start)));
         overlapping.clear();
         index.overlapping(b"", &positions, (start, end), &mut overlapping);
         let for_all_rules = overlapping.len();

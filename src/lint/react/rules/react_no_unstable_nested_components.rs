@@ -200,7 +200,7 @@ impl<'a> Upstream<'a> {
     /// True if `getRelatedComponent` can find `node`: it's a declaration, or its parent's `init`, `right` or `value`.
     fn can_be_related(&self, node: Node<'a>) -> bool {
         self.has_related
-            && match node.as_written() {
+            && match node.owner_or_self() {
                 Node::Stmt(_) => true,
                 Node::Expr(e) => match e.parent() {
                     Node::VarDecl(_) | Node::Prop(_) => true,
@@ -242,7 +242,7 @@ fn check<'a>(
     if !is_component && !is_returning_jsx {
         return;
     }
-    let (parent, outer) = (parent_node(node, is_oxlint), node.as_written());
+    let (parent, outer) = (parent_node(node, is_oxlint), node.owner_or_self());
     let property = parent.filter(|&it| is_property(it, outer, is_oxlint));
     let pragma = detected.as_deref().map(|it| it.pragmas().pragma);
     // Upstream's `isComponentInProp`
@@ -346,14 +346,14 @@ fn check<'a>(
 /// Upstream's `isComponentInsideCreateElementsProp`, for a component. Also true if the call has no second argument and
 /// `node` isn't inside an object, because both lookups then come back empty.
 fn is_component_inside_create_elements_prop<'a>(node: Node<'a>, pragma: &[u8], state: &mut State<'a>) -> bool {
-    let of_kind = |node: Node<'a>, tag: ExprTag| node.as_expr().filter(|it| it.tag() == tag);
+    let expr_with_tag = |node: Node<'a>, tag: ExprTag| node.as_expr().filter(|it| it.tag() == tag);
     let create_element_parent = state.nearest_create_element_call.find(node, |_, ancestor| {
-        of_kind(ancestor, ExprTag::Call).filter(|it| is_create_element(*it, pragma))
+        expr_with_tag(ancestor, ExprTag::Call).filter(|it| is_create_element(*it, pragma))
     });
     create_element_parent.and_then(Expr::as_call).is_some_and(|call| {
         let is_object_expression = |it: &Expr| !it.is_assignment_target();
         call.args().get(1)
-            == state.nearest_object.find(node, |_, it| of_kind(it, ExprTag::Object).filter(is_object_expression))
+            == state.nearest_object.find(node, |_, it| expr_with_tag(it, ExprTag::Object).filter(is_object_expression))
     })
 }
 
@@ -371,7 +371,7 @@ fn is_in_class_declaration<'a>(node: Node<'a>, detected: &Detected<'a>) -> bool 
 }
 
 fn is_inside_render_method<'a>(node: Node<'a>, detected: &Detected<'a>) -> bool {
-    matches!(node.as_written(), Node::Member(method)
+    matches!(node.owner_or_self(), Node::Member(method)
         if method.key().and_then(name_of_key).is_some_and(|it| it == b"render"))
         && is_in_class_declaration(node, detected)
 }
@@ -410,7 +410,7 @@ fn is_property<'a>(parent: Node<'a>, child: Node<'a>, is_oxlint: bool) -> bool {
 /// Parent of a function, class or call. `None` if the node is a whole optional chain or, for oxlint (which has nodes
 /// for parentheses), is parenthesized.
 fn parent_node(node: Node<'_>, is_oxlint: bool) -> Option<Node<'_>> {
-    match node.as_written() {
+    match node.owner_or_self() {
         Node::Expr(e) => (!(is_oxlint && e.is_parenthesized()) && !e.is_chain_root()).then(|| e.parent()),
         // A method's function has the method as its parent.
         outer @ Node::Member(_) => Some(outer),
@@ -421,7 +421,7 @@ fn parent_node(node: Node<'_>, is_oxlint: bool) -> Option<Node<'_>> {
 /// Returns the enclosing call if `argument` is its first argument.
 fn as_first_argument(argument: Node<'_>) -> Option<Call<'_>> {
     let call = parent_node(argument, true)?.as_expr()?.as_call()?;
-    (call.args().first().map(Node::Expr) == Some(argument.as_written())).then_some(call)
+    (call.args().first().map(Node::Expr) == Some(argument.owner_or_self())).then_some(call)
 }
 
 impl<'a> Components<'a> {
@@ -521,7 +521,7 @@ fn function_like_name(node: Node<'_>) -> Option<Name<'_>> {
 }
 
 fn is_anonymous_default_export(node: Node) -> bool {
-    match node.as_written() {
+    match node.owner_or_self() {
         Node::Stmt(statement) => statement.is_default_export(),
         _ => matches!(parent_node(node, true), Some(Node::Stmt(it)) if it.tag() == StmtTag::ExportDefault),
     }
@@ -569,7 +569,7 @@ fn nearest_jsx_attribute_name<'a>(child: Node<'a>, parent: Node<'a>, is_oxlint: 
 /// `<a>{() => <b />}</a>`. Upstream accepts anything in the braces, not only a function.
 fn is_direct_jsx_child_render_prop(node: Node, is_oxlint: bool) -> bool {
     (!is_oxlint || matches!(node, Node::Func(_)))
-        && is_in_jsx_expression_container(node.as_written())
+        && is_in_jsx_expression_container(node.owner_or_self())
         && matches!(parent_node(node, is_oxlint), Some(Node::Expr(e))
             if matches!(e.kind(), ExprKind::Jsx(jsx) if !jsx.is_fragment()))
 }

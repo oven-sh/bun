@@ -258,8 +258,8 @@ pub(crate) mod valid_expect {
             AstKind::Expr(e) => e.tag() == ExprTag::Await,
             _ => false,
         };
-        let mut around = AstKind::Expr(e).ancestors().skip_while(is_transparent);
-        matches!(around.next(), Some(AstKind::Stmt(it)) if it.tag() == StmtTag::Expr)
+        let mut outer_nodes = AstKind::Expr(e).ancestors().skip_while(is_transparent);
+        matches!(outer_nodes.next(), Some(AstKind::Stmt(it)) if it.tag() == StmtTag::Expr)
     }
 
     /// Returns the last member of `node.a.b().c`.
@@ -855,7 +855,7 @@ pub(crate) mod expect_expect {
         has_assertion: Option<bool>,
         pending: Vec<Task<'a>>,
         /// True if an assertion is reachable from the node.
-        known: FxHashMap<VisitKey<'a>, bool>,
+        results: FxHashMap<VisitKey<'a>, bool>,
         /// The nodes whose result isn't known yet, in the order they were first reached.
         unknown: Vec<VisitKey<'a>>,
         /// Each node's index in `unknown`.
@@ -872,7 +872,7 @@ pub(crate) mod expect_expect {
                 first_name_only: match_first_name_only(assert_function_matchers),
                 has_assertion: None,
                 pending: Vec::new(),
-                known: FxHashMap::default(),
+                results: FxHashMap::default(),
                 unknown: Vec::new(),
                 positions: FxHashMap::default(),
                 open: Vec::new(),
@@ -885,9 +885,9 @@ pub(crate) mod expect_expect {
             tasks: impl Iterator<Item = Task<'a>>,
         ) -> bool {
             if self.has_assertion.is_none() {
-                let may_have_one = !self.first_name_only || self.may_have_assertion(file);
+                let may_have_name = !self.first_name_only || self.may_have_assertion(file);
                 let mut calls = file.exprs_of_kind(ExprTag::Call).filter_map(Expr::as_call);
-                self.has_assertion = Some(may_have_one && calls.any(|it| self.is_assertion(it)));
+                self.has_assertion = Some(may_have_name && calls.any(|it| self.is_assertion(it)));
             }
             if self.has_assertion == Some(false) {
                 return false;
@@ -906,7 +906,7 @@ pub(crate) mod expect_expect {
                 };
             }
             // Each of these is open or leads back to an open one, and the open ones lead to the assertion.
-            self.known
+            self.results
                 .extend(self.unknown.drain(..).map(|it| (it, is_found)));
             self.pending.clear();
             self.positions.clear();
@@ -957,8 +957,8 @@ pub(crate) mod expect_expect {
         /// Returns whether an assertion is reachable from `visit_key`, if that's known. `None` means the caller has to
         /// visit it now.
         fn enter(&mut self, visit_key: VisitKey<'a>) -> Option<bool> {
-            if let Some(&known) = self.known.get(&visit_key) {
-                return Some(known);
+            if let Some(&result) = self.results.get(&visit_key) {
+                return Some(result);
             }
             if let Some(&position) = self.positions.get(&visit_key) {
                 if let Some((_, least)) = self.open.last_mut() {
@@ -990,7 +990,7 @@ pub(crate) mod expect_expect {
                 .drain((position as usize).min(self.unknown.len())..)
             {
                 self.positions.remove(&visit_key);
-                self.known.insert(visit_key, false);
+                self.results.insert(visit_key, false);
             }
         }
 
@@ -1027,8 +1027,8 @@ pub(crate) mod expect_expect {
         }
 
         fn visit_function_body(&mut self, func: Func<'a>) -> bool {
-            if let Some(known) = self.enter((false, Node::Func(func))) {
-                return known;
+            if let Some(result) = self.enter((false, Node::Func(func))) {
+                return result;
             }
             match func.body() {
                 FnBody::Block(statements) => self
@@ -1053,8 +1053,8 @@ pub(crate) mod expect_expect {
                 ExprKind::Call(_) | ExprKind::Await(_) | ExprKind::Array(_) => None,
                 _ => return false,
             };
-            if let Some(known) = self.enter((true, Node::Expr(e))) {
-                return known;
+            if let Some(result) = self.enter((true, Node::Expr(e))) {
+                return result;
             }
             self.pending.extend(function.map(Task::Body));
             match e.kind() {
@@ -1074,8 +1074,8 @@ pub(crate) mod expect_expect {
                         if self.is_assertion(call_expr) {
                             return true;
                         }
-                        if let Some(known) = self.enter((false, node)) {
-                            return known;
+                        if let Some(result) = self.enter((false, node)) {
+                            return result;
                         }
                         let checked = call_expr.args().iter().filter(Self::needs_separate_check);
                         self.pending.extend(checked.map(Task::Check));
@@ -1174,7 +1174,7 @@ pub(crate) mod no_standalone_expect {
         ) -> bool {
             let (mut at, mut enclosing) = (node.span(), caches.functions.of(Node::Expr(node)));
             // The functions the walk has exited. The result found further up applies to each of them.
-            let mut passed = SmallVec::<[Func<'a>; 8]>::new();
+            let mut exited = SmallVec::<[Func<'a>; 8]>::new();
             let mut is_correct = false;
             while let Some(func) = enclosing {
                 let function = match func.owner() {
@@ -1192,18 +1192,18 @@ pub(crate) mod no_standalone_expect {
                         break;
                     }
                 }
-                if let Some(&known) = caches.function_results.get(func) {
-                    is_correct = known;
+                if let Some(&cached_result) = caches.function_results.get(func) {
+                    is_correct = cached_result;
                     break;
                 }
-                passed.push(func);
+                exited.push(func);
                 at = function.span();
                 enclosing = enclosing_function(func);
             }
-            if passed.spilled() {
+            if exited.spilled() {
                 caches
                     .function_results
-                    .extend(passed.iter().map(|it| (*it, is_correct)));
+                    .extend(exited.iter().map(|it| (*it, is_correct)));
             }
             is_correct
         }
@@ -1215,15 +1215,15 @@ pub(crate) mod no_standalone_expect {
             ctx: &Ctx<'a, '_>,
         ) -> bool {
             // The arrays, objects and calls the walk has exited. The answer is the same for each of them.
-            let mut passed = SmallVec::<[Expr<'a>; 8]>::new();
+            let mut exited = SmallVec::<[Expr<'a>; 8]>::new();
             let answer = self.is_var_declarator_or_test_block_uncached(
                 node,
                 &caches.blocks,
-                &mut passed,
+                &mut exited,
                 ctx,
             );
-            if passed.spilled() {
-                caches.blocks.extend(passed.iter().map(|it| (*it, answer)));
+            if exited.spilled() {
+                caches.blocks.extend(exited.iter().map(|it| (*it, answer)));
             }
             answer
         }
@@ -1231,8 +1231,8 @@ pub(crate) mod no_standalone_expect {
         fn is_var_declarator_or_test_block_uncached<'a>(
             &self,
             node: AstKind<'a>,
-            known: &IdMap<Expr<'a>, bool>,
-            passed: &mut SmallVec<[Expr<'a>; 8]>,
+            cached_answers: &IdMap<Expr<'a>, bool>,
+            exited: &mut SmallVec<[Expr<'a>; 8]>,
             ctx: &Ctx<'a, '_>,
         ) -> bool {
             let is_in_literal = |it: AstKind| match it {
@@ -1245,10 +1245,10 @@ pub(crate) mod no_standalone_expect {
             // object.
             while is_in_literal(at) {
                 if let AstKind::Expr(e) = at {
-                    if let Some(&answer) = known.get(e) {
+                    if let Some(&answer) = cached_answers.get(e) {
                         return answer;
                     }
-                    passed.push(e);
+                    exited.push(e);
                 }
                 at = at.parent();
             }
@@ -1259,10 +1259,10 @@ pub(crate) mod no_standalone_expect {
             while let Some(e) = at.as_expr()
                 && let Some(call_expr) = e.as_call()
             {
-                if let Some(&answer) = known.get(e) {
+                if let Some(&answer) = cached_answers.get(e) {
                     return answer;
                 }
-                passed.push(e);
+                exited.push(e);
                 if !self.additional_test_block_functions.is_empty() {
                     let node_name = get_node_name(call_expr.callee());
                     if self

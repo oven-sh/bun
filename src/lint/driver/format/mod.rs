@@ -86,7 +86,7 @@ impl Format {
     }
 
     /// True if the output is oxlint's entire standard output, including the final newline if there is one.
-    pub(crate) fn is_of_oxlint(self) -> bool {
+    pub(crate) fn is_oxlint_output(self) -> bool {
         matches!(
             self,
             Format::OxlintDefault
@@ -112,7 +112,7 @@ impl Format {
 
     /// True if it reads [`FileResult::text`]. oxlint's formats print byte offsets, which the messages don't have.
     pub(crate) fn reads_text(self) -> bool {
-        self.is_of_oxlint()
+        self.is_oxlint_output()
             || matches!(
                 self,
                 Format::Json | Format::JsonWithMetadata | Format::Pretty | Format::Agent
@@ -199,10 +199,10 @@ pub(crate) struct Meta<'m> {
 
 /// The line and column of `message` for a format that ESLint doesn't have. `is_oxlint` is [`Meta::is_oxlint`]. With it,
 /// a report at line 0 has no location.
-fn shown_at(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
+fn display_position(message: &LintMessage, is_oxlint: bool) -> (u32, u32) {
     match is_oxlint {
         true => (message.line, message.column),
-        false => message.place(),
+        false => message.line_and_column(),
     }
 }
 
@@ -247,22 +247,25 @@ pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec
     out
 }
 
-/// Returns the extra output for GitHub Actions: a workflow command for each problem, or nothing. `is_alone` means the
-/// report itself doesn't go to standard output, where these commands go.
+/// Returns the extra output for GitHub Actions: a workflow command for each problem, or nothing. `report_is_elsewhere`
+/// means the report itself doesn't go to standard output, where these commands go.
 pub(crate) fn annotations(
     format: Format,
     results: &[FileResult],
     meta: &Meta,
-    is_alone: bool,
+    report_is_elsewhere: bool,
 ) -> Vec<u8> {
     let mut out = Vec::new();
     // Never mixed into output that a program parses, and never printed twice.
-    let fits = match format {
+    let is_allowed_here = match format {
         Format::Stylish | Format::Pretty => true,
         Format::Github => false,
-        _ => is_alone,
+        _ => report_is_elsewhere,
     };
-    if meta.github_annotations && fits && results.iter().any(|it| !it.messages.is_empty()) {
+    if meta.github_annotations
+        && is_allowed_here
+        && results.iter().any(|it| !it.messages.is_empty())
+    {
         excerpt::write_github(&mut out, results, meta);
     }
     out

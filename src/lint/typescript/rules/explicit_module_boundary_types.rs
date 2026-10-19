@@ -384,9 +384,9 @@ enum Step<'a> {
     ForgetTarget,
     InSetter(bool),
     Overloaded(IdSet<Member<'a>>),
-    /// `place` is where to report a missing return type, unless the function returns a function.
+    /// `report_span` is where to report a missing return type, unless the function returns a function.
     LeaveFunction {
-        place: Option<Span>,
+        report_span: Option<Span>,
         forgets_target: bool,
     },
     LeaveClass,
@@ -405,7 +405,7 @@ struct OxlintChecker<'a, 'c> {
     target: Option<Target<'a>>,
     /// One entry per enclosing function, and per class that [`Step::WalkClass`] entered. True if one of the function's
     /// `return`s returns a function.
-    around: Vec<bool>,
+    returns_function_stack: Vec<bool>,
     in_setter: bool,
     /// With `allowOverloadFunctions`, the enclosing class's methods that have overload signatures.
     overloaded: IdSet<Member<'a>>,
@@ -499,7 +499,7 @@ impl<'a> OxlintChecker<'a, '_> {
             Step::Visit(Node::Member(member)) => self.visit_class_element(member),
             Step::Visit(_) => {}
             Step::WalkClass(class) => {
-                self.around.push(false);
+                self.returns_function_stack.push(false);
                 self.visit_all(class.decorators());
                 self.visit_all(class.extends());
                 self.visit_all(class.members());
@@ -511,13 +511,13 @@ impl<'a> OxlintChecker<'a, '_> {
             Step::InSetter(was) => self.in_setter = was,
             Step::Overloaded(was) => self.overloaded = was,
             Step::LeaveFunction {
-                place,
+                report_span,
                 forgets_target,
             } => {
-                let returns_function = self.around.pop() == Some(true);
-                if let Some(place) = place.filter(|_| !returns_function) {
+                let returns_function = self.returns_function_stack.pop() == Some(true);
+                if let Some(report_span) = report_span.filter(|_| !returns_function) {
                     self.cx
-                        .report(place, MISSING_RETURN_TYPE)
+                        .report(report_span, MISSING_RETURN_TYPE)
                         .called_with(self.export);
                 }
                 if forgets_target {
@@ -525,7 +525,7 @@ impl<'a> OxlintChecker<'a, '_> {
                 }
             }
             Step::LeaveClass => {
-                self.around.pop();
+                self.returns_function_stack.pop();
             }
         }
     }
@@ -607,13 +607,13 @@ impl<'a> OxlintChecker<'a, '_> {
             return false;
         };
         let span = key.inner_span(self.cx.file());
-        let is_written = match key.kind() {
+        let is_verbatim = match key.kind() {
             KeyKind::Private(_) | KeyKind::ComputedNumber(_) => false,
             KeyKind::Number(_) => self.cx.file().slice(span).ends_with(b"n"),
             KeyKind::Computed(e) => e.tag() != ExprTag::Regex,
             _ => true,
         };
-        let Some(name) = property_key_name(key).filter(|_| is_written) else {
+        let Some(name) = property_key_name(key).filter(|_| is_verbatim) else {
             return false;
         };
         self.target = Some(Target {
@@ -701,7 +701,7 @@ impl<'a> OxlintChecker<'a, '_> {
         for value in statements.iter().filter_map(Stmt::as_return).flatten() {
             if value.as_fn().is_some()
                 && !value.is_parenthesized()
-                && let Some(returns_function) = self.around.last_mut()
+                && let Some(returns_function) = self.returns_function_stack.last_mut()
             {
                 *returns_function = true;
             }
@@ -791,16 +791,16 @@ impl<'a> OxlintChecker<'a, '_> {
 
     fn visit_function(&mut self, func: Func<'a>) {
         let forgets_target = self.with_target_binding(func.name());
-        self.around.push(false);
+        self.returns_function_stack.push(false);
         self.rule.check_parameters(func, self.cx, Some(self.export));
-        let place = match func.return_type() {
+        let report_span = match func.return_type() {
             Some(_) => None,
             None if func.is_arrow() => self.check_arrow_without_return(func),
             None if self.in_setter => None,
             None => self.check_function_without_return(func),
         };
         self.steps.push(Step::LeaveFunction {
-            place,
+            report_span,
             forgets_target,
         });
     }
@@ -823,17 +823,18 @@ impl<'a> OxlintChecker<'a, '_> {
     }
 
     fn check_arrow_without_return(&mut self, arrow: Func<'a>) -> Option<Span> {
-        let place = match self.target {
+        let report_span = match self.target {
             Some(Target {
                 span,
                 is_property: true,
                 ..
             }) => Some(span),
-            _ if self.around.len() == 1 => arrow.arrow_span(),
+            _ if self.returns_function_stack.len() == 1 => arrow.arrow_span(),
             Some(target) => Some(target.span),
             None => arrow.params_span().or_else(|| arrow.arrow_span()),
         };
-        let unless_allowed = place.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
+        let unless_allowed =
+            report_span.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
         let body = match arrow.body() {
             FnBody::Expr(body) if self.rule.options.allow_higher_order_functions => body,
             FnBody::Block(statements) if self.rule.options.allow_higher_order_functions => {
@@ -861,7 +862,7 @@ impl<'a> OxlintChecker<'a, '_> {
                 None
             }
             // `allowedNames` isn't checked here.
-            _ => place,
+            _ => report_span,
         }
     }
 }
@@ -954,7 +955,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
                 export: Node::File(cx.file()),
                 steps: Vec::new(),
                 target: None,
-                around: Vec::new(),
+                returns_function_stack: Vec::new(),
                 in_setter: false,
                 overloaded: IdSet::default(),
             };

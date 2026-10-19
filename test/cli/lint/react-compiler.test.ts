@@ -439,12 +439,12 @@ describe.concurrent("bun lint: how a diagnostic's labels, help and note are prin
   });
 
   test("agent, which is the default for an agent, is oxlint's format: one line, with the help", async () => {
-    const [named, detected] = await Promise.all([lint(files, ["-f", "agent"]), lint(files, [], { AGENT: "1" })]);
-    expect(named.stdout).toMatchInlineSnapshot(
+    const [explicit, detected] = await Promise.all([lint(files, ["-f", "agent"]), lint(files, [], { AGENT: "1" })]);
+    expect(explicit.stdout).toMatchInlineSnapshot(
       `"a.jsx:4:5: error react(set-state-in-effect): Calling setState synchronously within an effect can trigger cascading renders help: Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system."`,
     );
-    expect(detected.stdout).toBe(named.stdout);
-    expect({ named: named.exitCode, detected: detected.exitCode }).toEqual({ named: 1, detected: 1 });
+    expect(detected.stdout).toBe(explicit.stdout);
+    expect({ explicit: explicit.exitCode, detected: detected.exitCode }).toEqual({ explicit: 1, detected: 1 });
   });
 });
 
@@ -582,8 +582,8 @@ describe.concurrent(
           "25:22-25:37",
           "26:14-26:22",
         ].map(
-          place =>
-            `react-hooks/hooks ${place} Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values`,
+          position =>
+            `react-hooks/hooks ${position} Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values`,
         ),
         "defaults-with-jsx.jsx": [
           ["todo 1:28-1:57 Todo", "ObjectExpression"],

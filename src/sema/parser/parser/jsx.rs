@@ -1,7 +1,7 @@
 //! JSX.
 
 use super::{ListKind, Parser, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_core::lexer::{
     char_and_size, end_of_run, is_type_script_identifier_part, is_white_space_single_line,
@@ -79,7 +79,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn jsx_elements_without_parent(&mut self, first: ExprId) -> ExprId {
         if !self.recovers() {
-            self.refuse(Refusal::Unsupported);
+            self.reject(Rejection::Unsupported);
             return first;
         }
         let base = self.s.ids.len();
@@ -153,8 +153,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let from = self.full_start();
         let before = self.token();
         // What was scanned as a comment is JSX text.
-        let kept = self.lx.comments.partition_point(|it| it.pos < from);
-        self.lx.comments.truncate(kept);
+        let keep_len = self.lx.comments.partition_point(|it| it.pos < from);
+        self.lx.comments.truncate(keep_len);
         self.lx.end = from;
         self.lx.next_jsx_child();
         // The native parser's `parseJsxChildren` reads the scanner's token and leaves `p.token` as it was: a `<<` or a
@@ -279,8 +279,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             jsx.close_tag = self.jsx_element_name();
             // `tagNamesAreEquivalent`
             let src = self.lx.src;
-            let written = |range: (u32, u32)| src.get(range.0 as usize..range.1 as usize);
-            if written(name) != written((closing, self.prev_end()))
+            let text_at = |range: (u32, u32)| src.get(range.0 as usize..range.1 as usize);
+            if text_at(name) != text_at((closing, self.prev_end()))
                 && !self.are_tag_names_equivalent(jsx.tag, jsx.close_tag)
             {
                 return self.jsx_element_with_mismatched_closing_tag(
@@ -353,10 +353,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.s.ids.truncate(base);
             return (ExprId::NONE, false);
         }
-        let written = text_between(self.lx.src, name);
+        let tag_text = text_between(self.lx.src, name);
         if self.token() == T::Eof {
             match jsx.tag.is_some() {
-                true => self.error(17008, range(name.0.min(name.1), name.1), &[written]),
+                true => self.error(17008, range(name.0.min(name.1), name.1), &[tag_text]),
                 false => self.error(17014, range(full_start, jsx.opening_end), &[]),
             }
         }
@@ -376,7 +376,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 && !self.are_tag_names_equivalent(jsx.tag, jsx.close_tag)
                 && self.are_tag_names_equivalent(jsx.close_tag, parent);
             if closes_parent {
-                self.error(17008, range(start + 1, name.1), &[written]);
+                self.error(17008, range(start + 1, name.1), &[tag_text]);
             }
         }
         let id = self.f.add_jsx(jsx);
@@ -396,7 +396,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         is_in_expression: bool,
     ) -> (ExprId, bool) {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return (ExprId::NONE, false);
         }
         let end_of_name = self.prev_end();
@@ -405,13 +405,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => self.expected(T::GreaterThan),
         }
         jsx.end = self.full_start();
-        let written = text_between(self.lx.src, name);
+        let tag_text = text_between(self.lx.src, name);
         let closes_parent =
             parent.is_some() && self.are_tag_names_equivalent(jsx.close_tag, parent);
         // `TagName().Loc` starts where the `<` or the `</` ends.
         match closes_parent {
-            true => self.error(17008, range(start + 1, name.1), &[written]),
-            false => self.error(17002, range(jsx.close_pos + 2, end_of_name), &[written]),
+            true => self.error(17008, range(start + 1, name.1), &[tag_text]),
+            false => self.error(17002, range(jsx.close_pos + 2, end_of_name), &[tag_text]),
         }
         if !closes_parent && !is_in_expression {
             self.rescan_jsx_child();
@@ -517,8 +517,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             end += len;
         }
         if keeps_source_text {
-            let written = (self.lx.start as usize)..end;
-            text = src.get(written).unwrap_or_default().to_vec();
+            let source_range = (self.lx.start as usize)..end;
+            text = src.get(source_range).unwrap_or_default().to_vec();
         }
         if end > from || keeps_source_text {
             self.lx.atom = self.atom(&text);
@@ -820,7 +820,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn empty_jsx_attribute_value(&mut self, open: u32) -> ExprId {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return ExprId::NONE;
         }
         if self.is_for_oxc() {

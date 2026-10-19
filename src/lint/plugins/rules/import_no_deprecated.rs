@@ -113,14 +113,16 @@ impl Rule for NoDeprecated {
                     && cx.state.namespaces.contains_key(&object)
                     && !e.is_jsx_tag_name()
                 {
-                    let around = |it: &Expr<'a>| match it.parent() {
+                    let parent_member = |it: &Expr<'a>| match it.parent() {
                         Node::Expr(parent) if !it.is_chain_root() => Some(parent),
                         _ => None,
                     };
                     let mut properties =
-                        std::iter::successors(Some(e), around).map_while(|it| match it.kind() {
-                            ExprKind::Dot { name, .. } => Some(name),
-                            _ => None,
+                        std::iter::successors(Some(e), parent_member).map_while(|it| {
+                            match it.kind() {
+                                ExprKind::Dot { name, .. } => Some(name),
+                                _ => None,
+                            }
                         });
                     check_member_expression(object, node, &mut properties, cx);
                 }

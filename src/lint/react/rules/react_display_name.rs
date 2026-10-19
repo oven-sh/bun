@@ -83,7 +83,7 @@ impl Rule for DisplayName {
             "createElement",
             "createContext",
         ]);
-        let makes_one = |call: Call| {
+        let creates_component_or_context = |call: Call| {
             callee_name(call).is_some_and(|name| {
                 name.is_any(&names)
                     || name.is("createElement") && is_create_element_call(call)
@@ -91,7 +91,7 @@ impl Rule for DisplayName {
             })
         };
         ((file.mentions("createElement") || file.mentions_any(&names) || may_have_context_objects)
-            && file.calls_on(&CALLS).filter_map(Expr::as_call).any(makes_one))
+            && file.calls_on(&CALLS).filter_map(Expr::as_call).any(creates_component_or_context))
         .then_some(())
     }
 

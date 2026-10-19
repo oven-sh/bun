@@ -203,7 +203,7 @@ impl Codegen {
                 self.print_expr(argument, true);
             }
             (PropKind::Init, Some(key), Some(value)) => {
-                let written = property.file().slice(key.inner_span(property.file()));
+                let key_text = property.file().slice(key.inner_span(property.file()));
                 let (open, close): (&[u8], &[u8]) = if key.is_computed() {
                     (b"[", b"]: ")
                 } else {
@@ -213,19 +213,19 @@ impl Codegen {
                 match key.kind() {
                     KeyKind::Computed(e) => self.print_expr(e, true),
                     KeyKind::String(name) | KeyKind::ComputedString(name)
-                        if !written.starts_with(b"`") =>
+                        if !key_text.starts_with(b"`") =>
                     {
                         print_string(&mut self.code, name.bytes(), b'\'');
                     }
                     KeyKind::Number(name) | KeyKind::ComputedNumber(name)
-                        if !written.ends_with(b"n") =>
+                        if !key_text.ends_with(b"n") =>
                     {
                         print_number(
                             &mut self.code,
                             bun_core::fmt::js_string_to_number(name.bytes()),
                         );
                     }
-                    _ => self.code.extend_from_slice(written),
+                    _ => self.code.extend_from_slice(key_text),
                 }
                 self.code.extend_from_slice(close);
                 self.print_expr(value, true);

@@ -210,14 +210,14 @@ pub(crate) fn get_component_attrs_by_name<'a>(
         if item.get(b"name")?.as_str()? != name {
             return None;
         }
-        let of = |key: &[u8]| item.get(key);
-        let shared = || of(b"formAttribute").or_else(|| of(b"linkAttribute"));
-        (of(b"attribute")
+        let field = |key: &[u8]| item.get(key);
+        let shared = || field(b"formAttribute").or_else(|| field(b"linkAttribute"));
+        (field(b"attribute")
             .or_else(shared)
             .and_then(Json::as_str)
             .map(ComponentAttrs::One))
         .or_else(|| {
-            of(b"attributes")
+            field(b"attributes")
                 .or_else(shared)
                 .and_then(Json::as_array)
                 .map(ComponentAttrs::Many)
@@ -425,7 +425,7 @@ fn add_expression<'a>(expression: Expr<'a>, variables: &mut Variables<'a>) -> u8
 /// Caches what a file's variables can evaluate to, for [`function_returns`].
 #[derive(Default)]
 pub(crate) struct Returns<'a> {
-    of_variables: VariableFlags<'a>,
+    variable_flags: VariableFlags<'a>,
 }
 
 impl<'a> Returns<'a> {
@@ -433,7 +433,7 @@ impl<'a> Returns<'a> {
         let mut variables = Variables::new();
         returns.0 |= add_expression(expression, &mut variables);
         for variable in variables {
-            returns.0 |= self.of_variables.of_variable(variable, |variable| {
+            returns.0 |= self.variable_flags.of_variable(variable, |variable| {
                 let mut variables = Variables::new();
                 let declarator = variable.declarations().next().and_then(Declaration::node);
                 let returns = match declarator {
@@ -530,10 +530,10 @@ impl<'a> FunctionsWithJsx<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
         let mut functions = IdSet::new();
         // Caches a node's enclosing function. `None` inside a parameter, which isn't in any function's body.
-        let mut around: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
+        let mut enclosing_function: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
         let mut add = |e: Expr<'a>| {
             let is_in_body = |child: Node<'a>| !matches!(child, Node::Param(_));
-            let function = around.find(Node::Expr(e), |child, parent| {
+            let function = enclosing_function.find(Node::Expr(e), |child, parent| {
                 as_function(parent).map(|it| is_in_body(child).then_some(it))
             });
             if let Some(function) = function.flatten() {

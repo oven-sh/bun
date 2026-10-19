@@ -1525,17 +1525,17 @@ impl CursorRegion {
 /// Calls `write`, which writes the ESTree node at `span`. Use it for a node that isn't written by a handle's
 /// `impl Format`, like an interface's body or a template's text.
 #[inline]
-pub(crate) fn around_node<'a>(
+pub(crate) fn with_node_marks<'a>(
     span: Span,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    around_node_at(|| span, f, write);
+    with_node_marks_at(|| span, f, write);
 }
 
-/// Like `around_node`, but `span` is only computed if there's a cursor.
+/// Like `with_node_marks`, but `span` is only computed if there's a cursor.
 #[inline]
-pub(crate) fn around_node_at<'a>(
+pub(crate) fn with_node_marks_at<'a>(
     span: impl FnOnce() -> Span,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
@@ -1555,7 +1555,7 @@ pub(crate) fn around_node_at<'a>(
 ///
 /// With `in_group`, the children are only on their own lines if the enclosing group breaks.
 #[inline]
-pub(crate) fn around_jsx_children<'a>(
+pub(crate) fn with_jsx_children_marks<'a>(
     element: u32,
     in_group: bool,
     f: &mut Formatter<'a>,

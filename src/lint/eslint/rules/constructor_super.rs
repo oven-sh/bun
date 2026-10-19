@@ -451,14 +451,14 @@ impl ConstructorSuper {
         let id = segment.id();
         cx.state.seg_info_map.insert(id, unknown);
         let before = cx.state.seen_prev_segments(segment);
-        let is_beside_call = cx.language().is_oxlint
+        let is_other_branch_of_call = cx.language().is_oxlint
             && matches!((node, node.parent()), (Node::Expr(e), Node::Expr(parent))
                 if oxlint_branches(parent).is_some_and(|(_, other)| other == e));
         let called = Called {
             // A `for` loop's update segment is created early, before its previous segments are seen. It's never the
             // only previous segment of another one, so `true` here lets the others decide.
-            in_every_path: before.any && before.called.in_every_path || is_update_of_for(node) || is_beside_call,
-            in_some_paths: before.any && before.called.in_some_paths || is_beside_call,
+            in_every_path: before.any && before.called.in_every_path || is_update_of_for(node) || is_other_branch_of_call,
+            in_some_paths: before.any && before.called.in_some_paths || is_other_branch_of_call,
         };
         if let Some(info) = cx.state.seg_info_map.get_mut(&id) {
             info.called = called;
@@ -532,11 +532,11 @@ impl ConstructorSuper {
             let constructor = cx.state.constructor.map(Node::Func);
             // oxlint treats the expression that a `for`-`in` iterates over as part of the loop.
             let is_in_head = matches!(e.parent(), Node::Stmt(it) if matches!(it.tag(), StmtTag::ForIn | StmtTag::ForOf));
-            let mut around = node.ancestors().take_while(|it| Some(*it) != constructor);
+            let mut enclosing_nodes = node.ancestors().take_while(|it| Some(*it) != constructor);
             cx.state.found.push(e);
             cx.state.is_repeated |= is_duplicate || is_in_head;
             cx.state.can_be_bypassed |= is_in_head
-                || !is_duplicate && around.any(|it| matches!(it, Node::Stmt(it) if is_endless(it)));
+                || !is_duplicate && enclosing_nodes.any(|it| matches!(it, Node::Stmt(it) if is_endless(it)));
         }
         if is_duplicate && !is_oxlint {
             cx.report(e, DUPLICATE);

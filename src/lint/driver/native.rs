@@ -181,10 +181,10 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], name_source: NameSour
     }
 }
 
-/// Error message for `written`, which isn't a valid severity. `rule` is the rule or category it was set for.
-pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
+/// Error message for `invalid_value`, which isn't a valid severity. `rule` is the rule or category it was set for.
+pub(crate) fn invalid_severity(rule: &[u8], invalid_value: &Json) -> Vec<u8> {
     let mut message = Vec::new();
-    write_json(&mut message, written);
+    write_json(&mut message, invalid_value);
     message.extend_from_slice(b" is not a valid severity for ");
     message.extend_from_slice(rule);
     message.extend_from_slice(b"\n  Expected \"off\", \"warn\", or \"error\"");
@@ -202,8 +202,8 @@ pub(crate) fn check_rules(
     plugins: &[NamedPlugin],
     only_plugin_rules: Option<bool>,
 ) -> Result<(), Mistake> {
-    let check = |rules: &[(Vec<u8>, Json)], places: &[BunfigRule]| {
-        check(linter, plugins, rules, places, only_plugin_rules)
+    let check = |rules: &[(Vec<u8>, Json)], rule_locations: &[BunfigRule]| {
+        check(linter, plugins, rules, rule_locations, only_plugin_rules)
     };
     let filters = options.filters.iter().filter(|it| !is_category(&it.1));
     let filters: Vec<(Vec<u8>, Json)> = filters
@@ -212,13 +212,13 @@ pub(crate) fn check_rules(
     check(&filters, &[])?;
     check(&options.rule, &options.bunfig_rules)?;
     for it in &options.overrides {
-        check(&it.rules, &it.places)?;
+        check(&it.rules, &it.rule_locations)?;
     }
     if only_plugin_rules.is_some() {
         return Ok(());
     }
-    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
-    let mut wildcards = options.wildcards.iter().chain(of_overrides);
+    let override_wildcards = options.overrides.iter().flat_map(|it| &it.wildcards);
+    let mut wildcards = options.wildcards.iter().chain(override_wildcards);
     wildcards.try_for_each(|it| check_wildcard(linter.registry(), plugins, it))
 }
 
@@ -230,8 +230,8 @@ fn check_wildcard(
     wildcard: &Wildcard,
 ) -> Result<(), Mistake> {
     let (id, plugin) = (&wildcard.id[..], wildcard.plugin());
-    let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
-    if is_left_out || !rules_of_plugin(registry, js_plugins, plugin).is_empty() {
+    let is_intentionally_missing = !matches!(registry.why_missing(id), Missing::Unknown(_));
+    if is_intentionally_missing || !rules_of_plugin(registry, js_plugins, plugin).is_empty() {
         return Ok(());
     }
     let message = match similar_plugin(registry, js_plugins, plugin) {
@@ -249,29 +249,31 @@ fn check_wildcard(
     Err(Mistake::new(message, wildcard.key_at))
 }
 
-/// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
+/// `rule_locations` has the bunfig.toml locations of the first `rule_locations.len()` rules. The rest came from
+/// `--rule`.
 fn check(
     linter: &Linter,
     plugins: &[NamedPlugin],
     rules: &[(Vec<u8>, Json)],
-    places: &[BunfigRule],
+    rule_locations: &[BunfigRule],
     only_plugin_rules: Option<bool>,
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for (at, (id, setting)) in rules.iter().enumerate() {
         // `--rule` may have replaced this entry, so its bunfig.toml location no longer applies.
-        let written = places.get(at);
-        let written = written.filter(|it| it.setting.as_ref() == Some(setting));
+        let rule_location = rule_locations.get(at);
+        let rule_location = rule_location.filter(|it| it.setting.as_ref() == Some(setting));
         let parts: &[Json] = match setting {
             Json::Array(items) => items,
             setting => std::slice::from_ref(setting),
         };
         let severity = parts.first().and_then(severity_of);
         let invalid_severity = || {
-            let place = written.map(|it| it.place.items.first().unwrap_or(&it.place));
+            let severity_location =
+                rule_location.map(|it| it.offsets.items.first().unwrap_or(&it.offsets));
             Mistake {
                 message: invalid_severity(id, parts.first().unwrap_or(&Json::Null)),
-                at: place.map(|it| it.at),
+                at: severity_location.map(|it| it.at),
             }
         };
         let (prefix, name) = parse_rule_id(id);
@@ -282,7 +284,7 @@ fn check(
                 }
                 return Err(Mistake {
                     message: unknown_plugin_rule(plugin, id, name),
-                    at: written.map(|it| it.key_at),
+                    at: rule_location.map(|it| it.key_at),
                 });
             };
             let given = parts.get(1..).unwrap_or_default();
@@ -305,7 +307,7 @@ fn check(
                             .collect();
                         return Err(Mistake {
                             message: [b"Invalid options for ", &id[..], b"\n", &lines].concat(),
-                            at: written.map(|it| it.place.find(&[Step::Index(1)], false)),
+                            at: rule_location.map(|it| it.offsets.find(&[Step::Index(1)], false)),
                         });
                     }
                 },
@@ -316,17 +318,17 @@ fn check(
         }
         let found = registry.find_by_any_name(id);
         if found.or_else(|| registry.base_of(id)).is_none() {
-            let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
-            if is_left_out && severity == Some(Severity::Off) {
+            let is_intentionally_missing = !matches!(registry.why_missing(id), Missing::Unknown(_));
+            if is_intentionally_missing && severity == Some(Severity::Off) {
                 continue;
             }
             return Err(Mistake {
                 message: unknown_rule(
                     registry,
                     id,
-                    written.map_or(NameSource::Flag, |_| NameSource::Bunfig),
+                    rule_location.map_or(NameSource::Flag, |_| NameSource::Bunfig),
                 ),
-                at: written.map(|it| it.key_at),
+                at: rule_location.map(|it| it.key_at),
             });
         }
         let Some(severity) = severity else {
@@ -352,14 +354,14 @@ fn check(
             let path: Vec<Step> = after_severity.collect();
             return Err(Mistake {
                 message: mistake.message,
-                at: written.map(|it| it.place.find(&path, mistake.is_about_key)),
+                at: rule_location.map(|it| it.offsets.find(&path, mistake.is_about_key)),
             });
         }
         // Some errors get past the schema, like an invalid selector or regular expression.
         if let Some(Err(thrown)) = entry.map(|it| linter.validate(it, given)) {
             return Err(Mistake {
                 message: [b"Invalid options for ", &id[..], b"\n  ", &thrown].concat(),
-                at: written.map(|it| it.place.find(&[Step::Index(1)], false)),
+                at: rule_location.map(|it| it.offsets.find(&[Step::Index(1)], false)),
             });
         }
     }
@@ -370,8 +372,8 @@ fn check(
 fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
     let is_about =
         |name: &[u8]| name == category || name == b"all" && CATEGORIES.contains(&category);
-    let mut said = options.filters.iter().rev();
-    said.find(|it| is_about(&it.1)).map(|it| it.0)
+    let mut latest_first = options.filters.iter().rev();
+    latest_first.find(|it| is_about(&it.1)).map(|it| it.0)
 }
 
 const TYPESCRIPT: &[u8] = b"**/*.{ts,mts,cts,tsx}";
@@ -430,13 +432,18 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
                 continue;
             };
             let is_extension = found.is_some_and(|it| it.meta.plugin == Plugin::TypeScript);
-            let said = match is_extension {
+            let pair_settings = match is_extension {
                 true => [None, Some(setting)],
                 false => [Some(setting), None],
             };
             match pairs.iter_mut().find(|it| it.0[0].name == base.meta.name) {
-                Some(pair) => pair.1 = [said[0].or(pair.1[0]), said[1].or(pair.1[1])],
-                None => pairs.push(([base.meta, extension.meta], said)),
+                Some(pair) => {
+                    pair.1 = [
+                        pair_settings[0].or(pair.1[0]),
+                        pair_settings[1].or(pair.1[1]),
+                    ]
+                }
+                None => pairs.push(([base.meta, extension.meta], pair_settings)),
             }
         }
         if pairs.is_empty() {
@@ -444,23 +451,26 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
             continue;
         }
         let mut in_typescript = Vec::new();
-        for ([base, extension], [of_base, of_extension]) in pairs {
-            let (Some(for_javascript), Some(for_typescript)) =
-                (of_base.or(of_extension), of_extension.or(of_base))
-            else {
+        for ([base, extension], [base_setting, extension_setting]) in pairs {
+            let (Some(for_javascript), Some(for_typescript)) = (
+                base_setting.or(extension_setting),
+                extension_setting.or(base_setting),
+            ) else {
                 continue;
             };
             everywhere.push((id(base), for_javascript.clone()));
             everywhere.push((id(extension), off()));
             let given = for_typescript.as_array().and_then(|it| it.get(1..));
-            let takes = |it| mistake_in_options(it, b"", given.unwrap_or_default()).is_none();
+            let accepts_options =
+                |it| mistake_in_options(it, b"", given.unwrap_or_default()).is_none();
             let can_run = has_types || !extension.requires_types;
-            let (runs, rests) = match can_run && (takes(extension) || !takes(base)) {
-                true => (extension, base),
-                false => (base, extension),
-            };
+            let (runs, rests) =
+                match can_run && (accepts_options(extension) || !accepts_options(base)) {
+                    true => (extension, base),
+                    false => (base, extension),
+                };
             // Leave a typed rule on if the user asked for it by name. It can't run, but the "Skipped" warning counts it.
-            let is_skipped = !can_run && of_extension.is_some();
+            let is_skipped = !can_run && extension_setting.is_some();
             in_typescript.push((
                 id(rests),
                 if is_skipped {
@@ -583,8 +593,8 @@ fn similar_plugin<'a>(
 
 /// Returns the first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
 pub(crate) fn first_wildcard(options: &Options) -> Option<&Wildcard> {
-    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
-    options.wildcards.iter().chain(of_overrides).next()
+    let override_wildcards = options.overrides.iter().flat_map(|it| &it.wildcards);
+    options.wildcards.iter().chain(override_wildcards).next()
 }
 
 /// Config object key for the IDs of its [`Wildcard`]s. [`expand_wildcards`] replaces it.

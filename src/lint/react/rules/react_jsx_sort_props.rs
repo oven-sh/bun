@@ -348,7 +348,7 @@ impl<'a> Element<'a, '_> {
             let (whole, mut comment) = (attribute.span(), file.comments_after(attribute));
             let attribute_line = line_of(whole);
             // (its end, `hasComment`, whether the next attribute moves with it)
-            let (end, has_comment, takes_next) = match (comment.next(), comment.next(), next_attribute) {
+            let (end, has_comment, includes_next) = match (comment.next(), comment.next(), next_attribute) {
                 (None, ..) => (whole.end, false, false),
                 (Some(first), None, Some(next)) if attribute_line + 1 == line_of(first.span()) => {
                     (next.end, true, true)
@@ -369,7 +369,7 @@ impl<'a> Element<'a, '_> {
                 // It isn't sortable and stays where it is.
                 _ => continue,
             };
-            i += usize::from(takes_next);
+            i += usize::from(includes_next);
             let has_value = attribute.value().is_some();
             let rank = [
                 has_comment,

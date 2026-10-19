@@ -38,7 +38,10 @@ fn text_of(it: &Diagnostic, index: usize) -> Cow<'static, str> {
 
 /// Decodes an error that the parser recorded for oxc.
 #[optimize(size)]
-pub(super) fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<SyntaxError> {
+pub(super) fn decode_recorded_error<'a>(
+    file: &'a File<'a>,
+    it: &Diagnostic,
+) -> Option<SyntaxError> {
     let stage = match it.kind {
         DiagnosticKind::Oxc => Stage::Parser,
         DiagnosticKind::OxcFatal => Stage::Fatal,
@@ -47,10 +50,10 @@ pub(super) fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Synta
         _ => return None,
     };
     let message = it.args.first().map_or_else(Vec::new, |it| it.to_vec());
-    let mut error = SyntaxError::of_oxc(span_of(it), message)
+    let mut error = SyntaxError::oxc_error(span_of(it), message)
         .code(it.code as u16)
         .help(text_of(it, 1))
-        .says(text_of(it, 2))
+        .label_text(text_of(it, 2))
         .stage(stage);
     for other in &it.related {
         error = match other.args.is_empty() {
@@ -62,7 +65,7 @@ pub(super) fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Synta
 }
 
 /// The span from the `[` before `inside` to the matching `]`.
-fn brackets_around<'a>(file: &'a File<'a>, inside: u32) -> Span {
+fn enclosing_brackets<'a>(file: &'a File<'a>, inside: u32) -> Span {
     let text = file.text();
     let open = file.end_of_token_before(inside).saturating_sub(1);
     let (mut at, mut depth) = (inside, 1u32);
@@ -120,7 +123,7 @@ fn translate_grammar_error<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Sy
             let message = "An index signature must have exactly one parameter.";
             error(
                 1096,
-                brackets_around(file, it.start),
+                enclosing_brackets(file, it.start),
                 message,
                 Stage::Parser,
             )
@@ -160,7 +163,7 @@ fn translate_grammar_error<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Sy
                 message,
                 Stage::Parser,
             )
-            .says(Cow::Borrowed("First 'default' clause is here."))
+            .label_text(Cow::Borrowed("First 'default' clause is here."))
             .and(
                 Span::new(second.pos, second.end),
                 Cow::Borrowed("Another 'default' clause cannot appear here."),
@@ -195,7 +198,7 @@ fn translate_grammar_error<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Sy
                 bun_sema::messages::message(it.code)?.1,
                 &it.args,
             );
-            SyntaxError::of_oxc(span, message)
+            SyntaxError::oxc_error(span, message)
                 .code(it.code as u16)
                 .stage(Stage::Parser)
         }
@@ -208,14 +211,14 @@ fn translate_grammar_error<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Sy
                 bun_sema::messages::message(it.code)?.1,
                 &it.args,
             );
-            SyntaxError::of_oxc(span, message).stage(Stage::Parser)
+            SyntaxError::oxc_error(span, message).stage(Stage::Parser)
         }
         _ => return None,
     })
 }
 
 fn error(code: u16, at: Span, message: &str, stage: Stage) -> SyntaxError {
-    SyntaxError::of_oxc(at, message).code(code).stage(stage)
+    SyntaxError::oxc_error(at, message).code(code).stage(stage)
 }
 
 /// A namespace, `declare module "m"` or `declare global` in a position where it isn't allowed, or with a required part
@@ -232,11 +235,11 @@ fn modules<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
         if let ModuleName::String(_) = raw.name {
             let name = file.text().get(raw.name_pos as usize..).unwrap_or_default();
             let name = Span::new(raw.name_pos, raw.name_pos + token_len(name) as u32);
-            let around = match parent {
-                Parent::Module(around) => hir.modules.get(around.idx()).map(|it| it.name),
+            let enclosing = match parent {
+                Parent::Module(enclosing) => hir.modules.get(enclosing.idx()).map(|it| it.name),
                 _ => None,
             };
-            all.extend(match (is_ambient, parent, around) {
+            all.extend(match (is_ambient, parent, enclosing) {
                 (false, ..) => {
                     let message = "Only ambient modules can use quoted names.";
                     Some(error(1035, name, message, Stage::Parser))
@@ -288,13 +291,13 @@ fn type_parameters<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
         };
         let has_variance =
             is_type || matches!(TypeParam::from_raw(file, i as u32).parent(), Node::Class(_));
-        let written = hir.modifiers.get(raw.modifiers.range()).unwrap_or_default();
-        for (index, it) in written.iter().enumerate() {
+        let own_modifiers = hir.modifiers.get(raw.modifiers.range()).unwrap_or_default();
+        for (index, it) in own_modifiers.iter().enumerate() {
             let ModifierKind::Keyword(modifier) = it.kind else {
                 continue;
             };
             // oxc remembers only the last position of each keyword.
-            if written[index + 1..]
+            if own_modifiers[index + 1..]
                 .iter()
                 .any(|later| later.kind == it.kind)
             {
@@ -323,7 +326,7 @@ fn type_parameters<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
                 error(1273, at, &message, Stage::Parser)
             };
             // oxc reports it after the modifiers. The parser has already reported any errors about their order.
-            all.push(match found.of_oxc.noticed {
+            all.push(match found.oxc_details.noticed {
                 Some(_) => found,
                 None => found.noticed_at(raw.pos),
             });
@@ -367,11 +370,11 @@ fn jsdoc_types<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
             JSDocTypeKind::Nullable => ('?', " | null | undefined"),
             _ => ('!', ""),
         };
-        let (code, place) = match is_postfix {
+        let (code, side) = match is_postfix {
             true => (17019, "end"),
             false => (17020, "start"),
         };
-        let message = format!("'{sign}' at the {place} of a type is not valid TypeScript syntax.");
+        let message = format!("'{sign}' at the {side} of a type is not valid TypeScript syntax.");
         let inner = bstr::BStr::new(file.slice(inner));
         let help = format!("Did you mean to write '{inner}{more}'?");
         all.push(error(code, span, &message, Stage::Semantic).help(Cow::Owned(help)));
@@ -499,10 +502,10 @@ fn export_assignments_with_other_exports<'a>(
         }
         StmtKind::ExportStar { .. } | StmtKind::ExportDefault(_) => true,
         _ => {
-            let written = hir.stmt_modifiers(hir::StmtId(id));
-            let written = hir.modifiers.get(written.range()).unwrap_or_default();
+            let own_modifiers = hir.stmt_modifiers(hir::StmtId(id));
+            let own_modifiers = hir.modifiers.get(own_modifiers.range()).unwrap_or_default();
             let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
-            written.iter().any(is_export)
+            own_modifiers.iter().any(is_export)
         }
     };
     if !with_ids().any(exports) {
@@ -526,15 +529,15 @@ fn export_assignments_with_other_exports<'a>(
 fn nested_module_syntax<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
     let hir = &file.hir;
     for (i, raw) in hir.stmts.iter().enumerate() {
-        let written = hir.stmt_modifiers(hir::StmtId(i as u32));
-        let written = hir.modifiers.get(written.range()).unwrap_or_default();
+        let own_modifiers = hir.stmt_modifiers(hir::StmtId(i as u32));
+        let own_modifiers = hir.modifiers.get(own_modifiers.range()).unwrap_or_default();
         let is_export = |it: &&hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
         let (at, what) = match raw.kind {
             StmtKind::Import(_) => (raw.start, "import"),
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } | StmtKind::ExportDefault(_) => {
                 (raw.start, "export")
             }
-            _ => match written.iter().find(is_export) {
+            _ => match own_modifiers.iter().find(is_export) {
                 Some(keyword) => (keyword.pos, "export"),
                 None => continue,
             },
@@ -610,7 +613,7 @@ fn in_list<'a>(file: &'a File<'a>, at: u32, brackets: (u8, u8)) -> SyntaxError {
 }
 
 /// The context of the expression before a token.
-enum Around {
+enum ExprContext {
     /// After the `?` of a conditional expression, before its `:`.
     Conditional(Span),
     /// A substitution of a template.
@@ -631,7 +634,7 @@ enum Around {
 }
 
 #[optimize(size)]
-fn around<'a>(file: &'a File<'a>, at: u32) -> Around {
+fn expr_context<'a>(file: &'a File<'a>, at: u32) -> ExprContext {
     let is_object = |open: u32| {
         let mut all = file.hir.exprs.iter();
         all.any(|it| it.pos == open && matches!(it.kind, ExprKind::Object(_)))
@@ -656,7 +659,7 @@ fn around<'a>(file: &'a File<'a>, at: u32) -> Around {
             [b'}', _, ..] | [b'`', _, ..] => {
                 if it.text().ends_with(b"${") {
                     match depth {
-                        0 => return Around::Substitution,
+                        0 => return ExprContext::Substitution,
                         _ => depth -= 1,
                     }
                 }
@@ -666,48 +669,48 @@ fn around<'a>(file: &'a File<'a>, at: u32) -> Around {
             b"(" | b"[" | b"{" if depth > 0 => depth -= 1,
             b"(" => {
                 return match word_before(file, opened.start) {
-                    b"for" | b"await" => Around::For,
-                    b"if" | b"while" | b"switch" | b"with" => Around::Condition(opened),
-                    _ => Around::List((b'(', b')')),
+                    b"for" | b"await" => ExprContext::For,
+                    b"if" | b"while" | b"switch" | b"with" => ExprContext::Condition(opened),
+                    _ => ExprContext::List((b'(', b')')),
                 };
             }
-            b"[" if is_array(opened.start) => return Around::List((b'[', b']')),
-            b"[" => return Around::Index,
-            b"{" if is_object(opened.start) => return Around::List((b'{', b'}')),
+            b"[" if is_array(opened.start) => return ExprContext::List((b'[', b']')),
+            b"[" => return ExprContext::Index,
+            b"{" if is_object(opened.start) => return ExprContext::List((b'{', b'}')),
             b"{" | b";" if depth == 0 => {
                 return match starts_member(token_after(file, opened).start) {
-                    true => Around::Field,
-                    false => Around::Statement,
+                    true => ExprContext::Field,
+                    false => ExprContext::Statement,
                 };
             }
-            b"@" if depth == 0 && is_path => return Around::Decorator,
+            b"@" if depth == 0 && is_path => return ExprContext::Decorator,
             _ if depth > 0 => {}
             b":" => colons += 1,
-            b"?" if colons == 0 => return Around::Conditional(opened),
+            b"?" if colons == 0 => return ExprContext::Conditional(opened),
             b"?" => colons -= 1,
             _ => {}
         }
     }
-    Around::Statement
+    ExprContext::Statement
 }
 
 /// oxc's error at the token at `at`, which can't follow the expression before it.
 #[optimize(size)]
 fn after_expression<'a>(file: &'a File<'a>, at: u32) -> SyntaxError {
-    match around(file, at) {
-        Around::Conditional(question) => expected(file, "`:`", at)
+    match expr_context(file, at) {
+        ExprContext::Conditional(question) => expected(file, "`:`", at)
             .noticed_at(at)
             .and(question, "Conditional starts here"),
-        Around::Substitution => expected(file, "`}`", at),
-        Around::For => expected(file, "`;`", at),
-        Around::Condition(opened) => expected(file, "`)`", at)
+        ExprContext::Substitution => expected(file, "`}`", at),
+        ExprContext::For => expected(file, "`;`", at),
+        ExprContext::Condition(opened) => expected(file, "`)`", at)
             .noticed_at(at)
             .and(opened, "Opened here"),
-        Around::List(brackets) => in_list(file, at, brackets),
-        Around::Index => expected(file, "`]`", at),
-        Around::Field => expected(file, "`;`", at),
-        Around::Decorator => unexpected_at(file, at),
-        Around::Statement => semicolon_after(file.end_of_token_before(at)),
+        ExprContext::List(brackets) => in_list(file, at, brackets),
+        ExprContext::Index => expected(file, "`]`", at),
+        ExprContext::Field => expected(file, "`;`", at),
+        ExprContext::Decorator => unexpected_at(file, at),
+        ExprContext::Statement => semicolon_after(file.end_of_token_before(at)),
     }
 }
 
@@ -966,7 +969,9 @@ fn translate_js_diagnostic<'a>(file: &'a File<'a>, it: &Diagnostic, all: &mut Ve
                         error(0, Span::new(open - 1, before_colon), message, Stage::Fatal)
                     }
                     // The `:` belongs to the conditional expression, and the type is an arrow function's parameter.
-                    FnKind::Arrow if matches!(around(file, colon), Around::Conditional(_)) => {
+                    FnKind::Arrow
+                        if matches!(expr_context(file, colon), ExprContext::Conditional(_)) =>
+                    {
                         type_as_expression(file, func)
                     }
                     FnKind::Arrow => after_expression(file, colon),
@@ -1207,18 +1212,23 @@ fn reserved_in_mts_and_cts<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
 /// member's modifiers only once it has the whole member. Diagnostics about TypeScript syntax in JavaScript are appended
 /// after parsing, so they get the same offset test.
 #[optimize(size)]
-pub(super) fn noted<'a>(file: &'a File<'a>, stop: Option<usize>) -> Vec<SyntaxError> {
+pub(super) fn recorded_errors<'a>(file: &'a File<'a>, stop: Option<usize>) -> Vec<SyntaxError> {
     let diagnostics = &file.hir.diagnostics;
     let gives_up_at = stop.and_then(|it| diagnostics.get(it)).map(|it| it.start);
     let (mut all, mut found) = (Vec::new(), Vec::new());
-    for (place, it) in diagnostics.iter().enumerate() {
+    for (diagnostic_index, it) in diagnostics.iter().enumerate() {
         match it.kind {
             DiagnosticKind::Js => translate_js_diagnostic(file, it, &mut found),
-            _ => found.extend(of_parser(file, it)),
+            _ => found.extend(decode_recorded_error(file, it)),
         }
-        let is_late = it.kind == DiagnosticKind::Js || stop.is_some_and(|stop| place > stop);
-        let is_in_time = |it: &SyntaxError| gives_up_at.is_none_or(|at| it.order() < at);
-        all.extend(found.drain(..).filter(|it| !is_late || is_in_time(it)));
+        let is_after_stop =
+            it.kind == DiagnosticKind::Js || stop.is_some_and(|stop| diagnostic_index > stop);
+        let is_before_give_up = |it: &SyntaxError| gives_up_at.is_none_or(|at| it.order() < at);
+        all.extend(
+            found
+                .drain(..)
+                .filter(|it| !is_after_stop || is_before_give_up(it)),
+        );
     }
     all
 }
@@ -1226,7 +1236,7 @@ pub(super) fn noted<'a>(file: &'a File<'a>, stop: Option<usize>) -> Vec<SyntaxEr
 /// `has_scopes` is false for oxfmt, whose file has no symbols. Only the semantic pass's errors need them, and oxfmt
 /// doesn't run that pass.
 pub(super) fn errors<'a>(file: &'a File<'a>, has_scopes: bool) -> Vec<SyntaxError> {
-    let mut all = noted(file, None);
+    let mut all = recorded_errors(file, None);
     if file.is_javascript() {
         if file.has_rare_syntax(rare::NESTED_MODULE_SYNTAX) {
             nested_module_syntax(file, &mut all);

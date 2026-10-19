@@ -54,7 +54,7 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
                         write!(f, empty_line());
                     } else if !f.is_quiet()
                         && (f.comments().of_node(element.as_ast_nodes()).leading.iter()).any(
-                            |comment| match block_comment_that_ends_line_starts_one(f) {
+                            |comment| match block_comment_that_ends_line_starts_line(f) {
                                 true => comment.has_newline_after(),
                                 false => comment.is_line(),
                             },
@@ -80,7 +80,7 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
 }
 
 /// `[1,⏎/* comment */⏎2]`: for oxfmt the comment stays on its own line, and for Prettier it goes after the `1,`.
-fn block_comment_that_ends_line_starts_one(f: &Formatter<'_>) -> bool {
+fn block_comment_that_ends_line_starts_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

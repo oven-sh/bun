@@ -328,11 +328,11 @@ impl Writer<'_, '_> {
                 );
                 // The line break after a `\` is written like every other one.
                 let has_line_break = (self.out.get(start..))
-                    .is_some_and(|written| bun_core::strings::contains_char(written, b'\n'));
+                    .is_some_and(|quoted| bun_core::strings::contains_char(quoted, b'\n'));
                 if has_line_break && self.config.line_ending != b"\n" {
-                    let written = self.out.split_off(start);
+                    let quoted = self.out.split_off(start);
                     crate::range::write_with_line_ending(
-                        &written,
+                        &quoted,
                         self.config.line_ending,
                         self.out,
                     );

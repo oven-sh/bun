@@ -40,7 +40,7 @@
 //! | `{ includeComments: true }` | `.with_comments()` on any of the iterators, before anything else |
 //! | `getTokenBefore(x, { includeComments: true })` | `file.tokens_before(x).with_comments().next()` |
 //! | `getTokenByRangeStart(i)` | `file.token_at(i)` |
-//! | (the token or comment at a text index) | `file.token_around(i)`, `file.comment_around(i)`, `file.token_or_comment_around(i)` |
+//! | (the token or comment at a text index) | `file.token_containing(i)`, `file.comment_containing(i)`, `file.token_or_comment_containing(i)` |
 //! | `ast.tokens` | `file.tokens()` |
 //! | `getAllComments()`, `ast.comments` | `file.comments()` |
 //! | `getCommentsBefore(x)` | `file.comments_before(x)` |
@@ -431,7 +431,7 @@ fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
 }
 
 /// Returns the token of `all` that contains `offset`.
-fn around(all: &[RawToken], offset: u32) -> Option<&RawToken> {
+fn containing(all: &[RawToken], offset: u32) -> Option<&RawToken> {
     let after = all.partition_point(|token| token.start <= offset);
     all.get(after.checked_sub(1)?)
         .filter(|token| offset < token.end)
@@ -558,19 +558,19 @@ impl<'a> File<'a> {
     }
 
     /// The token that contains `offset` (`start <= offset < end`). `None` between tokens.
-    pub fn token_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.token(around(self.raw_tokens(), offset))
+    pub fn token_containing(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.token(containing(self.raw_tokens(), offset))
     }
 
     /// The comment that contains `offset`.
-    pub fn comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.token(around(self.raw_comments(), offset))
+    pub fn comment_containing(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.token(containing(self.raw_comments(), offset))
     }
 
     /// The token or comment that contains `offset`. `None` in whitespace.
-    pub fn token_or_comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.comment_around(offset)
-            .or_else(|| self.token_around(offset))
+    pub fn token_or_comment_containing(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.comment_containing(offset)
+            .or_else(|| self.token_containing(offset))
     }
 
     fn comments_within(&'a self, span: Span) -> Tokens<'a> {
@@ -607,10 +607,10 @@ impl<'a> File<'a> {
 
     /// The comments directly before a node, a token or a comment, that is, after the preceding token. In source order.
     pub fn comments_before(&'a self, at: impl Spanned) -> Tokens<'a> {
-        self.comments_that_end_before(at.span().start)
+        self.comments_ending_before(at.span().start)
     }
 
-    fn comments_that_end_before(&'a self, end: u32) -> Tokens<'a> {
+    fn comments_ending_before(&'a self, end: u32) -> Tokens<'a> {
         let comments = self.raw_comments();
         let after = comments.partition_point(|comment| comment.end <= end);
         let (mut first, mut start) = (after, end);
@@ -630,10 +630,10 @@ impl<'a> File<'a> {
 
     /// The comments directly after a node, a token or a comment, that is, before the next token.
     pub fn comments_after(&'a self, at: impl Spanned) -> Tokens<'a> {
-        self.comments_that_start_after(at.span().end)
+        self.comments_starting_after(at.span().end)
     }
 
-    fn comments_that_start_after(&'a self, start: u32) -> Tokens<'a> {
+    fn comments_starting_after(&'a self, start: u32) -> Tokens<'a> {
         let comments = self.raw_comments();
         let first = comments.partition_point(|comment| comment.start < start);
         let (mut after, mut end) = (first, start);

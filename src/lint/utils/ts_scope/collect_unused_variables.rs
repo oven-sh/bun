@@ -167,7 +167,7 @@ fn is_part_of_qualified_name(module: Module) -> bool {
 /// True if scope-manager has a definition for `declaration` in the enclosing scope.
 #[inline]
 fn is_definition(declaration: Declaration) -> bool {
-    Facts::of_declaration(declaration) & Facts::DEFINED != 0
+    Facts::for_declaration(declaration) & Facts::DEFINED != 0
 }
 
 /// True if one of `symbol`'s declarations is a class. The flags don't tell if the class conflicts with an earlier
@@ -222,7 +222,7 @@ impl Facts {
         | Self::EXPORTABLE;
 
     /// The flags of a binding of `var`, `let`, `const`, `using` or `catch`.
-    const OF_VARIABLE: u16 = Self::DEFINED
+    const FOR_VARIABLE: u16 = Self::DEFINED
         | Self::NOT_IMPORTED_AS_TYPE
         | Self::VALUE
         | Self::HAS_RANGES
@@ -235,14 +235,14 @@ impl Facts {
 
     /// 0 for a declaration that scope-manager has no definition for in the enclosing scope.
     #[inline]
-    fn of_declaration(declaration: Declaration) -> u16 {
+    fn for_declaration(declaration: Declaration) -> u16 {
         match declaration {
-            Declaration::Var(_) => Self::OF_VARIABLE,
-            _ => Self::of_non_variable(declaration),
+            Declaration::Var(_) => Self::FOR_VARIABLE,
+            _ => Self::for_non_variable(declaration),
         }
     }
 
-    fn of_non_variable(declaration: Declaration) -> u16 {
+    fn for_non_variable(declaration: Declaration) -> u16 {
         let declared = Self::DEFINED | Self::NOT_IMPORTED_AS_TYPE;
         let both = Self::TYPE | Self::VALUE;
         match declaration {
@@ -320,10 +320,10 @@ impl Facts {
         if !kinds.is_empty()
             && (DeclarationKinds::VARIABLE | DeclarationKinds::CATCH_CLAUSE).contains(kinds)
         {
-            return Facts(Self::OF_VARIABLE);
+            return Facts(Self::FOR_VARIABLE);
         }
         let declarations = variable.symbol.declarations();
-        Facts(declarations.fold(0, |facts, it| facts | Self::of_declaration(it)))
+        Facts(declarations.fold(0, |facts, it| facts | Self::for_declaration(it)))
     }
 }
 

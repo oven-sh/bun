@@ -35,8 +35,8 @@ impl Rule for JsxMaxPropsPerLine {
             return;
         };
         let attributes = jsx.attrs();
-        let fits = |max: Option<usize>| max.is_none_or(|it| attributes.len() <= it);
-        if fits(self.single) && fits(self.multi) {
+        let is_within_limit = |max: Option<usize>| max.is_none_or(|it| attributes.len() <= it);
+        if is_within_limit(self.single) && is_within_limit(self.multi) {
             return;
         }
         let file = cx.file();

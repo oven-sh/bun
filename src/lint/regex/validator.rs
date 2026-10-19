@@ -49,7 +49,7 @@ pub struct Mode {
 
 impl Mode {
     /// `{ unicode: flags.includes("u"), unicodeSets: flags.includes("v") }`
-    pub fn of_flags(flags: &[u8]) -> Self {
+    pub fn from_flags(flags: &[u8]) -> Self {
         Mode {
             unicode: strings::contains_char(flags, b'u'),
             unicode_sets: strings::contains_char(flags, b'v'),
@@ -371,7 +371,7 @@ struct GroupName {
     start: u32,
     len: u32,
     /// Its range in the source.
-    written: (u32, u32),
+    name_range: (u32, u32),
 }
 
 /// The name in a `\k<name>`, and the range of the whole `\k<name>`.
@@ -379,7 +379,7 @@ struct GroupName {
 struct BackreferenceName {
     start: u32,
     len: u32,
-    written: (u32, u32),
+    reference_range: (u32, u32),
 }
 
 /// Above this many names, lookups use a map.
@@ -664,7 +664,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.handler.on_literal_enter(0);
         if self.eat(b'/') && self.eat_regexp_body()? && self.eat(b'/') {
             let flag_start = self.index;
-            let mode = Mode::of_flags(self.source.get(flag_start..).unwrap_or_default());
+            let mode = Mode::from_flags(self.source.get(flag_start..).unwrap_or_default());
             self.validate_flags(flag_start, end)?;
             self.validate_pattern(1, flag_start - 1, mode)?;
         } else if end == 0 {
@@ -1055,12 +1055,12 @@ impl<'s, 'h> Validator<'s, 'h> {
             .map(|it| it as u32)
     }
 
-    fn add_group_name(&mut self, written: (u32, u32)) {
+    fn add_group_name(&mut self, name_range: (u32, u32)) {
         let (start, len) = self.intern_last_str();
         self.group_names.push(GroupName {
             start,
             len,
-            written,
+            name_range,
         });
         let count = self.group_names.len();
         let newly_mapped = match count {
@@ -1096,22 +1096,22 @@ impl<'s, 'h> Validator<'s, 'h> {
         let inner = self
             .disjunctions
             .partition_point(|it| it.groups_before <= group);
-        let around = inner
+        let enclosing = inner
             .checked_sub(1)
             .and_then(|it| self.disjunctions.get(it));
-        !around.is_some_and(|it| group < it.groups_before_alternative)
+        !enclosing.is_some_and(|it| group < it.groups_before_alternative)
     }
 
-    /// oxc marks the first conflicting group named `last_str_value`, and the one at `written`.
+    /// oxc marks the first conflicting group named `last_str_value`, and the one at `name_range`.
     #[cold]
-    fn oxc_has_duplicate(&self, written: (u32, u32)) -> Oxc {
+    fn oxc_has_duplicate(&self, name_range: (u32, u32)) -> Oxc {
         let conflicts = |(i, group): &(usize, &GroupName)| {
             self.name(group.start, group.len) == self.last_str_value && self.is_in_scope(*i as u32)
         };
         let first = self.group_names.iter().enumerate().find(conflicts);
-        let (start, end) = first.map_or(written, |it| it.1.written);
+        let (start, end) = first.map_or(name_range, |it| it.1.name_range);
         Oxc {
-            also: Some(written),
+            also: Some(name_range),
             ..Oxc::new(oxc_text::DUPLICATED_NAMES, start as usize, end as usize)
         }
     }
@@ -1176,7 +1176,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         for i in 0..self.backreference_names.len() {
             let name = self.backreference_names[i];
             if !self.has_in_pattern(self.name(name.start, name.len)) {
-                let oxc = self.oxc_unknown_group(name.written);
+                let oxc = self.oxc_unknown_group(name.reference_range);
                 return self.raise_with("Invalid named capture referenced", Some(oxc));
             }
         }
@@ -1184,9 +1184,9 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(())
     }
 
-    /// `written` is the range of a `\k<name>`.
+    /// `reference_range` is the range of a `\k<name>`.
     #[cold]
-    fn oxc_unknown_group(&self, written: (u32, u32)) -> Oxc {
+    fn oxc_unknown_group(&self, reference_range: (u32, u32)) -> Oxc {
         let mut names: Vec<&[u8]> = Vec::new();
         for group in &self.group_names {
             let name = self.name(group.start, group.len);
@@ -1206,8 +1206,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             help,
             ..Oxc::new(
                 (oxc_text::NAMED_REFERENCE, ""),
-                written.0 as usize,
-                written.1 as usize,
+                reference_range.0 as usize,
+                reference_range.1 as usize,
             )
         }
     }
@@ -1643,12 +1643,12 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.index;
         if self.eat(b'?') {
             if self.eat_group_name()? {
-                let written = (start as u32 + 2, self.pos() - 1);
+                let name_range = (start as u32 + 2, self.pos() - 1);
                 if !self.has_in_scope(&self.last_str_value) {
-                    self.add_group_name(written);
+                    self.add_group_name(name_range);
                     return Ok(true);
                 }
-                let oxc = self.oxc_has_duplicate(written);
+                let oxc = self.oxc_has_duplicate(name_range);
                 return self.raise_with("Duplicate capture group name", Some(oxc));
             }
             self.rewind(start);
@@ -1691,12 +1691,12 @@ impl<'s, 'h> Validator<'s, 'h> {
         match number {
             0 => self.oxc_stops(self.index),
             _ if number <= self.num_capturing_parens => None,
-            _ => Some(self.oxc_has_no_such_group(self.index - 1, self.index + digits.len())),
+            _ => Some(self.oxc_unknown_group_number(self.index - 1, self.index + digits.len())),
         }
     }
 
     #[cold]
-    fn oxc_has_no_such_group(&self, start: usize, end: usize) -> Oxc {
+    fn oxc_unknown_group_number(&self, start: usize, end: usize) -> Oxc {
         let help = match self.num_capturing_parens {
             0 => Cow::Borrowed("There are no capturing groups defined in this pattern"),
             1 => Cow::Borrowed("This pattern only has 1 capturing group"),
@@ -1721,7 +1721,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() {
-                let oxc = self.oxc_has_no_such_group(start - 1, self.index);
+                let oxc = self.oxc_unknown_group_number(start - 1, self.index);
                 return self.raise_with("Invalid escape", Some(oxc));
             }
             self.rewind(start);
@@ -1822,7 +1822,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                 self.backreference_names.push(BackreferenceName {
                     start: name_start,
                     len,
-                    written: (start - 1, self.pos()),
+                    reference_range: (start - 1, self.pos()),
                 });
                 self.handler.on_backreference(
                     start - 1,

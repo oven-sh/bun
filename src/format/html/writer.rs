@@ -86,11 +86,11 @@ impl<'w, 'f> Writer<'w, 'f> {
         };
         // `SoftOrSpace` prints the first space, except where the line may be empty, because the `ir` printer drops a
         // space there. The remaining spaces are written as text.
-        let (mode, blanks) = match (mode, std::mem::take(&mut self.pending_spaces)) {
-            (LineMode::SoftOrSpace, blanks @ 1..) if self.empty_line != EmptyLine::No => {
-                (LineMode::Soft, blanks)
+        let (mode, extra_spaces) = match (mode, std::mem::take(&mut self.pending_spaces)) {
+            (LineMode::SoftOrSpace, extra_spaces @ 1..) if self.empty_line != EmptyLine::No => {
+                (LineMode::Soft, extra_spaces)
             }
-            (LineMode::SoftOrSpace, blanks @ 1..) => (mode, blanks - 1),
+            (LineMode::SoftOrSpace, extra_spaces @ 1..) => (mode, extra_spaces - 1),
             _ => (mode, 0),
         };
         match self.empty_line {
@@ -109,11 +109,11 @@ impl<'w, 'f> Writer<'w, 'f> {
             }
             empty_line => self.write_lines(mode, count, empty_line != EmptyLine::No),
         }
-        if blanks > 0 {
+        if extra_spaces > 0 {
             let condition = Condition::new(PrintMode::Flat);
             self.f
                 .write_element(FormatElement::Tag(Tag::StartConditionalContent(condition)));
-            for _ in 0..blanks {
+            for _ in 0..extra_spaces {
                 self.f.write_token(" ");
             }
             self.f
@@ -128,7 +128,7 @@ impl<'w, 'f> Writer<'w, 'f> {
 
     /// `is_line_empty` means the current line is empty, so the `ir` printer will skip the first line break.
     fn write_lines(&mut self, mode: LineMode, count: u32, is_line_empty: bool) {
-        let written_by_mode = if is_line_empty { 0 } else { 1 };
+        let breaks_printed_by_mode = if is_line_empty { 0 } else { 1 };
         if mode == LineMode::Hard && is_line_empty {
             // The first `Hard` only resets the pending indentation, so it isn't printed on the empty lines.
             self.f
@@ -144,7 +144,7 @@ impl<'w, 'f> Writer<'w, 'f> {
             self.f.write_element(FormatElement::Line(LineMode::Hard));
             self.write_lines(mode, count - 1, true);
         } else {
-            let with_empty_line = count > written_by_mode;
+            let with_empty_line = count > breaks_printed_by_mode;
             self.f
                 .write_element(FormatElement::Line(match (mode, with_empty_line) {
                     (mode, false) => mode,
@@ -505,9 +505,9 @@ impl<'w, 'f> Writer<'w, 'f> {
                 self.indent_level = attempt.indent_level;
             }
         }
-        let written = self.f.end_capture(attempt.slot);
-        if is_kept && written.len > 0 {
-            self.f.write_element(FormatElement::Interned(written));
+        let captured = self.f.end_capture(attempt.slot);
+        if is_kept && captured.len > 0 {
+            self.f.write_element(FormatElement::Interned(captured));
         }
         is_kept
     }
@@ -525,7 +525,7 @@ impl<'w, 'f> Writer<'w, 'f> {
         }
         self.empty_line = attempt.empty_line;
         self.indent_level = attempt.indent_level;
-        Some(self.f.end_capture(attempt.slot)).filter(|written| is_kept && written.len > 0)
+        Some(self.f.end_capture(attempt.slot)).filter(|captured| is_kept && captured.len > 0)
     }
 
     /// Writes any pending line breaks.

@@ -123,8 +123,8 @@ pub fn check<'a, R: Rule>(
         };
         if is_duplicate && let Some(key) = key_span(member) {
             // oxlint reports at the earlier member.
-            let place = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
-            cx.report(place, UNEXPECTED)
+            let report_span = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
+            cx.report(report_span, UNEXPECTED)
                 .hint("Only the last one counts.")
                 .labels_with(|labels| {
                     labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));

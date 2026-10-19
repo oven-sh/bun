@@ -118,12 +118,12 @@ impl<'t> Offsets<'t> {
 
     const STEP: usize = 1024;
 
-    /// Advances from `at`, which has `units` code units before it, to the first character start with at least `wanted`
-    /// before it.
-    fn forward(&self, (mut at, mut units): (usize, usize), wanted: usize) -> usize {
-        while units < wanted && at < self.text.len() {
+    /// Advances from `at`, which has `units` code units before it, to the first character start with at least
+    /// `target_units` before it.
+    fn forward(&self, (mut at, mut units): (usize, usize), target_units: usize) -> usize {
+        while units < target_units && at < self.text.len() {
             // Skip a run of ASCII in one step.
-            let most = (at + (wanted - units)).min(self.text.len());
+            let most = (at + (target_units - units)).min(self.text.len());
             let Some(ascii) = strings::first_non_ascii(&self.text[at..most]) else {
                 return most;
             };
@@ -163,14 +163,14 @@ impl<'t> Offsets<'t> {
         {
             let between = self.text.get(before.0..start).unwrap_or_default();
             let units_before_line = before.1 + strings::element_length_utf8_into_utf16(between);
-            let wanted = units_before_line + after_start;
-            let later = self.marks().partition_point(|it| it.1 <= wanted);
+            let target_units = units_before_line + after_start;
+            let later = self.marks().partition_point(|it| it.1 <= target_units);
             self.forward(
                 later
                     .checked_sub(1)
                     .map_or((start, units_before_line), |it| self.marks()[it])
                     .max((start, units_before_line)),
-                wanted,
+                target_units,
             )
         } else {
             self.forward((start, 0), after_start)

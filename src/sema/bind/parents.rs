@@ -61,9 +61,10 @@ fn needs_full_binder<S: Storage>(f: &FileIn<S>) -> bool {
 ///
 /// Fills in `expr_parent`, `stmt_parent`, `pat_parent`, `prop_owner`, `member_owner`, `param_fn`,
 /// `var_stmt`, `case_stmt`, `class_owner`, `enum_member_owner`, `type_query_operands` and the
-/// `owner` of each entry in `fns`. `class_scope`, `type_scope` and `type_param_scope` only have
-/// `REACHED` for each node that `bind` reaches. The few files that need the binder get the full
-/// result of `bind`.
+/// `owner` of each entry in `fns`. The operand of a `typeof` type always gets `Parent::File`, where
+/// `bind` gives it the enclosing function, namespace, class property or file. `class_scope`,
+/// `type_scope` and `type_param_scope` only have `REACHED` for each node that `bind` reaches. The few
+/// files that need the binder get the full result of `bind`.
 pub fn bind_for_format_in<'r>(
     f: &File,
     options: BindOptions,

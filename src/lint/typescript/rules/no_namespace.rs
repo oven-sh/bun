@@ -50,10 +50,10 @@ impl Rule for NoNamespace {
         // oxlint points at the keyword, which comes right before the name.
         let end = cx.file().end_of_token_before(name.span().start);
         let keyword = if cx.slice(Span::new(0, end)).ends_with(b"namespace") { "namespace" } else { "module" };
-        let place = match cx.language().is_oxlint {
+        let report_span = match cx.language().is_oxlint {
             true => Span::new(end.saturating_sub(keyword.len() as u32), end),
             false => stmt.span_without_export(),
         };
-        cx.report(place, MODULE_SYNTAX_IS_PREFERRED);
+        cx.report(report_span, MODULE_SYNTAX_IS_PREFERRED);
     }
 }

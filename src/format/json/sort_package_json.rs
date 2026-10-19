@@ -84,7 +84,7 @@ enum Over {
 /// How to handle the values of some of an object's keys.
 type Properties = &'static [(&'static str, Over)];
 
-const KEPT: Over = Over::Nothing;
+const AS_IS: Over = Over::Nothing;
 const SORTED: Over = Over::Keys(&[], &[]);
 
 /// A member of an object.
@@ -356,7 +356,7 @@ impl Plan {
             Over::EslintRules => npm::sort_eslint_rules(members),
             Over::PrettierConfig => {
                 npm::sort_prettier_config(members);
-                properties = npm::OVERRIDES_OF_PRETTIER;
+                properties = npm::PRETTIER_OVERRIDES;
             }
             Over::PnpmConfig => {
                 sort_keys(members, npm::PNPM_KEYS, context);
@@ -370,8 +370,8 @@ impl Plan {
             }
         }
         for member in members.iter() {
-            let of_key = properties.iter().find(|it| it.0.as_bytes() == &*member.key);
-            match of_key.map_or(inner, |it| it.1) {
+            let matching_property = properties.iter().find(|it| it.0.as_bytes() == &*member.key);
+            match matching_property.map_or(inner, |it| it.1) {
                 Over::Nothing => {}
                 over => pending.push((member.name + 1, over)),
             }

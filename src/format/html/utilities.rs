@@ -67,12 +67,12 @@ pub(crate) fn dedent_string(text: &[u8]) -> Cow<'_, [u8]> {
 pub(crate) fn html_trim_preserve_indentation(text: &[u8]) -> &[u8] {
     // `.replaceAll(/^[\t\f\r ]*\n/g, "")`: without the `m` flag, it removes one line at most.
     let text = text.trim_ascii_end();
-    let blanks = text
+    let whitespace_len = text
         .iter()
         .take_while(|byte| matches!(byte, b'\t' | 0x0C | b'\r' | b' '))
         .count();
-    match text.get(blanks) {
-        Some(b'\n') => &text[blanks + 1..],
+    match text.get(whitespace_len) {
+        Some(b'\n') => &text[whitespace_len + 1..],
         _ => text,
     }
 }

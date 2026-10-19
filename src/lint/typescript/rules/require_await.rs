@@ -8,7 +8,7 @@ use bun_lint::utils::ts_utils::{
     upper_case_first,
 };
 use bun_lint_eslint::rules::require_await::{
-    MISSING_AWAIT, REMOVE_ASYNC, State, mark_function_around, node_with_async_keyword,
+    MISSING_AWAIT, REMOVE_ASYNC, State, mark_enclosing_function, node_with_async_keyword,
 };
 
 /// Disallow async functions which do not return promises and have no `await` expression.
@@ -136,19 +136,19 @@ impl Rule for RequireAwait {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        mark_function_around(node.into(), cx);
+        mark_enclosing_function(node.into(), cx);
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if node.as_for_of().is_some_and(|(.., is_await)| is_await) {
-            mark_function_around(node.into(), cx);
+            mark_enclosing_function(node.into(), cx);
         }
     }
 
     #[inline]
     fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if node.var_kind() == VarKind::AwaitUsing {
-            mark_function_around(node.into(), cx);
+            mark_enclosing_function(node.into(), cx);
         }
     }
 

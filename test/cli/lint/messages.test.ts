@@ -19,8 +19,8 @@ async function bun(files: Record<string, string | Buffer>, args: string[]) {
   using dir = tempDir("bun-lint-messages", files);
   await using proc = spawn({ cmd: [bunExe(), ...args], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const shown = (text: string) => normalizeBunSnapshot(text, String(dir));
-  return { stdout: shown(stdout), stderr: shown(stderr), exitCode };
+  const normalize = (text: string) => normalizeBunSnapshot(text, String(dir));
+  return { stdout: normalize(stdout), stderr: normalize(stderr), exitCode };
 }
 
 describe.concurrent("bun lint", () => {

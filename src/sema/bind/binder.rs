@@ -237,7 +237,7 @@ enum InstanceState {
 /// The state of one top-level `Binder::module_instance_state` query.
 struct InstanceStates {
     /// Indexed by `ModuleId`.
-    of: Vec<InstanceState>,
+    by_module: Vec<InstanceState>,
     /// The modules whose state this query computed.
     answered: Vec<ModuleId>,
     /// The query reached a module that was `InProgress`.
@@ -919,7 +919,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// Returns the `module "m" { }` or `global { }` at the top level of a script, if `scope` is its
     /// body.
-    fn ambient_module_around(&self, scope: ScopeId) -> Option<ModuleId> {
+    fn enclosing_ambient_module(&self, scope: ScopeId) -> Option<ModuleId> {
         let s = &self.b.scopes[scope.idx()];
         match s.kind {
             ScopeKind::Module(m)
@@ -940,7 +940,7 @@ impl<'f, 's> Binder<'f, 's> {
         if matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File) {
             self.specifier(spec);
         } else if spec.is_some()
-            && let Some(m) = self.ambient_module_around(self.scope)
+            && let Some(m) = self.enclosing_ambient_module(self.scope)
             && (self.f[m].flags.contains(Flags::AMBIENT) || self.f.kind == FileKind::Declaration)
         {
             self.b.ambient_specifiers.push(spec);
@@ -1067,8 +1067,8 @@ impl<'f, 's> Binder<'f, 's> {
         let mut at = e;
         let mut links = 0;
         let answer = loop {
-            let written = self.chain_answers.borrow().get(at.idx()).copied();
-            if let Some(entry) = written
+            let cached_entry = self.chain_answers.borrow().get(at.idx()).copied();
+            if let Some(entry) = cached_entry
                 && entry & is_known != 0
             {
                 break entry & is_yes != 0;
@@ -1595,7 +1595,7 @@ impl<'f, 's> Binder<'f, 's> {
         let container = self.b.container_scope(self.scope);
         if let ScopeKind::Fn(f) = self.b.scopes[container.idx()].kind {
             if let NodeData::Prop(method) = self.f.data(self.f.node(f)) {
-                self.symbol_of_literal_around(method);
+                self.symbol_of_enclosing_literal(method);
             } else if matches!(self.f[f].kind, FnKind::Expr | FnKind::Arrow)
                 && self.b.fn_symbol[f.idx()].is_none()
             {
@@ -1642,8 +1642,10 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `getInitializerSymbol`
     fn initializer_symbol(&mut self, symbol: SymbolId) -> Option<SymbolId> {
-        let of = &self.b.symbols[symbol.idx()];
-        let declaration = *of.decls.get(of.value_declaration as usize)?;
+        let symbol_data = &self.b.symbols[symbol.idx()];
+        let declaration = *symbol_data
+            .decls
+            .get(symbol_data.value_declaration as usize)?;
         match declaration {
             // `IsFunctionDeclaration`, `IsClassDeclaration`
             Decl::Fn(f) if matches!(self.b.fns[f.idx()].owner, FnOwner::Stmt(_)) => Some(symbol),
@@ -1736,19 +1738,19 @@ impl<'f, 's> Binder<'f, 's> {
     /// nor exports.
     fn container_of_expando(&self, e: ExprId, scope: ScopeId) -> Option<ScopeId> {
         let (f, b) = (self.f, &self.b);
-        let of_function = |func: FnId| func.is_some().then(|| b.fns[func.idx()].scope);
+        let scope_of_function = |func: FnId| func.is_some().then(|| b.fns[func.idx()].scope);
         let mut parent = b.parent_of_expr(e);
         loop {
             parent = match parent {
                 Parent::Expr(outer) if outer.is_some() => b.parent_of_expr(outer),
                 Parent::Prop(_) | Parent::PropKey(..) => return None,
-                Parent::MethodKey(p) => return of_function(f.function_of(f.node(p))),
+                Parent::MethodKey(p) => return scope_of_function(f.function_of(f.node(p))),
                 Parent::ParamDecorator(p) => {
-                    return of_function(b.param_fn[p.idx()]);
+                    return scope_of_function(b.param_fn[p.idx()]);
                 }
                 Parent::MemberKey(m) | Parent::MemberDecorator(m) => {
                     return match b.member_owner[m.idx()] {
-                        _ if f[m].func.is_some() => of_function(f[m].func),
+                        _ if f[m].func.is_some() => scope_of_function(f[m].func),
                         MemberOwner::Class(c) => Some(b.class_scope[c.idx()]),
                         MemberOwner::Interface(i) => Some(b.interface_scope[i.idx()]),
                         MemberOwner::TypeLiteral(_) | MemberOwner::None => None,
@@ -2065,7 +2067,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// The scope of member `m`'s name and initializer. `members` only creates a
     /// `ScopeKind::PropertyDeclaration` around expressions and doesn't store it.
     fn scope_of_property_declaration(&mut self, m: MemberId) -> ScopeId {
-        let (around, owner) = (self.b.member_scope[m.idx()], self.b.member_owner[m.idx()]);
+        let (enclosing_scope, owner) = (self.b.member_scope[m.idx()], self.b.member_owner[m.idx()]);
         let constructor = match owner {
             MemberOwner::Class(class)
                 if self.f[m].kind == MemberKind::Property && !self.is_static(m, owner) =>
@@ -2074,10 +2076,10 @@ impl<'f, 's> Binder<'f, 's> {
             }
             _ => FnId::NONE,
         };
-        if constructor.is_none() || around.is_none() {
-            return around;
+        if constructor.is_none() || enclosing_scope.is_none() {
+            return enclosing_scope;
         }
-        let current = std::mem::replace(&mut self.scope, around);
+        let current = std::mem::replace(&mut self.scope, enclosing_scope);
         let scope = self.push_scope(
             ScopeKind::PropertyDeclaration(m, constructor),
             SymbolId::NONE,
@@ -2115,8 +2117,9 @@ impl<'f, 's> Binder<'f, 's> {
             } else if self.b.symbols[symbol.idx()].flags & (SymFlags::VALUE | SymFlags::ALIAS)
                 == SymFlags::ALIAS
             {
-                // Not the `ExportSymbol` of a local that a conflicting declaration has replaced with
-                // its own symbol, which need not be a value either.
+                // This tests for `ALIAS` without `VALUE`, not just for a missing `VALUE`. A conflicting
+                // declaration overwrites a local's `ExportSymbol` with its own symbol, which may be
+                // neither a value nor an alias.
                 self.b.alias_idents.push((expr, scope));
             }
         }
@@ -2175,13 +2178,13 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
             self.b.tables.push((start as u32, table.len() as u32));
         }
-        let places = large_table_entries(&self.b.tables, &self.b.entries);
-        self.b.large_tables.extend(places);
+        let large_entries = large_table_entries(&self.b.tables, &self.b.entries);
+        self.b.large_tables.extend(large_entries);
         self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Write out the labels' edges.
-        let kept = self.label_edges.iter().filter(|it| it.node.is_some());
-        let kept = kept.map(|it| it.edges.len()).sum();
-        self.b.flow_edges.reserve_exact(kept);
+        let used_labels = self.label_edges.iter().filter(|it| it.node.is_some());
+        let edge_count = used_labels.map(|it| it.edges.len()).sum();
+        self.b.flow_edges.reserve_exact(edge_count);
         for node in &mut self.b.flow {
             let (Flow::Label { start, len } | Flow::Loop { start, len }) = node else {
                 continue;
@@ -2275,7 +2278,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.stmt_parent[id.idx()] = parent.into();
         self.b.stmt_scope[id.idx()] = self.scope;
         self.b.stmt_flow[id.idx()] = self.flow;
-        let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
+        let outer_is_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Stmt(id);
         let counted = self.yields.len();
         // `checkDecorators` never reaches the decorators of a statement that isn't a class. A
@@ -2345,9 +2348,9 @@ impl<'f, 's> Binder<'f, 's> {
                 for t in self.f.ids(i.extends) {
                     self.ty(t);
                 }
-                let around = std::mem::replace(&mut self.is_unchecked, true);
+                let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
                 self.tys(i.other_heritage);
-                self.is_unchecked = around;
+                self.is_unchecked = was_unchecked;
                 self.members(i.members, MemberOwner::Interface(interface));
                 self.pop_scope();
                 self.b.interface_contains_this[interface.idx()] = self.seen_this;
@@ -2669,7 +2672,7 @@ impl<'f, 's> Binder<'f, 's> {
         ) {
             self.yields.truncate(counted);
         }
-        self.is_reached = around_reached;
+        self.is_reached = outer_is_reached;
     }
 
     /// `bindBreakOrContinueStatement`
@@ -2927,7 +2930,7 @@ impl<'f, 's> Binder<'f, 's> {
         let is_augmentation = if is_at_top {
             self.f.has_module_syntax
         } else {
-            self.ambient_module_around(self.scope).is_some()
+            self.enclosing_ambient_module(self.scope).is_some()
         };
         // `bindModuleDeclaration`: a module that is declared here is a value regardless of its
         // contents.
@@ -2944,7 +2947,7 @@ impl<'f, 's> Binder<'f, 's> {
         let is_global = is_in_file && !self.f.has_module_syntax;
         let symbol = match decl.name {
             ModuleName::String(name)
-                if is_in_file || self.ambient_module_around(container).is_some() =>
+                if is_in_file || self.enclosing_ambient_module(container).is_some() =>
             {
                 // `collectModuleReferences`: a module augmentation must resolve its module, like an
                 // import. At the top level of a script it declares the module itself.
@@ -3051,24 +3054,24 @@ impl<'f, 's> Binder<'f, 's> {
     /// results depend on where the query started.
     fn module_instance_state(&mut self, m: ModuleId) -> ModuleInstanceState {
         let mut states = InstanceStates {
-            of: std::mem::take(&mut self.instance_states),
+            by_module: std::mem::take(&mut self.instance_states),
             answered: Vec::new(),
             reached_in_progress: false,
             ran_out_of_stack: false,
         };
         states
-            .of
+            .by_module
             .resize(self.f.modules.len(), InstanceState::Unknown);
         let mut outer = std::mem::take(&mut self.statement_lists);
         let state = self.instance_state_of_module(m, &mut outer, &mut states);
         self.statement_lists = outer;
         if states.reached_in_progress {
             for &answered in &states.answered {
-                states.of[answered.idx()] = InstanceState::Unknown;
+                states.by_module[answered.idx()] = InstanceState::Unknown;
             }
         }
         self.b.ran_out_of_stack |= states.ran_out_of_stack;
-        self.instance_states = states.of;
+        self.instance_states = states.by_module;
         state
     }
 
@@ -3085,7 +3088,7 @@ impl<'f, 's> Binder<'f, 's> {
         if !module.has_body {
             return ModuleInstanceState::Instantiated;
         }
-        match visited.of[m.idx()] {
+        match visited.by_module[m.idx()] {
             InstanceState::Known(state) => return state,
             InstanceState::InProgress => {
                 visited.reached_in_progress = true;
@@ -3097,7 +3100,7 @@ impl<'f, 's> Binder<'f, 's> {
             visited.ran_out_of_stack = true;
             return ModuleInstanceState::Instantiated;
         }
-        visited.of[m.idx()] = InstanceState::InProgress;
+        visited.by_module[m.idx()] = InstanceState::InProgress;
         outer.push(module.body);
         let mut state = ModuleInstanceState::NonInstantiated;
         for s in self.f.ids(module.body) {
@@ -3111,7 +3114,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         outer.pop();
-        visited.of[m.idx()] = InstanceState::Known(state);
+        visited.by_module[m.idx()] = InstanceState::Known(state);
         visited.answered.push(m);
         state
     }
@@ -3180,12 +3183,12 @@ impl<'f, 's> Binder<'f, 's> {
                 continue;
             }
             let mut found: Option<ModuleInstanceState> = None;
-            let mut around = outer[..=depth].to_vec();
+            let mut enclosing_lists = outer[..=depth].to_vec();
             for s in self.f.ids(list) {
                 if !self.stmt_has_name(s, name) {
                     continue;
                 }
-                let state = self.instance_state_of_statement(s, &mut around, visited);
+                let state = self.instance_state_of_statement(s, &mut enclosing_lists, visited);
                 if found.is_none_or(|known| state > known) {
                     found = Some(state);
                 }
@@ -3239,7 +3242,7 @@ impl<'f, 's> Binder<'f, 's> {
         ) {
             flags |= SymFlags::CONST;
         }
-        let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
+        let outer_is_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         // `bindVariableDeclarationFlow`: in source order.
         self.pat(decl.pat, PatParent::Var(d), flags);
         if decl.ty.is_some() {
@@ -3251,7 +3254,7 @@ impl<'f, 's> Binder<'f, 's> {
         if decl.init.is_some() || always_assigned {
             self.initialized(decl.pat, Some(d));
         }
-        self.is_reached = around_reached;
+        self.is_reached = outer_is_reached;
     }
 
     /// `bindInitializedVariableFlow`
@@ -3363,11 +3366,11 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         self.b.pat_parent[name.idx()] = element;
-        let around = self.is_unchecked;
+        let was_unchecked = self.is_unchecked;
         self.is_unchecked |= matches!(self.f[name].kind, PatKind::Ident(_))
             && self.b.required_by(self.f, name).is_some();
         self.conditional_default(default, parent);
-        self.is_unchecked = around;
+        self.is_unchecked = was_unchecked;
     }
 
     /// `bindInitializer`: a default may or may not be evaluated.
@@ -3792,9 +3795,9 @@ impl<'f, 's> Binder<'f, 's> {
         for t in self.f.ids(c.implements) {
             self.ty(t);
         }
-        let around = std::mem::replace(&mut self.is_unchecked, true);
+        let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
         self.tys(c.other_implements);
-        self.is_unchecked = around;
+        self.is_unchecked = was_unchecked;
         self.members(c.members, MemberOwner::Class(id));
         self.pop_scope();
         if has_own_name {
@@ -3804,15 +3807,20 @@ impl<'f, 's> Binder<'f, 's> {
         self.containing_classes.pop();
     }
 
-    /// Binds the decorators among `modifiers`, which are the modifiers of `of`. `of` is `class`,
-    /// one of its members or a parameter of a member.
-    fn decorators(&mut self, modifiers: Span<ModifierId>, class: ClassId, of: DecoratorOwner) {
+    /// Binds the decorators among `modifiers`, which are the modifiers of `decorated`. That's
+    /// `class`, one of its members or a parameter of a member.
+    fn decorators(
+        &mut self,
+        modifiers: Span<ModifierId>,
+        class: ClassId,
+        decorated: DecoratorOwner,
+    ) {
         let owner = self.b.class_owner[class.idx()];
-        self.is_in_class_decorator = matches!(of, DecoratorOwner::Class(_));
+        self.is_in_class_decorator = matches!(decorated, DecoratorOwner::Class(_));
         for modifier in modifiers.iter() {
             if let ModifierKind::Decorator(e) = self.f[modifier].kind {
-                self.expr(e, of.into());
-                if !self.can_be_decorated(of, class, owner) {
+                self.expr(e, decorated.into());
+                if !self.can_be_decorated(decorated, class, owner) {
                     self.b.rejected_decorators.push(e);
                 }
             }
@@ -3820,17 +3828,17 @@ impl<'f, 's> Binder<'f, 's> {
         self.is_in_class_decorator = false;
     }
 
-    /// Binds the decorators of `class`'s member `m`, or of its parameter `of`. `Resolve`,
-    /// `KindDecorator`: the search continues at the class, which it reaches from the member.
+    /// Binds the decorators of `decorated`, which is `class`'s member `m` or one of its parameters.
+    /// `Resolve`, `KindDecorator`: the search continues at the class, which it reaches from the member.
     /// `requiresScopeChangeWorker` only inspects a member's name.
     fn decorators_in_member(
         &mut self,
         modifiers: Span<ModifierId>,
         class: ClassId,
         m: MemberId,
-        of: DecoratorOwner,
+        decorated: DecoratorOwner,
     ) {
-        let around = std::mem::replace(&mut self.scope, self.b.class_scope[class.idx()]);
+        let outer_scope = std::mem::replace(&mut self.scope, self.b.class_scope[class.idx()]);
         let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
         if self.is_static(m, MemberOwner::Class(class)) {
             self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
@@ -3838,12 +3846,12 @@ impl<'f, 's> Binder<'f, 's> {
         // `forEachYieldExpression` visits only the computed name of a method, an accessor or a
         // constructor.
         let counted = self.yields.len();
-        self.decorators(modifiers, class, of);
+        self.decorators(modifiers, class, decorated);
         if self.f[m].func.is_some() {
             self.yields.truncate(counted);
         }
         self.scope_change_of = scope_change_of;
-        self.scope = around;
+        self.scope = outer_scope;
     }
 
     /// Binds the decorators among `modifiers`, which belong to a parameter of `func`. `func` isn't
@@ -3862,7 +3870,7 @@ impl<'f, 's> Binder<'f, 's> {
             FnKind::Method => matches!(self.b.fns[func.idx()].owner, FnOwner::Expr(_)),
             _ => false,
         };
-        let around = self.scope;
+        let outer_scope = self.scope;
         if is_class_element {
             self.scope = self.b.scopes[function_scope.idx()].parent;
         }
@@ -3875,16 +3883,21 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         self.yields.truncate(counted);
-        self.scope = around;
+        self.scope = outer_scope;
     }
 
     /// `NodeCanBeDecorated`
-    fn can_be_decorated(&self, of: DecoratorOwner, class: ClassId, owner: ClassOwner) -> bool {
+    fn can_be_decorated(
+        &self,
+        decorated: DecoratorOwner,
+        class: ClassId,
+        owner: ClassOwner,
+    ) -> bool {
         let legacy = self.f.legacy_decorators;
         let is_declaration = matches!(owner, ClassOwner::Stmt(_));
         let class_allows_decorators = !legacy || is_declaration;
         let has_body = |func: FnId| func.is_some() && !matches!(self.f[func].body, FnBody::None);
-        match of {
+        match decorated {
             DecoratorOwner::Class(_) => class_allows_decorators,
             DecoratorOwner::Member(m) => {
                 let member = &self.f[m];
@@ -4064,7 +4077,7 @@ impl<'f, 's> Binder<'f, 's> {
             if let PropKey::Computed(key) = member.key {
                 // `checkComputedPropertyName`: `[P in K]` outside a mapped type is its own error
                 // and isn't checked. `checkIndexConstraints` still checks it for a class member.
-                let around = self.is_unchecked;
+                let was_unchecked = self.is_unchecked;
                 self.is_unchecked |=
                     matches!(self.f[key].kind, ExprKind::Binary { op: BinOp::In, .. })
                         && !is_parenthesized(self.f, key)
@@ -4093,17 +4106,17 @@ impl<'f, 's> Binder<'f, 's> {
                 if is_of_class_or_interface {
                     self.pop_scope();
                 }
-                self.is_unchecked = around;
+                self.is_unchecked = was_unchecked;
             }
-            let of_class = if matches!(owner, MemberOwner::Class(_)) {
+            let class_member = if matches!(owner, MemberOwner::Class(_)) {
                 m
             } else {
                 MemberId::NONE
             };
             // `getControlFlowContainer`: a member of a type literal is in the class property whose
             // type the literal is part of.
-            let container = if of_class.is_some() {
-                of_class
+            let container = if class_member.is_some() {
+                class_member
             } else {
                 self.cur_member
             };
@@ -4173,28 +4186,28 @@ impl<'f, 's> Binder<'f, 's> {
     /// `IsObjectLiteralOrClassExpressionMethodOrAccessor`, where outer narrowings apply. Returns
     /// the state that `leave_function_head` restores.
     fn enter_function_head(&mut self, is_in_expression: bool) -> (bool, FlowId, FlowId) {
-        let around = (
+        let outer_state = (
             std::mem::replace(&mut self.seen_this, false),
             self.flow,
             self.exception_target,
         );
         self.flow = self.new_flow(Flow::Start {
             outer: if is_in_expression {
-                around.1
+                outer_state.1
             } else {
                 FlowId::NONE
             },
             arrow: false,
         });
         self.exception_target = FlowId::NONE;
-        around
+        outer_state
     }
 
     /// Ends the head. The function is bound next.
-    fn leave_function_head(&mut self, around: (bool, FlowId, FlowId)) {
+    fn leave_function_head(&mut self, outer_state: (bool, FlowId, FlowId)) {
         self.flow_after_name = self.flow;
-        self.this_in_name = std::mem::replace(&mut self.seen_this, around.0);
-        (self.flow, self.exception_target) = (around.1, around.2);
+        self.this_in_name = std::mem::replace(&mut self.seen_this, outer_state.0);
+        (self.flow, self.exception_target) = (outer_state.1, outer_state.2);
     }
 
     // ───────────────────────────── types ─────────────────────────────
@@ -4244,13 +4257,13 @@ impl<'f, 's> Binder<'f, 's> {
         if self.is_out_of_stack() {
             return;
         }
-        let around = (self.by_alias, self.scope_change_of);
+        let outer_state = (self.by_alias, self.scope_change_of);
         let counted = self.yields.len();
         // A chain of type operators (`T[][][]..`) doesn't recurse.
         while let Some(operand) = self.ty_or_operand(id) {
             id = operand;
         }
-        (self.by_alias, self.scope_change_of) = around;
+        (self.by_alias, self.scope_change_of) = outer_state;
         // `forEachYieldExpression`: `IsPartOfTypeNode`
         self.yields.truncate(counted);
     }
@@ -4472,9 +4485,9 @@ impl<'f, 's> Binder<'f, 's> {
                     self.ty(mapped.ty);
                 }
                 if !mapped.members.is_empty() {
-                    let around = std::mem::replace(&mut self.is_unchecked, true);
+                    let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
                     self.members(mapped.members, MemberOwner::TypeLiteral(id));
-                    self.is_unchecked = around;
+                    self.is_unchecked = was_unchecked;
                 }
                 self.pop_scope();
             }
@@ -4549,9 +4562,9 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `expr` for an expression that `checkSourceFile` never reaches.
     fn unchecked_expr(&mut self, id: ExprId, parent: Parent) {
-        let around = std::mem::replace(&mut self.is_unchecked, true);
+        let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
         self.expr(id, parent);
-        self.is_unchecked = around;
+        self.is_unchecked = was_unchecked;
     }
 
     /// The first part of `expr`, which doesn't depend on flow or on the enclosing expression.
@@ -4583,7 +4596,7 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         self.enter_expr(id, parent);
-        let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
+        let outer_is_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Expr(id);
         // Only `!`, `&&`, `||`, `??` and expressions that leave the value unchanged pass the
         // condition targets on to their operands.
@@ -4606,8 +4619,8 @@ impl<'f, 's> Binder<'f, 's> {
         }
         // `bindChildren`: only the parts of a pattern propagate it. Parentheses, which the HIR
         // doesn't preserve, don't.
-        let around_in_pattern = std::mem::replace(&mut self.in_assignment_pattern, false);
-        let in_pattern = around_in_pattern && !is_parenthesized(self.f, id);
+        let outer_in_pattern = std::mem::replace(&mut self.in_assignment_pattern, false);
+        let in_pattern = outer_in_pattern && !is_parenthesized(self.f, id);
         // `requiresScopeChangeWorker`: `??` and an optional chain determine the result for
         // everything inside them, and `f<T>` counts as a type.
         let scope_change_of = self.scope_change_of;
@@ -4725,10 +4738,10 @@ impl<'f, 's> Binder<'f, 's> {
                 } else {
                     self.expr(call.callee, me);
                     // `resolveCall` neither uses nor checks the type arguments of a `super` call.
-                    let around = self.is_unchecked;
+                    let was_unchecked = self.is_unchecked;
                     self.is_unchecked |= matches!(self.f[call.callee].kind, ExprKind::Super);
                     self.tys(self.f.list_at(call.type_args));
-                    self.is_unchecked = around;
+                    self.is_unchecked = was_unchecked;
                     self.exprs(call.args, me);
                 }
                 if let ExprKind::Dot { obj, name, .. } = self.f[call.callee].kind
@@ -4905,9 +4918,9 @@ impl<'f, 's> Binder<'f, 's> {
             }
             ExprKind::ImportCall { args } => {
                 // `checkImportCallExpression` never checks them.
-                let around = std::mem::replace(&mut self.is_unchecked, true);
+                let was_unchecked = std::mem::replace(&mut self.is_unchecked, true);
                 self.tys(self.f.type_args_of_import_call(args));
-                self.is_unchecked = around;
+                self.is_unchecked = was_unchecked;
                 self.exprs(args, me);
             }
             ExprKind::Yield { value, .. } => {
@@ -4948,9 +4961,9 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         (self.true_target, self.false_target) = targets;
-        self.in_assignment_pattern = around_in_pattern;
+        self.in_assignment_pattern = outer_in_pattern;
         self.scope_change_of = scope_change_of;
-        self.is_reached = around_reached;
+        self.is_reached = outer_is_reached;
     }
 
     /// `addLateBoundAssignmentDeclarationToSymbol`
@@ -4969,7 +4982,10 @@ impl<'f, 's> Binder<'f, 's> {
     fn get_this_class_and_symbol_table(&mut self) -> Option<(SymbolId, TableId)> {
         let (class, is_static) = if self.this_property.is_some() {
             let is_static = self.f.is_static(self.f.node(self.this_property));
-            (self.symbol_of_literal_around(self.this_property), is_static)
+            (
+                self.symbol_of_enclosing_literal(self.this_property),
+                is_static,
+            )
         } else if self.this_member.is_some()
             && let MemberOwner::Class(c) = self.b.member_owner[self.this_member.idx()]
         {
@@ -4990,7 +5006,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `node.Symbol()` of the object literal whose member `p` is being bound. A literal without a
     /// symbol gets one here, with the members declared so far, which are those up to `p`.
-    fn symbol_of_literal_around(&mut self, p: PropId) -> SymbolId {
+    fn symbol_of_enclosing_literal(&mut self, p: PropId) -> SymbolId {
         let literal = self.b.prop_owner[p.idx()];
         if self.b.expr_symbol[literal.idx()].is_none() {
             let container = self.bind_object_literal(literal);
@@ -5337,12 +5353,12 @@ impl<'f, 's> Binder<'f, 's> {
 
     fn props(&mut self, props: Span<PropId>, owner: ExprId) {
         // The literal only gets symbols if a name occurs twice or is computed, or if
-        // `symbol_of_literal_around` requests them. Otherwise `PropSource::Literal` serves as each
+        // `symbol_of_enclosing_literal` requests them. Otherwise `PropSource::Literal` serves as each
         // member's symbol.
         let names: SmallVec<[PropKey; 16]> = props.iter().map(|p| self.f[p].key).collect();
-        let written = names.iter().filter_map(|key| key.name());
+        let plain_names = names.iter().filter_map(|key| key.name());
         if names.iter().any(|key| matches!(key, PropKey::Computed(_)))
-            || !number_repeated(&written.collect::<SmallVec<[Atom; 16]>>()).is_empty()
+            || !number_repeated(&plain_names.collect::<SmallVec<[Atom; 16]>>()).is_empty()
         {
             self.bind_object_literal(owner);
         }

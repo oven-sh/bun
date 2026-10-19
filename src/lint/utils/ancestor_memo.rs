@@ -43,12 +43,12 @@ impl<'a> Far<'a> {
         index: u32,
         up: &dyn Fn(Node<'a>) -> Node<'a>,
     ) {
-        let mut passed = node;
+        let mut current = node;
         for step in 0..steps {
             if step >= PLAIN_STEPS {
-                self.known.insert(passed, index);
+                self.known.insert(current, index);
             }
-            passed = up(passed);
+            current = up(current);
         }
     }
 }

@@ -142,8 +142,8 @@ impl OnlyThrowError {
         }
         if ty.has_flags(TypeFlags::UNDEFINED) {
             // tsgolint points at the statement.
-            let place = if is_oxlint { statement.span() } else { node.span() };
-            cx.report(place, UNDEF).claims(node);
+            let report_span = if is_oxlint { statement.span() } else { node.span() };
+            cx.report(report_span, UNDEF).claims(node);
             return;
         }
         if self.allow_throwing_any && is_type_any_type(ty) {

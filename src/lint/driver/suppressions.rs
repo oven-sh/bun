@@ -162,14 +162,14 @@ impl Suppressions {
                 };
                 if *count <= tolerated {
                     // `suppressMessagesByRule`
-                    let (mut hidden, shown): (Vec<_>, Vec<_>) =
+                    let (mut hidden, remaining): (Vec<_>, Vec<_>) =
                         std::mem::take(&mut result.messages)
                             .into_iter()
                             .partition(|it| rule_of(it, is_oxlint).as_ref() == Some(rule));
                     for message in &mut hidden {
                         message.suppressions = vec![Suppression::file()];
                     }
-                    result.messages = shown;
+                    result.messages = remaining;
                     result.suppressed.append(&mut hidden);
                     was_suppressed = true;
                 }

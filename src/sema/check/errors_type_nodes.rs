@@ -276,7 +276,7 @@ impl Checker<'_, '_> {
             let own = self.type_from_node(file, hir[p].constraint);
             if !self.is_identical(own, expected) {
                 for p in declarations {
-                    let name = self.place_of_token(file, hir[p].pos);
+                    let name = self.span_of_token(file, hir[p].pos);
                     self.error_at(name, 2838, &[Arg::Atom(hir[p].name)]);
                 }
                 return;
@@ -306,7 +306,7 @@ impl Checker<'_, '_> {
                 TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_)
             ) || hir[inner].pos as usize != operand
             {
-                self.grammar_error_at(self.place_of_token(file, hir[node].pos), 1354, &[]);
+                self.grammar_error_at(self.span_of_token(file, hir[node].pos), 1354, &[]);
             }
             return;
         }
@@ -321,7 +321,7 @@ impl Checker<'_, '_> {
                     (None, 1334)
                 // `NodeFlagsConst` is one of the two bits of `NodeFlagsAwaitUsing`.
                 } else if !matches!(hir[d].kind, VarKind::Const | VarKind::AwaitUsing) {
-                    (Some(self.place_of_token(file, hir[hir[d].pat].pos)), 1332)
+                    (Some(self.span_of_token(file, hir[hir[d].pat].pos)), 1332)
                 } else {
                     return;
                 }
@@ -373,7 +373,7 @@ impl Checker<'_, '_> {
             _ => false,
         };
         if !is_provided {
-            self.error_at(self.place_of_token(file, start), 2795, &[]);
+            self.error_at(self.span_of_token(file, start), 2795, &[]);
         }
     }
 
@@ -426,14 +426,14 @@ impl Checker<'_, '_> {
         }
         let name = hir[param.pat].pos;
         if is_literal || self.is_generic(keys) {
-            self.error_at(self.place_of_token(file, name), 1337, &[]);
+            self.error_at(self.span_of_token(file, name), 1337, &[]);
         } else if !self
             .parts(keys)
             .iter()
             .all(|&t| self.is_valid_index_key_type(t))
             || keys.is_never()
         {
-            self.error_at(self.place_of_token(file, name), 1268, &[]);
+            self.error_at(self.span_of_token(file, name), 1268, &[]);
         } else if member.ty.is_none() {
             self.error_at((file, member.start, member.loc.end), 1021, &[]);
         }
@@ -461,7 +461,7 @@ impl Checker<'_, '_> {
         }
         match member.kind {
             MemberKind::Property => {
-                self.error_at(self.place_of_token(file, member.name_pos), 18016, &[]);
+                self.error_at(self.span_of_token(file, member.name_pos), 18016, &[]);
             }
             // `GetErrorRangeForNode` has no case for a method signature, so the error starts at the first modifier.
             MemberKind::Method if !self.is_signature_inside_a_class(file, m) => {
@@ -487,7 +487,7 @@ impl Checker<'_, '_> {
             .grammar_error_in_modifiers(file, interface.stmt)
             .is_none()
         {
-            self.error_at(self.place_of_token(file, keyword as u32), 1176, &[]);
+            self.error_at(self.span_of_token(file, keyword as u32), 1176, &[]);
         }
     }
 

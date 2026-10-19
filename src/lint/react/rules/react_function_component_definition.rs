@@ -179,10 +179,10 @@ fn component_parent_kind(func: Func<'_>) -> Option<Node<'_>> {
             return Some(parent);
         };
         // `a, b, c` is parsed as `(a, b), c`.
-        let goes_on = !sequence.is_parenthesized()
+        let sequence_continues = !sequence.is_parenthesized()
             && matches!(sequence.parent(), Node::Expr(outer)
                 if outer.binary_op() == Some(BinOp::Comma) && outer.left() == Some(sequence));
-        if goes_on || sequence.right().map(get_inner_expression) != Some(inner) {
+        if sequence_continues || sequence.right().map(get_inner_expression) != Some(inner) {
             return None;
         }
         inner = sequence;
@@ -228,12 +228,12 @@ fn can_fix(func: Func, declaration: Option<VarDecl>, expected: FunctionStyle, is
     {
         return false;
     }
-    let is_alone = |it: VarDecl| {
+    let is_only_declarator = |it: VarDecl| {
         matches!(it.parent(), Node::Stmt(statement)
             if matches!(statement.kind(), StmtKind::Var(all) if all.len() == 1))
     };
     let type_params = func.type_params();
-    (!is_oxlint || declaration.is_none_or(is_alone))
+    (!is_oxlint || declaration.is_none_or(is_only_declarator))
         && !matches!(func.owner(), Node::Stmt(statement) if statement.is_default_export())
         && !(func.kind() == FnKind::Expr && func.name().is_some())
         && !(expected == FunctionStyle::Declaration && declaration.is_some_and(|it| it.ty().is_some()))

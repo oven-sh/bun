@@ -17,7 +17,7 @@
 //!   - `declared` is in a table, and no computation in progress will overwrite it. If a type node is in progress
 //!     several times, the outermost evaluation stores last (`is_type_node_settled`).
 //!   - The result is in `Program::instantiations`. `instantiate_cached` only stores a result there if it was computed
-//!     without a cycle, a limit, or a refusal. Also, no instantiation with `mapper` is in progress, because the outer
+//!     without a cycle, a limit, or a rejection. Also, no instantiation with `mapper` is in progress, because the outer
 //!     of two instantiations with the same key stores last (`is_mapper_idle`).
 //! - A part derived from other parts is cached only if all of them are. See `TypeLinks::uncached_derivations`.
 //! - A part whose derivation runs an inference follows the rules for skipping an inference walk. The derivation must
@@ -213,7 +213,7 @@ pub(super) struct TypeLinks {
     /// `uniqueLiteralFilledInstantiation`, indexed by `FixedMapper`. Each cell is a `Packed` type, or 0 if it's empty.
     with_fixed_mappers: Vec<[u32; 3]>,
     /// Number of `forget_restrictive_instantiations` calls.
-    times_forgotten: u32,
+    restrictive_resets: u32,
     /// Number of times a part was derived but not cached. A part derived from other parts isn't cached if this changes
     /// during its derivation.
     uncached_derivations: u64,
@@ -235,7 +235,7 @@ impl TypeLinks {
             generic_names,
             fixed_mapper_rows,
             with_fixed_mappers,
-            times_forgotten,
+            restrictive_resets,
             uncached_derivations,
             has_found_circular_mapped_constraint,
             aliases,
@@ -252,7 +252,7 @@ impl TypeLinks {
         generic_names.clear();
         fixed_mapper_rows.clear();
         with_fixed_mappers.clear();
-        (*times_forgotten, *uncached_derivations) = (0, 0);
+        (*restrictive_resets, *uncached_derivations) = (0, 0);
         *has_found_circular_mapped_constraint = false;
         of.clear();
         cached.clear();
@@ -385,14 +385,14 @@ impl TypeLinks {
         for row in &mut self.with_fixed_mappers {
             row[FixedMapper::Restrictive as usize] = 0;
         }
-        self.times_forgotten = self.times_forgotten.wrapping_add(1);
+        self.restrictive_resets = self.restrictive_resets.wrapping_add(1);
     }
 
     /// Returns the number of `forget_restrictive_instantiations` calls. An instantiation that was in progress during a
     /// call isn't cached either.
     #[inline]
-    pub(super) fn times_forgotten(&self) -> u32 {
-        self.times_forgotten
+    pub(super) fn restrictive_resets(&self) -> u32 {
+        self.restrictive_resets
     }
 
     pub(super) fn note_circular_mapped_constraint(&mut self) {
@@ -752,7 +752,10 @@ mod tests {
             assert_eq!(links.alias_type_arguments(ty), None);
         }
         assert_eq!(links.infer_type_parameters(TypeId(8)), None);
-        assert_eq!((links.times_forgotten, links.uncached_derivations), (0, 0));
+        assert_eq!(
+            (links.restrictive_resets, links.uncached_derivations),
+            (0, 0)
+        );
         assert!(!links.has_found_circular_mapped_constraint);
         // A row added after `clear` starts empty.
         links.set_cell(types[0], Kind::Mapped, 1, 60, Stored::new());

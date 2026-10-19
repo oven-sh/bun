@@ -135,13 +135,13 @@ pub(crate) struct CommentTracker {
 
 impl CommentTracker {
     /// Restores the pending comments to what they were when `undo_log` had `len` entries, except for the comments from
-    /// `forgotten_from` on.
-    fn undo_until(&mut self, len: usize, forgotten_from: u32) {
+    /// `discarded_from` on.
+    fn undo_until(&mut self, len: usize, discarded_from: u32) {
         while self.undo_log.len() > len {
             let Some(previous) = self.undo_log.pop() else {
                 break;
             };
-            if previous.first_id >= forgotten_from {
+            if previous.first_id >= discarded_from {
                 continue;
             }
             let pending = &mut self.pending;
@@ -249,9 +249,9 @@ impl CommentTracker {
     }
 
     /// Drops the comments from `first_id` on. They're added again when the next node is finished.
-    fn forget_comments_from(&mut self, first_id: u32) {
-        let kept = (self.pending).partition_point(|comments| comments.first_id < first_id);
-        self.pending.truncate(kept);
+    fn discard_comments_from(&mut self, first_id: u32) {
+        let keep_len = (self.pending).partition_point(|comments| comments.first_id < first_id);
+        self.pending.truncate(keep_len);
         self.tracked_count = first_id;
     }
 }
@@ -797,7 +797,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         // Comments that were first seen after the checkpoint will be seen again. There can be thousands, so drop them
         // without restoring them first.
-        (self.comments).forget_comments_from(to.comments.tracked_count);
+        (self.comments).discard_comments_from(to.comments.tracked_count);
         (self.comments).undo_until(to.comments.undo_log_len as usize, to.comments.tracked_count);
         self.comments
             .last_expr_with_width

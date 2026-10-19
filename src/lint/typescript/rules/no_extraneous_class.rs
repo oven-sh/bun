@@ -25,7 +25,7 @@ impl NoExtraneousClass {
             None => class.estree_span(),
         };
         let name = class.name().map_or(whole, |it| it.span());
-        let (place, message, is_allowed) = match members.first() {
+        let (report_span, message, is_allowed) = match members.first() {
             None => (whole, EMPTY, self.allow_empty),
             Some(only) if members.len() == 1 && only.is_constructor() => {
                 if only.func().is_some_and(|it| it.params().iter().any(Param::is_parameter_property)) {
@@ -49,7 +49,7 @@ impl NoExtraneousClass {
         if is_allowed {
             return;
         }
-        let report = cx.report(place, message);
+        let report = cx.report(report_span, message);
         let report = match members.is_empty() && class.decorators().next().is_some() {
             true => report.help(
                 "Set \"allowWithDecorator\": true in your config to allow empty decorated classes",

@@ -214,13 +214,13 @@ impl JsdocFormatter<'_> {
                 == Some(first);
             return (!is_unchanged).then(|| FormattedJsdoc::SingleLine(first.to_vec()));
         }
-        let mut whole = b"/**".to_vec();
+        let mut full_comment = b"/**".to_vec();
         for line in std::iter::once(first).chain(lines) {
-            whole.extend_from_slice(if line.is_empty() { b"\n *" } else { b"\n * " });
-            whole.extend_from_slice(line);
+            full_comment.extend_from_slice(if line.is_empty() { b"\n *" } else { b"\n * " });
+            full_comment.extend_from_slice(line);
         }
-        whole.extend_from_slice(b"\n */");
-        (whole != content).then(|| FormattedJsdoc::MultiLine(all.to_vec()))
+        full_comment.extend_from_slice(b"\n */");
+        (full_comment != content).then(|| FormattedJsdoc::MultiLine(all.to_vec()))
     }
 
     /// Pushes a description with `indent` before each non-empty line.

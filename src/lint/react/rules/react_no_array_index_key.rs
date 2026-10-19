@@ -271,8 +271,8 @@ fn check_prop_value<'a>(
         return report(node);
     }
     // oxlint's AST has a node for parentheses.
-    let is_seen = |it: Expr<'a>| !is_oxlint || !it.is_parenthesized();
-    if !is_seen(node) {
+    let is_plain = |it: Expr<'a>| !is_oxlint || !it.is_parenthesized();
+    if !is_plain(node) {
         return;
     }
     match node.kind() {
@@ -286,7 +286,7 @@ fn check_prop_value<'a>(
             while let Some(side) = pending.pop() {
                 if is_array_index(side) {
                     report(node);
-                } else if is_seen(side)
+                } else if is_plain(side)
                     && let Some(sides) = as_binary_expression(side, is_oxlint)
                 {
                     pending.extend(sides);
@@ -296,7 +296,7 @@ fn check_prop_value<'a>(
         ExprKind::Call(call) if !node.is_chain_root() => {
             let callee = call.callee();
             match callee.kind() {
-                _ if callee.is_chain_root() || !is_seen(callee) => {}
+                _ if callee.is_chain_root() || !is_plain(callee) => {}
                 // key={bar.toString()}
                 ExprKind::Dot { obj, name, .. } if name.name().is("toString") && is_array_index(obj) => report(node),
                 // Upstream treats `bar[toString]` as `bar.toString`.

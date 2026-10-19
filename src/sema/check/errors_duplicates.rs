@@ -50,7 +50,7 @@ impl Checker<'_, '_> {
             }
             self.check_namespace_merge_order(file, sym);
         }
-        self.check_refused_merges(file);
+        self.check_rejected_merges(file);
         self.check_duplicate_umd_globals(file);
         self.check_duplicate_members(file);
         self.check_static_property_name_conflicts(file);
@@ -104,24 +104,25 @@ impl Checker<'_, '_> {
     /// declaration of the symbol. Equal diagnostics are merged later by `sort_and_deduplicate_diagnostics`.
     fn report_redeclarations(&mut self, file: FileId) {
         let bound = self.bound(file);
-        let place = |d: &Reported| {
+        let span_of_diagnostic = |d: &Reported| {
             (
                 file,
                 d.start,
                 if d.end == NO_LENGTH { d.start } else { d.end },
             )
         };
-        for refusal in bound.redeclarations.iter() {
-            let message = refusal.code;
+        for redeclaration in bound.redeclarations.iter() {
+            let message = redeclaration.code;
             let Some(mut diag) =
-                self.new_diagnostic_for_declaration_name(file, refusal.decl, message)
+                self.new_diagnostic_for_declaration_name(file, redeclaration.decl, message)
             else {
                 continue;
             };
-            let did_you_mean = self.did_you_mean_export_type_with_braces(file, refusal.decl);
+            let did_you_mean = self.did_you_mean_export_type_with_braces(file, redeclaration.decl);
             diag.related_information.extend(did_you_mean);
             let multiple_default_exports = message == 2528;
-            let declarations = &bound.symbol(refusal.symbol).decls[..refusal.count as usize];
+            let declarations =
+                &bound.symbol(redeclaration.symbol).decls[..redeclaration.count as usize];
             for (index, &declaration) in declarations.iter().enumerate() {
                 let Some(mut d) =
                     self.new_diagnostic_for_declaration_name(file, declaration, message)
@@ -130,8 +131,8 @@ impl Checker<'_, '_> {
                 };
                 if multiple_default_exports {
                     let here = if index == 0 { 2753 } else { 6204 };
-                    d.add_related_info(Reported::bare(place(&diag), here));
-                    diag.add_related_info(Reported::bare(place(&d), 2752));
+                    d.add_related_info(Reported::bare(span_of_diagnostic(&diag), here));
+                    diag.add_related_info(Reported::bare(span_of_diagnostic(&d), 2752));
                 }
                 self.add_diagnostic(d);
             }
@@ -250,17 +251,17 @@ impl Checker<'_, '_> {
 
     /// `getAdjustedNodeForError` for a declaration of a symbol passed to `mergeSymbol`. A module augmentation's name is
     /// a string literal.
-    fn place_of_merged_declaration(
+    fn span_of_merged_declaration(
         &self,
         file: FileId,
         decl: Decl,
-    ) -> Option<super::related::Place> {
+    ) -> Option<super::related::FileSpan> {
         match decl {
-            Decl::Module(m) => Some(self.place_of_token(file, self.hir(file)[m].name_pos)),
+            Decl::Module(m) => Some(self.span_of_token(file, self.hir(file)[m].name_pos)),
             Decl::ExportsProperty(e) | Decl::Expando(e) | Decl::ThisProperty(e) => {
                 self.place_of_assignment_declaration_name(file, e)
             }
-            _ => self.place_of_declaration(file, decl),
+            _ => self.span_of_declaration(file, decl),
         }
     }
 
@@ -282,9 +283,9 @@ impl Checker<'_, '_> {
         let mut name = Vec::new();
         match source.first() {
             Some(&(of, decl @ (Decl::Member(_) | Decl::Property(_)), _)) => {
-                if let Some((of, from, to)) = self.place_of_declaration(of, decl) {
-                    let written = self.hir(of).text.get(from as usize..to as usize);
-                    name.extend_from_slice(written.unwrap_or_default());
+                if let Some((of, from, to)) = self.span_of_declaration(of, decl) {
+                    let name_text = self.hir(of).text.get(from as usize..to as usize);
+                    name.extend_from_slice(name_text.unwrap_or_default());
                 }
             }
             _ => self.write_symbol(&mut name, named),
@@ -300,11 +301,11 @@ impl Checker<'_, '_> {
             }
             for &(of, decl, _) in symbol {
                 if of == file
-                    && let Some((_, start, _)) = self.place_of_merged_declaration(of, decl)
+                    && let Some((_, start, _)) = self.span_of_merged_declaration(of, decl)
                 {
                     let others = other
                         .iter()
-                        .filter_map(|d| self.place_of_merged_declaration(d.0, d.1))
+                        .filter_map(|d| self.span_of_merged_declaration(d.0, d.1))
                         .collect::<Vec<_>>()
                         .into_iter();
                     let end = match decl {
@@ -325,8 +326,8 @@ impl Checker<'_, '_> {
     /// the equal ones.
     fn add_duplicate_declaration_error(
         &mut self,
-        at: super::related::Place,
-        others: impl Iterator<Item = super::related::Place>,
+        at: super::related::FileSpan,
+        others: impl Iterator<Item = super::related::FileSpan>,
         name: &[u8],
         code: u32,
     ) {
@@ -369,47 +370,52 @@ impl Checker<'_, '_> {
             return None;
         }
         let suggestion = [b"export type { ", self.atoms().bytes(alias.name), b" }"].concat();
-        let at = self.place_of_token(file, alias.name_pos);
+        let at = self.span_of_token(file, alias.name_pos);
         Some(self.new_diagnostic(at, 1369, &[Arg::Bytes(&suggestion)]))
     }
 
     /// `mergeSymbol`: reports the pairs of symbols that `Files::merge` refused to merge.
-    fn check_refused_merges(&mut self, file: FileId) {
+    fn check_rejected_merges(&mut self, file: FileId) {
         let files = self.files();
         if !files.has_rejected_merges(file) {
             return;
         }
         let declarations = |parts: &[Sym]| -> Vec<Declaration> {
-            let of_part = |&part: &Sym| {
+            let declarations_of_part = |&part: &Sym| {
                 files
                     .symbol(part)
                     .decls
                     .iter()
                     .map(move |&d| (part.file, d, true))
             };
-            parts.iter().flat_map(of_part).collect()
+            parts.iter().flat_map(declarations_of_part).collect()
         };
-        for refused in &files.rejected_merges {
-            let (there, added) = (refused.target_parts, refused.source_parts);
+        for rejected_merge in &files.rejected_merges {
+            let (there, added) = (rejected_merge.target_parts, rejected_merge.source_parts);
             if !there.iter().chain(added).any(|part| part.file == file) {
                 continue;
             }
             let (there, added) = (declarations(there), declarations(added));
-            let target = files.canonical(refused.target);
-            let source = files.canonical(refused.source);
-            if refused.target_flags.contains(SymFlags::NAMESPACE_MODULE) {
+            let target = files.canonical(rejected_merge.target);
+            let source = files.canonical(rejected_merge.source);
+            if rejected_merge
+                .target_flags
+                .contains(SymFlags::NAMESPACE_MODULE)
+            {
                 // A value that merges with a non-instantiated namespace reports TS2649 once, on its first declaration.
                 // "Do not report an error when merging `var globalThis` with the built-in `globalThis`"
-                if refused.target != files.global_this_symbol
+                if rejected_merge.target != files.global_this_symbol
                     && let Some(&(of, decl, _)) = added.first()
                     && of == file
-                    && let Some((_, start, _)) = self.place_of_merged_declaration(of, decl)
+                    && let Some((_, start, _)) = self.span_of_merged_declaration(of, decl)
                 {
                     self.error_at((file, start, 0), 2649, &[Arg::Sym(target)]);
                 }
                 continue;
             }
-            let code = code_of_merge_symbol_error(refused.target_flags | refused.source_flags);
+            let code = code_of_merge_symbol_error(
+                rejected_merge.target_flags | rejected_merge.source_flags,
+            );
             self.report_merge_symbol_error(file, &there, &added, source, code);
         }
     }
@@ -734,22 +740,24 @@ impl Checker<'_, '_> {
         };
         for conflict in &late.conflicts {
             match conflict {
-                LateBoundConflict::Refused(name, earlier, refused) => {
-                    let Some((of, from, to)) = self.place_of_declaration(refused.0, refused.1)
+                LateBoundConflict::Duplicate(name, earlier, rejected) => {
+                    let Some((of, from, to)) = self.span_of_declaration(rejected.0, rejected.1)
                     else {
                         continue;
                     };
                     // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol. The default
                     // library's text isn't stored.
                     let name = match self.hir(of).text.get(from as usize..to as usize) {
-                        Some(written) if self.atoms().is_symbol_name(*name) => Arg::Bytes(written),
+                        Some(name_text) if self.atoms().is_symbol_name(*name) => {
+                            Arg::Bytes(name_text)
+                        }
                         _ => Arg::Atom(*name),
                     };
-                    for at in earlier.iter().chain(std::iter::once(refused)) {
+                    for at in earlier.iter().chain(std::iter::once(rejected)) {
                         if at.0 == file
-                            && let Some(place) = self.place_of_declaration(at.0, at.1)
+                            && let Some(declaration_span) = self.span_of_declaration(at.0, at.1)
                         {
-                            self.error_at(place, 2300, &[name]);
+                            self.error_at(declaration_span, 2300, &[name]);
                         }
                     }
                 }
@@ -762,9 +770,9 @@ impl Checker<'_, '_> {
                 }
                 LateBoundConflict::NonModuleEntity(source, target) => {
                     if source.0 == file
-                        && let Some(place) = self.place_of_declaration(source.0, source.1)
+                        && let Some(declaration_span) = self.span_of_declaration(source.0, source.1)
                     {
-                        self.error_at(place, 2649, &[Arg::Sym(*target)]);
+                        self.error_at(declaration_span, 2649, &[Arg::Sym(*target)]);
                     }
                 }
             }
@@ -881,7 +889,7 @@ impl Checker<'_, '_> {
                 named.push(Decl::Member(m));
             }
             for declaration in named {
-                let Some(place) = self.place_of_declaration(file, declaration) else {
+                let Some(declaration_span) = self.span_of_declaration(file, declaration) else {
                     continue;
                 };
                 // `symbolToString(symbol)`: the source text of the name in its first declaration.
@@ -891,15 +899,15 @@ impl Checker<'_, '_> {
                 // way.
                 let is_stored = first.is_none_or(|(of, _)| !self.hir(of).text.is_empty());
                 let first = first.filter(|_| is_stored);
-                let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
-                let (of, from, to) = first.unwrap_or(place);
+                let first = first.and_then(|(of, first)| self.span_of_declaration(of, first));
+                let (of, from, to) = first.unwrap_or(declaration_span);
                 // `GetTextOfNode` doesn't skip the `*` before the name.
                 let from = super::spans::start_of_error_range(self.hir(of), from, to);
                 let text = match is_stored || self.atoms().is_symbol_name(name) {
                     true => Arg::Bytes(&self.hir(of).text[from as usize..to as usize]),
                     false => Arg::Atom(name),
                 };
-                self.error_at(place, code, &[text]);
+                self.error_at(declaration_span, code, &[text]);
             }
         }
     }
@@ -943,7 +951,7 @@ impl Checker<'_, '_> {
             self.end_of_member_name(file, m),
         );
         let bound = self.bound(file);
-        let of_literal;
+        let literal_name;
         let container = match bound.member_owner[m.idx()] {
             MemberOwner::Class(class) => match bound.class_symbol[class.idx()] {
                 symbol if symbol.is_some() => Arg::Sym(self.files().sym(file, symbol)),
@@ -953,8 +961,8 @@ impl Checker<'_, '_> {
                 Arg::Sym(self.files().sym(file, bound.interface_symbol[it.idx()]))
             }
             MemberOwner::TypeLiteral(node) => {
-                of_literal = self.name_of_type_literal(file, node);
-                Arg::Bytes(&of_literal)
+                literal_name = self.name_of_type_literal(file, node);
+                Arg::Bytes(&literal_name)
             }
             _ => Arg::Bytes(b""),
         };

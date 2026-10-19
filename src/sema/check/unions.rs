@@ -151,14 +151,14 @@ impl UnionCalls {
     };
 
     #[inline]
-    fn place(&self, hash: u64) -> usize {
+    fn slot_index(&self, hash: u64) -> usize {
         (hash.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
     }
 
     /// `arguments` has at least one type, and `hash` is its hash.
     #[inline]
     fn get(&self, hash: u64, arguments: &UnionArguments) -> Option<TypeId> {
-        let call = self.slots.get(self.place(hash))?;
+        let call = self.slots.get(self.slot_index(hash))?;
         if call.hash != hash
             || call.types as usize != arguments.types.len()
             || call.reduction != arguments.reduction
@@ -188,8 +188,8 @@ impl UnionCalls {
             self.grow();
         }
         self.added += 1;
-        let place = self.place(hash);
-        self.slots[place] = CachedUnionCall {
+        let slot = self.slot_index(hash);
+        self.slots[slot] = CachedUnionCall {
             hash,
             reduction: arguments.reduction,
             alias: arguments.alias.map(|alias| alias.0),
@@ -210,8 +210,8 @@ impl UnionCalls {
         self.added = 0;
         for call in old {
             if call.types != 0 {
-                let place = self.place(call.hash);
-                self.slots[place] = call;
+                let slot = self.slot_index(call.hash);
+                self.slots[slot] = call;
             }
         }
     }
@@ -1202,9 +1202,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let members = self.members(apparent)?;
         for prop in &members.shape().props {
-            let of_prop = self.type_of_prop(prop, members.mapper);
-            if self.is_unit(of_prop) {
-                return Some((prop.name, self.with_freshness(of_prop, false)));
+            let prop_type = self.type_of_prop(prop, members.mapper);
+            if self.is_unit(prop_type) {
+                return Some((prop.name, self.with_freshness(prop_type, false)));
             }
         }
         None
@@ -2149,7 +2149,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => ExprId::NONE,
         };
         self.sort_position(ty)
-            .map(|place| (place.1, place.2, literal))
+            .map(|sort_key| (sort_key.1, sort_key.2, literal))
     }
 
     /// `Shape::mapper` for a type that gets `t.symbol`, the symbol of an object literal (`newAnonymousType(t.symbol,
@@ -2178,11 +2178,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `compareSymbols`, limited to comparing the first declarations.
     pub(super) fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
-        let place = |symbol: Sym| {
+        let program_position = |symbol: Sym| {
             let (_, file, pos) = self.symbol_position(symbol)?;
             Some(self.position_in_program_order(file, pos))
         };
-        some_first(place(s), place(t))
+        some_first(program_position(s), program_position(t))
     }
 
     /// `compareTypeNames`
@@ -2270,7 +2270,7 @@ impl<'p, 's> Checker<'p, 's> {
         let atoms = &self.atoms();
         let types = |x: TypeId, y: TypeId| self.compare_types_without_ids(x, y);
         let lists = |x: &[TypeId], y: &[TypeId]| self.compare_type_lists(x, y);
-        let place = |t: TypeId| {
+        let program_position = |t: TypeId| {
             let (_, file, pos) = self.sort_position(t)?;
             Some(self.position_in_program_order(file, pos))
         };
@@ -2304,7 +2304,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .compare_type_names(a, b)
                 .then_with(|| match have_same_target {
                     true => Equal,
-                    false => some_first(place(a), place(b))
+                    false => some_first(program_position(a), program_position(b))
                         .then_with(|| {
                             some_first(
                                 self.name_of_symbol_without_declarations(a),

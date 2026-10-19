@@ -295,12 +295,12 @@ fn report<'a>(
     }
 
     // oxlint points at the first of the two. tsgolint's constituent is the parenthesized type.
-    let place = match (is_oxlint, previous) {
+    let report_span = match (is_oxlint, previous) {
         (true, Some((_, previous))) => previous.outer_span(),
         (true, None) => constituent_node.outer_span(),
         (false, _) => Span::new(constituent_node.span().start, end),
     };
-    let mut report = cx.report(place, message).comments_apply_at(constituent_node.outer_span());
+    let mut report = cx.report(report_span, message).comments_apply_at(constituent_node.outer_span());
     if let Some((union_or_intersection, previous)) = previous {
         // tsgolint 7.0 prints it with its parentheses and everything before it, starting at the end of the previous
         // token.

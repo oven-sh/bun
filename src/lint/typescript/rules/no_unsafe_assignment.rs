@@ -147,8 +147,8 @@ fn relation_span(sender_node: Expr, whole: Span) -> Span {
 
 /// Where a report is shown, and where disable comments apply to it. For oxlint these differ.
 #[derive(Copy, Clone)]
-struct Place {
-    shown: Span,
+struct ReportSpans {
+    primary: Span,
     for_comments: Span,
 }
 
@@ -160,8 +160,8 @@ fn check_destructure<'a>(
     sender_node: Expr<'a>,
 ) {
     // oxlint points at the assigned value.
-    let place = |span: Span| Place {
-        shown: if cx.language().is_oxlint {
+    let report_spans = |span: Span| ReportSpans {
+        primary: if cx.language().is_oxlint {
             sender_node.outer_span()
         } else {
             span
@@ -174,7 +174,7 @@ fn check_destructure<'a>(
     check_pattern(
         cx,
         receiver_node,
-        place(receiver_span),
+        report_spans(receiver_span),
         sender_type,
         &mut parts,
     );
@@ -185,7 +185,7 @@ fn check_destructure<'a>(
         };
         // The any type comes first, to handle `[[[x]]] = [any]` and `{ x: { y: z } } = { x: any }`.
         if is_type_any_type(sender_type) {
-            cx.report(place(part.span).shown, part.message)
+            cx.report(report_spans(part.span).primary, part.message)
                 .comments_apply_at(part.span)
                 .data("sender", describe_sender(sender_type, cx))
                 .labels_with(|labels| {
@@ -198,7 +198,7 @@ fn check_destructure<'a>(
             check_pattern(
                 cx,
                 part.target,
-                place(part.target.span()),
+                report_spans(part.target.span()),
                 sender_type,
                 &mut parts,
             );
@@ -210,7 +210,7 @@ fn check_destructure<'a>(
 fn check_pattern<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
-    receiver_span: Place,
+    receiver_span: ReportSpans,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
@@ -230,13 +230,13 @@ fn check_pattern<'a>(
 fn check_array_destructure<'a>(
     cx: &Context<'a>,
     receiver_node: Target<'a>,
-    receiver_span: Place,
+    receiver_span: ReportSpans,
     sender_type: Type<'a>,
     parts: &mut Vec<Destructured<'a>>,
 ) {
     // `const [x] = [] as any[];`
     if is_type_any_array_type(sender_type) {
-        cx.report(receiver_span.shown, UNSAFE_ARRAY_PATTERN)
+        cx.report(receiver_span.primary, UNSAFE_ARRAY_PATTERN)
             .comments_apply_at(receiver_span.for_comments)
             .data("sender", describe_sender(sender_type, cx))
             .labels_with(|labels| {
@@ -359,11 +359,11 @@ fn report_any_assignment<'a>(
         ANY_ASSIGNMENT
     };
     // oxlint points at the assigned value, or at the `this`.
-    let place = match cx.language().is_oxlint {
+    let report_span = match cx.language().is_oxlint {
         true => any_this.map_or_else(|| sender_span(sender_node), |this| this.span()),
         false => reporting_node,
     };
-    cx.report(place, message)
+    cx.report(report_span, message)
         .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("sender", describe_sender(sender_type, cx))
         .labels_with(|labels| {
@@ -421,12 +421,12 @@ fn report_unsafe_assignment<'a>(
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
     };
-    let place = if cx.language().is_oxlint {
+    let report_span = if cx.language().is_oxlint {
         sender_span(sender_node)
     } else {
         reporting_node
     };
-    cx.report(place, UNSAFE_ASSIGNMENT)
+    cx.report(report_span, UNSAFE_ASSIGNMENT)
         .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("receiver", in_backticks(result.receiver))
         .data("sender", in_backticks(result.sender))
@@ -583,12 +583,12 @@ impl NoUnsafeAssignment {
         }
         let rest_type = argument.ty();
         if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
-            let place = if cx.language().is_oxlint {
+            let report_span = if cx.language().is_oxlint {
                 argument.outer_span()
             } else {
                 node.span()
             };
-            cx.report(place, UNSAFE_ARRAY_SPREAD)
+            cx.report(report_span, UNSAFE_ARRAY_SPREAD)
                 .comments_apply_at(node)
                 .data("sender", describe_sender(rest_type, cx))
                 .labels_with(|labels| {

@@ -9,7 +9,7 @@
 use super::explain::NOWHERE;
 use super::explain_relation::RelationDiagnostic;
 use super::relate::Relation;
-use super::related::Place;
+use super::related::FileSpan;
 use super::*;
 use crate::bind::{FnOwner, Parent};
 
@@ -218,7 +218,7 @@ impl Checker<'_, '_> {
     }
 
     /// `c.checkTypeAssignableToAndOptionallyElaborate(c.checkExpressionCached(initializer), t, node, initializer, nil, nil)`
-    fn check_initializer(&mut self, file: FileId, initializer: ExprId, t: TypeId, node: Place) {
+    fn check_initializer(&mut self, file: FileId, initializer: ExprId, t: TypeId, node: FileSpan) {
         let source = self.type_of_expr(file, initializer);
         let expr = Some((file, initializer));
         self.check_type_assignable_to_and_optionally_elaborate(
@@ -788,7 +788,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkTypeArgumentConstraints`: 2344, or a more specific error. `sig` is the signature that has
-    /// `type_parameters` (see `mapper_around_sig`), or `None` for a type's type parameters.
+    /// `type_parameters` (see `outer_mapper_of_sig`), or `None` for a type's type parameters.
     fn check_type_argument_constraints(
         &mut self,
         file: FileId,
@@ -797,7 +797,7 @@ impl Checker<'_, '_> {
         sig: Option<SigId>,
     ) -> bool {
         let hir = self.hir(file);
-        let outer = sig.map_or(MapperId::IDENTITY, |sig| self.mapper_around_sig(sig));
+        let outer = sig.map_or(MapperId::IDENTITY, |sig| self.outer_mapper_of_sig(sig));
         let mut effective: Option<(Vec<TypeId>, MapperId)> = None;
         let mut result = true;
         for (i, &type_parameter) in type_parameters.iter().enumerate() {
@@ -820,7 +820,7 @@ impl Checker<'_, '_> {
                 (filled, mapper)
             });
             let (argument, mapper) = (type_arguments[i], *mapper);
-            let constraint = self.filled_in_around(type_parameter, constraint, outer);
+            let constraint = self.with_outer_type_arguments(type_parameter, constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
             // A default has no node, and nothing is reported for it.
             let error_node = (i < nodes.len()).then(|| {
@@ -1029,10 +1029,10 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode` for `e`, the result of `getEffectiveCheckNode`. Its enclosing parentheses aren't part of
     /// it, except those of a JSDoc type assertion.
-    pub(super) fn place_of_effective_check_node(&self, file: FileId, e: ExprId) -> Place {
+    pub(super) fn span_of_effective_check_node(&self, file: FileId, e: ExprId) -> FileSpan {
         match self.range_of_jsdoc_type_assertion(file, e) {
             Some((open, end)) => (file, open, end),
-            None => self.place_of_expr(file, e),
+            None => self.span_of_expr(file, e),
         }
     }
 
@@ -1192,7 +1192,7 @@ impl Checker<'_, '_> {
         file: FileId,
         container: FnId,
         expected: TypeId,
-        node: Place,
+        node: FileSpan,
         in_return_statement: InReturnStatement,
         e: ExprId,
         in_conditional_expression: InConditionalExpression,
@@ -1229,7 +1229,7 @@ impl Checker<'_, '_> {
         {
             node
         } else {
-            self.place_of_effective_check_node(file, e)
+            self.span_of_effective_check_node(file, e)
         };
         self.check_type_assignable_to_and_optionally_elaborate(
             ty,
@@ -1277,7 +1277,7 @@ impl Checker<'_, '_> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         expr: Option<(FileId, ExprId)>,
         is_effective: bool,
         head_message: Option<u32>,
@@ -1301,7 +1301,7 @@ impl Checker<'_, '_> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         expr: Option<(FileId, ExprId)>,
         is_effective: bool,
         head_message: Option<u32>,
@@ -1355,7 +1355,7 @@ impl Checker<'_, '_> {
             return false;
         }
         let node = if is_effective {
-            self.place_of_effective_check_node(file, e)
+            self.span_of_effective_check_node(file, e)
         } else {
             self.span_of_parenthesized_expr(file, e)
         };
@@ -1427,7 +1427,7 @@ impl Checker<'_, '_> {
     /// if the result of calling `node` would be assignable.
     pub(super) fn elaborate_did_you_mean_to_call_or_construct(
         &mut self,
-        node: Place,
+        node: FileSpan,
         source: TypeId,
         target: TypeId,
         head_message: Option<u32>,
@@ -1540,7 +1540,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             let check_node = self.effective_check_node(file, item);
-            let at = self.place_of_effective_check_node(file, check_node);
+            let at = self.span_of_effective_check_node(file, check_node);
             let output = diagnostic_output.as_deref_mut();
             reported |= self.elaborate_element(
                 source, target, at, check_node, true, name_type, None, output,
@@ -1556,7 +1556,7 @@ impl Checker<'_, '_> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        prop: Place,
+        prop: FileSpan,
         next: ExprId,
         is_effective: bool,
         name_type: TypeId,
@@ -1698,9 +1698,10 @@ impl Checker<'_, '_> {
             return false;
         }
         for prop in self.properties_of_type(target) {
-            if let Some(of_source) = self.type_of_property_of_type(source, prop.name)
-                && let Some(of_target) = self.type_of_property_of_type(target, prop.name)
-                && self.is_exact_optional_property_mismatch(of_source, of_target)
+            if let Some(source_property_type) = self.type_of_property_of_type(source, prop.name)
+                && let Some(target_property_type) = self.type_of_property_of_type(target, prop.name)
+                && self
+                    .is_exact_optional_property_mismatch(source_property_type, target_property_type)
             {
                 return true;
             }
@@ -1903,13 +1904,13 @@ impl Checker<'_, '_> {
         } else {
             Relation::Assignable
         };
-        let place = (file, at, end);
+        let error_span = (file, at, end);
         let (is_related, diagnostic) =
-            self.relation_diagnostic(source, target, relation, place, Some(head));
+            self.relation_diagnostic(source, target, relation, error_span, Some(head));
         let diagnostic = match diagnostic {
             // The caller used a different relation, so there's no elaboration to give.
             None if is_related && self.related(source, target, relation) => {
-                self.relation_error_without_elaboration(source, target, relation, place, head)
+                self.relation_error_without_elaboration(source, target, relation, error_span, head)
             }
             diagnostic => diagnostic?,
         };

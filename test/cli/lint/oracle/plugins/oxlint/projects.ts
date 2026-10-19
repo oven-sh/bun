@@ -1024,7 +1024,7 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/self",
-    about: "Flavor::counts_self_imports, and Request::may_be_itself",
+    about: "Flavor::counts_self_imports, and Request::may_reexport_itself",
     config: noCycle(),
     files: {
       "a.ts": `import { a as x } from "./a";\nexport const a = x;\n`,
@@ -1039,7 +1039,7 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/exports-itself-on-the-way",
-    about: "Request::may_be_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    about: "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
     config: noCycle({ maxDepth: 2 }),
     files: {
       "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,
@@ -1319,7 +1319,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/place",
-    about: "oxlint_reports_the_declaration",
+    about: "oxlint_reports_at_declaration",
     config: unused,
     files: { "a.ts": `export function f() {\n  let n = 0;\n  n++;\n  let m;\n  m = 1;\n  m = 2;\n}\n` },
   },
@@ -1355,7 +1355,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/vars-local",
-    about: "oxlint_takes_for_global: with vars: local, a var at the top of the file, of a module too, and nothing else",
+    about: "oxlint_treats_as_global: with vars: local, a var at the top of the file, of a module too, and nothing else",
     config: rules(["typescript"], { "no-unused-vars": ["error", "local"] }),
     files: {
       "a.ts": `var a = 1;\nlet b = 2;\nconst c = 3;\nfunction d() {\n  var e = 4;\n}\nclass F {}\nexport {};\n`,
@@ -1427,7 +1427,7 @@ const hand: Project[] = [
   },
   {
     name: "consistent-type-imports/react",
-    about: "oxlint_takes_for_jsx_factory",
+    about: "oxlint_treats_as_jsx_factory",
     config: rules(["typescript"], { "typescript/consistent-type-imports": "error" }),
     files: {
       "a.ts": `import * as React from "react";\nexport function C(x: unknown) {\n  return x as React.ReactNode;\n}\n`,
@@ -1635,7 +1635,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/how-it-is-declared",
-    about: "oxlint_leaves_alone",
+    about: "oxlint_never_reports",
     config: unused,
     files: {
       "a.ts": lines(
@@ -3249,7 +3249,7 @@ const hand: Project[] = [
   },
   {
     name: "no-use-before-define/key-of-type",
-    about: "oxlint_is_in_key_of_type",
+    about: "oxlint_is_in_type_member_key",
     config: rules([], { "no-use-before-define": "error" }),
     files: {
       "a.ts": lines(
@@ -6462,7 +6462,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/beside-an-infer-of-the-same-name",
-    about: "oxlint_used_beside_infer",
+    about: "oxlint_uses_hidden_by_type_parameters",
     config: rules([], { "no-unused-vars": "error" }),
     files: {
       "a.ts": lines(
@@ -6527,7 +6527,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/without-a-body-decorators-defaults",
-    about: "is_only_declared, member_of, oxlint_is_default_of_parameter",
+    about: "is_only_declared, member_of, oxlint_is_parameter_default",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": "error" }),
     files: {
       "a.ts": lines(
@@ -10539,7 +10539,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-by-default",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", {}] }),
     files: {
       "a.ts": lines(
@@ -10561,7 +10561,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-allow-expressions",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
     config: rules(["typescript"], {
       "typescript/explicit-function-return-type": ["error", { allowExpressions: true }],
     }),
@@ -10585,7 +10585,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-typed-function-expressions-not-allowed",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
     config: rules(["typescript"], {
       "typescript/explicit-function-return-type": ["error", { allowTypedFunctionExpressions: false }],
     }),
@@ -10609,7 +10609,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-allow-expressions-but-not-typed-ones",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
     config: rules(["typescript"], {
       "typescript/explicit-function-return-type": [
         "error",
@@ -10636,7 +10636,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/defaults-of-parameters-const-assertions-not-allowed",
-    about: "oxlint_is_default_of_parameter: only what the type of the parameter says is left out",
+    about: "oxlint_is_parameter_default: only what the type of the parameter says is left out",
     config: rules(["typescript"], {
       "typescript/explicit-function-return-type": ["error", { allowDirectConstAssertionInArrowFunctions: false }],
     }),
@@ -11260,7 +11260,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/parentheses-and-objects-that-are-defaults-by-default",
-    about: "oxlint_hides_const_assertion, oxlint_is_default_of_parameter",
+    about: "oxlint_hides_const_assertion, oxlint_is_parameter_default",
     config: rules(["typescript"], { "typescript/explicit-function-return-type": ["error", {}] }),
     files: {
       "a.ts": lines(
@@ -11287,7 +11287,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/parentheses-and-objects-that-are-defaults-allow-expressions",
-    about: "oxlint_hides_const_assertion, oxlint_is_default_of_parameter",
+    about: "oxlint_hides_const_assertion, oxlint_is_parameter_default",
     config: rules(["typescript"], {
       "typescript/explicit-function-return-type": ["error", { allowExpressions: true }],
     }),
@@ -11316,7 +11316,7 @@ const hand: Project[] = [
   },
   {
     name: "explicit-function-return-type/parentheses-and-objects-that-are-defaults-const-assertions-not-allowed",
-    about: "oxlint_hides_const_assertion, oxlint_is_default_of_parameter",
+    about: "oxlint_hides_const_assertion, oxlint_is_parameter_default",
     config: rules(["typescript"], {
       "typescript/explicit-function-return-type": ["error", { allowDirectConstAssertionInArrowFunctions: false }],
     }),
@@ -11419,7 +11419,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/what-only-a-logical-assignment-changes-or-a-comma-discards",
-    about: "oxlint_may_be_unused_after_all, is_exported",
+    about: "oxlint_unused_candidates, is_exported",
     config: rules([], { "no-unused-vars": "error" }),
     files: {
       "a.js": lines(
@@ -11470,7 +11470,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/what-a-comma-discards-with-all-arguments",
-    about: "oxlint_may_be_unused_after_all: unused_for_oxlint",
+    about: "oxlint_unused_candidates: unused_for_oxlint",
     config: rules([], {
       "no-unused-vars": ["error", { args: "all", argsIgnorePattern: "^a[kn]$", varsIgnorePattern: "^[ab]$" }],
     }),
@@ -11523,7 +11523,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unused-vars/beside-a-type-parameter-of-the-same-name",
-    about: "oxlint_used_beside_infer: the A of A.B is no type parameter",
+    about: "oxlint_uses_hidden_by_type_parameters: the A of A.B is no type parameter",
     config: rules([], { "no-unused-vars": "error" }),
     files: {
       "a.ts": lines(
@@ -11891,7 +11891,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unnecessary-type-assertion/what-a-call-is-without-the-assertion",
-    about: "get_uncast_type: context_free_type_of_call_resolved_afresh",
+    about: "get_uncast_type: context_free_type_of_freshly_resolved_call",
     config: rules(["typescript"], { "typescript/no-unnecessary-type-assertion": "error" }),
     typed: true,
     files: {
@@ -11953,7 +11953,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unnecessary-type-assertion/what-new-await-and-templates-are-without-the-assertion",
-    about: "get_uncast_type: context_free_type_of_call_resolved_afresh, through await",
+    about: "get_uncast_type: context_free_type_of_freshly_resolved_call, through await",
     config: rules(["typescript"], { "typescript/no-unnecessary-type-assertion": "error" }),
     typed: true,
     files: {
@@ -12456,7 +12456,7 @@ const hand: Project[] = [
   },
   {
     name: "no-unnecessary-type-assertion/a-call-among-the-arguments",
-    about: "is_asserted_type_expected_of_a_call_in_the_arguments; context_free_type_of_call_resolved_afresh",
+    about: "asserted_type_reaches_call_in_arguments; context_free_type_of_freshly_resolved_call",
     config: rules(["typescript"], { "typescript/no-unnecessary-type-assertion": "error" }),
     typed: true,
     files: {
@@ -14933,7 +14933,7 @@ const hand: Project[] = [
   },
   {
     name: "ban-ts-comment/decoration",
-    about: "find_directive_in_comment_for_oxlint",
+    about: "oxlint_find_directive_in_comment",
     config: rules(["typescript"], {
       "typescript/ban-ts-comment": "error",
       "typescript/prefer-ts-expect-error": "error",

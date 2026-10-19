@@ -81,7 +81,7 @@ fn oxlint_ancestor_has_return_type<'a>(func: Func<'a>, known: &mut AncestorMemo<
 }
 
 /// `(a: () => void = () => {}) => {}`: oxlint doesn't apply the parameter's type to its default value.
-fn oxlint_is_default_of_parameter(func: Func) -> bool {
+fn oxlint_is_parameter_default(func: Func) -> bool {
     let Node::Expr(mut e) = func.owner() else {
         return false;
     };
@@ -193,7 +193,7 @@ impl ExplicitFunctionReturnType {
             allow_typed_function_expressions: false,
             ..options
         };
-        let is_default = is_oxlint && oxlint_is_default_of_parameter(func);
+        let is_default = is_oxlint && oxlint_is_parameter_default(func);
         if is_expression
             && self.options.allow_typed_function_expressions
             && (is_valid_function_expression_return_type(

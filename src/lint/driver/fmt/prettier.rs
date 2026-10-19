@@ -27,7 +27,7 @@ pub(crate) struct Prettier<'e> {
     cwd: Vec<u8>,
     /// The settings shared by all files, in the shape that `formatWithPrettier` in `worker/prettier.js` reads.
     run: Vec<(Vec<u8>, Json)>,
-    once: fs::Written,
+    written_files: fs::WrittenFiles,
 }
 
 impl<'e> Prettier<'e> {
@@ -71,7 +71,7 @@ impl<'e> Prettier<'e> {
             host,
             cwd: environment.cwd.clone(),
             run,
-            once: fs::Written::default(),
+            written_files: fs::WrittenFiles::default(),
         }
     }
 
@@ -85,25 +85,26 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. `shown` is the name to print. With `writes`, the file is written if it changes.
-    /// Returns whether it changed. `Err` is the message to print.
+    /// Formats the file at `path`. With `writes`, the file is written if it changes. Returns whether it changed. `Err`
+    /// is the message to print.
     pub(crate) fn format_file(
         &self,
-        (path, shown): (&[u8], &[u8]),
+        (path, display_name): (&[u8], &[u8]),
         config: Option<&[u8]>,
         writes: bool,
         only: Option<&git::Files>,
     ) -> Result<bool, Vec<u8>> {
-        let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
+        let fail =
+            |what: &[u8], why: &[u8]| [what, b" file \"", display_name, b"\":\n", why].concat();
         let text = git::read(only, path)
             .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
         let formatted = (self.format(Some(path), config, &text))
-            .map_err(|why| [shown, b": ", &describe(why)].concat())?;
+            .map_err(|why| [display_name, b": ", &describe(why)].concat())?;
         if formatted == text {
             return Ok(false);
         }
         if writes {
-            fs::write_atomically(&self.once, &self.cwd, path, &formatted)
+            fs::write_atomically(&self.written_files, &self.cwd, path, &formatted)
                 .map_err(|why| fail(b"Unable to write", &why))?;
         }
         Ok(true)

@@ -61,8 +61,8 @@ impl Checker<'_, '_> {
         };
         // `DeclarationNameToString`
         let text_of = |c: &Self, node: Node| {
-            let written = hir.start(node) as usize..c.end_of_node(file, node) as usize;
-            hir.text.get(written).unwrap_or_default()
+            let text_range = hir.start(node) as usize..c.end_of_node(file, node) as usize;
+            hir.text.get(text_range).unwrap_or_default()
         };
         if declared.is_some() && candidate == files.sym(file, declared) {
             let args = [Arg::Bytes(text_of(self, name))];

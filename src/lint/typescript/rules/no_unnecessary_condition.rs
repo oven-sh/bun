@@ -713,8 +713,8 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
     };
     if let Some(condition_is_true) = condition_is_true {
         // oxlint points at the left operand, which for a `case` is the `switch`'s discriminant.
-        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
-        cx.report(place, COMPARISON_BETWEEN_LITERAL_TYPES)
+        let report_span = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        cx.report(report_span, COMPARISON_BETWEEN_LITERAL_TYPES)
             .comments_apply_at(operator_span(node, (left, right), operator))
             .data("left", left_type.to_text())
             .data("operator", bin_op_text(operator))
@@ -752,8 +752,8 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
         // tsgolint 7.0's first label starts where the token before the left operand ends.
         let operand = left.outer_span();
         let start = cx.file().end_of_token_before(operand.start);
-        let place = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
-        cx.report(place, NO_OVERLAP_BOOLEAN_EXPRESSION)
+        let report_span = if cx.language().is_oxlint { Span::new(start, operand.end) } else { node.span() };
+        cx.report(report_span, NO_OVERLAP_BOOLEAN_EXPRESSION)
             .comments_apply_at(operator_span(node, (left, right), operator))
             .labels_with(|labels| {
                 // The second label does the same.
@@ -954,8 +954,8 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         return;
     }
     // oxlint points at the expression before the `?.`.
-    let place = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
-    cx.report(place, NEVER_OPTIONAL_CHAIN)
+    let report_span = if cx.language().is_oxlint { node_to_check.outer_span() } else { question_dot_operator };
+    cx.report(report_span, NEVER_OPTIONAL_CHAIN)
         .comments_apply_at(question_dot_operator)
         .labels_with(|labels| {
             // The type it uses, without the `undefined` from a `?.` further left.
@@ -1100,18 +1100,18 @@ impl NoUnnecessaryCondition {
             },
             _ => None,
         };
-        let (place, message) = match (body, is_truthy) {
+        let (report_span, message) = match (body, is_truthy) {
             (Some(body), true) => (body, ALWAYS_TRUTHY),
             (Some(body), false) => (body, ALWAYS_FALSY),
             (None, true) => (callback.span(), ALWAYS_TRUTHY_FUNC),
             (None, false) => (callback.span(), ALWAYS_FALSY_FUNC),
         };
-        cx.report(place, message).labels_with(|labels| {
+        cx.report(report_span, message).labels_with(|labels| {
             let is_literal = matches!(callback.kind(), ExprKind::Fn(function)
                 if matches!(function.body(), FnBody::Expr(body) if tsgolint_is_self_explanatory(body)));
             if !is_literal && let Some(ty) = return_type {
                 labels.first(format!("Return type: {}", tsgolint_type_name(ty)));
-                labels.push(place, "");
+                labels.push(report_span, "");
             }
         });
     }
@@ -1129,17 +1129,17 @@ impl NoUnnecessaryCondition {
                 && parameter.get_type().is_assignable_to(predicate_type)
             {
                 // It points at the parameter if this file declares it.
-                let place = match parameter.value_declaration() {
+                let report_span = match parameter.value_declaration() {
                     Some(declaration) if declaration.is_in_linted_file() => declaration.span(),
                     _ => callback.outer_span(),
                 };
-                cx.report(place, TYPE_GUARD_ALREADY_IS_TYPE)
+                cx.report(report_span, TYPE_GUARD_ALREADY_IS_TYPE)
                     .data("typeGuardOrAssertionFunction", "type guard")
                     .labels_with(|labels| {
                         let value = tsgolint_type_name(parameter.get_type());
                         let predicate = tsgolint_type_name(predicate_type);
                         labels.first(format!("Type {value} already satisfies predicate type {predicate}"));
-                        labels.push(place, "");
+                        labels.push(report_span, "");
                     });
                 return;
             }

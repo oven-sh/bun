@@ -46,8 +46,10 @@ fn report_missing<'a>(
     name: Cow<'a, [u8]>,
     cx: &Cx<'a, ExplicitMemberAccessibility>,
 ) {
-    let place = if cx.language().is_oxlint { key() } else { None }.unwrap_or_else(&head);
-    let report = cx.report(place, MISSING_ACCESSIBILITY).called_with(node);
+    let report_span = if cx.language().is_oxlint { key() } else { None }.unwrap_or_else(&head);
+    let report = cx
+        .report(report_span, MISSING_ACCESSIBILITY)
+        .called_with(node);
     let mut report = report.data("type", node_type).data("name", name);
     for accessibility in ["public", "private", "protected"] {
         report = report.suggest_with(

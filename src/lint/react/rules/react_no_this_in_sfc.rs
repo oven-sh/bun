@@ -132,7 +132,7 @@ fn is_in_property(node: Node<'_>) -> bool {
         _ if node.as_expr().is_some_and(Expr::is_chain_root) => false,
         Node::Prop(it) => it.kind() != PropKind::Spread && !it.is_jsx_attribute(),
         // The default value is inside an `AssignmentPattern`.
-        Node::PatProp(it) => it.default().map(Node::Expr) != Some(node.as_written()),
+        Node::PatProp(it) => it.default().map(Node::Expr) != Some(node.owner_or_self()),
         _ => false,
     }
 }

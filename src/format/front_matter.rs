@@ -24,11 +24,11 @@ pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
 /// block scalar, and so part of a value. Prettier trims them.
 pub(crate) fn trim_end_to_last_line(text: &[u8]) -> &[u8] {
     let end = bun_core::strings::trim_js_whitespace_end(text).len();
-    let blanks = text[end..]
+    let spaces_and_tabs = text[end..]
         .iter()
         .take_while(|byte| matches!(byte, b' ' | b'\t'))
         .count();
-    &text[..end + blanks]
+    &text[..end + spaces_and_tabs]
 }
 
 /// A delimiter is exactly three characters: `----` is a thematic break in Markdown. Prettier and oxfmt treat its first

@@ -110,7 +110,7 @@ impl<'a> UnresolvedOrder<'a> {
             utils::sort::sort_unstable_by_key(&mut names, |it| it.0);
         }
         let order = oxc_table_order(names.iter().map(|it| it.1.bytes()));
-        let name_at = |place: u32| names.get(place as usize).map(|it| it.1);
+        let name_at = |index: u32| names.get(index as usize).map(|it| it.1);
         UnresolvedOrder {
             ranks: order.into_iter().filter_map(name_at).zip(0..).collect(),
         }

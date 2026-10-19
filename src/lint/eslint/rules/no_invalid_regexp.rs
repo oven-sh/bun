@@ -79,7 +79,7 @@ impl NoInvalidRegexp {
         };
         let mode = |unicode: bool, unicode_sets: bool| regex::Mode { unicode, unicode_sets };
         let error = match flags {
-            Some(flags) => validate(regex::Mode::of_flags(flags)),
+            Some(flags) => validate(regex::Mode::from_flags(flags)),
             // Reported only if it's invalid whatever the flags are.
             None => validate(mode(true, false))
                 .and_then(|_| validate(mode(false, true)))
@@ -123,12 +123,12 @@ impl NoInvalidRegexp {
             let mut start = 0;
             for end in ends.filter(|_| !text.is_empty()) {
                 let flag = &text[start..end];
-                let place = Span::empty(flags.span().start + 1 + start as u32);
+                let report_span = Span::empty(flags.span().start + 1 + start as u32);
                 start = end;
-                let shown = bstr::BStr::new(flag);
+                let flag_text = bstr::BStr::new(flag);
                 if flag == b"u" && mode.unicode_sets || flag == b"v" && mode.unicode {
                     let (new, old) = if flag == b"u" { ('u', 'v') } else { ('v', 'u') };
-                    cx.report(place, INVALID)
+                    cx.report(report_span, INVALID)
                         .data("message", "`u` and `v` flags should be used alone")
                         .help("Specify only one of 'u' or 'v' flags")
                         .first_label(format!("the '{new}' flag cannot be used when the '{old}' flag is specified"));
@@ -137,20 +137,20 @@ impl NoInvalidRegexp {
                 mode.unicode |= flag == b"u";
                 mode.unicode_sets |= flag == b"v";
                 if seen.contains(&flag) {
-                    cx.report(place, INVALID)
+                    cx.report(report_span, INVALID)
                         .data("message", "Duplicated flag")
                         .help_with(|| {
-                            format!("Remove the duplicated '{shown}' flag from the regular expression flags")
+                            format!("Remove the duplicated '{flag_text}' flag from the regular expression flags")
                         })
-                        .first_label(format!("flag '{shown}' already specified"));
+                        .first_label(format!("flag '{flag_text}' already specified"));
                     return;
                 }
                 seen.push(flag);
                 if !strings::contains(VALID_FLAGS, flag) && !strings::contains(&self.allowed_flags, flag) {
-                    cx.report(place, INVALID)
+                    cx.report(report_span, INVALID)
                         .data("message", "Unknown flag")
                         .note(VALID_FLAGS_NOTE)
-                        .first_label(format!("flag '{shown}' is not a valid regular expression flag"));
+                        .first_label(format!("flag '{flag_text}' is not a valid regular expression flag"));
                     return;
                 }
             }

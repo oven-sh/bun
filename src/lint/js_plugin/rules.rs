@@ -162,18 +162,18 @@ impl FileSettings {
     ) -> Arc<FileSettings> {
         let sources = has_non_json_value(&language.settings).then(|| {
             let sources = sources.iter().map(|it| (*it).clone());
-            let mut written = Vec::new();
-            write_json(&mut written, &Json::Array(sources.collect()));
-            written.into()
+            let mut sources_json = Vec::new();
+            write_json(&mut sources_json, &Json::Array(sources.collect()));
+            sources_json.into()
         });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let string = |text: &[u8]| Json::String(text.to_vec());
         // oxlint only puts the entries of `globals` itself there.
-        let written = match language.is_oxlint {
+        let config_globals = match language.is_oxlint {
             true => &language.own_globals,
             false => &language.globals,
         };
-        let globals = written.iter().map(|(name, setting)| {
+        let globals = config_globals.iter().map(|(name, setting)| {
             let setting: &[u8] = match setting {
                 Global::Readonly => b"readonly",
                 Global::Writable => b"writable",

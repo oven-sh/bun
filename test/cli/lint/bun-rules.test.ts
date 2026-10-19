@@ -2197,7 +2197,7 @@ const testRules: Record<string, Case[]> = {
   ].map(inBunTest),
 };
 
-const whose: Case[] = [
+const importSourceCases: Case[] = [
   focused(`import { test } from "bun:test";\ntest.«only»("a", () => {});`),
   focused(`import { test as check } from "bun:test";\ncheck.«only»("a", () => {});`),
   focused(`import { type Mock, test } from "bun:test";\ntest.«only»("a", () => {});`),
@@ -2279,7 +2279,7 @@ function marked(code: string, messages: Message[]) {
 
 const tables = Object.entries({
   bun: rules,
-  "bun:test": { ...testRules, "no-focused-tests, by whose the call is": whose },
+  "bun:test": { ...testRules, "no-focused-tests, by whose the call is": importSourceCases },
 });
 describe.concurrent.each(tables)("%s/", (plugin, rules) => {
   for (const [title, table] of Object.entries(rules)) {
@@ -3130,7 +3130,7 @@ expect(1).toBe(1);
     const all = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
     const categories = Object.fromEntries(all.map(it => [it, "error"]));
     const plugins = ["jest", "vitest"];
-    const [everything, andTheRule, named] = await Promise.all([
+    const [everything, andTheRule, listedInPlugins] = await Promise.all([
       lint({ ".oxlintrc.json": JSON.stringify({ plugins, categories }), "a.test.js": only }, [
         "-f",
         "unix",
@@ -3144,8 +3144,8 @@ expect(1).toBe(1);
     ]);
     expect(unix(everything.stdout)).toEqual([]);
     expect(unix(andTheRule.stdout)).toEqual(["2 Warning/bun:test(no-focused-tests)"]);
-    expect(named.stdout).toContain("Unknown plugin: 'bun:test'.");
-    expect(named.exitCode).toBe(1);
+    expect(listedInPlugins.stdout).toContain("Unknown plugin: 'bun:test'.");
+    expect(listedInPlugins.exitCode).toBe(1);
   });
 
   test("`settings.vitest` doesn't apply to it", async () => {
@@ -3282,8 +3282,8 @@ var a = b;
       print({ ".oxlintrc.json": oxlintrc({ [name]: "error" }), "a.test.js": only }),
     ]);
     /** Returns the spellings of the rule's name in the output. */
-    const written = (text: string) => [...new Set(text.match(/bun(:|%3A)test[/(]no-focused-tests\)?/g))];
-    expect(Object.fromEntries(formats.map((format, index) => [format, written(plain[index])]))).toEqual({
+    const ruleNamesIn = (text: string) => [...new Set(text.match(/bun(:|%3A)test[/(]no-focused-tests\)?/g))];
+    expect(Object.fromEntries(formats.map((format, index) => [format, ruleNamesIn(plain[index])]))).toEqual({
       stylish: ["bun:test/no-focused-tests"],
       unix: ["bun:test/no-focused-tests"],
       json: ["bun:test/no-focused-tests"],
@@ -3296,7 +3296,7 @@ var a = b;
       pretty: ["bun:test/no-focused-tests"],
       agent: ["bun:test/no-focused-tests"],
     });
-    expect(Object.fromEntries(formats.map((format, index) => [format, written(oxlint[index])]))).toEqual({
+    expect(Object.fromEntries(formats.map((format, index) => [format, ruleNamesIn(oxlint[index])]))).toEqual({
       stylish: ["bun:test(no-focused-tests)"],
       unix: ["bun:test(no-focused-tests)"],
       json: ["bun:test(no-focused-tests)"],
@@ -3339,14 +3339,14 @@ var a = b;
   });
 
   test("--rules lists its rules without a category", async () => {
-    const [json, lines, alone] = await Promise.all([
+    const [json, lines, withoutConfig] = await Promise.all([
       lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]),
       lint({}, ["--rules"]),
       lint({}, ["--rules", "-f", "json"]),
     ]);
     // `default` means that oxlint turns the rule on without a config file, even in a project where `bun lint` turns
     // some of these rules on.
-    expect(alone.stdout).toBe(json.stdout);
+    expect(withoutConfig.stdout).toBe(json.stdout);
     const listed = (JSON.parse(json.stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun:test");
     expect(listed.map(it => it.value)).toEqual(Object.keys(twins));
     expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
@@ -4168,9 +4168,9 @@ describe("tests that pass in bun test", () => {
       const fixed = await Bun.file(`${dir}/${name}`).text();
       if (name === "shapes.test.ts") expect(fixed).not.toBe(text);
       // `expect` messages, titles, timeouts and options.
-      const kept = (text: string) =>
+      const literalsIn = (text: string) =>
         (text.match(/"[^"\n]*"|\b1000\b|\{ (timeout|retry|repeats)[^}]*\}/g) ?? []).toSorted();
-      expect(kept(fixed)).toEqual(kept(text));
+      expect(literalsIn(fixed)).toEqual(literalsIn(text));
     }
   });
 });

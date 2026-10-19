@@ -183,9 +183,9 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
 
 /// The length of a `>` at the start of `line`, however it's written, with the spaces and tabs around it.
 fn blockquote_marker_len(line: &[u8]) -> Option<usize> {
-    let is_blank = |byte: &&u8| matches!(byte, b' ' | b'\t');
-    let blanks = line.iter().take_while(is_blank).count();
-    let rest = &line[blanks..];
+    let is_space_or_tab = |byte: &&u8| matches!(byte, b' ' | b'\t');
+    let leading_whitespace = line.iter().take_while(is_space_or_tab).count();
+    let rest = &line[leading_whitespace..];
     let reference = |rest: &[u8]| -> Option<usize> {
         let number = rest.strip_prefix(b"&#")?;
         let (digits, wanted, prefix): (&[u8], &[u8], usize) = match number.first()? {
@@ -206,7 +206,7 @@ fn blockquote_marker_len(line: &[u8]) -> Option<usize> {
     } else {
         reference(rest)?
     };
-    Some(blanks + len + rest[len..].iter().take_while(is_blank).count())
+    Some(leading_whitespace + len + rest[len..].iter().take_while(is_space_or_tab).count())
 }
 
 /// How many unescaped references to a line break are in `line`: `&NewLine;`, `&#10;`, `&#xA;`.
@@ -343,7 +343,7 @@ pub(crate) struct Preprocessor<'x> {
 
 /// Facts about a node derived from its ancestors.
 #[derive(Copy, Clone)]
-struct Around {
+struct Ancestry {
     /// All the lists around it are aligned.
     is_in_aligned_lists: bool,
     /// The paragraph or heading that contains it, and true if that's in a block quote.
@@ -357,13 +357,13 @@ impl Preprocessor<'_> {
         if !self.is_mdx {
             self.mark_risky_paragraphs(root);
         }
-        let around = Around {
+        let ancestry = Ancestry {
             is_in_aligned_lists: true,
             paragraph: None,
             is_in_blockquote: false,
             is_in_emphasis: false,
         };
-        self.visit(root, around);
+        self.visit(root, ancestry);
     }
 
     /// A paragraph where wrapping could turn `[[` and `]]` into a wiki link keeps its texts as is. Such a paragraph has
@@ -414,7 +414,7 @@ impl Preprocessor<'_> {
         }
     }
 
-    fn visit(&mut self, id: NodeId, mut around: Around) {
+    fn visit(&mut self, id: NodeId, mut ancestry: Ancestry) {
         if !self.stack_check.is_safe_to_recurse() {
             self.is_nested_too_deeply = true;
             return;
@@ -423,12 +423,12 @@ impl Preprocessor<'_> {
             return;
         };
         match node.kind {
-            Kind::Text => return self.split_into_sentence(id, around),
+            Kind::Text => return self.split_into_sentence(id, ancestry),
             Kind::List if node.first_child != super::ast::NONE => {
-                let is_aligned = around.is_in_aligned_lists
+                let is_aligned = ancestry.is_in_aligned_lists
                     && (self.is_mdx || !is_indented_code(self.original, self.tree, node.next))
                     && self.is_aligned(id);
-                around.is_in_aligned_lists = is_aligned;
+                ancestry.is_in_aligned_lists = is_aligned;
                 // Prettier's `getNthListSiblingIndex`
                 let nth = match self.tree.get(node.previous) {
                     Some(previous)
@@ -442,11 +442,11 @@ impl Preprocessor<'_> {
                     (node.is_aligned, node.first_align) = (is_aligned, nth);
                 }
             }
-            Kind::Paragraph | Kind::Heading if around.paragraph.is_none() => {
-                around.paragraph = Some((id, around.is_in_blockquote));
+            Kind::Paragraph | Kind::Heading if ancestry.paragraph.is_none() => {
+                ancestry.paragraph = Some((id, ancestry.is_in_blockquote));
             }
-            Kind::Blockquote => around.is_in_blockquote = true,
-            Kind::Emphasis | Kind::Strong => around.is_in_emphasis = true,
+            Kind::Blockquote => ancestry.is_in_blockquote = true,
+            Kind::Emphasis | Kind::Strong => ancestry.is_in_emphasis = true,
             // Prettier's `htmlToJsx`
             Kind::Html
                 if self.is_mdx
@@ -477,7 +477,7 @@ impl Preprocessor<'_> {
         }
         let mut child = node.first_child;
         while let Some(next) = self.tree.get(child).map(|child| child.next) {
-            self.visit(child, around);
+            self.visit(child, ancestry);
             child = next;
         }
     }
@@ -540,14 +540,14 @@ impl Preprocessor<'_> {
     }
 
     /// Prettier's `splitTextIntoSentences`, for one text.
-    fn split_into_sentence(&mut self, id: NodeId, around: Around) {
+    fn split_into_sentence(&mut self, id: NodeId, ancestry: Ancestry) {
         let Some(&node) = self.tree.get(id) else {
             return;
         };
         let raw = &self.original[node.start as usize..node.end as usize];
         let mut without_markers = Vec::new();
         let mut text = raw;
-        if let Some((_, true)) = around.paragraph
+        if let Some((_, true)) = ancestry.paragraph
             && bun_core::strings::contains_char(raw, b'\n')
         {
             blockquote_raw_text(
@@ -557,7 +557,7 @@ impl Preprocessor<'_> {
             );
             text = &without_markers;
         }
-        if around.paragraph.is_some() && self.tree.kind(node.parent) == Some(Kind::Paragraph) {
+        if ancestry.paragraph.is_some() && self.tree.kind(node.parent) == Some(Kind::Paragraph) {
             if node.previous == super::ast::NONE {
                 text = text.trim_ascii_start();
             }
@@ -602,7 +602,7 @@ impl Preprocessor<'_> {
                 Str::source(start, start + text.len() as u32)
             }
         };
-        let is_risky = around.paragraph.is_some_and(|(paragraph, _)| {
+        let is_risky = ancestry.paragraph.is_some_and(|(paragraph, _)| {
             self.tree
                 .get(paragraph)
                 .is_some_and(|it| it.kind == Kind::Paragraph && it.spread)
@@ -616,12 +616,12 @@ impl Preprocessor<'_> {
         // Without wrapping, words only matter if they aren't plain ASCII, or if they may need escapes.
         if !self.wraps_lines
             && text.is_ascii()
-            && !((around.is_in_emphasis || self.is_mdx)
+            && !((ancestry.is_in_emphasis || self.is_mdx)
                 && bun_core::strings::index_of_any(text, b"*_").is_some())
         {
             if let Some(node) = self.tree.get_mut(id) {
                 (node.kind, node.value, node.number, node.is_aligned) =
-                    (Kind::Sentence, base, PLAIN, around.is_in_emphasis);
+                    (Kind::Sentence, base, PLAIN, ancestry.is_in_emphasis);
             }
             return;
         }

@@ -139,15 +139,15 @@ impl NoMultiComp {
         if components.length() <= 1 {
             return;
         }
-        let places = components.list().into_iter().filter_map(|id| {
+        let component_spans = components.list().into_iter().filter_map(|id| {
             let node = components.component(id).node;
             // upstream's `isIgnored`
             let is_ignored = self.ignore_stateless
                 && (matches!(node, Node::Func(_)) || components.is_pragma_component_wrapper(node));
             (!is_ignored).then(|| components.component(id).span())
         });
-        for place in places.skip(1) {
-            cx.report(place, ONLY_ONE_COMPONENT).at_the_end();
+        for component_span in component_spans.skip(1) {
+            cx.report(component_span, ONLY_ONE_COMPONENT).at_the_end();
         }
     }
 }

@@ -178,15 +178,15 @@ impl Checker<'_, '_> {
     /// The end of `getTypeOfAccessors`, where `popTypeResolution` finds the cycle. `members` are the declarations of
     /// the property `sym`.
     pub(super) fn report_circular_accessors(&mut self, sym: Sym, members: &[(FileId, MemberId)]) {
-        let of_kind = |c: &Self, kind: MemberKind| {
+        let accessor_of_kind = |c: &Self, kind: MemberKind| {
             members
                 .iter()
                 .copied()
                 .find(|&(file, m)| c.hir(file)[m].kind == kind)
         };
         let (getter, setter) = (
-            of_kind(self, MemberKind::Getter),
-            of_kind(self, MemberKind::Setter),
+            accessor_of_kind(self, MemberKind::Getter),
+            accessor_of_kind(self, MemberKind::Setter),
         );
         // `getAnnotatedAccessorTypeNode`
         let annotated_getter = getter.filter(|&(file, g)| {
@@ -269,12 +269,13 @@ impl Checker<'_, '_> {
         if !hir.is_js {
             return;
         }
-        let of_this_or_exports =
-            (bound.symbols.iter().flat_map(|symbol| symbol.decls)).filter_map(|decl| match decl {
+        let this_or_exports_declarations = (bound.symbols.iter().flat_map(|symbol| symbol.decls))
+            .filter_map(|decl| match decl {
                 Decl::ThisProperty(e) | Decl::ExportsProperty(e) => Some(e),
                 _ => None,
             });
-        for &declaration in (bound.expando_declarations.iter()).chain(of_this_or_exports) {
+        for &declaration in (bound.expando_declarations.iter()).chain(this_or_exports_declarations)
+        {
             let checked = match hir[declaration].kind {
                 ExprKind::Assign { target, .. } => target,
                 _ => declaration,

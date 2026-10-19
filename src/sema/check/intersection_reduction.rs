@@ -7,15 +7,15 @@ use smallvec::SmallVec;
 pub const MEMBER_COUNTS: [&str; 11] = [
     "intersections reduced",
     "with a shared name",
-    "unions made objects",
-    "properties of unions created",
+    "unions converted to objects",
+    "union properties created",
     "members visited",
     "members visited without facts",
     "intersections listed",
     "properties listed",
     "intersections left unlisted",
-    "asked of unlisted intersections",
-    "listed after being asked",
+    "lookups in unlisted intersections",
+    "listed after repeated lookups",
 ];
 
 /// An index into `MEMBER_COUNTS`.

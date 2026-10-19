@@ -185,8 +185,8 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         });
         let message = object(vec![(b"text", text(&problem.message))]);
         let has_file = !info.filename.is_empty();
-        let is_of_rule = info.code.is_some();
-        if !is_of_rule && !has_file {
+        let has_rule_code = info.code.is_some();
+        if !has_rule_code && !has_file {
             is_successful &= !is_error(problem);
             notifications.push(object(vec![
                 (
@@ -202,7 +202,7 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         let id = info.code.unwrap_or_else(|| b"OXL0001".to_vec());
         let known = rule_ids.iter().find(|it| it.0 == id).map(|it| it.1);
         let rule = known.unwrap_or_else(|| {
-            let descriptor = match is_of_rule {
+            let descriptor = match has_rule_code {
                 true => rule_descriptor(&id),
                 false => Some(own_descriptor(
                     &id,

@@ -138,14 +138,14 @@ impl Iterator for Changed {
 }
 
 /// An environment's variables: `browser`, `node`, `es2021`, `jest`, `shared-node-browser`, .. Sorted by name. `None` if
-/// `whose` has no such environment.
+/// `env_tables` has no such environment.
 pub fn environment(
     name: &[u8],
-    whose: Tables,
+    env_tables: Tables,
 ) -> Option<impl Iterator<Item = (&'static [u8], Global)>> {
     let (known, changes) = (
         entries_of(tables::ENVIRONMENTS, name),
-        entries_of(whose.changes(), name),
+        entries_of(env_tables.changes(), name),
     );
     if known.is_none() && changes.is_none() {
         return None;

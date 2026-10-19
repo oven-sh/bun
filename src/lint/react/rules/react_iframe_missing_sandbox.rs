@@ -121,12 +121,12 @@ impl IframeMissingSandbox {
         };
         let missing = if is_oxlint { MISSING_SANDBOX_PROP } else { ATTRIBUTE_MISSING };
         // oxlint's AST has a node for parentheses.
-        let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
+        let is_plain = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
         let arguments = call.args();
-        if !arguments.first().filter(is_seen).and_then(Expr::as_string).is_some_and(|it| it.is("iframe")) {
+        if !arguments.first().filter(is_plain).and_then(Expr::as_string).is_some_and(|it| it.is("iframe")) {
             return;
         }
-        let Some((object, ExprKind::Object(properties))) = arguments.get(1).filter(is_seen).map(|it| (it, it.kind()))
+        let Some((object, ExprKind::Object(properties))) = arguments.get(1).filter(is_plain).map(|it| (it, it.kind()))
         else {
             cx.report(e, missing);
             return;

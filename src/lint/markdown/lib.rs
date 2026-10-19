@@ -18,7 +18,7 @@ mod util;
 pub use document::Document;
 use document::Mdast;
 
-use bun_lint::languages::{Configured, LineBreaks, Parsed, Refusal, SyntaxError};
+use bun_lint::languages::{Configured, LineBreaks, Parsed, Rejection, SyntaxError};
 use bun_lint::options::Json;
 use bun_lint::rule::{Kind, Meta, Plugin};
 
@@ -170,10 +170,10 @@ impl bun_lint::languages::Language for Markdown {
         LineBreaks::Newlines
     }
 
-    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Refusal> {
+    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Rejection> {
         match Dialect::new(name, options) {
             Ok(dialect) => Ok(std::sync::Arc::new(dialect)),
-            Err(message) => Err(Refusal::Invalid(message)),
+            Err(message) => Err(Rejection::Invalid(message)),
         }
     }
 

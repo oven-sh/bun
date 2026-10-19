@@ -51,15 +51,15 @@ impl Phase {
 }
 
 /// On drop, reports its lifetime to the host.
-pub struct Spent<'a>(&'a dyn Host, Phase, Instant);
+pub struct PhaseTimer<'a>(&'a dyn Host, Phase, Instant);
 
-impl<'a> Spent<'a> {
-    pub fn on(host: &'a dyn Host, phase: Phase) -> Spent<'a> {
-        Spent(host, phase, Instant::now())
+impl<'a> PhaseTimer<'a> {
+    pub fn on(host: &'a dyn Host, phase: Phase) -> PhaseTimer<'a> {
+        PhaseTimer(host, phase, Instant::now())
     }
 }
 
-impl Drop for Spent<'_> {
+impl Drop for PhaseTimer<'_> {
     fn drop(&mut self) {
         self.0.spent(self.1, self.2.elapsed());
     }
@@ -105,7 +105,7 @@ pub fn run_with_current_helpers(
 }
 
 /// An opaque value that only its creator can read.
-pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+pub type CachedConfig = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 /// `Options::paths`
 pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
@@ -184,11 +184,11 @@ pub trait Host: Sync {
     fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
     /// `ExtendedConfigCache`, for a host that reads many configuration files. Returns what
     /// `cache_extended_config` stored for the file at `path`.
-    fn extended_config(&self, _path: &[u8]) -> Option<Kept> {
+    fn extended_config(&self, _path: &[u8]) -> Option<CachedConfig> {
         None
     }
     /// Only calls `parsed` if the host caches the result.
-    fn cache_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> Kept) {}
+    fn cache_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> CachedConfig) {}
     /// For a host that reads many configuration files: returns a shared list equal to `paths`, so
     /// the projects of a build that get their `paths` from the same file share one copy.
     fn shared_paths(&self, paths: std::sync::Arc<Paths>) -> std::sync::Arc<Paths> {
@@ -417,7 +417,8 @@ impl Options {
         let files = self.project_files.as_ref()?;
         self.with_path(name, |path| {
             let sources = files.outputs.get(path)?.iter();
-            // It has what the other has.
+            // `outputDtsToProjectReference` stores the same `SourceOutputAndProjectReference` values as
+            // `sourceToProjectReference`, so the entry is looked up through its source.
             let sources = sources.filter_map(|source| {
                 let file = self.last_referenced(files.sources.get(source)?)?;
                 (to_path(&file.output_dts, self.use_case_sensitive_file_names) == path)
@@ -428,8 +429,8 @@ impl Options {
     }
 
     /// `maps.Copy`: when several referenced projects have the file, the last one's entry wins.
-    fn last_referenced<'a>(&self, of_all: &'a [ProjectFile]) -> Option<&'a ProjectFile> {
-        let referenced = of_all.iter().filter_map(|file| {
+    fn last_referenced<'a>(&self, candidates: &'a [ProjectFile]) -> Option<&'a ProjectFile> {
+        let referenced = candidates.iter().filter_map(|file| {
             let project = self.referenced_projects.get(&file.project)?;
             Some((project, file))
         });
@@ -955,12 +956,12 @@ impl Options {
     }
 
     /// `emit_syntax_for_import` for the argument of `import()`, in a file whose plain `import`s are
-    /// emitted as `of_import`. `ShouldTransformImportCall`: the call is preserved unless the file
+    /// emitted as `import_syntax`. `ShouldTransformImportCall`: the call is preserved unless the file
     /// is emitted in a module format older than ECMAScript modules.
-    pub fn emit_syntax_for_import_call(&self, of_import: ResolutionMode) -> ResolutionMode {
+    pub fn emit_syntax_for_import_call(&self, import_syntax: ResolutionMode) -> ResolutionMode {
         if self.module.is_node()
             || self.module == ModuleKind::Preserve
-            || of_import == ResolutionMode::Import
+            || import_syntax == ResolutionMode::Import
         {
             ResolutionMode::Import
         } else {
@@ -2127,14 +2128,14 @@ fn guess_directory_link(
     let mut b: Vec<&[u8]> = strings::split(link, b"/").collect();
     // `isNodeModulesOrScopedPackageDirectory`: the symlink is an entry of such a directory, not the
     // directory itself.
-    let holds_packages = |name: &[u8]| {
+    let is_node_modules_or_scope = |name: &[u8]| {
         is_same_path(name, b"node_modules", is_case_sensitive) || name.starts_with(b"@")
     };
     let mut is_directory = false;
     while a.len() >= 2
         && b.len() >= 2
-        && !holds_packages(a[a.len() - 2])
-        && !holds_packages(b[b.len() - 2])
+        && !is_node_modules_or_scope(a[a.len() - 2])
+        && !is_node_modules_or_scope(b[b.len() - 2])
         && is_same_path(a[a.len() - 1], b[b.len() - 1], is_case_sensitive)
     {
         a.pop();
@@ -2567,11 +2568,11 @@ impl<'h> Resolver<'h> {
         // The directories handled so far. Thousands of files share hundreds of directories.
         let mut visited_directories: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
-            let of_file = dirname::<Posix>(path);
-            if !visited_directories.insert(of_file) {
+            let file_directory = dirname::<Posix>(path);
+            if !visited_directories.insert(file_directory) {
                 continue;
             }
-            let Some((directory, package)) = self.package_scope(of_file) else {
+            let Some((directory, package)) = self.package_scope(file_directory) else {
                 continue;
             };
             if seen.contains(&directory) {
@@ -2672,9 +2673,9 @@ impl<'h> Resolver<'h> {
             let json =
                 text.and_then(|text| (self.host).parse_package_json(self.session.arena(), &text));
             let json = json.unwrap_or(Json::Null);
-            let kept = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
+            let stored_field = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {
-                name_and_version: kept(b"name").zip(kept(b"version")),
+                name_and_version: stored_field(b"name").zip(stored_field(b"version")),
                 json: std::sync::Arc::new(json),
                 peer_dependencies: Default::default(),
             }
@@ -3299,8 +3300,9 @@ impl<'h> Resolver<'h> {
             None => Cow::Owned(self.options.effective_type_roots()),
         };
         if tracer.is_some() {
-            let shown: Vec<Cow<'_, [u8]>> = roots.iter().map(|it| displayed_path(it)).collect();
-            let joined = shown.join(&b","[..]);
+            let displayed_roots: Vec<Cow<'_, [u8]>> =
+                roots.iter().map(|it| displayed_path(it)).collect();
+            let joined = displayed_roots.join(&b","[..]);
             look.trace(
                 6116,
                 &[Arg::Bytes(name), Arg::Path(from), Arg::Bytes(&joined)],
@@ -3308,7 +3310,7 @@ impl<'h> Resolver<'h> {
             self.trace_resolution_using_project_reference(look);
             match roots.is_empty() {
                 true => look.trace(6122, &[]),
-                false => look.trace(6121, &[Arg::Bytes(&shown.join(&b", "[..]))]),
+                false => look.trace(6121, &[Arg::Bytes(&displayed_roots.join(&b", "[..]))]),
             }
         }
         // First in the type roots, regardless of the location of the reference.
@@ -3422,11 +3424,11 @@ impl<'h> Resolver<'h> {
         })
     }
 
-    /// In `tryLoadModuleUsingPaths`: a substitution `written` with an extension may name the file
-    /// at `path` exactly. That file is then the result, regardless of the requested kinds of file,
+    /// In `tryLoadModuleUsingPaths`: a `substitution` with an extension may name the file at `path`
+    /// exactly. That file is then the result, regardless of the requested kinds of file,
     /// before the extension is interpreted.
-    fn exact_file(&self, written: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
-        if known_extension(written).is_empty() {
+    fn exact_file(&self, substitution: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
+        if known_extension(substitution).is_empty() {
             return None;
         }
         self.try_file(path, look)
@@ -3757,31 +3759,40 @@ impl<'h> Resolver<'h> {
         self.with_extensions(&path[..path.len() - extension.len()], extension, look)
     }
 
-    /// `tryAddingExtensions`: `stem` with each of the extensions that `written` maps to, in a fixed
-    /// order: TypeScript, declaration, JavaScript or JSON, each kind only if `look` allows it. The
-    /// original extension isn't tried first.
-    fn with_extensions(&self, stem: &[u8], written: &[u8], look: Look) -> Option<Vec<u8>> {
+    /// `tryAddingExtensions`: `stem` with each of the extensions that `original_extension` maps to, in
+    /// a fixed order: TypeScript, declaration, JavaScript or JSON, each kind only if `look` allows it.
+    /// The original extension isn't tried first.
+    fn with_extensions(
+        &self,
+        stem: &[u8],
+        original_extension: &[u8],
+        look: Look,
+    ) -> Option<Vec<u8>> {
         // No file is looked up in a directory that doesn't exist. Without a tracer, `is_file` takes care of that.
         if look.tracer.is_some() && !self.is_dir(dirname::<Posix>(stem)) {
             return None;
         }
-        let (typescript, declaration, javascript): (&[&[u8]], &[u8], &[&[u8]]) = match written {
-            b".ts" | b".d.ts" | b".js" | b"" => (&[b".ts", b".tsx"], b".d.ts", &[b".js", b".jsx"]),
-            b".tsx" | b".jsx" => (&[b".tsx", b".ts"], b".d.ts", &[b".jsx", b".js"]),
-            b".mts" | b".d.mts" | b".mjs" => (&[b".mts"], b".d.mts", &[b".mjs"]),
-            b".cts" | b".d.cts" | b".cjs" => (&[b".cts"], b".d.cts", &[b".cjs"]),
-            b".json" => (&[], b".d.json.ts", &[]),
-            // `./a.css` is declared by `a.d.css.ts`.
-            _ => {
-                return if look.declarations {
-                    let found = self.try_file(&[stem, b".d", written, b".ts"].concat(), look)?;
-                    look.outcome.arbitrary_extension.set(true);
-                    Some(found)
-                } else {
-                    None
-                };
-            }
-        };
+        let (typescript, declaration, javascript): (&[&[u8]], &[u8], &[&[u8]]) =
+            match original_extension {
+                b".ts" | b".d.ts" | b".js" | b"" => {
+                    (&[b".ts", b".tsx"], b".d.ts", &[b".js", b".jsx"])
+                }
+                b".tsx" | b".jsx" => (&[b".tsx", b".ts"], b".d.ts", &[b".jsx", b".js"]),
+                b".mts" | b".d.mts" | b".mjs" => (&[b".mts"], b".d.mts", &[b".mjs"]),
+                b".cts" | b".d.cts" | b".cjs" => (&[b".cts"], b".d.cts", &[b".cjs"]),
+                b".json" => (&[], b".d.json.ts", &[]),
+                // `./a.css` is declared by `a.d.css.ts`.
+                _ => {
+                    return if look.declarations {
+                        let found = self
+                            .try_file(&[stem, b".d", original_extension, b".ts"].concat(), look)?;
+                        look.outcome.arbitrary_extension.set(true);
+                        Some(found)
+                    } else {
+                        None
+                    };
+                }
+            };
         let typed = if look.typescript {
             self.first_file(stem, typescript, look)
         } else {
@@ -3797,14 +3808,16 @@ impl<'h> Resolver<'h> {
         if let Some(found) = typed {
             // `tryExtension`
             let is_ts_extension = matches!(
-                written,
+                original_extension,
                 b".ts" | b".d.ts" | b".tsx" | b".mts" | b".d.mts" | b".cts" | b".d.cts"
             );
             look.outcome
                 .using_ts_extension
                 .set(!look.ending_from_config && is_ts_extension);
             // `.d.json.ts`
-            look.outcome.arbitrary_extension.set(written == b".json");
+            look.outcome
+                .arbitrary_extension
+                .set(original_extension == b".json");
             return Some(found);
         }
         if look.js
@@ -3812,7 +3825,7 @@ impl<'h> Resolver<'h> {
         {
             return Some(found);
         }
-        let is_json = match written {
+        let is_json = match original_extension {
             b".json" => look.json,
             b".ts" | b".d.ts" | b".js" | b"" => look.is_config_lookup,
             _ => false,
@@ -4479,15 +4492,15 @@ impl<'h> Resolver<'h> {
                 continue;
             }
             let input = join(root_dir, path.get(dir.len() + 1..).unwrap_or(b""));
-            let written = known_extension(&input);
+            let output_extension = known_extension(&input);
             // `GetPossibleOriginalInputExtensionForExtension`
-            let extensions: &[&[u8]] = match written {
+            let extensions: &[&[u8]] = match output_extension {
                 b".mjs" | b".d.mts" => &[b".mts", b".mjs"],
                 b".cjs" | b".d.cts" => &[b".cts", b".cjs"],
                 b".js" | b".json" | b".d.ts" => &[b".tsx", b".ts", b".jsx", b".js"],
                 _ => continue,
             };
-            let stem = &input[..input.len() - written.len()];
+            let stem = &input[..input.len() - output_extension.len()];
             for extension in extensions {
                 let candidate = [stem, *extension].concat();
                 if self.is_file(&candidate)
@@ -4511,7 +4524,7 @@ impl<'h> Resolver<'h> {
                 crate::verify::Problem::new(
                     if is_imports { 2210 } else { 2209 },
                     &[entry, &displayed_path(package_json)],
-                    crate::verify::Place::Nowhere,
+                    crate::verify::ConfigLocation::Nowhere,
                 )
             })
             .collect()

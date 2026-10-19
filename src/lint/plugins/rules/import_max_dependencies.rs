@@ -10,7 +10,7 @@ pub struct MaxDependencies {
     max: u32,
     /// `max` as the plugin reads it. `None` if there are options without a `max`, because no count is greater than
     /// `undefined`.
-    written_max: Option<f64>,
+    plugin_max: Option<f64>,
     ignore_type_imports: bool,
 }
 
@@ -28,13 +28,13 @@ impl Rule for MaxDependencies {
     fn new(options: &Options) -> Self {
         let as_u32 = |n: f64| (n.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&n)).then_some(n as u32);
         if let Some(max) = options.number(0).and_then(as_u32) {
-            return MaxDependencies { max, written_max: None, ignore_type_imports: false };
+            return MaxDependencies { max, plugin_max: None, ignore_type_imports: false };
         }
-        let written_max = if options.is_empty() { Some(10.0) } else { options.object(0).number("max") };
+        let plugin_max = if options.is_empty() { Some(10.0) } else { options.object(0).number("max") };
         let options = options.object(0);
         MaxDependencies {
             max: options.number("max").and_then(as_u32).unwrap_or(10),
-            written_max,
+            plugin_max,
             ignore_type_imports: options.bool_or("ignoreTypeImports", false),
         }
     }
@@ -50,7 +50,7 @@ impl Rule for MaxDependencies {
         if file.mentions("require") {
             candidates += file.exprs_of_kind(ExprTag::Call).count();
         }
-        (candidates as f64 > self.written_max?).then_some(())
+        (candidates as f64 > self.plugin_max?).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
@@ -80,7 +80,7 @@ impl Rule for MaxDependencies {
             let is_import_type = |it: Stmt| matches!(it.kind(), StmtKind::Import(it) if it.is_type_only());
             add(it.specifier, matches!(it.importer, Node::Stmt(it) if is_import_type(it)));
         }
-        if let (Some(last_node), Some(max)) = (visited.last(), self.written_max)
+        if let (Some(last_node), Some(max)) = (visited.last(), self.plugin_max)
             && dependency_sources.len() as f64 > max
         {
             cx.report(last_node.source, EXCEEDED).data("max", text::number_to_string(max));

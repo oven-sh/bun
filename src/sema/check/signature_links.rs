@@ -206,9 +206,9 @@ impl<'p, 's> Checker<'p, 's> {
         if raw == 0 || !self.index_infos_in_instantiation.is_empty() {
             return None;
         }
-        let kept = TypeId::unpack(raw);
+        let return_type = TypeId::unpack(raw);
 
-        Some(kept)
+        Some(return_type)
     }
 
     fn return_type_source(&self, sig: SigId) -> ReturnTypeSource {
@@ -264,12 +264,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `signature.resolvedTypePredicate` if it's cached and safe to read now.
     #[inline]
     pub(super) fn cached_type_predicate(&mut self, sig: SigId) -> Option<Option<Predicate>> {
-        let kept = self.signature_links.type_predicate(sig)?;
+        let predicate_entry = self.signature_links.type_predicate(sig)?;
         if !self.index_infos_in_instantiation.is_empty() {
             return None;
         }
 
-        Some(kept)
+        Some(predicate_entry)
     }
 
     /// `sig_predicate` on a cache miss.
@@ -346,8 +346,8 @@ mod tests {
         }
         for (at, sig) in sigs.into_iter().enumerate() {
             links.cache_return_type(sig, TypeId(at as u32), Stored::new());
-            let kept = (at % 2 == 0).then(|| predicate(at));
-            links.cache_type_predicate(sig, kept, Stored::new());
+            let expected_predicate = (at % 2 == 0).then(|| predicate(at));
+            links.cache_type_predicate(sig, expected_predicate, Stored::new());
             links.add_fact(sig, fact::HAS_NO_THIS_PARAMETER);
             links.cache_parameters(sig, &parameters[..at % 2]);
             // A second call doesn't replace the first list.
@@ -359,13 +359,13 @@ mod tests {
         }
         for (at, sig) in sigs.into_iter().enumerate() {
             assert_eq!(links.cell(sig, super::RETURN_TYPE), at as u32 + 1);
-            let kept = (at % 2 == 0).then(|| predicate(at));
-            assert_eq!(links.type_predicate(sig), Some(kept));
+            let expected_predicate = (at % 2 == 0).then(|| predicate(at));
+            assert_eq!(links.type_predicate(sig), Some(expected_predicate));
             assert!(links.has(sig, fact::HAS_NO_THIS_PARAMETER));
             assert!(!links.has(sig, fact::HAS_NO_TYPE_PARAMETERS));
             assert_eq!(links.parameters(sig), Some(&parameters[..at % 2]));
-            let kept = (at % 3 == 0).then_some(&type_parameters[..at % 2]);
-            assert_eq!(links.type_parameters(sig), kept);
+            let expected_type_parameters = (at % 3 == 0).then_some(&type_parameters[..at % 2]);
+            assert_eq!(links.type_parameters(sig), expected_type_parameters);
         }
         for other in [1, page + 1, 6 * page, LOCAL | 2, LOCAL | 1001].map(SigId) {
             assert_eq!(links.cell(other, super::RETURN_TYPE), 0);

@@ -64,12 +64,12 @@ pub struct OwnTexts<'a> {
 
 impl<'a> OwnTexts<'a> {
     /// Set in a span's start if the text isn't in the source.
-    pub const ELSEWHERE: u32 = 1 << 31;
+    pub const NOT_IN_SOURCE: u32 = 1 << 31;
 
     /// `spans` is indexed by atom. Each entry is the text's start in `source` and its length.
     pub fn new(spans: &'a [(u32, u32)], source: &'a [u8]) -> Self {
-        // A start with `ELSEWHERE` set has to be past the end of the source, so `in_source` misses.
-        match source.len() <= Self::ELSEWHERE as usize {
+        // A start with `NOT_IN_SOURCE` set has to be past the end of the source, so `in_source` misses.
+        match source.len() <= Self::NOT_IN_SOURCE as usize {
             true => OwnTexts { spans, source },
             false => OwnTexts::default(),
         }
@@ -108,23 +108,26 @@ type Texts = AppendVec<Text>;
 /// for each would have to be freed one at a time, on a different thread than the one that allocated
 /// it.
 pub(crate) enum Text {
-    Short { len: u8, bytes: [u8; Text::SHORT] },
+    Short {
+        len: u8,
+        bytes: [u8; Text::INLINE_LEN],
+    },
     Long(Box<[u8]>),
 }
 
 impl Text {
     /// The most bytes that fit without making `Text` larger than `Long` needs.
-    const SHORT: usize = 22;
+    const INLINE_LEN: usize = 22;
 }
 
 const _: () = assert!(size_of::<Text>() == 24);
 
 impl From<&[u8]> for Text {
     fn from(text: &[u8]) -> Text {
-        if text.len() > Text::SHORT {
+        if text.len() > Text::INLINE_LEN {
             return Text::Long(text.into());
         }
-        let mut bytes = [0; Text::SHORT];
+        let mut bytes = [0; Text::INLINE_LEN];
         bytes[..text.len()].copy_from_slice(text);
         Text::Short {
             len: text.len() as u8,
@@ -466,21 +469,22 @@ pub fn written_name(name: &[u8]) -> &[u8] {
     if !name.starts_with(PRIVATE_NAME_PREFIX) {
         return name;
     }
-    let written = &name[1..];
-    &written[..bun_core::strings::index_of_char_usize(written, b'@').unwrap_or(written.len())]
+    let private_name = &name[1..];
+    &private_name
+        [..bun_core::strings::index_of_char_usize(private_name, b'@').unwrap_or(private_name.len())]
 }
 
 /// Per-thread cache of recently seen names, with the text stored inline. A file repeats the same
 /// few names, and a lookup in the shared table touches three distant memory locations.
 struct Recent {
     /// `Interner::number`
-    of: u64,
+    interner_number: u64,
     entries: Vec<RecentEntry>,
 }
 
 #[derive(Copy, Clone)]
 struct RecentEntry {
-    /// See `short`.
+    /// See `pack_short`.
     start: (u64, u64, u64),
     end: u32,
     atom: u32,
@@ -490,13 +494,13 @@ impl Recent {
     /// Doesn't belong to any interner, since interner numbers start at 1. The entries are allocated
     /// on first use.
     const EMPTY: Recent = Recent {
-        of: 0,
+        interner_number: 0,
         entries: Vec::new(),
     };
-    const LONGEST: usize = 27;
+    const MAX_PACKED_LEN: usize = 27;
     const BITS: u32 = 11;
     /// No text has this length.
-    const NOTHING: RecentEntry = RecentEntry {
+    const EMPTY_ENTRY: RecentEntry = RecentEntry {
         start: (0, 0, 0),
         end: u32::MAX,
         atom: 0,
@@ -527,10 +531,10 @@ pub fn word(text: &[u8], from: usize) -> u64 {
     }
 }
 
-/// Packs a text of at most `Recent::LONGEST` bytes into integers: the bytes padded with zeros, with
+/// Packs a text of at most `Recent::MAX_PACKED_LEN` bytes into integers: the bytes padded with zeros, with
 /// the length in the last byte.
 #[inline]
-fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
+fn pack_short(text: &[u8]) -> ((u64, u64, u64), u32) {
     (
         (word(text, 0), word(text, 8), word(text, 16)),
         word(text, 24) as u32 | (text.len() as u32) << 24,
@@ -540,10 +544,10 @@ fn short(text: &[u8]) -> ((u64, u64, u64), u32) {
 /// The lookup key of a text.
 #[inline]
 pub(crate) fn hash_of(text: &[u8]) -> u64 {
-    if text.len() > Recent::LONGEST {
+    if text.len() > Recent::MAX_PACKED_LEN {
         spread_hash(text)
     } else {
-        spread_hash(&short(text))
+        spread_hash(&pack_short(text))
     }
 }
 
@@ -659,9 +663,9 @@ impl<'s> InternerPerThread<'s> {
     /// The calling thread's interner.
     #[inline]
     fn own(&self) -> &Interner<'s> {
-        let (of, at) = OWN.get();
+        let (owner_number, at) = OWN.get();
         match self.all.get(at) {
-            Some(own) if of == self.number => own,
+            Some(own) if owner_number == self.number => own,
             _ => self.assign(),
         }
     }
@@ -669,10 +673,10 @@ impl<'s> InternerPerThread<'s> {
     #[cold]
     #[inline(never)]
     fn assign(&self) -> &Interner<'s> {
-        let asked = self
+        let thread_index = self
             .threads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let at = asked % self.all.len();
+        let at = thread_index % self.all.len();
         OWN.set((self.number, at));
         &self.all[at]
     }
@@ -762,18 +766,18 @@ impl<'s> Interner<'s> {
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
-        if text.len() > Recent::LONGEST {
+        if text.len() > Recent::MAX_PACKED_LEN {
             return self.intern_shared(hash_of(text), text);
         }
-        let (start, end) = short(text);
+        let (start, end) = pack_short(text);
         let spread = spread_hash(&(start, end));
         RECENT.with_borrow_mut(|recent| {
             // Nothing in this closure borrows `RECENT` again.
-            if recent.of != self.number {
-                recent.of = self.number;
+            if recent.interner_number != self.number {
+                recent.interner_number = self.number;
                 match recent.entries.is_empty() {
-                    true => recent.entries = vec![Recent::NOTHING; 1 << Recent::BITS],
-                    false => recent.entries.fill(Recent::NOTHING),
+                    true => recent.entries = vec![Recent::EMPTY_ENTRY; 1 << Recent::BITS],
+                    false => recent.entries.fill(Recent::EMPTY_ENTRY),
                 }
             }
             let entry = &mut recent.entries[(spread >> (64 - Recent::BITS)) as usize];

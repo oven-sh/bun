@@ -227,7 +227,7 @@ fn comments_before_first_type<'a>(
         }
         _ => CommentList::empty(),
     };
-    let of_first_type = types.first().map_or(CommentList::empty(), |first| {
+    let first_type_comments = types.first().map_or(CommentList::empty(), |first| {
         let first = without_lone_operator(first).as_ast_nodes();
         let leading_comments = f.comments().of_node(first).leading;
         let before_union = (leading_comments.iter())
@@ -235,8 +235,8 @@ fn comments_before_first_type<'a>(
             .count();
         leading_comments.slice(0, before_union)
     });
-    let of_union = f.comments().of_node(AstNodes::TSUnionType(ty)).leading;
-    [after_colon, of_union, of_first_type]
+    let union_comments = f.comments().of_node(AstNodes::TSUnionType(ty)).leading;
+    [after_colon, union_comments, first_type_comments]
 }
 
 /// oxc's `TSUnionType::write`, which is Prettier 3.8's `printUnionType`, for a union that isn't printed like an object
@@ -254,12 +254,16 @@ fn write_union_one_per_line<'a>(
         (true, _) => comments_before_first_type(ty, parent, f),
         // `( // comment ⏎ A | B)[]`. The union's comments are outside the parentheses.
         (false, true) => {
-            let [_, _, of_first_type] = comments_before_first_type(ty, parent, f);
-            [CommentList::empty(), CommentList::empty(), of_first_type]
+            let [_, _, first_type_comments] = comments_before_first_type(ty, parent, f);
+            [
+                CommentList::empty(),
+                CommentList::empty(),
+                first_type_comments,
+            ]
         }
         (false, false) => [CommentList::empty(); 3],
     };
-    let [_, of_union, _] = comments;
+    let [_, union_comments, _] = comments;
     let leading_comments = || comments.into_iter().flatten();
     let is_after_code_at_end_of_line = |comment: Comment<'_>| {
         comment.is_block() && !comment.has_newline_before() && comment.has_newline_after()
@@ -301,7 +305,7 @@ fn write_union_one_per_line<'a>(
         types,
         comments_after_first_operator: match has_comments_before_operator {
             true => CommentList::empty(),
-            false => of_union,
+            false => union_comments,
         },
     };
     let types = format_with(|f| {

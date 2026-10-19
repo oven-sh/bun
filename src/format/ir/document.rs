@@ -52,7 +52,7 @@ struct State {
     is_space_element_pending: bool,
     is_in_line_suffix: bool,
     /// Frames from this index on have no text yet.
-    without_text: u32,
+    first_frame_without_text: u32,
     /// Something that forces the enclosing groups to break.
     last_break: u32,
     /// Something that makes `Storage::will_break` true.
@@ -166,15 +166,15 @@ impl Tracker {
                 Tag::EndGroup => self.end_group(index, storage),
                 Tag::StartConditionalContent(condition) => {
                     match (condition.group_id, condition.mode) {
-                        (Some(_), _) => self.open_apart(FrameKind::Unknown, index),
+                        (Some(_), _) => self.open_isolated(FrameKind::Unknown, index),
                         (None, PrintMode::Expanded) => {
-                            self.open_apart(FrameKind::IfExpanded, index)
+                            self.open_isolated(FrameKind::IfExpanded, index)
                         }
                         (None, PrintMode::Flat) => self.open(FrameKind::IfFlat, index),
                     }
                 }
                 Tag::StartLineSuffix => {
-                    self.open_apart(FrameKind::Unknown, index);
+                    self.open_isolated(FrameKind::Unknown, index);
                     self.state.is_in_line_suffix = true;
                 }
                 Tag::EndConditionalContent | Tag::EndLineSuffix => self.end_content(index),
@@ -242,10 +242,10 @@ impl Tracker {
     }
 
     /// Opens a frame whose content doesn't count toward the enclosing content's flat width.
-    fn open_apart(&mut self, kind: FrameKind, start: u32) {
+    fn open_isolated(&mut self, kind: FrameKind, start: u32) {
         self.saved.push(self.state);
         self.open(kind, start);
-        self.state.without_text = self.frames.len() as u32 - 1;
+        self.state.first_frame_without_text = self.frames.len() as u32 - 1;
     }
 
     /// Pops the innermost frame if its kind is one of `kinds`. Unused reserved slots inside it are dropped.
@@ -257,7 +257,10 @@ impl Tracker {
             .is_some()
         {}
         let frame = self.frames.pop_if(|frame| kinds.contains(&frame.kind))?;
-        self.state.without_text = self.state.without_text.min(self.frames.len() as u32);
+        self.state.first_frame_without_text = self
+            .state
+            .first_frame_without_text
+            .min(self.frames.len() as u32);
         Some(frame)
     }
 
@@ -274,7 +277,10 @@ impl Tracker {
             .pop_if(|frame| frame.kind == FrameKind::Reserved && frame.start > start)
             .is_some()
         {}
-        self.state.without_text = self.state.without_text.min(self.frames.len() as u32);
+        self.state.first_frame_without_text = self
+            .state
+            .first_frame_without_text
+            .min(self.frames.len() as u32);
         if let Some(frame) = self.frames.last_mut()
             && frame.kind == FrameKind::Reserved
             && frame.start == start
@@ -329,7 +335,7 @@ impl Tracker {
     /// Records that a [`FormatElement::Skip`] was written at `index`. The elements that follow are what it skips.
     #[inline]
     pub(crate) fn start_skipped(&mut self, index: u32) {
-        self.open_apart(FrameKind::Skipped, index);
+        self.open_isolated(FrameKind::Skipped, index);
         self.state.is_in_line_suffix = false;
     }
 
@@ -375,7 +381,7 @@ impl Tracker {
             .state
             .width
             .wrapping_add(u32::from(self.state.is_space_pending));
-        if (self.state.without_text as usize) < self.frames.len() {
+        if (self.state.first_frame_without_text as usize) < self.frames.len() {
             self.first_text(start);
         }
         self.state.width = start.wrapping_add(width);
@@ -389,7 +395,7 @@ impl Tracker {
         let state = &self.state;
         for frame in self
             .frames
-            .get_mut(state.without_text as usize..)
+            .get_mut(state.first_frame_without_text as usize..)
             .unwrap_or_default()
         {
             frame.first_text = start;
@@ -397,7 +403,7 @@ impl Tracker {
                 .with(FlatFlags::STARTS_WITH_LINE, state.last_line > frame.start)
                 .with(FlatFlags::STARTS_WITH_SPACE, state.last_space > frame.start);
         }
-        self.state.without_text = self.frames.len() as u32;
+        self.state.first_frame_without_text = self.frames.len() as u32;
     }
 
     #[inline(never)]

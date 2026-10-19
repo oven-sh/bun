@@ -1,7 +1,7 @@
 //! Where a subexpression's expected type comes from. `elaborateError` attaches this to its errors
 //! as related information.
 
-use super::related::Place;
+use super::related::FileSpan;
 use super::*;
 use crate::bind::Decl;
 
@@ -31,11 +31,11 @@ impl Checker<'_, '_> {
         {
             return Some(Reported::bare(signature, 6501));
         }
-        let place = match property.flatten() {
-            Some(place) => place,
+        let declaration_span = match property.flatten() {
+            Some(declaration_span) => declaration_span,
             None => self.first_declaration_of_type_symbol(target)?,
         };
-        if self.files().module(place.0).is_lib {
+        if self.files().module(declaration_span.0).is_lib {
             return None;
         }
         let property_name = if self.atoms().is_symbol_name(name) {
@@ -46,7 +46,7 @@ impl Checker<'_, '_> {
         };
         let on_type = self.type_to_string(target);
         Some(self.new_diagnostic(
-            place,
+            declaration_span,
             6500,
             &[Arg::Bytes(&property_name), Arg::Bytes(&on_type)],
         ))
@@ -54,12 +54,12 @@ impl Checker<'_, '_> {
 
     /// Returns the span that `range` computes for the node at `start` in `file`. If the default
     /// library's text isn't stored, its end positions are unknown and the span is empty.
-    fn place_in_file(
+    fn span_in_file(
         &self,
         file: FileId,
         start: u32,
         range: impl FnOnce(&Self) -> (u32, u32),
-    ) -> Place {
+    ) -> FileSpan {
         if self.hir(file).text.is_empty() {
             return (file, start, start);
         }
@@ -69,24 +69,28 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode` of `getPropertyOfType(ty, name).Declarations[0]`. `None` if there's
     /// no such property, `Some(None)` if it has no declaration.
-    fn first_declaration_of_property(&mut self, ty: TypeId, name: Atom) -> Option<Option<Place>> {
+    fn first_declaration_of_property(
+        &mut self,
+        ty: TypeId,
+        name: Atom,
+    ) -> Option<Option<FileSpan>> {
         let (prop, _) = self.get_property_of_type(ty, name)?;
-        Some(self.place_of_first_prop_declaration(prop))
+        Some(self.span_of_first_prop_declaration(prop))
     }
 
     /// `GetErrorRangeForNode` of `ty.symbol.Declarations[0]`
-    pub(super) fn first_declaration_of_type_symbol(&mut self, ty: TypeId) -> Option<Place> {
+    pub(super) fn first_declaration_of_type_symbol(&mut self, ty: TypeId) -> Option<FileSpan> {
         let sym = match self.data(ty) {
             TypeData::Ref { target, .. } => *target,
             TypeData::Fns { decls, .. } => {
                 let &(file, func) = decls.first()?;
-                return Some(self.place_of_signature_declaration(file, func));
+                return Some(self.span_of_signature_declaration(file, func));
             }
             TypeData::Anon { origin, .. } => match *origin {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
                     let start = self.hir(file)[node].pos;
                     let range = |c: &Self| (start, c.end_of_type_node(file, node));
-                    return Some(self.place_in_file(file, start, range));
+                    return Some(self.span_in_file(file, start, range));
                 }
                 Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
                     let start = self.start_inside_parentheses(file, e);
@@ -107,8 +111,8 @@ impl Checker<'_, '_> {
                 let (start, end) = self.error_range_of_class(file, class);
                 Some((file, start, end))
             }
-            Decl::Fn(func) => Some(self.place_of_signature_declaration(file, func)),
-            _ => self.place_of_declaration(file, decl),
+            Decl::Fn(func) => Some(self.span_of_signature_declaration(file, func)),
+            _ => self.span_of_declaration(file, decl),
         }
     }
 
@@ -118,13 +122,13 @@ impl Checker<'_, '_> {
         &mut self,
         target: TypeId,
         name: Atom,
-    ) -> Option<Place> {
+    ) -> Option<FileSpan> {
         let ty = self.reduced_apparent_type(target);
         let members = self.structured_members(ty)?;
         let key_type = self.key_type_of_name(name)?;
         let info = self.applicable_index_info(&members, key_type)?;
         let (file, m) = info.declaration?;
         let start = self.hir(file)[m].start;
-        Some(self.place_in_file(file, start, |c| c.error_range_of_member(file, m)))
+        Some(self.span_in_file(file, start, |c| c.error_range_of_member(file, m)))
     }
 }

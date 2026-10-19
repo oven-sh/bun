@@ -43,12 +43,12 @@ impl<'a> Accessor<'a> {
         }
     }
 
-    fn of_member(index: usize, member: Member<'a>) -> Option<Self> {
-        accessor_pairs::Accessor::of_member(member).map(|it| Accessor::at(index, it))
+    fn from_member(index: usize, member: Member<'a>) -> Option<Self> {
+        accessor_pairs::Accessor::from_member(member).map(|it| Accessor::at(index, it))
     }
 
-    fn of_prop(index: usize, prop: Prop<'a>) -> Option<Self> {
-        accessor_pairs::Accessor::of_prop(prop).map(|it| Accessor::at(index, it))
+    fn from_prop(index: usize, prop: Prop<'a>) -> Option<Self> {
+        accessor_pairs::Accessor::from_prop(prop).map(|it| Accessor::at(index, it))
     }
 }
 
@@ -129,7 +129,7 @@ impl GroupedAccessorPairs {
     fn check_signatures<'a>(&self, func: Func<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check_list(
             func,
-            &mut members.iter().enumerate().filter_map(|(index, member)| Accessor::of_member(index, member)),
+            &mut members.iter().enumerate().filter_map(|(index, member)| Accessor::from_member(index, member)),
             cx,
         );
     }
@@ -171,7 +171,7 @@ impl GroupedAccessorPairs {
                 {
                     self.check_list(
                         func,
-                        &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
+                        &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::from_prop(index, prop)),
                         cx,
                     );
                 }
@@ -183,7 +183,7 @@ impl GroupedAccessorPairs {
                     let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
                         let flags = member.flags();
                         (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
-                            .then(|| Accessor::of_member(index, member))
+                            .then(|| Accessor::from_member(index, member))
                             .flatten()
                     });
                     self.check_list(func, &mut accessors, cx);

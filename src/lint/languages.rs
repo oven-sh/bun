@@ -49,7 +49,7 @@ pub trait Language: Sync {
 
     /// ESLint's `validateLanguageOptions`, called once per config. `name` is one of [`Language::names`] and `options`
     /// is `languageOptions`. The result is passed to [`Language::parse`].
-    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Refusal>;
+    fn configure(&self, name: &[u8], options: &Json) -> Result<Configured, Rejection>;
 
     /// `text` has no byte order mark, and spans are offsets into it. If this returns `Err`, no rule runs.
     fn parse(&self, text: &[u8], configured: &Configured) -> Result<Parsed, Vec<SyntaxError>>;
@@ -59,7 +59,7 @@ pub trait Language: Sync {
 pub type Configured = Arc<dyn Any + Send + Sync>;
 
 /// Why a language rejected its `languageOptions`.
-pub enum Refusal {
+pub enum Rejection {
     /// The message of the error that `validateLanguageOptions` throws. It ends the run.
     Invalid(Vec<u8>),
     /// The options need something that only the package supports, so these files are handed to `eslint`.

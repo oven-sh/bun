@@ -62,7 +62,7 @@ impl<'a> Ancestor<'a> {
     }
 
     /// The parent of `e`, or of the `ChainExpression` around `e` if there is one.
-    fn of_expr(e: Expr<'a>) -> Ancestor<'a> {
+    fn parent_of_expr(e: Expr<'a>) -> Ancestor<'a> {
         let parent = estree_parent(Node::Expr(e));
         let modifiers = match parent {
             Node::Class(class) => Some(class.modifiers()),
@@ -88,7 +88,7 @@ impl<'a> Ancestor<'a> {
     }
 
     /// The parent of `statement`, taken together with any `export` before it.
-    fn of_stmt(statement: Stmt<'a>) -> Ancestor<'a> {
+    fn parent_of_stmt(statement: Stmt<'a>) -> Ancestor<'a> {
         let parent = statement.parent();
         // A function's `BlockStatement`, or the `TSModuleBlock`.
         let block = match parent {
@@ -109,12 +109,12 @@ impl<'a> Ancestor<'a> {
     fn parent(self) -> Ancestor<'a> {
         let node = match self {
             Ancestor::Node(node) => node,
-            Ancestor::Chain(e) => return Ancestor::of_expr(e),
+            Ancestor::Chain(e) => return Ancestor::parent_of_expr(e),
             Ancestor::Part(_, parent) => return Ancestor::Node(parent),
         };
         // The expression, statement or member that a function or class appears as. A static block
         // is its `Member`.
-        let written = match node {
+        let source_node = match node {
             Node::Func(func) => match func.owner() {
                 owner @ Node::Member(_) if func.kind() != FnKind::StaticBlock => {
                     return Ancestor::Node(owner);
@@ -124,12 +124,12 @@ impl<'a> Ancestor<'a> {
             Node::Class(class) => class.owner(),
             _ => node,
         };
-        match written {
+        match source_node {
             Node::Expr(e) if e.is_chain_root() => Ancestor::Chain(e),
-            Node::Expr(e) => Ancestor::of_expr(e),
+            Node::Expr(e) => Ancestor::parent_of_expr(e),
             Node::Stmt(statement) => match statement.export_span() {
                 Some(export) => Ancestor::Part(export.start, statement.parent()),
-                None => Ancestor::of_stmt(statement),
+                None => Ancestor::parent_of_stmt(statement),
             },
             // The `ClassBody`.
             Node::Member(member) => match member.parent() {
@@ -145,7 +145,7 @@ impl<'a> Ancestor<'a> {
             Node::Prop(prop) if prop.is_jsx_attribute() => {
                 Ancestor::Part(prop.parent().span().start, prop.parent())
             }
-            _ => Ancestor::Node(estree_parent(written)),
+            _ => Ancestor::Node(estree_parent(source_node)),
         }
     }
 
@@ -246,8 +246,9 @@ pub(crate) fn may_have_explicit_components<'a>(file: &'a File<'a>) -> bool {
     comments.any(|it| strings::contains(it, b"React."))
 }
 
-/// The test `isExplicitComponent` applies to the comment. The tags come from [`File::jsdoc`].
-/// doctrine, which upstream parses them with, also stops at the first tag it can't parse.
+/// The test `isExplicitComponent` applies to the comment. The tags come from [`File::jsdoc`]. Known
+/// difference: doctrine, which upstream parses them with, gives up at the first tag it can't parse
+/// and misses the tags after it. That isn't reproduced here.
 fn has_component_tag<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
     let value = comment.comment_value();
     if !strings::contains(value, b"React.") {

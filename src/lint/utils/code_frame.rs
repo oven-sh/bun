@@ -28,16 +28,16 @@ use std::ops::Range;
 
 /// `{ line, column }`: a line counted from 1, and a column in UTF-16 code units.
 #[derive(Copy, Clone, Debug)]
-pub struct Place {
+pub struct LineColumn {
     pub line: u32,
     pub column: Option<u32>,
 }
 
 /// The arguments of `codeFrameColumns` except the text.
 pub struct Frame<'m> {
-    pub start: Place,
+    pub start: LineColumn,
     /// If it's `None` or has no column, `start`'s is used.
-    pub end: Option<Place>,
+    pub end: Option<LineColumn>,
     /// Empty means no message.
     pub message: &'m [u8],
     /// `codeFrameColumns` defaults to 2.
@@ -74,13 +74,13 @@ pub fn write<'a>(out: &mut Vec<u8>, lines: &(impl Lines<'a> + ?Sized), frame: &F
     write_rows_of(out, lines, frame, &(0..u32::MAX))
 }
 
-/// [`write`], but it only prints the rows of the lines in `shown`. That lets a caller show the start and the end of a
-/// long range in time that doesn't depend on the range's length.
+/// [`write`], but it only prints the rows of the lines in `visible_lines`. That lets a caller show the start and the
+/// end of a long range in time that doesn't depend on the range's length.
 pub fn write_rows_of<'a>(
     out: &mut Vec<u8>,
     lines: &(impl Lines<'a> + ?Sized),
     frame: &Frame,
-    shown: &Range<u32>,
+    visible_lines: &Range<u32>,
 ) -> bool {
     let count = u64::from(lines.count());
     let exists = |line: u64| (1..=count).contains(&line);
@@ -118,13 +118,14 @@ pub fn write_rows_of<'a>(
     let top = first.saturating_sub(u64::from(frame.lines_above) + 1) + 1;
     let bottom = count.min(last + u64::from(frame.lines_below));
     let width = bun_core::fmt::digit_count(bottom);
-    if !frame.message.is_empty() && start_column.is_none() && u64::from(shown.start) <= top {
+    if !frame.message.is_empty() && start_column.is_none() && u64::from(visible_lines.start) <= top
+    {
         out.resize(out.len() + width + 1, b' ');
         out.extend_from_slice(frame.message);
         out.push(b'\n');
     }
-    let top = top.max(u64::from(shown.start));
-    for number in top..(bottom + 1).min(u64::from(shown.end)) {
+    let top = top.max(u64::from(visible_lines.start));
+    for number in top..(bottom + 1).min(u64::from(visible_lines.end)) {
         if number > top {
             out.push(b'\n');
         }
@@ -166,17 +167,17 @@ pub fn write_rows_of<'a>(
 
 /// `line.slice(0, units).replace(/[^\t]/g, " ")`
 fn write_padding(out: &mut Vec<u8>, line: &[u8], units: u64) {
-    let (mut at, mut written) = (0, 0);
-    while written < units {
+    let (mut at, mut units_written) = (0, 0);
+    while units_written < units {
         let (c, size) = bun_core::lexer::char_and_size(line, at);
         if size == 0 {
             break;
         }
         out.push(if c == i32::from(b'\t') { b'\t' } else { b' ' });
-        if c > 0xFFFF && written + 1 < units {
+        if c > 0xFFFF && units_written + 1 < units {
             out.push(b' ');
         }
-        written += if c > 0xFFFF { 2 } else { 1 };
+        units_written += if c > 0xFFFF { 2 } else { 1 };
         at += size;
     }
 }

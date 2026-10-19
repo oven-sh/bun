@@ -18,13 +18,13 @@ fn spread_identifiers(e: Expr<'_>) -> impl Iterator<Item = Expr<'_>> {
         ExprKind::Object(properties) => (None, Some(properties)),
         _ => (None, None),
     };
-    let of_array = elements.into_iter().flatten().filter_map(|it| match it.kind() {
+    let array_spreads = elements.into_iter().flatten().filter_map(|it| match it.kind() {
         ExprKind::Spread(argument) => Some(argument),
         _ => None,
     });
     let spreads = properties.into_iter().flatten().filter(|it| it.kind() == PropKind::Spread);
-    let of_object = spreads.filter_map(Prop::value);
-    of_array.chain(of_object).filter(|it| it.tag() == ExprTag::Ident)
+    let object_spreads = spreads.filter_map(Prop::value);
+    array_spreads.chain(object_spreads).filter(|it| it.tag() == ExprTag::Ident)
 }
 
 /// Returns the `const [state, setter] = useState(..)` that declares `e`.
@@ -50,7 +50,7 @@ fn names_form_state_pair(setter: &[u8], state: &[u8]) -> bool {
 /// True if `setter` sets `state`. If neither comes from a `useState()` in this file, compares their names.
 fn is_setter_of<'a>(setter: Expr<'a>, state: Expr<'a>) -> bool {
     match (use_state_declaration(setter), use_state_declaration(state)) {
-        (Some(of_setter), Some(of_state)) => of_setter == of_state && setter.symbol() != state.symbol(),
+        (Some(setter_declaration), Some(state_declaration)) => setter_declaration == state_declaration && setter.symbol() != state.symbol(),
         (None, None) => names_form_state_pair(setter.text(), state.text()),
         _ => false,
     }

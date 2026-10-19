@@ -117,7 +117,7 @@ const OTHER: &[Param] = &[
     clap::param!("--help-all                      The same as <b>--help --all<r>"),
 ];
 
-const OF_ESLINT: &[Param] = &[
+const ESLINT_COMPAT: &[Param] = &[
     clap::param!(
         "--flavor <tool>                 Use the <b>eslint<r> or the <b>oxlint<r> config in a project that has both"
     ),
@@ -180,7 +180,7 @@ const OF_ESLINT: &[Param] = &[
     ),
 ];
 
-const OF_OXLINT: &[Param] = &[
+const OXLINT_COMPAT: &[Param] = &[
     clap::param!("-A, --allow <rule>...           Turn off a rule or a category"),
     clap::param!("-W, --warn <rule>...            Make a rule or a category a warning"),
     clap::param!("-D, --deny <rule>...            Make a rule or a category an error"),
@@ -245,11 +245,11 @@ pub const HELP: Help = Help {
         },
         Group {
             title: "Compatibility with ESLint",
-            params: OF_ESLINT,
+            params: ESLINT_COMPAT,
         },
         Group {
             title: "Compatibility with oxlint",
-            params: OF_OXLINT,
+            params: OXLINT_COMPAT,
         },
     ],
     common: &[
@@ -274,7 +274,15 @@ const _: () = assert!(
 );
 
 pub(crate) const PARAMS: &[Param] = clap::concat_params!(
-    RULES, FILES, OUTPUT, FIXING, TYPES, OTHER, OF_ESLINT, OF_OXLINT, OPPOSITES
+    RULES,
+    FILES,
+    OUTPUT,
+    FIXING,
+    TYPES,
+    OTHER,
+    ESLINT_COMPAT,
+    OXLINT_COMPAT,
+    OPPOSITES
 );
 
 /// Flags only ESLint has. A flag never picks the tool. These lists only let a run reject flags that can't work with its
@@ -353,14 +361,14 @@ pub struct ToolSpecificFlag {
 impl ToolSpecificFlag {
     /// True if the flag can't work in a run that uses a `flavor` config.
     fn is_unsupported_with(&self, flavor: Flavor) -> bool {
-        let is_of_eslint_8 = ESLINT_8_ONLY.contains(&self.name);
+        let is_eslint_8_only = ESLINT_8_ONLY.contains(&self.name);
         match (self.tool, flavor) {
             // `--eslintrc`, the opposite of `--no-eslintrc`, is a no-op.
             _ if self.name == b"eslintrc" && self.is_on => false,
             (Tool::Eslint, Flavor::Oxlint) => {
-                is_of_eslint_8 || UNSUPPORTED_WITH_OXLINT.contains(&self.name)
+                is_eslint_8_only || UNSUPPORTED_WITH_OXLINT.contains(&self.name)
             }
-            (Tool::Eslint, Flavor::Eslint) => is_of_eslint_8,
+            (Tool::Eslint, Flavor::Eslint) => is_eslint_8_only,
             (Tool::Eslint, Flavor::EslintRc | Flavor::BuiltIn) | (Tool::Oxlint, Flavor::Oxlint) => {
                 false
             }
@@ -374,7 +382,7 @@ impl ToolSpecificFlag {
     }
 
     /// The flag as written, and the tool it belongs to.
-    fn written(&self) -> (Vec<u8>, &'static [u8]) {
+    fn spelling_and_tool(&self) -> (Vec<u8>, &'static [u8]) {
         let flag: Vec<u8> = match self.name {
             b"allow" => b"-A".to_vec(),
             b"warn" => b"-W".to_vec(),
@@ -383,12 +391,12 @@ impl ToolSpecificFlag {
             name => [b"--no-", name].concat(),
         };
         let space: &[u8] = if self.value.is_empty() { b"" } else { b" " };
-        let whose: &[u8] = match self.tool {
+        let tool_name: &[u8] = match self.tool {
             Tool::Oxlint => b"oxlint",
             Tool::Eslint if ESLINT_8_ONLY.contains(&self.name) => b"ESLint 8",
             Tool::Eslint => b"ESLint",
         };
-        ([&flag[..], space, &self.value].concat(), whose)
+        ([&flag[..], space, &self.value].concat(), tool_name)
     }
 }
 
@@ -445,7 +453,7 @@ pub struct Override {
     pub excluded: Vec<Vec<u8>>,
     pub rules: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml location of each entry in `rules`.
-    pub places: Vec<crate::bunfig::BunfigRule>,
+    pub rule_locations: Vec<crate::bunfig::BunfigRule>,
     pub wildcards: Vec<Wildcard>,
     pub globals: Vec<(Vec<u8>, Json)>,
     pub settings: Vec<(Vec<u8>, Json)>,
@@ -730,18 +738,18 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
 
 /// Prepends `directory` to `value`, which is a relative path or pattern, or a list of them. With `always`, also to
 /// patterns that start with `**/`.
-fn start_at(directory: &[u8], value: &mut Json, always: bool) {
+fn prepend_directory(directory: &[u8], value: &mut Json, always: bool) {
     match value {
         Json::Array(all) => all
             .iter_mut()
-            .for_each(|it| start_at(directory, it, always)),
+            .for_each(|it| prepend_directory(directory, it, always)),
         Json::String(it) if !it.is_empty() => {
-            let (not, written) = match it.strip_prefix(b"!") {
+            let (negation, portable) = match it.strip_prefix(b"!") {
                 Some(rest) => (&b"!"[..], paths::from_native(rest)),
                 None => (&b""[..], paths::from_native(it)),
             };
-            if !paths::is_absolute(&written) && (always || !written.starts_with(b"**/")) {
-                *it = [not, &paths::join_normalized(directory, &written)].concat();
+            if !paths::is_absolute(&portable) && (always || !portable.starts_with(b"**/")) {
+                *it = [negation, &paths::join_normalized(directory, &portable)].concat();
             }
         }
         _ => {}
@@ -769,11 +777,11 @@ impl Options {
     ) -> Result<(), UsageError> {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
-        let is_of_oxlint = OXLINT_ONLY.contains(&name) || name.ends_with(b"-plugin");
-        let is_of_eslint = ESLINT_ONLY.contains(&name);
-        if is_of_oxlint || is_of_eslint {
+        let is_oxlint_only = OXLINT_ONLY.contains(&name) || name.ends_with(b"-plugin");
+        let is_eslint_only = ESLINT_ONLY.contains(&name);
+        if is_oxlint_only || is_eslint_only {
             self.tool_specific_flags.push(ToolSpecificFlag {
-                tool: if is_of_oxlint {
+                tool: if is_oxlint_only {
                     Tool::Oxlint
                 } else {
                     Tool::Eslint
@@ -809,11 +817,11 @@ impl Options {
                     self.wildcards.push(Wildcard { id, key_at: None });
                 }
                 // The flag overrides bunfig.toml's entries for these rules.
-                for (at, place) in self.bunfig_rules.iter_mut().enumerate() {
+                for (at, bunfig_rule) in self.bunfig_rules.iter_mut().enumerate() {
                     if (self.rule.get(at))
                         .is_some_and(|it| parsed.iter().any(|parsed| parsed.0 == it.0))
                     {
-                        place.setting = None;
+                        bunfig_rule.setting = None;
                     }
                 }
                 merge(&mut self.rule, parsed);
@@ -1002,7 +1010,11 @@ impl Options {
         flavor: Flavor,
     ) -> Option<(Vec<u8>, &'static [u8])> {
         let mut flags = self.tool_specific_flags.iter();
-        Some(flags.find(|it| it.is_unsupported_with(flavor))?.written())
+        Some(
+            flags
+                .find(|it| it.is_unsupported_with(flavor))?
+                .spelling_and_tool(),
+        )
     }
 
     /// `args` is everything after `lint` on the command line.
@@ -1029,9 +1041,9 @@ impl Options {
                 &mut self.tsconfig,
             ];
             for it in all.into_iter().flatten() {
-                let written = paths::from_native(it);
-                if !paths::is_absolute(&written) {
-                    *it = paths::join_normalized(&directory, &written);
+                let portable = paths::from_native(it);
+                if !paths::is_absolute(&portable) {
+                    *it = paths::join_normalized(&directory, &portable);
                 }
             }
         }
@@ -1051,13 +1063,13 @@ impl Options {
         self.pipes.load(cwd, &named)
     }
 
-    /// Returns `rules` with the paths and patterns in their options rebased. `places` has each rule's location in
-    /// bunfig.toml. Rules resolve those paths from the working directory, but in bunfig.toml they're written relative
-    /// to the file.
+    /// Returns `rules` with the paths and patterns in their options rebased. `rule_locations` has each rule's location
+    /// in bunfig.toml. Rules resolve those paths from the working directory, but in bunfig.toml they're written
+    /// relative to the file.
     pub(crate) fn rebase_rule_paths(
         &self,
         rules: &[(Vec<u8>, Json)],
-        places: &[crate::bunfig::BunfigRule],
+        rule_locations: &[crate::bunfig::BunfigRule],
         is_oxlint: bool,
         cwd: &[u8],
     ) -> Vec<(Vec<u8>, Json)> {
@@ -1067,8 +1079,8 @@ impl Options {
         };
         for (at, (id, setting)) in rules.iter_mut().enumerate() {
             // `--rule` may have replaced this entry.
-            let written = places.get(at).and_then(|it| it.setting.as_ref());
-            if written != Some(&*setting) {
+            let bunfig_setting = rule_locations.get(at).and_then(|it| it.setting.as_ref());
+            if bunfig_setting != Some(&*setting) {
                 continue;
             }
             let (prefix, name) = parse_rule_id(id);
@@ -1101,14 +1113,16 @@ impl Options {
                 continue;
             };
             // Options that default to the working directory.
-            let usual = match name {
+            let default_option = match name {
                 b"no-restricted-paths" => Some((&b"basePath"[..], Json::String(b".".to_vec()))),
                 b"no-unused-modules" => {
                     Some((&b"src"[..], Json::Array(vec![Json::String(b".".to_vec())])))
                 }
                 _ => None,
             };
-            if let Some((key, value)) = usual.filter(|it| !options.iter().any(|at| at.0 == it.0)) {
+            if let Some((key, value)) =
+                default_option.filter(|it| !options.iter().any(|at| at.0 == it.0))
+            {
                 options.push((key.to_vec(), value));
             }
             for (key, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
@@ -1122,12 +1136,12 @@ impl Options {
                             strings::contains_any(first, b"*?[{(")
                                 || matches!(first, b"." | b"..")
                                 || {
-                                    let beside = paths::join_normalized(directory, first);
-                                    bun_sys::exists(&paths::resolve(cwd, &beside))
+                                    let sibling = paths::join_normalized(directory, first);
+                                    bun_sys::exists(&paths::resolve(cwd, &sibling))
                                 }
                         };
                         let paths = all.iter_mut().filter(|it| it.as_str().is_some_and(is_path));
-                        paths.for_each(|it| start_at(directory, it, finds_files));
+                        paths.for_each(|it| prepend_directory(directory, it, finds_files));
                     }
                     // `path.resolve(cwd, "")`
                     (_, b"basePath", Json::String(it)) if it.is_empty() => *it = directory.to_vec(),
@@ -1135,11 +1149,11 @@ impl Options {
                         for it in all {
                             match it {
                                 Json::String(it) if it.is_empty() => *it = directory.to_vec(),
-                                it => start_at(directory, it, finds_files),
+                                it => prepend_directory(directory, it, finds_files),
                             }
                         }
                     }
-                    _ => start_at(directory, value, finds_files),
+                    _ => prepend_directory(directory, value, finds_files),
                 }
             }
         }
@@ -1178,16 +1192,16 @@ impl Options {
             if is(b"node") {
                 // Made absolute, because `resolve` has its own handling of relative paths.
                 if let Some(value) = options_of(options, b"paths") {
-                    start_at(&paths::resolve(cwd, directory), value, true);
+                    prepend_directory(&paths::resolve(cwd, directory), value, true);
                 }
             } else if is(b"typescript") {
                 if let Some(value) = options_of(options, b"project") {
-                    start_at(directory, value, true);
+                    prepend_directory(directory, value, true);
                 }
                 let file =
                     options_of(options, b"tsconfig").and_then(|it| options_of(it, b"configFile"));
                 if let Some(value) = file {
-                    start_at(directory, value, true);
+                    prepend_directory(directory, value, true);
                 }
             }
         }
@@ -1201,9 +1215,9 @@ impl Options {
                 _ => {}
             }
         }
-        let of_overrides = self.overrides.iter_mut().map(|it| &mut it.settings);
+        let override_settings = self.overrides.iter_mut().map(|it| &mut it.settings);
         for (key, value) in std::iter::once(&mut self.settings)
-            .chain(of_overrides)
+            .chain(override_settings)
             .flatten()
         {
             match &key[..] {
@@ -1226,16 +1240,16 @@ impl Options {
             b"project"
         };
         for (_, value) in self.parser_options.iter_mut().filter(|it| it.0 == key) {
-            start_at(&directory, value, true);
+            prepend_directory(&directory, value, true);
         }
     }
 
     /// True if the options mention a rule that compares a file with `bun fmt`'s output, and so needs `[fmt]`.
     pub fn mentions_format_rule(&self) -> bool {
-        let of_overrides = self.overrides.iter().flat_map(|it| &it.rules);
-        let of_filters = self.filters.iter().map(|it| &it.1[..]);
-        let names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
-        let mut names = names.chain(of_filters);
+        let override_rules = self.overrides.iter().flat_map(|it| &it.rules);
+        let filter_names = self.filters.iter().map(|it| &it.1[..]);
+        let names = self.rule.iter().chain(override_rules).map(|it| &it.0[..]);
+        let mut names = names.chain(filter_names);
         names.any(|it| matches!(it, b"bun/format" | b"prettier/prettier"))
     }
 
@@ -1288,11 +1302,11 @@ impl Options {
                 // Negates a flag that takes a value.
                 b"--no-native-plugin-rules" => rewritten.push(b"--native-plugin-rules=false"),
                 _ if arg.starts_with(b"--debug=") => {
-                    let written = &arg[b"--debug=".len()..];
-                    let cannot_parse = [b"couldn't parse `", written, b"`: "].concat();
-                    for option in strings::split(written, b",") {
+                    let debug_options = &arg[b"--debug=".len()..];
+                    let cannot_parse = [b"couldn't parse `", debug_options, b"`: "].concat();
+                    for option in strings::split(debug_options, b",") {
                         rewritten.push(match option {
-                            b"files" if written == b"files" => b"--list-files",
+                            b"files" if debug_options == b"files" => b"--list-files",
                             b"files" => {
                                 return error(&[
                                     &cannot_parse[..],

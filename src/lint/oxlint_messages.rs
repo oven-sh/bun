@@ -16,7 +16,7 @@ pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
     if !matches!(meta.plugin, Plugin::Eslint | Plugin::TypeScript) {
         return [&[], &[]];
     }
-    let [eslint, typescript] = of_name(meta);
+    let [eslint, typescript] = entries_for_name(meta);
     match meta.plugin {
         Plugin::Eslint => [eslint, &[]],
         // oxlint lists a rule that extends an ESLint rule under the ESLint rule's name.
@@ -25,7 +25,7 @@ pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
 }
 
 /// The `MESSAGES` entries for `meta`'s name, under `eslint` and under `typescript`.
-fn of_name(meta: &Meta) -> [&'static [Message]; 2] {
+fn entries_for_name(meta: &Meta) -> [&'static [Message]; 2] {
     type Named = (u32, &'static str, [&'static [Message]; 2]);
     /// Sorted by the hash of the name, which is [`Meta::key`].
     static BY_KEY: OnceLock<Box<[Named]>> = OnceLock::new();

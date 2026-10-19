@@ -150,7 +150,8 @@ impl Checker<'_, '_> {
         let found_none = (self.p.calls_before_signatures)
             .get(&self.task, &(file, e))
             .is_some();
-        // The enclosing resolution continued with the signatures.
+        // That resolution may have been nested in another resolution of the same call, which then continued with the
+        // signatures. The errors of that one are reported too.
         if found_none {
             self.report_call_resolution(file, e);
         }
@@ -840,7 +841,7 @@ impl Checker<'_, '_> {
     }
 
     /// `GetErrorRangeForNode` for the declaration `func` of a signature.
-    pub(super) fn place_of_signature_declaration(
+    pub(super) fn span_of_signature_declaration(
         &self,
         file: FileId,
         func: FnId,
@@ -859,7 +860,7 @@ impl Checker<'_, '_> {
         let declared = self.declared_sig(last);
         match self.sig_decl(declared) {
             Some((file, func, _)) => vec![Reported::bare(
-                self.place_of_signature_declaration(file, func),
+                self.span_of_signature_declaration(file, func),
                 2771,
             )],
             None => Vec::new(),
@@ -884,7 +885,7 @@ impl Checker<'_, '_> {
             && let Some((of, func, _)) = self.sig_decl(implementation)
         {
             related.push(Reported::bare(
-                self.place_of_signature_declaration(of, func),
+                self.span_of_signature_declaration(of, func),
                 2793,
             ));
         }
@@ -904,12 +905,12 @@ impl Checker<'_, '_> {
         let is_js = (self.sig_decl(sig)).is_some_and(|(file, ..)| self.hir(file).is_js);
         let filled = self.fill_sig_type_args_as(sig, type_params, type_args, is_js);
         let mapper = self.mapper_from(type_params, &filled);
-        let outer = self.mapper_around_sig(sig);
+        let outer = self.outer_mapper_of_sig(sig);
         for i in 0..type_args.len().min(type_params.len()) {
             let Some(constraint) = self.constraint_of_type_param(type_params[i]) else {
                 continue;
             };
-            let constraint = self.filled_in_around(type_params[i], constraint, outer);
+            let constraint = self.with_outer_type_arguments(type_params[i], constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
             let constraint = self.type_with_this_argument(constraint, filled[i]);
             let error_node = error_nodes.map(|(file, nodes)| {
@@ -961,7 +962,9 @@ impl Checker<'_, '_> {
             if !self.related(actual, expected, relation) {
                 if report {
                     let (start, end) = match (this_arg, decorator) {
-                        (None, Some(written)) => (written.at_sign, written.end),
+                        (None, Some(decorator_span)) => {
+                            (decorator_span.at_sign, decorator_span.end)
+                        }
                         _ => (
                             self.error_start_of(file, this_arg.unwrap_or(e)),
                             self.error_end_of(file, this_arg.unwrap_or(e)),
@@ -1013,8 +1016,8 @@ impl Checker<'_, '_> {
             if report {
                 let check_node = self.effective_check_node(file, node);
                 let error_node = match decorator {
-                    Some(written) => (file, written.start, written.end),
-                    None => self.place_of_effective_check_node(file, check_node),
+                    Some(decorator_span) => (file, decorator_span.start, decorator_span.end),
+                    None => self.span_of_effective_check_node(file, check_node),
                 };
                 let expr = match arg {
                     Arg::Expr(_) => Some((file, check_node)),
@@ -1044,8 +1047,8 @@ impl Checker<'_, '_> {
                     );
                 }
                 self.reported.extend(diagnostics);
-                let place = self.span_of_parenthesized_expr(file, node);
-                self.maybe_add_missing_await_info(place, actual, expected, reported);
+                let error_span = self.span_of_parenthesized_expr(file, node);
+                self.maybe_add_missing_await_info(error_span, actual, expected, reported);
             }
             return false;
         }
@@ -1055,8 +1058,10 @@ impl Checker<'_, '_> {
             if !self.related(actual, rest, relation) {
                 if report {
                     let (at, end) = match decorator {
-                        Some(written) if count == args.len() => (written.at_sign, written.end),
-                        Some(written) => (written.start, written.end),
+                        Some(decorator_span) if count == args.len() => {
+                            (decorator_span.at_sign, decorator_span.end)
+                        }
+                        Some(decorator_span) => (decorator_span.start, decorator_span.end),
                         None => match args[count..] {
                             [] => (
                                 self.start_inside_parentheses(file, e),
@@ -1064,8 +1069,9 @@ impl Checker<'_, '_> {
                             ),
                             [only] => {
                                 let check_node = self.effective_check_node(file, only.node());
-                                let place = self.place_of_effective_check_node(file, check_node);
-                                (place.1, place.2)
+                                let error_span =
+                                    self.span_of_effective_check_node(file, check_node);
+                                (error_span.1, error_span.2)
                             }
                             [first, .., last] => (
                                 self.start_of(file, first.node()),
@@ -1083,11 +1089,11 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// `maybeAddMissingAwaitInfo`. `place` is the argument's span. `reported` is the index in `self.reported` of the
-    /// first diagnostic for it.
+    /// `maybeAddMissingAwaitInfo`. `argument_span` is the argument's span. `reported` is the index in `self.reported`
+    /// of the first diagnostic for it.
     fn maybe_add_missing_await_info(
         &mut self,
-        place: (FileId, u32, u32),
+        argument_span: (FileId, u32, u32),
         source: TypeId,
         target: TypeId,
         reported: usize,
@@ -1107,7 +1113,7 @@ impl Checker<'_, '_> {
             return;
         };
         if self.is_assignable(awaited, target) {
-            self.reported[reported].add_related_info(Reported::bare(place, 2773));
+            self.reported[reported].add_related_info(Reported::bare(argument_span, 2773));
         }
     }
 
@@ -1124,8 +1130,8 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         match (node, hir[e].kind) {
             (CallLike::Decorator(_), _) => {
-                let written = self.decorator_position(file, e);
-                (written.at_sign, written.end)
+                let decorator_span = self.decorator_position(file, e);
+                (decorator_span.at_sign, decorator_span.end)
             }
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
@@ -1275,8 +1281,12 @@ impl Checker<'_, '_> {
             (error_range, 2575, either)
         } else if args.len() < least || most >= args.len() {
             (error_range, code, vec![expected, actual])
-        } else if let Some(written) = decorator {
-            ((written.start, written.end), code, vec![expected, actual])
+        } else if let Some(decorator_span) = decorator {
+            (
+                (decorator_span.start, decorator_span.end),
+                code,
+                vec![expected, actual],
+            )
         } else {
             let start = self.start_of(file, args[most].node());
             let end = self.end_of_expr(file, args[args.len() - 1].node());

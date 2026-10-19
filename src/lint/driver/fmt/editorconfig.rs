@@ -121,26 +121,26 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
     full
 }
 
-/// globset's `Glob::new(written)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The section
-/// then applies to no file.
-fn globset_glob(written: &[u8]) -> Option<Pattern> {
-    let mut glob = Vec::with_capacity(written.len() + ANYTHING.len());
-    if written.starts_with(b"!") {
+/// globset's `Glob::new(section_name)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The
+/// section then applies to no file.
+fn globset_glob(section_name: &[u8]) -> Option<Pattern> {
+    let mut glob = Vec::with_capacity(section_name.len() + ANYTHING.len());
+    if section_name.starts_with(b"!") {
         glob.push(b'\\');
     }
     // The whole pattern is `**`, which matches everything.
-    if written == b"**/" {
+    if section_name == b"**/" {
         return Some(Pattern::new(b"**"));
     }
     let (mut at, mut depth) = (0, 0_usize);
-    while let Some(&byte) = written.get(at) {
+    while let Some(&byte) = section_name.get(at) {
         match byte {
             b'*' => {
-                let stars = Stars::at(written, at);
+                let stars = Stars::at(section_name, at);
                 let end = stars.end;
                 // Here only `/` or the start of the pattern begins a segment. An alternative can follow a name
                 // directly.
-                let is_after_literal = at > 0 && matches!(written[at - 1], b'{' | b',');
+                let is_after_literal = at > 0 && matches!(section_name[at - 1], b'{' | b',');
                 glob.extend_from_slice(
                     match (
                         stars.starts_name && !is_after_literal,
@@ -156,11 +156,12 @@ fn globset_glob(written: &[u8]) -> Option<Pattern> {
             }
             b'?' => glob.extend_from_slice(b"{?,/}"),
             b'\\' => {
-                glob.extend_from_slice(written.get(at..at + 2)?);
+                glob.extend_from_slice(section_name.get(at..at + 2)?);
                 at += 1;
             }
             b'[' => {
-                at = bun_lint::glob::from_globset_class(written, at, false, &mut glob).ok()??;
+                at = bun_lint::glob::from_globset_class(section_name, at, false, &mut glob)
+                    .ok()??;
                 continue;
             }
             b'{' => {
@@ -214,21 +215,21 @@ fn json_number(text: &[u8]) -> Option<f64> {
 }
 
 /// True if `text` is a single quoted string: `"`, then text with no unescaped `"`, then `"`.
-fn is_one_string(text: &[u8]) -> bool {
+fn is_quoted_string(text: &[u8]) -> bool {
     let [b'"', inner @ .., b'"'] = text else {
         return false;
     };
     let mut is_escaped = false;
     inner.iter().all(|&byte| {
-        let ends_it = byte == b'"' && !is_escaped;
+        let closes_string = byte == b'"' && !is_escaped;
         is_escaped = byte == b'\\' && !is_escaped;
-        !ends_it
+        !closes_string
     }) && !is_escaped
 }
 
 impl Value {
     /// `normalizeProps`. `key` is lowercase.
-    fn for_prettier(key: &[u8], written: &[u8]) -> Value {
+    fn for_prettier(key: &[u8], raw: &[u8]) -> Value {
         let is_known = matches!(
             key,
             b"charset"
@@ -240,23 +241,23 @@ impl Value {
         );
         // `JSON.parse(value)`. No property is ever compared with an array or an object, or with its source text, so
         // keeping the text is fine.
-        match written {
+        match raw {
             b"true" => Value::Bool(true),
             b"false" => Value::Bool(false),
             // `String(value)`
-            b"null" => Value::Text(written.to_vec()),
+            b"null" => Value::Text(raw.to_vec()),
             _ => {
                 let string = || {
-                    let parsed = is_one_string(written).then(|| bun_lint::json::parse(written));
+                    let parsed = is_quoted_string(raw).then(|| bun_lint::json::parse(raw));
                     parsed??.into_string().map(Value::Text)
                 };
-                let as_written = || match is_known {
-                    true => Value::Text(written.to_ascii_lowercase()),
-                    false => Value::Text(written.to_vec()),
+                let fallback_text = || match is_known {
+                    true => Value::Text(raw.to_ascii_lowercase()),
+                    false => Value::Text(raw.to_vec()),
                 };
-                (json_number(written).map(Value::Number))
+                (json_number(raw).map(Value::Number))
                     .or_else(string)
-                    .unwrap_or_else(as_written)
+                    .unwrap_or_else(fallback_text)
             }
         }
     }
@@ -288,7 +289,7 @@ impl Value {
     }
 
     /// `editorconfig-parser`'s `parse` for the property `key`. `None` if it has no such property.
-    fn for_oxfmt(key: &[u8], written: &[u8]) -> Option<Value> {
+    fn for_oxfmt(key: &[u8], raw: &[u8]) -> Option<Value> {
         let words: &[&[u8]] = match key {
             b"indent_style" => &[b"tab", b"space"],
             b"end_of_line" => &[b"lf", b"cr", b"crlf"],
@@ -300,16 +301,14 @@ impl Value {
         };
         let takes_number = matches!(key, b"indent_size" | b"tab_width" | b"max_line_length");
         // `str::parse::<usize>`
-        let digits = written.strip_prefix(b"+").unwrap_or(written);
+        let digits = raw.strip_prefix(b"+").unwrap_or(raw);
         let is_number = takes_number && digits.iter().all(u8::is_ascii_digit);
         let number = || bun_core::fmt::parse_decimal::<u64>(digits).filter(|_| is_number);
-        Some(
-            match words.iter().find(|it| it.eq_ignore_ascii_case(written)) {
-                Some(word) => Value::Text(word.to_vec()),
-                None if written.eq_ignore_ascii_case(b"unset") => Value::Unset,
-                None => number().map_or(Value::Invalid, Value::Whole),
-            },
-        )
+        Some(match words.iter().find(|it| it.eq_ignore_ascii_case(raw)) {
+            Some(word) => Value::Text(word.to_vec()),
+            None if raw.eq_ignore_ascii_case(b"unset") => Value::Unset,
+            None => number().map_or(Value::Invalid, Value::Whole),
+        })
     }
 }
 
@@ -418,11 +417,11 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
     let candidate = Candidate::new(path);
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
     for file in files.filter(|it| paths::inside(&it.directory, path).is_some()) {
-        let is_for_it = |it: &&Section| {
+        let matches_file = |it: &&Section| {
             let glob = it.glob.as_ref();
             glob.is_some_and(|it| it.matches_candidate(&candidate))
         };
-        for section in file.sections.iter().filter(is_for_it) {
+        for section in file.sections.iter().filter(matches_file) {
             for (key, value) in &section.properties {
                 properties.retain(|it| it.0 != &key[..]);
                 properties.push((key, value));
@@ -453,20 +452,20 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
         false => (is(indent_style, b"tab") || is(indent_size, b"tab")).then_some(true),
     };
     options.extend(use_tabs.map(|it| (&b"useTabs"[..], text_of(it))));
-    let shown = |number: u64| match u32::try_from(number) {
+    let to_setting = |number: u64| match u32::try_from(number) {
         Ok(number) => number.to_string().into_bytes(),
         Err(_) => super::config::UNLIMITED_WIDTH.to_vec(),
     };
     let size = indent_size.filter(|_| use_tabs == Some(false));
     let width = (size.and_then(Value::positive_integer))
         .or_else(|| tab_width.and_then(Value::positive_integer));
-    options.extend(width.map(|it| (&b"tabWidth"[..], shown(it))));
+    options.extend(width.map(|it| (&b"tabWidth"[..], to_setting(it))));
     let max_line_length = get(b"max_line_length");
     let print_width = match is(max_line_length, b"off") {
         true => Some(u64::MAX),
         false => max_line_length.and_then(Value::positive_integer),
     };
-    options.extend(print_width.map(|it| (&b"printWidth"[..], shown(it))));
+    options.extend(print_width.map(|it| (&b"printWidth"[..], to_setting(it))));
     let quote_type = get(b"quote_type");
     let single_quote = match is(quote_type, b"single") {
         true => Some(true),
@@ -504,9 +503,9 @@ fn apply_as_oxfmt<'v>(get: impl Fn(&[u8]) -> Option<&'v Value>, use_tabs: Option
     if let Some(Value::Text(end)) = get(b"end_of_line") {
         options.push((b"endOfLine", end.clone()));
     }
-    let of_style = one_of(b"indent_style", [b"tab", b"space"]);
-    options.extend(of_style.map(|it| (&b"useTabs"[..], text_of(it))));
-    let size = whole(b"indent_size").filter(|_| use_tabs.or(of_style) == Some(false));
+    let style_uses_tabs = one_of(b"indent_style", [b"tab", b"space"]);
+    options.extend(style_uses_tabs.map(|it| (&b"useTabs"[..], text_of(it))));
+    let size = whole(b"indent_size").filter(|_| use_tabs.or(style_uses_tabs) == Some(false));
     let width = size.or_else(|| whole(b"tab_width")).map(|it| it as u8);
     options.extend(width.map(|it| (&b"tabWidth"[..], it.to_string().into_bytes())));
     let final_newline = one_of(b"insert_final_newline", [b"true", b"false"]);
@@ -520,9 +519,9 @@ fn apply_as_oxfmt<'v>(get: impl Fn(&[u8]) -> Option<&'v Value>, use_tabs: Option
 pub(crate) fn options_for_oxfmt(file: &File, path: &[u8], use_tabs: Option<bool>) -> Found {
     // `path.strip_prefix(cwd).unwrap_or(path)`
     let relative = paths::inside(&file.directory, path).unwrap_or(path);
-    let is_for_it = |it: &&Section| it.glob.as_ref().is_some_and(|it| it.matches(relative));
+    let matches_file = |it: &&Section| it.glob.as_ref().is_some_and(|it| it.matches(relative));
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
-    for section in file.sections.iter().filter(is_for_it) {
+    for section in file.sections.iter().filter(matches_file) {
         for (key, value) in &section.properties {
             if *value != Value::Invalid {
                 properties.retain(|it| it.0 != &key[..]);

@@ -50,11 +50,11 @@ impl Moves<'_, '_> {
             return;
         }
         let lengths = || bounds.iter().zip(ends).map(|(start, end)| end - start);
-        let shifts = (bounds.iter().zip(ranks).enumerate()).map(|(part, (written_at, rank))| {
+        let shifts = (bounds.iter().zip(ranks).enumerate()).map(|(part, (source_start, rank))| {
             let visited_before = (lengths().zip(ranks).enumerate())
                 .filter(|&(other, (_, other_rank))| (other_rank, other) < (rank, part))
                 .map(|(_, (length, _))| length);
-            (start + visited_before.sum::<u32>()).wrapping_sub(*written_at)
+            (start + visited_before.sum::<u32>()).wrapping_sub(*source_start)
         });
         self.found.push(Parts {
             shifts: shifts.collect(),
@@ -158,7 +158,7 @@ impl Moves<'_, '_> {
     fn function(&mut self, id: hir::FnId) {
         let file = self.file;
         let (hir, tree) = (&file.hir, file.scope_tree());
-        let scope = (tree.of_fn.get(id.idx())).and_then(|&it| tree.scopes.get(it as usize));
+        let scope = (tree.scope_of_fn.get(id.idx())).and_then(|&it| tree.scopes.get(it as usize));
         // Signatures and function types are visited as written.
         let Some(function) = (hir.fns.get(id.idx()))
             .filter(|_| scope.is_some_and(|it| it.kind == ScopeKind::Function))
@@ -188,9 +188,9 @@ impl Moves<'_, '_> {
                 self.swap(ty.pos, ty.end, default.end);
             }
             // The first part after the type parameters starts where they end.
-            let start = |written_at: u32| match ranks[..] {
-                [2] => end_of_type_parameters.unwrap_or(written_at),
-                _ => written_at,
+            let start = |source_pos: u32| match ranks[..] {
+                [2] => end_of_type_parameters.unwrap_or(source_pos),
+                _ => source_pos,
             };
             let modifiers = hir.modifiers_of_params.get(id.idx()).copied();
             if let Some(decorators) = modifiers.and_then(|it| self.decorators(it)) {
@@ -294,7 +294,8 @@ impl Moves<'_, '_> {
 }
 
 /// Indices into `all`, which is in source order, sorted into the order the references are created in. `moved` is
-/// `References::moved`. `None` if nothing but `moved` changes the order.
+/// `References::moved`. `None` if that's `all`'s order: no node reorders its parts, and `moved` doesn't change the
+/// order either.
 pub(super) fn in_creation_order<'a>(
     file: &'a File<'a>,
     all: &[RawReference],
@@ -302,17 +303,17 @@ pub(super) fn in_creation_order<'a>(
 ) -> Option<Vec<u32>> {
     // The position and the index are packed into one number, so references at the same position keep their order.
     let key = |visit: u32, index: u32| u64::from(visit) << 32 | u64::from(index);
-    let mut written: Vec<u64> = (all.iter().zip(0..))
+    let mut visit_keys: Vec<u64> = (all.iter().zip(0..))
         .map(|(it, index)| key(it.pos, index))
         .collect();
     for &(index, visit) in moved {
-        if let Some(it) = written.get_mut(index as usize) {
+        if let Some(it) = visit_keys.get_mut(index as usize) {
             *it = key(visit, index);
         }
     }
-    let was_in_order = written.is_sorted();
-    references::sort_nearly_sorted(&mut written);
-    let mut visits: Vec<u32> = written.iter().map(|it| (it >> 32) as u32).collect();
+    let was_in_order = visit_keys.is_sorted();
+    references::sort_nearly_sorted(&mut visit_keys);
+    let mut visits: Vec<u32> = visit_keys.iter().map(|it| (it >> 32) as u32).collect();
     let mut moves = Moves {
         file,
         visits: &visits,
@@ -322,7 +323,7 @@ pub(super) fn in_creation_order<'a>(
     let found = moves.found;
     if found.is_empty() {
         // `moved` has more than went into `References::visiting_order`.
-        let order = || written.iter().map(|&it| it as u32).collect();
+        let order = || visit_keys.iter().map(|&it| it as u32).collect();
         return (!was_in_order).then(order);
     }
     // Inner ones first: each stays within its part of the enclosing one.
@@ -335,8 +336,8 @@ pub(super) fn in_creation_order<'a>(
         .collect();
     inside_first.sort();
     let first_at = {
-        let written_at = visits.clone();
-        move |pos: u32| written_at.partition_point(|&it| it < pos)
+        let original_visits = visits.clone();
+        move |pos: u32| original_visits.partition_point(|&it| it < pos)
     };
     for parts in inside_first.iter().map(|&it| &found[it as u32 as usize]) {
         let [start, ends @ .., end] = &parts.bounds[..] else {
@@ -348,9 +349,9 @@ pub(super) fn in_creation_order<'a>(
         }
     }
     let mut made: Vec<u64> = (visits.iter().zip(0..))
-        .map(|(&visit, place)| key(visit, place))
+        .map(|(&visit, key_index)| key(visit, key_index))
         .collect();
     references::sort_nearly_sorted(&mut made);
-    let index = |place: &u64| written[*place as u32 as usize] as u32;
+    let index = |key_index: &u64| visit_keys[*key_index as u32 as usize] as u32;
     Some(made.iter().map(index).collect())
 }

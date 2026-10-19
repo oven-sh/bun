@@ -106,12 +106,15 @@ pub struct Vacancy {
     /// The free slot.
     at: usize,
     /// The number of slots at the time.
-    of: usize,
+    table_len: usize,
 }
 
 impl Vacancy {
     /// No search was done.
-    const UNKNOWN: Vacancy = Vacancy { at: 0, of: 0 };
+    const UNKNOWN: Vacancy = Vacancy {
+        at: 0,
+        table_len: 0,
+    };
 }
 
 impl HashIndex {
@@ -128,14 +131,14 @@ impl HashIndex {
         spread: u64,
         is_match: impl FnMut(u32) -> bool,
     ) -> Result<u32, Vacancy> {
-        let held = self.slots.borrow();
-        let slots: &[u64] = &held;
-        let of = slots.len();
-        if of == 0 {
+        let borrowed = self.slots.borrow();
+        let slots: &[u64] = &borrowed;
+        let table_len = slots.len();
+        if table_len == 0 {
             return Err(Vacancy::UNKNOWN);
         }
-        search::<TaskPlacement>(of, spread, |at| slots[at], is_match)
-            .map_err(|at| Vacancy { at, of })
+        search::<TaskPlacement>(table_len, spread, |at| slots[at], is_match)
+            .map_err(|at| Vacancy { at, table_len })
     }
 
     #[inline]
@@ -150,13 +153,13 @@ impl HashIndex {
     pub fn fill(&self, vacancy: Vacancy, spread: u64, number: u32) {
         let count = self.count.get() + 1;
         self.count.set(count);
-        let mut held = self.slots.borrow_mut();
-        if is_too_full(count, held.len()) {
-            Self::grow(&mut held, count);
+        let mut borrowed = self.slots.borrow_mut();
+        if is_too_full(count, borrowed.len()) {
+            Self::grow(&mut borrowed, count);
         }
-        let slots: &mut [u64] = &mut held;
+        let slots: &mut [u64] = &mut borrowed;
         let at = match slots.get(vacancy.at) {
-            Some(0) if vacancy.of == slots.len() => vacancy.at,
+            Some(0) if vacancy.table_len == slots.len() => vacancy.at,
             _ => free_slot::<TaskPlacement>(slots.len(), spread as u32, |at| slots[at]),
         };
         slots[at] = slot_value(spread, number);
@@ -171,10 +174,10 @@ impl HashIndex {
         for page in bigger.chunks_mut((4 << 10) / size_of::<u64>()) {
             *std::hint::black_box(&mut page[0]) = 0;
         }
-        for &place in slots.iter().filter(|&&place| place != 0) {
+        for &packed in slots.iter().filter(|&&packed| packed != 0) {
             let at =
-                free_slot::<TaskPlacement>(bigger.len(), (place >> 32) as u32, |at| bigger[at]);
-            bigger[at] = place;
+                free_slot::<TaskPlacement>(bigger.len(), (packed >> 32) as u32, |at| bigger[at]);
+            bigger[at] = packed;
         }
         *slots = bigger;
     }
@@ -218,31 +221,33 @@ impl<K, V> Default for Hashed<K, V> {
 impl<K: Eq, V> Hashed<K, V> {
     /// Returns the insertion-order index of the entry for `key`. Here and below, `spread` is the hash of `key`.
     #[inline]
-    pub fn place(&self, spread: u64, key: &K) -> Option<u32> {
-        (self.found).find(spread, |place| self.entries[place as usize].0 == *key)
+    pub fn index_of(&self, spread: u64, key: &K) -> Option<u32> {
+        (self.found).find(spread, |entry_index| {
+            self.entries[entry_index as usize].0 == *key
+        })
     }
 
     #[inline]
     pub fn get(&self, spread: u64, key: &K) -> Option<&V> {
-        let place = self.place(spread, key)?;
-        Some(&self.entries[place as usize].1)
+        let entry_index = self.index_of(spread, key)?;
+        Some(&self.entries[entry_index as usize].1)
     }
 
     /// Doesn't overwrite an existing entry. Returns the stored value.
     #[inline]
     pub fn insert(&mut self, spread: u64, key: K, value: V) -> &V {
-        let place = match self.place_or_vacancy(spread, &key) {
-            Ok(place) => place,
+        let entry_index = match self.index_or_vacancy(spread, &key) {
+            Ok(entry_index) => entry_index,
             Err(vacancy) => self.add(vacancy, spread, key, value),
         };
-        &self.entries[place as usize].1
+        &self.entries[entry_index as usize].1
     }
 
     /// Overwrites any existing value for `key`. The entry keeps its position in the insertion order.
     #[inline]
     pub fn replace(&mut self, spread: u64, key: K, value: V) {
-        match self.place_or_vacancy(spread, &key) {
-            Ok(place) => self.entries[place as usize].1 = value,
+        match self.index_or_vacancy(spread, &key) {
+            Ok(entry_index) => self.entries[entry_index as usize].1 = value,
             Err(vacancy) => {
                 self.add(vacancy, spread, key, value);
             }
@@ -250,15 +255,17 @@ impl<K: Eq, V> Hashed<K, V> {
     }
 
     #[inline]
-    fn place_or_vacancy(&self, spread: u64, key: &K) -> Result<u32, Vacancy> {
-        (self.found).find_or_vacancy(spread, |place| self.entries[place as usize].0 == *key)
+    fn index_or_vacancy(&self, spread: u64, key: &K) -> Result<u32, Vacancy> {
+        (self.found).find_or_vacancy(spread, |entry_index| {
+            self.entries[entry_index as usize].0 == *key
+        })
     }
 
     fn add(&mut self, vacancy: Vacancy, spread: u64, key: K, value: V) -> u32 {
-        let place = self.entries.len() as u32;
-        self.found.fill(vacancy, spread, place);
+        let entry_index = self.entries.len() as u32;
+        self.found.fill(vacancy, spread, entry_index);
         self.entries.push((key, value));
-        place
+        entry_index
     }
 
     #[inline]
@@ -271,10 +278,10 @@ impl<K: Eq, V> Hashed<K, V> {
         self.entries.len()
     }
 
-    /// Returns the entry at index `place` in insertion order.
+    /// Returns the entry at index `entry_index` in insertion order.
     #[inline]
-    pub fn entry(&self, place: u32) -> Option<&(K, V)> {
-        self.entries.get(place as usize)
+    pub fn entry(&self, entry_index: u32) -> Option<&(K, V)> {
+        self.entries.get(entry_index as usize)
     }
 }
 
@@ -561,7 +568,7 @@ impl SlotNumber {
     pub(crate) fn typed<S>(self) -> Slot<S> {
         Slot {
             number: self.0,
-            holds: PhantomData,
+            stored_type: PhantomData,
         }
     }
 }
@@ -569,14 +576,14 @@ impl SlotNumber {
 /// A `SlotNumber` plus the only `Half::typed` type that's ever stored or requested under it.
 pub(crate) struct Slot<S> {
     number: u32,
-    holds: PhantomData<fn() -> S>,
+    stored_type: PhantomData<fn() -> S>,
 }
 
 impl<S> Slot<S> {
     /// `number_tables` hasn't assigned a number yet. `Buffer` has no `Half` for this slot.
     pub(crate) const NONE: Slot<S> = Slot {
         number: u32::MAX,
-        holds: PhantomData,
+        stored_type: PhantomData,
     };
 
     #[inline]
@@ -770,19 +777,19 @@ impl<'s> Buffer<'s> {
         )
     }
 
-    /// Returns the log and leaves an empty one in its place.
+    /// Returns the log and replaces it with an empty one.
     pub(crate) fn take_log(&mut self) -> Log {
         self.log.as_mut().map(std::mem::take).unwrap_or_default()
     }
 
     /// Hands back the log that `take_log` returned, so its memory is reused.
-    pub(crate) fn recycle_log(&mut self, mut taken: Log) {
+    pub(crate) fn recycle_log(&mut self, mut old_log: Log) {
         if let Some(log) = &mut self.log
             && log.len() == 0
         {
-            taken.record_keys.clear();
-            taken.node_keys.clear();
-            *log = taken;
+            old_log.record_keys.clear();
+            old_log.node_keys.clear();
+            *log = old_log;
         }
     }
 
@@ -948,9 +955,9 @@ impl<'s> Buffer<'s> {
     #[inline]
     pub(crate) fn put_published_id_if_empty(&mut self, slot: u32, number: u32, raw: u32) -> u32 {
         let cell = self.published_id_cell(slot, number);
-        let kept = *cell;
-        if kept != 0 {
-            return kept;
+        let existing = *cell;
+        if existing != 0 {
+            return existing;
         }
         *cell = raw;
         self.log_record(slot, number);

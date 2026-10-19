@@ -63,7 +63,7 @@ impl<'a> Formatter<'a> {
 
     /// Calls `write`, which writes the node at `span`, for callers that don't go through [`Formatter::in_scope`].
     #[inline]
-    pub(crate) fn around_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+    pub(crate) fn track_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
         let cursor = self.context().cursor;
         if !cursor.is_active() {
             return write(self);
@@ -220,7 +220,7 @@ pub(crate) fn format_name<'a>(
 
 /// The name at `span`, copied from the source, for a caller that writes the name's comments itself.
 pub(crate) fn name_without_comments<'a>(span: Span) -> impl Format<'a> {
-    format_with(move |f| f.around_cursor(span, |f| write!(f, source_text(span))))
+    format_with(move |f| f.track_cursor(span, |f| write!(f, source_text(span))))
 }
 
 /// [`format_name`] for a name that Prettier prints like any other node, so a `prettier-ignore` comment applies to it:
@@ -246,7 +246,7 @@ fn format_name_or_copy<'a>(
     }
     let owned = f.comments().of_name(span.start);
     FormatLeadingComments::Comments(owned.leading).fmt(f);
-    f.around_cursor(span, |f| match can_be_ignored && owned.is_ignored {
+    f.track_cursor(span, |f| match can_be_ignored && owned.is_ignored {
         true => FormatSuppressedNode(span).fmt(f),
         false => write(f),
     });
@@ -262,7 +262,7 @@ pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) 
         AstNodes::TSTypeParameterDeclaration(_) | AstNodes::TSTypeParameterInstantiation(_)
     ) {
         let span = node.span();
-        return f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
+        return f.track_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
     }
     if let Some(expr) = node.as_expression() {
         return write_suppressed_expression(expr, false, f);
@@ -289,7 +289,7 @@ pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) 
         _ => {}
     }
     let span = node.span();
-    f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
+    f.track_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
 }
 
 // ───────────────────────────── names ─────────────────────────────
@@ -413,7 +413,7 @@ impl<'a> FormatExpr<'a> {
         if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_))
             && !(print::jsx::ignored_jsx_gets_no_parentheses(f) && f.comments().is_ignored(node))
         {
-            return f.around_cursor(span, |f| self.write_in_parentheses(false, f));
+            return f.track_cursor(span, |f| self.write_in_parentheses(false, f));
         }
         if print::function::write_called_function_with_comments(expr, self.options, f) {
             return;
@@ -496,7 +496,7 @@ fn write_suppressed_expression<'a>(
     // A class expression with decorators gets its own lines.
     let is_decorated_class =
         matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
-    f.around_cursor(span, |f| {
+    f.track_cursor(span, |f| {
         write!(f, needs_parentheses.then_some("("));
         match is_decorated_class {
             true => write!(f, soft_block_indent(&FormatSuppressedNode(span))),
@@ -889,7 +889,7 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
         _ => span.end < statement.span().end,
     };
     if f.options().semicolons.is_always() {
-        return f.around_cursor(span, |f| {
+        return f.track_cursor(span, |f| {
             write!(
                 f,
                 [FormatSuppressedNode(span), has_semicolon.then_some(";")]
@@ -898,7 +898,7 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
     }
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, span.start, f);
-    f.around_cursor(span, |f| {
+    f.track_cursor(span, |f| {
         write!(
             f,
             [
@@ -933,7 +933,7 @@ fn write_ignored_statement_without_terminator<'a>(
     };
     if f.options().semicolons.is_always() {
         let terminator = ends_with_terminator(statement).then_some(";");
-        return f.around_cursor(content, |f| {
+        return f.track_cursor(content, |f| {
             write!(f, [FormatSuppressedNode(content), terminator])
         });
     }
@@ -942,7 +942,7 @@ fn write_ignored_statement_without_terminator<'a>(
     let needs_leading_semicolon =
         print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
             && !print::statements::follows_type_cast_comment(content.start, f);
-    f.around_cursor(content, |f| {
+    f.track_cursor(content, |f| {
         write!(
             f,
             [
@@ -1163,7 +1163,7 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 /// Prettier's `printIgnored` for a type, with the parentheses it needs.
 fn write_suppressed_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
-    f.around_cursor(ty.span(), |f| {
+    f.track_cursor(ty.span(), |f| {
         write!(
             f,
             [
@@ -1179,9 +1179,9 @@ fn write_suppressed_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let write = |f: &mut Formatter<'a>| write_type_in_parentheses(ty, f);
     match print::union_type::union_prints_own_comments(ty, f) {
-        true => format_node_without_comments(ty.as_ast_nodes(), f, |f| {
-            f.around_cursor(ty.span(), write)
-        }),
+        true => {
+            format_node_without_comments(ty.as_ast_nodes(), f, |f| f.track_cursor(ty.span(), write))
+        }
         false => format_node_with_comments(ty.as_ast_nodes(), f, write),
     }
 }

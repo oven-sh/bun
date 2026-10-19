@@ -24,7 +24,7 @@ const tree = async (text: string) =>
   });
 
 const result = Bun.spawnSync([...bin.split(" "), "--check", "--no-config", "--parser", "glimmer", "."], { cwd: directory });
-const told = new Set([...result.stderr.toString().matchAll(/^\[error\] (.*?): formatting .*would change/gm)].map(it => it[1]));
+const reported = new Set([...result.stderr.toString().matchAll(/^\[error\] (.*?): formatting .*would change/gm)].map(it => it[1]));
 
 const count = { templates: 0, "the same tree": 0, "of which told": 0, "another tree": 0, "of which not told": 0 };
 let shown = 0;
@@ -43,13 +43,13 @@ for (const name of readdirSync(directory).sort()) {
   const after = await tree(formatted).catch(() => "cannot be parsed");
   if (before === after) {
     count["the same tree"]++;
-    if (told.has(name)) {
+    if (reported.has(name)) {
       count["of which told"]++;
       if (args.includes("-told") && shown++ < show) console.log(`##### told ${name}\n${text}\n--- formatted\n${formatted}`);
     }
   } else {
     count["another tree"]++;
-    if (!told.has(name)) {
+    if (!reported.has(name)) {
       count["of which not told"]++;
       if (shown++ < show) console.log(`##### not told ${name}\n${text}\n--- formatted\n${formatted}`);
     }

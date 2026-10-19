@@ -127,10 +127,10 @@ fn is_name_of_life_cycle_method(name: &[u8], check_async_safe_life_cycles: bool)
 /// `node.parent` if it has a `key`, for a function, a class or a field's initializer. The result is
 /// a `Member` or a `Prop`.
 fn parent_with_key(node: Node<'_>) -> Option<Node<'_>> {
-    let written = node.as_written();
-    match written {
+    let source_node = node.owner_or_self();
+    match source_node {
         // A signature is the node itself.
-        Node::Member(member) => (!member.is_signature()).then_some(written),
+        Node::Member(member) => (!member.is_signature()).then_some(source_node),
         Node::Expr(e) => match e.parent() {
             parent @ Node::Prop(_) => Some(parent),
             // A decorator doesn't count.
@@ -157,14 +157,14 @@ fn is_node_a_life_cycle_method(node: Node<'_>, check_async_safe_life_cycles: boo
 }
 
 fn is_set_state_updater(node: Func<'_>) -> bool {
-    let Some(written) = node.owner().as_expr() else {
+    let Some(function_expr) = node.owner().as_expr() else {
         return false;
     };
-    let parent = written.parent().as_expr().and_then(Expr::as_call);
+    let parent = function_expr.parent().as_expr().and_then(Expr::as_call);
     parent.is_some_and(|parent| {
         is_member_called(unwrap_ts_as_expression(parent.callee()), "setState")
             // Make sure we are in the updater not the callback
-            && parent.args().first() == Some(written)
+            && parent.args().first() == Some(function_expr)
     })
 }
 
@@ -481,11 +481,11 @@ impl<'a> UsedPropTypesInstructions<'a> {
         let destructuring = prop_param(node).and_then(properties_of_param).is_some();
         // A declaration's parent is a block, the program or an `export`, none of which is a component.
         let parent = || {
-            let written = node.owner().as_expr()?;
+            let function_expr = node.owner().as_expr()?;
             match estree_parent(Node::Func(node)) {
                 // It's in a `JSXExpressionContainer` or a `Decorator`.
-                _ if written.jsx_container_span().is_some() => None,
-                Node::Class(class) if class.extends() != Some(written) => None,
+                _ if function_expr.jsx_container_span().is_some() => None,
+                Node::Class(class) if class.extends() != Some(function_expr) => None,
                 parent => Some(parent),
             }
         };

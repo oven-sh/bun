@@ -118,9 +118,9 @@ fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
 
 fn suggestion_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Suggestion> {
     let data = json.get(b"data").map_or(Data::None, |data| {
-        let mut written = Vec::new();
-        write_json(&mut written, data);
-        Data::Json(written)
+        let mut data_json = Vec::new();
+        write_json(&mut data_json, data);
+        Data::Json(data_json)
     });
     Some(Suggestion {
         message_id: text_of(json.get(b"messageId")).map_or(Cow::Borrowed(""), Cow::Owned),
@@ -255,8 +255,8 @@ impl Host<'_> {
         wire::words(&mut message, &[processor.id, path.len() as u32]);
         message.extend_from_slice(path);
         message.extend_from_slice(rest);
-        let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| {
-            self.serve_common(asked, details, out);
+        let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| {
+            self.serve_common(request, details, out);
         };
         for _ in 0..2 {
             let returned = vm.call(kind, &message, &mut serve)?;

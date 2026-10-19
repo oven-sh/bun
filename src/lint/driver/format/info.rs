@@ -1,7 +1,7 @@
 //! `Info` from `oxc_diagnostics`, which oxlint's formats print a problem from.
 
 use super::oxlint::{Offsets, code, is_error};
-use super::{Meta, shown_at};
+use super::{Meta, display_position};
 use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
@@ -114,7 +114,7 @@ impl<'r> Source<'r> {
 
     /// Returns the problem's start and end as byte offsets from the start of the file. `None` if it has no location.
     pub(super) fn span(&self, message: &LintMessage) -> Option<(usize, usize)> {
-        let start = shown_at(message, self.is_oxlint);
+        let start = display_position(message, self.is_oxlint);
         if start.0 == 0 {
             return None;
         }

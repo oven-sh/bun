@@ -58,7 +58,7 @@ impl Short {
     }
 
     /// The UTF-16 code unit `unit`, in WTF-8.
-    fn of_unit(unit: u32) -> Short {
+    fn from_unit(unit: u32) -> Short {
         match unit {
             0..0x80 => Short::new(&[unit as u8]),
             0x80..0x800 => Short::new(&[0xC0 | (unit >> 6) as u8, 0x80 | (unit & 0x3F) as u8]),
@@ -71,7 +71,7 @@ impl Short {
     }
 
     /// `regex.flags`, which has them in alphabetical order.
-    fn of_flags(flags: &[u8]) -> Short {
+    fn from_flags(flags: &[u8]) -> Short {
         let mut short = Short::new(flags);
         crate::utils::sort::sort_unstable(&mut short.bytes[..short.len as usize]);
         short
@@ -90,7 +90,7 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
     for (_, c) in bun_core::strings::wtf8_codepoints(text) {
         let width = bun_core::strings::codepoint_len_utf16(c);
         if index < at + width {
-            return Some(Short::of_unit(match (width, index - at) {
+            return Some(Short::from_unit(match (width, index - at) {
                 (1, _) => c,
                 (_, 0) => 0xD800 + ((c - 0x1_0000) >> 10),
                 _ => 0xDC00 + ((c - 0x1_0000) & 0x3FF),
@@ -104,7 +104,7 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
 impl<'a> Val<'a> {
     /// The value of `entry`'s field in `node`. `node` must be of the type that `entry` belongs to.
     #[inline]
-    pub(super) fn of_field(
+    pub(super) fn from_field(
         node: VNode<'a>,
         entry: &'static FieldEntry,
         dialect: Dialect,
@@ -179,7 +179,9 @@ impl<'a> Val<'a> {
             }
             (Val::Node(node), _) => {
                 let entry = key.field.and_then(|field| node.node_type().field(field));
-                entry.map_or(Val::Undefined, |entry| Val::of_field(node, entry, dialect))
+                entry.map_or(Val::Undefined, |entry| {
+                    Val::from_field(node, entry, dialect)
+                })
             }
 
             (Val::List(..), P::Length) => Val::Number(self.elements().map_or(0, Nodes::len) as f64),
@@ -202,7 +204,7 @@ impl<'a> Val<'a> {
             (Val::Object(Object::Regex { flags, .. }), P::Flags) => Val::Str(flags),
 
             (Val::Regex { pattern, .. }, P::Source) => Val::Str(pattern),
-            (Val::Regex { flags, .. }, P::Flags) => Val::Short(Short::of_flags(flags)),
+            (Val::Regex { flags, .. }, P::Flags) => Val::Short(Short::from_flags(flags)),
             (Val::Regex { flags, .. }, P::HasFlag(flag)) => {
                 Val::Bool(bun_core::strings::contains_char(flags, flag))
             }
@@ -241,7 +243,7 @@ impl<'a> Val<'a> {
                 then(b"[object Object]")
             }
             Val::Regex { pattern, flags } => {
-                then(&[b"/", pattern, b"/", Short::of_flags(flags).as_bytes()].concat())
+                then(&[b"/", pattern, b"/", Short::from_flags(flags).as_bytes()].concat())
             }
             Val::List(..) | Val::Range(_) => then(&self.joined()),
         }

@@ -124,10 +124,10 @@ impl File<'_> {
         (self.text().get(pos as usize)).is_some_and(u8::is_ascii_digit)
     }
 
-    /// True if a key of kind `written` at `pos` can be a `KeyKind::String` or a `KeyKind::ComputedString`.
+    /// True if a key of kind `key_kind` at `pos` can be a `KeyKind::String` or a `KeyKind::ComputedString`.
     #[inline]
-    fn can_be_string_key(&self, written: NameKind, pos: u32) -> bool {
-        match written {
+    fn can_be_string_key(&self, key_kind: NameKind, pos: u32) -> bool {
+        match key_kind {
             NameKind::StringLiteral | NameKind::ComputedString => true,
             NameKind::Identifier => self.is_quote_at(pos),
             NameKind::NumericLiteral | NameKind::ComputedNumber | NameKind::Jsx => false,
@@ -137,9 +137,11 @@ impl File<'_> {
     /// The same for `KeyKind::Number` and `KeyKind::ComputedNumber`. The HIR has no kind for a `bigint` key, so this
     /// also checks for a digit.
     #[inline]
-    fn can_be_number_key(&self, written: NameKind, pos: u32) -> bool {
-        matches!(written, NameKind::NumericLiteral | NameKind::ComputedNumber)
-            || self.is_digit_at(pos)
+    fn can_be_number_key(&self, key_kind: NameKind, pos: u32) -> bool {
+        matches!(
+            key_kind,
+            NameKind::NumericLiteral | NameKind::ComputedNumber
+        ) || self.is_digit_at(pos)
     }
 }
 
@@ -290,11 +292,11 @@ impl<'a> File<'a> {
         });
         self.every_export_spec(|it| {
             // ESLint has two nodes even if the name is written once: `export { "a" } from "b"`.
-            for written in [it.local(), it.exported()] {
-                if written.is_string() {
-                    name(written.span(), Node::ExportSpec(it));
+            for specifier_name in [it.local(), it.exported()] {
+                if specifier_name.is_string() {
+                    name(specifier_name.span(), Node::ExportSpec(it));
                 } else {
-                    debug_assert!(!self.is_quote_at(written.span().start));
+                    debug_assert!(!self.is_quote_at(specifier_name.span().start));
                 }
             }
         });

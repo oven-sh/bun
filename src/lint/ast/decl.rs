@@ -46,17 +46,15 @@ impl<'a> Func<'a> {
     #[inline]
     pub fn flags(self) -> Flags {
         match self.file.has_synthetic_nodes() {
-            true => self.written_flags(),
+            true => self.source_flags(),
             false => self.raw().flags,
         }
     }
 
     #[inline(never)]
-    fn written_flags(self) -> Flags {
+    fn source_flags(self) -> Flags {
         match self.owner() {
-            Node::Member(member) => self
-                .file
-                .written_flags(self.raw().flags, member.modifiers()),
+            Node::Member(member) => self.file.source_flags(self.raw().flags, member.modifiers()),
             _ => self.raw().flags,
         }
     }
@@ -115,7 +113,7 @@ impl<'a> Func<'a> {
 
     #[inline]
     pub fn return_type(self) -> Option<TypeNode<'a>> {
-        TypeNode::written(self.file, self.raw().ret)
+        TypeNode::in_source(self.file, self.raw().ret)
     }
 
     #[inline]
@@ -337,7 +335,7 @@ impl<'a> Param<'a> {
 
     #[inline]
     pub fn ty(self) -> Option<TypeNode<'a>> {
-        TypeNode::written(self.file, self.raw().ty)
+        TypeNode::in_source(self.file, self.raw().ty)
     }
 
     #[inline]
@@ -507,7 +505,7 @@ pub enum KeyKind<'a> {
 impl<'a> KeyKind<'a> {
     /// For a `bigint` key the HIR stores no name, or in a binding pattern the literal's source text.
     #[inline(never)]
-    fn of_bigint(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
+    fn from_bigint(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
         let rest = file.text().get(start as usize..)?;
         let literal = rest.get(..crate::tokens::token_len(rest))?;
         (rest.first()?.is_ascii_digit() && literal.ends_with(b"n"))
@@ -516,13 +514,13 @@ impl<'a> KeyKind<'a> {
 
     /// The HIR also stores no name for a `#name` outside a class, since it declares nothing.
     #[inline(never)]
-    fn of_unnamed(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
+    fn from_unnamed(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
         let rest = file.text().get(start as usize..)?;
         match rest.first()? {
             b'#' => Some(KeyKind::Private(
                 file.intern(rest.get(..crate::tokens::token_len(rest))?),
             )),
-            _ => KeyKind::of_bigint(file, start),
+            _ => KeyKind::from_bigint(file, start),
         }
     }
 }
@@ -555,9 +553,9 @@ impl<'a> Key<'a> {
         name_kind: NameKind,
         start: u32,
     ) -> Option<Key<'a>> {
-        let bigint = || KeyKind::of_bigint(file, start);
+        let bigint = || KeyKind::from_bigint(file, start);
         let kind = match key {
-            hir::PropKey::None => KeyKind::of_unnamed(file, start)?,
+            hir::PropKey::None => KeyKind::from_unnamed(file, start)?,
             hir::PropKey::Private(name) => KeyKind::Private(file.private_name(name)),
             hir::PropKey::Computed(e) => KeyKind::Computed(Expr::new(file, e)),
             hir::PropKey::Name(name) => {
@@ -1017,7 +1015,7 @@ impl<'a> Member<'a> {
     #[inline]
     pub fn flags(self) -> Flags {
         match self.file.has_synthetic_nodes() {
-            true => self.file.written_flags(self.raw().flags, self.modifiers()),
+            true => self.file.source_flags(self.raw().flags, self.modifiers()),
             false => self.raw().flags,
         }
     }
@@ -1053,7 +1051,7 @@ impl<'a> Member<'a> {
     pub fn ty(self) -> Option<TypeNode<'a>> {
         match self.raw().func.is_some() {
             true => None,
-            false => TypeNode::written(self.file, self.raw().ty),
+            false => TypeNode::in_source(self.file, self.raw().ty),
         }
     }
 

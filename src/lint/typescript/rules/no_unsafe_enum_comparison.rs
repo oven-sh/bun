@@ -64,8 +64,8 @@ impl Rule for NoUnsafeEnumComparison {
             return;
         }
         // oxlint points at the left side.
-        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
-        let report = cx.report(place, MISMATCHED_CONDITION).comments_apply_at(node.span()).labels_with(|labels| {
+        let report_span = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        let report = cx.report(report_span, MISMATCHED_CONDITION).comments_apply_at(node.span()).labels_with(|labels| {
             labels.first(format!("Left operand: {}", bstr::BStr::new(&left_type.to_text())));
             labels.push(right.outer_span(), format!("Right operand: {}", bstr::BStr::new(&right_type.to_text())));
             labels.push(node, "");
@@ -92,8 +92,8 @@ impl Rule for NoUnsafeEnumComparison {
         };
         if is_mismatched_enum_comparison_types(discriminant.ty(), test.ty()) {
             // oxlint points at the `switch`'s discriminant.
-            let place = if cx.language().is_oxlint { discriminant.outer_span() } else { node.span() };
-            cx.report(place, MISMATCHED_CASE).comments_apply_at(node.span()).labels_with(|labels| {
+            let report_span = if cx.language().is_oxlint { discriminant.outer_span() } else { node.span() };
+            cx.report(report_span, MISMATCHED_CASE).comments_apply_at(node.span()).labels_with(|labels| {
                 labels.first(format!("Switch value: {}", bstr::BStr::new(&discriminant.ty().to_text())));
                 labels.push(test.outer_span(), format!("Case value: {}", bstr::BStr::new(&test.ty().to_text())));
                 labels.push(node.span(), "");

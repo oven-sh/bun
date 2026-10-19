@@ -14,7 +14,7 @@ use crate::resolve::{
 };
 use crate::session::Session;
 use crate::util::{FxHashSet, SharedSort};
-use crate::verify::{Place, Problem};
+use crate::verify::{ConfigLocation, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
@@ -84,7 +84,8 @@ impl ConfigError {
             at,
             chain: problem.chain.clone(),
             is_about_options: true,
-            // What is in a file of the program is where the problem itself is reported.
+            // Only a problem that's itself reported in a program file (`Files::include_problems_in`) has related
+            // information in one, and those don't come through here.
             related: (problem.related.iter())
                 .filter(|it| it.0 == crate::program::IN_CONFIGURATION)
                 .map(|&(_, from, to, code)| (from, to, code, Vec::new()))
@@ -153,10 +154,10 @@ impl Project {
         let specs = self.options.include_specs.iter();
         let include: Vec<Vec<u8>> = specs.map(|it| it.1.clone()).collect();
         let base = join(b"", &self.base);
-        let more = extra_supported_extensions(host, &self.options);
+        let extra_extensions = extra_supported_extensions(host, &self.options);
         let patterns =
             GlobMatcher::new(&include, &self.exclude, &base, case_sensitive, Usage::Files);
-        let base: Vec<Vec<u8>> = (PathParts::of_directory(typescript_path(&base)).iter())
+        let base: Vec<Vec<u8>> = (PathParts::split_directory(typescript_path(&base)).iter())
             .map(|it| it.to_vec())
             .collect();
         let begins_with_base = |pattern: &GlobPattern| {
@@ -173,8 +174,8 @@ impl Project {
             exclude_begins_with_base: patterns.excludes.iter().map(begins_with_base).collect(),
             patterns,
             base,
-            groups: supported_extensions(&self.options),
-            more: more.map(<[u8]>::to_vec).collect(),
+            extension_groups: supported_extensions(&self.options),
+            extra_extensions: extra_extensions.map(<[u8]>::to_vec).collect(),
             case_sensitive,
         }
     }
@@ -221,8 +222,8 @@ pub struct Roots {
     include_begins_with_base: Vec<bool>,
     exclude_begins_with_base: Vec<bool>,
     /// `supported_extensions`, `extra_supported_extensions`
-    groups: &'static [&'static [&'static [u8]]],
-    more: Vec<Vec<u8>>,
+    extension_groups: &'static [&'static [&'static [u8]]],
+    extra_extensions: Vec<Vec<u8>>,
     case_sensitive: bool,
 }
 
@@ -234,7 +235,7 @@ pub struct SplitFilePath<'a> {
 
 impl<'a> SplitFilePath<'a> {
     pub fn new(path: &'a [u8]) -> SplitFilePath<'a> {
-        let names = PathParts::of_directory(typescript_path(path));
+        let names = PathParts::split_directory(typescript_path(path));
         SplitFilePath { path, names }
     }
 }
@@ -254,7 +255,7 @@ impl Roots {
             return false;
         }
         // `hasFileWithHigherPriorityExtension`
-        for extension in extension_group(path, self.groups) {
+        for extension in extension_group(path, self.extension_groups) {
             if path.ends_with(extension) && (extension != b".ts" || !path.ends_with(b".d.ts")) {
                 break;
             }
@@ -276,10 +277,10 @@ impl Roots {
         let (path, directory) = (file.path, &file.names);
         let has_extension = |it: &[u8]| path.len() > it.len() && path.ends_with(it);
         let is_supported = self
-            .groups
+            .extension_groups
             .iter()
             .any(|group| group.iter().any(|it| has_extension(it)))
-            || self.more.iter().any(|it| has_extension(it));
+            || self.extra_extensions.iter().any(|it| has_extension(it));
         let whole = PathParts {
             directory,
             name: b"",
@@ -362,23 +363,23 @@ struct List {
     /// nil. Elements of the wrong type stay in it.
     items: Option<Vec<Json>>,
     /// See [`VerbatimSpecs`].
-    written: Option<Vec<Json>>,
+    verbatim: Option<Vec<Json>>,
 }
 
 impl List {
     fn of(value: Option<&Json>) -> List {
-        let written = value.and_then(Json::as_array);
-        let items = written.and_then(|items| {
-            let kept: Vec<Json> = (items.iter())
+        let array = value.and_then(Json::as_array);
+        let items = array.and_then(|items| {
+            let non_null: Vec<Json> = (items.iter())
                 .filter(|item| !matches!(item, Json::Null))
                 .cloned()
                 .collect();
-            (items.is_empty() || !kept.is_empty()).then_some(kept)
+            (items.is_empty() || !non_null.is_empty()).then_some(non_null)
         });
         List {
             is_specified: value.is_some(),
-            is_array: written.is_some(),
-            written: items.clone(),
+            is_array: array.is_some(),
+            verbatim: items.clone(),
             items,
         }
     }
@@ -391,8 +392,8 @@ impl List {
             .collect()
     }
 
-    fn written(&self) -> Option<Vec<Vec<u8>>> {
-        let strings = self.written.as_ref()?.iter().filter_map(Json::as_str);
+    fn verbatim_strings(&self) -> Option<Vec<Vec<u8>>> {
+        let strings = self.verbatim.as_ref()?.iter().filter_map(Json::as_str);
         Some(strings.map(<[u8]>::to_vec).collect())
     }
 
@@ -499,21 +500,26 @@ fn parse_config(
             // for a file in an `extends` cycle depends on where the cycle was entered, so it's only cached for this
             // call.
             if extends_cycles.hits != cycles_hit {
-                extends_cycles.kept.push((path.clone(), extended.clone()));
+                extends_cycles.cached.push((path.clone(), extended.clone()));
             } else if errors.len() == reported {
                 host.cache_extended_config(&path, &|| std::sync::Arc::new(extended.clone()));
             }
             innermost.inherit(&path, extended, host.is_case_sensitive());
         }
         while let Some(path) = innermost.extended.as_mut().and_then(Iterator::next) {
-            if let Some((_, kept)) = extends_cycles.kept.iter().find(|it| it.0 == path) {
+            if let Some((_, cached_config)) = extends_cycles.cached.iter().find(|it| it.0 == path) {
                 extends_cycles.hits += 1;
-                innermost.inherit(&path, kept.clone(), host.is_case_sensitive());
+                innermost.inherit(&path, cached_config.clone(), host.is_case_sensitive());
                 continue;
             }
-            let kept = host.extended_config(&path);
-            match kept.as_ref().and_then(|it| it.downcast_ref::<Raw>()) {
-                Some(kept) => innermost.inherit(&path, kept.clone(), host.is_case_sensitive()),
+            let cached_config = host.extended_config(&path);
+            match cached_config
+                .as_ref()
+                .and_then(|it| it.downcast_ref::<Raw>())
+            {
+                Some(cached_config) => {
+                    innermost.inherit(&path, cached_config.clone(), host.is_case_sensitive())
+                }
                 None => {
                     innermost.being_read = Some((path.clone(), errors.len(), extends_cycles.hits));
                     to_read = Some(path);
@@ -546,11 +552,11 @@ struct ExtendsCycles {
     /// The files at which a cycle was closed. TS18000 is reported once for each. TypeScript caches such a file the
     /// first time, and the cached result has no errors.
     closed: FxHashSet<Vec<u8>>,
-    /// How many times a cycle was hit or an entry of `kept` was used.
+    /// How many times a cycle was hit or an entry of `cached` was used.
     hits: usize,
     /// The files that hit a cycle, with their results for this `parse_config` call. A result depends on where the cycle
     /// was entered.
-    kept: Vec<(Vec<u8>, Raw)>,
+    cached: Vec<(Vec<u8>, Raw)>,
 }
 
 /// The part of [`parse_config`] that handles the file itself. `stack`: `resolutionStack`.
@@ -649,14 +655,14 @@ fn open_config(
             own.compiler.push((key.to_vec(), value));
         }
     }
-    for written in values_of(b"compilerOptions") {
-        let problems = crate::config_options::problems(&file, written, In::CompilerOptions);
+    for value_node in values_of(b"compilerOptions") {
+        let problems = crate::config_options::problems(&file, value_node, In::CompilerOptions);
         // `convertJsonOption`: an invalid value is treated as unspecified. So is an invalid element of a list.
         let omitted: Vec<_> = (problems.iter())
             .map(|problem| (problem.property, problem.index))
             .collect();
         errors.extend(problems.into_iter().map(from_problem));
-        for (property, key) in file.properties(written) {
+        for (property, key) in file.properties(value_node) {
             let is_omitted = |index| omitted.contains(&(property, index));
             let value = file.convert_property_value_to_json(file.initializer(property));
             // `convertJsonOptionOfListType` of `null`, and of a list of only `null`s.
@@ -698,8 +704,8 @@ fn open_config(
         let problems = crate::config_options::problems(&file, root, In::Root);
         errors.extend(problems.into_iter().map(from_problem));
     }
-    for written in values_of(b"typeAcquisition") {
-        let problems = crate::config_options::problems(&file, written, In::TypeAcquisition);
+    for value_node in values_of(b"typeAcquisition") {
+        let problems = crate::config_options::problems(&file, value_node, In::TypeAcquisition);
         errors.extend(problems.into_iter().map(from_problem));
     }
     own.files = List::of(json.get(b"files"));
@@ -710,23 +716,24 @@ fn open_config(
     own.has_extends = extends.is_some_and(|extends| *extends != Json::Null);
     // `getExtendsConfigPathOrArray`. With several `extends`, the last one wins.
     let mut extended_config_path = None;
-    for written in values_of(b"extends") {
-        let names: Vec<(usize, Vec<u8>)> = match &mut file.convert_property_value_to_json(written) {
-            Json::String(one) => vec![(0, std::mem::take(one))],
-            // `convertArrayLiteralExpressionToJson` drops `null`s, so the index only counts the other elements.
-            // TypeScript still looks up the node with it.
-            Json::Array(many) => (many.iter().filter(|it| **it != Json::Null))
-                .enumerate()
-                .filter_map(|(i, e)| Some((i, e.as_str()?.to_vec())))
-                .collect(),
-            _ => Vec::new(),
-        };
+    for value_node in values_of(b"extends") {
+        let names: Vec<(usize, Vec<u8>)> =
+            match &mut file.convert_property_value_to_json(value_node) {
+                Json::String(one) => vec![(0, std::mem::take(one))],
+                // `convertArrayLiteralExpressionToJson` drops `null`s, so the index only counts the other elements.
+                // TypeScript still looks up the node with it.
+                Json::Array(many) => (many.iter().filter(|it| **it != Json::Null))
+                    .enumerate()
+                    .filter_map(|(i, e)| Some((i, e.as_str()?.to_vec())))
+                    .collect(),
+                _ => Vec::new(),
+            };
         let mut found = Vec::new();
         for (i, name) in &names {
             let reported = errors.len();
             found.extend(extends_config_path(host, session, name, base, errors));
             // `CreateDiagnosticForNodeInSourceFileOrCompilerDiagnostic`, at `valueExpression`.
-            let value = file.elements(written).nth(*i).unwrap_or(written);
+            let value = file.elements(value_node).nth(*i).unwrap_or(value_node);
             for error in &mut errors[reported..] {
                 error.at = Some(at(file.span(value)));
             }
@@ -781,7 +788,7 @@ impl PendingConfig {
                     is_specified: true,
                     is_array: true,
                     items: Some(rebase(items)),
-                    written: extended.written,
+                    verbatim: extended.verbatim,
                 };
             }
         };
@@ -896,7 +903,7 @@ fn validate_specs(
             problems.push(Problem::new(
                 code,
                 &[spec],
-                Place::TopElement(key, spec.clone()),
+                ConfigLocation::TopElement(key, spec.clone()),
             ));
             false
         })
@@ -934,7 +941,7 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
             is_specified: !files.is_empty(),
             is_array: !files.is_empty(),
             items: (!files.is_empty()).then(|| files.into_iter().map(Json::String).collect()),
-            written: None,
+            verbatim: None,
         },
         ..Raw::default()
     };
@@ -1023,19 +1030,19 @@ fn project_from_raw(
         problems.push(Problem::new(
             18002,
             &[&config_file_name],
-            Place::Top(b"files"),
+            ConfigLocation::Top(b"files"),
         ));
     }
     // Emitted files aren't read back in as input.
     if !raw.exclude.is_array {
-        let written: Vec<Json> = [b"outDir".as_slice(), b"declarationDir"]
+        let output_dirs: Vec<Json> = [b"outDir".as_slice(), b"declarationDir"]
             .iter()
             .filter_map(|key| compiler.get(key).and_then(Json::as_str))
             .filter(|dir| !dir.is_empty())
             .map(|dir| Json::String(displayed_path(dir).into_owned()))
             .collect();
-        if !written.is_empty() {
-            raw.exclude.items = Some(written);
+        if !output_dirs.is_empty() {
+            raw.exclude.items = Some(output_dirs);
         }
     }
     // `canJsonReportNoInputFiles`
@@ -1095,9 +1102,9 @@ fn project_from_raw(
         references: references.unwrap_or_default(),
         errors,
         written: VerbatimSpecs {
-            files: raw.files.written(),
-            include: raw.include.written(),
-            exclude: raw.exclude.written(),
+            files: raw.files.verbatim_strings(),
+            include: raw.include.verbatim_strings(),
+            exclude: raw.exclude.verbatim_strings(),
         },
         raw_compiler_options: match compiler.into_object() {
             Some(mut options) => {
@@ -1302,7 +1309,7 @@ struct PathParts<'a> {
 impl<'a> PathParts<'a> {
     /// Returns the components of `directory`, which is a `typescript_path`. A leading `/` becomes a first component
     /// `""`. Called once per directory, not once per pattern and name in it.
-    fn of_directory(directory: &[u8]) -> Vec<&[u8]> {
+    fn split_directory(directory: &[u8]) -> Vec<&[u8]> {
         let root = directory.starts_with(b"/").then_some(&b""[..]);
         let names = strings::split(directory, b"/").filter(|p| !p.is_empty());
         root.into_iter().chain(names).collect()
@@ -1358,7 +1365,7 @@ impl GlobPattern {
     }
 
     fn matches_path(&self, path: &[u8]) -> bool {
-        let directory = &PathParts::of_directory(path);
+        let directory = &PathParts::split_directory(path);
         self.matches(PathParts {
             directory,
             name: b"",
@@ -1638,9 +1645,9 @@ fn base_paths(path: &[u8], includes: &[Vec<u8>], case_sensitive: bool) -> Vec<Ve
                 true => reduced.map(|name| name.len() + 1).sum(),
                 false => include.len(),
             };
-            let (reduced, written) = include.split_at(end.min(include.len()));
-            let written = strings::split_any(written, b"/\\").filter(|name| !name.is_empty());
-            let absolute = written.fold(join(path, reduced), |dir, name| inside(&dir, name));
+            let (reduced, unreduced) = include.split_at(end.min(include.len()));
+            let unreduced = strings::split_any(unreduced, b"/\\").filter(|name| !name.is_empty());
+            let absolute = unreduced.fold(join(path, reduced), |dir, name| inside(&dir, name));
             include_base_path(&absolute)
         })
         .collect();
@@ -1691,7 +1698,7 @@ fn match_files(
             } else {
                 [path, b"/"].concat()
             };
-            let directory = &PathParts::of_directory(typescript_path(&prefix));
+            let directory = &PathParts::split_directory(typescript_path(&prefix));
             Listed {
                 files: files
                     .into_iter()

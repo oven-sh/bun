@@ -149,10 +149,10 @@ impl Checker<'_, '_> {
                     match self.is_qualified_name_a_value(file, scope, &texts) {
                         Some(true) => {
                             // `getContainingQualifiedNameNode`: all of the names. `entityNameToString`
-                            let written: Vec<Vec<u8>> = (names.iter())
+                            let name_texts: Vec<Vec<u8>> = (names.iter())
                                 .map(|n| self.declaration_name_to_string(file, hir.node(n)))
                                 .collect();
-                            self.error(file, names, 2749, &[Arg::Bytes(&written.join(&b'.'))]);
+                            self.error(file, names, 2749, &[Arg::Bytes(&name_texts.join(&b'.'))]);
                             return;
                         }
                         Some(false) => {}
@@ -186,11 +186,11 @@ impl Checker<'_, '_> {
         }
         let (start, end) = (hir.start(name), self.end_of_node(file, name));
         let start = super::spans::start_of_error_range(hir, start, end);
-        let written = self.source_text(file, start, end);
+        let raw_text = self.source_text(file, start, end);
         // The default library's text isn't stored.
         match hir.text(name) {
-            text if written.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),
-            _ => written,
+            text if raw_text.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),
+            _ => raw_text,
         }
     }
 
@@ -298,7 +298,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             let is_export = type_only.is_export();
-            let at = self.place_of_token(file, hir[e].pos);
+            let at = self.span_of_token(file, hir[e].pos);
             self.aliases_error_about_type_only(
                 at,
                 if is_export { 1362 } else { 1361 },

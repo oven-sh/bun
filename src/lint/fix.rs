@@ -27,8 +27,8 @@ pub enum SuggestionKind {
     DangerousSuggestion,
 }
 
-/// What's left of a line once `span` is removed from `text`.
-pub struct Around<'t> {
+/// The surroundings of `span` in `text`, for deciding what else to remove along with it.
+pub struct Removal<'t> {
     text: &'t [u8],
     span: Span,
     /// `span` with the spaces and tabs on both sides of it.
@@ -44,14 +44,14 @@ fn is_blank_line(line: &[u8]) -> bool {
     line.iter().all(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
 }
 
-impl<'t> Around<'t> {
-    pub fn of(text: &'t [u8], span: Span) -> Around<'t> {
+impl<'t> Removal<'t> {
+    pub fn of(text: &'t [u8], span: Span) -> Removal<'t> {
         let is_space_or_tab = |byte: &&u8| matches!(byte, b' ' | b'\t');
         let before = text.get(..span.start as usize).unwrap_or_default();
         let after = text.get(span.end as usize..).unwrap_or_default();
         let start = before.len() - before.iter().rev().take_while(is_space_or_tab).count();
         let spaces_after = after.iter().take_while(is_space_or_tab).count();
-        Around {
+        Removal {
             text,
             span,
             with_spaces: Span::new(start as u32, span.end + spaces_after as u32),
@@ -308,7 +308,7 @@ impl<'a> Fixer<'a> {
             }
             end = comment.end();
         }
-        match Around::of(self.file.text(), Span::new(at, end)).line_break {
+        match Removal::of(self.file.text(), Span::new(at, end)).line_break {
             Some(_) => end,
             None => at,
         }

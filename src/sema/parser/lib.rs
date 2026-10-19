@@ -5,7 +5,7 @@
 //! parses speculatively in the same places as that parser, so both resolve every ambiguity the same way.
 //!
 //! It's compiled twice. The first instance only parses valid code. It has no error recovery, reports no errors, and
-//! rejects any text it can't vouch for ([`Refusal`]). The second ([`Options::recovers`], [`Options::reads_jsdoc`])
+//! rejects any text it can't vouch for ([`Rejection`]). The second ([`Options::recovers`], [`Options::reads_jsdoc`])
 //! continues after an error the way TypeScript's parser does and reports the same errors. [`summarize`] and its
 //! siblings try the first instance and fall back to the second for text the first rejected.
 
@@ -30,7 +30,7 @@ pub use summarize::{
 
 /// Why the parser rejected a text.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub enum Refusal {
+pub enum Rejection {
     /// A token the grammar doesn't allow at its position. In a speculative parse this only ends the speculation.
     Syntax,
     /// The grammar accepts the text, but TypeScript reports an error about it while parsing.
@@ -54,53 +54,53 @@ pub enum Refusal {
     Unsupported,
 }
 
-impl Refusal {
+impl Rejection {
     /// True if the scanner hit something that isn't a token.
     pub(crate) fn is_scanner_error(self) -> bool {
         matches!(
             self,
-            Refusal::NotUtf8
-                | Refusal::Unterminated
-                | Refusal::UnexpectedCharacter
-                | Refusal::ConflictMarker
-                | Refusal::InvalidEscape
-                | Refusal::EscapedKeyword
-                | Refusal::UnusualNumber
-                | Refusal::UnusualRegex
-                | Refusal::UnusualPrivateName
+            Rejection::NotUtf8
+                | Rejection::Unterminated
+                | Rejection::UnexpectedCharacter
+                | Rejection::ConflictMarker
+                | Rejection::InvalidEscape
+                | Rejection::EscapedKeyword
+                | Rejection::UnusualNumber
+                | Rejection::UnusualRegex
+                | Rejection::UnusualPrivateName
         )
     }
 
     /// The number of reasons.
-    pub const COUNT: usize = Refusal::Unsupported as usize + 1;
+    pub const COUNT: usize = Rejection::Unsupported as usize + 1;
 
     /// Every reason, indexed by its discriminant.
-    pub const ALL: [Refusal; Refusal::COUNT] = [
-        Refusal::Syntax,
-        Refusal::Reported,
-        Refusal::TooLarge,
-        Refusal::TooDeep,
-        Refusal::NotUtf8,
-        Refusal::Unterminated,
-        Refusal::UnexpectedCharacter,
-        Refusal::ConflictMarker,
-        Refusal::InvalidEscape,
-        Refusal::EscapedKeyword,
-        Refusal::UnusualNumber,
-        Refusal::UnusualRegex,
-        Refusal::UnusualPrivateName,
-        Refusal::Jsx,
-        Refusal::Json,
-        Refusal::AwaitInScript,
-        Refusal::Decorators,
-        Refusal::Unsupported,
+    pub const ALL: [Rejection; Rejection::COUNT] = [
+        Rejection::Syntax,
+        Rejection::Reported,
+        Rejection::TooLarge,
+        Rejection::TooDeep,
+        Rejection::NotUtf8,
+        Rejection::Unterminated,
+        Rejection::UnexpectedCharacter,
+        Rejection::ConflictMarker,
+        Rejection::InvalidEscape,
+        Rejection::EscapedKeyword,
+        Rejection::UnusualNumber,
+        Rejection::UnusualRegex,
+        Rejection::UnusualPrivateName,
+        Rejection::Jsx,
+        Rejection::Json,
+        Rejection::AwaitInScript,
+        Rejection::Decorators,
+        Rejection::Unsupported,
     ];
 }
 
 /// A refusal and where it came from.
 #[derive(Copy, Clone, Debug)]
-pub struct Refused {
-    pub why: Refusal,
+pub struct Rejected {
+    pub why: Rejection,
     /// The position in the text.
     pub at: u32,
     /// The line in this crate that rejected the text.
@@ -109,10 +109,10 @@ pub struct Refused {
     pub after: u32,
 }
 
-impl Refused {
+impl Rejected {
     #[track_caller]
-    fn new(why: Refusal) -> Refused {
-        Refused {
+    fn new(why: Rejection) -> Rejected {
+        Rejected {
             why,
             at: 0,
             by: core::panic::Location::caller(),
@@ -199,7 +199,7 @@ impl Scratch {
 
     /// Returns an error the parser reported in the last rejected text (`len` bytes long) before it gave up, if any:
     /// either the first in the text or the first reported.
-    pub fn error_before_refusal(
+    pub fn error_before_rejection(
         &self,
         is_first_in_text: bool,
         len: usize,
@@ -237,7 +237,7 @@ pub(crate) fn parse(
     options: Options,
     atoms: &dyn Intern,
     scratch: &mut Scratch,
-) -> Result<Parsed, Refused> {
+) -> Result<Parsed, Rejected> {
     let parsed = parser::run(text, options, Some(atoms), scratch)?;
     if !options.reads_jsdoc || options.is_javascript {
         return Ok(parsed);
@@ -261,6 +261,6 @@ pub(crate) fn parse_with_own_atoms(
     text: &[u8],
     options: Options,
     scratch: &mut Scratch,
-) -> Result<Parsed, Refused> {
+) -> Result<Parsed, Rejected> {
     parser::run(text, options, None, scratch)
 }

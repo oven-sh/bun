@@ -49,7 +49,7 @@ fn get_pattern_replacement(e: Expr) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let ast = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()).ok()?;
+    let ast = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default()).ok()?;
     let RegexKind::Pattern { alternatives } = ast.pattern().kind() else {
         return None;
     };

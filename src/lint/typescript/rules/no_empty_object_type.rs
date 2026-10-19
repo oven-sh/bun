@@ -83,9 +83,9 @@ impl NoEmptyObjectType {
         let should_suggest =
             !statement.is_default_export() && !is_merged_with_other_declaration(statement, interface);
         // oxlint points at the braces.
-        let place = if cx.language().is_oxlint { interface.body_span() } else { interface.name().span() };
+        let report_span = if cx.language().is_oxlint { interface.body_span() } else { interface.name().span() };
         let Some(extended) = extends.first() else {
-            let report = cx.report(place, NO_EMPTY_INTERFACE).data("option", "allowInterfaces");
+            let report = cx.report(report_span, NO_EMPTY_INTERFACE).data("option", "allowInterfaces");
             if should_suggest {
                 REPLACEMENTS.into_iter().fold(report, |report, replacement| {
                     report.suggest_behavior_change(
@@ -97,7 +97,7 @@ impl NoEmptyObjectType {
             }
             return;
         };
-        let report = cx.report(place, NO_EMPTY_INTERFACE_WITH_SUPER);
+        let report = cx.report(report_span, NO_EMPTY_INTERFACE_WITH_SUPER);
         if should_suggest {
             report.suggest_behavior_change(REPLACE_EMPTY_INTERFACE_WITH_SUPER, &[], |fixer| {
                 replace_interface(fixer, interface, extended.text())

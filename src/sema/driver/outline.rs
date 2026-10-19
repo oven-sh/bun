@@ -13,7 +13,7 @@ use bun_sema::config::{self, Roots, SplitFilePath};
 use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
 use bun_sema::resolve::{
-    Host, Kept, Options, ancestors, contains_path, inside, is_same_path, join,
+    CachedConfig, Host, Options, ancestors, contains_path, inside, is_same_path, join,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -51,7 +51,7 @@ type ProjectSlot = Arc<OnceLock<Option<Arc<Project>>>>;
 pub struct Outlines {
     host: UncachedDisk<'static>,
     /// `Host::extended_config`
-    extended: Guarded<FxHashMap<Vec<u8>, Kept>>,
+    extended: Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
     /// `major_of_typescript_at`, by the directory of an installed TypeScript.
     majors: Guarded<FxHashMap<Vec<u8>, Option<(Vec<u8>, Json)>>>,
     cwd: Vec<u8>,

@@ -2,7 +2,7 @@
 
 use super::stmt::ModifiersOf;
 use super::{ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -105,7 +105,7 @@ fn can_be_type_arguments_with_an_error(
 fn source_range_of(f: &FileBuilder, e: ExprId) -> (u32, u32) {
     match (f.parens.last(), f.exprs.get(e.idx())) {
         (Some(&(inside, open, end)), _) if inside == e => (open, end),
-        (_, Some(written)) => (written.pos, written.end),
+        (_, Some(unparenthesized)) => (unparenthesized.pos, unparenthesized.end),
         _ => (0, 0),
     }
 }
@@ -822,7 +822,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if matches!(self.token(), T::Dot | T::LessThan | T::OpenBracket) && !self.newline_before()
             || matches!(self.token(), T::Dot | T::LessThan)
         {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         }
     }
 
@@ -871,7 +871,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn unary_expression_before_power(&mut self, operator: T, start: u32) {
         if !self.recovers() {
-            return self.refuse(Refusal::Reported);
+            return self.reject(Rejection::Reported);
         }
         let at = (start, self.prev_end());
         let text: &[u8] = match operator {
@@ -925,7 +925,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         // `None`: the token can follow a name, but then it's scanned differently than after the operator.
         let cannot_follow_name = self.look_ahead(|p| {
             p.next();
-            let is_on_line = !p.newline_before();
+            let is_on_same_line = !p.newline_before();
             let cannot_follow_name = match p.token() {
                 T::Slash | T::SlashEquals | T::LessThan => return None,
                 // `await!`
@@ -950,7 +950,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
                 _ => false,
             };
-            Some(cannot_follow_name && is_on_line)
+            Some(cannot_follow_name && is_on_same_line)
         });
         match cannot_follow_name {
             Some(cannot_follow_name) => cannot_follow_name && !self.is_module_so_far(),
@@ -963,7 +963,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn can_await_be_a_name(&mut self) -> bool {
-        let noted = (
+        let saved_flags = (
             self.has_plain_top_level_await,
             self.has_await_in_statement,
             self.has_await_identifier,
@@ -993,7 +993,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.has_plain_top_level_await,
             self.has_await_in_statement,
             self.has_await_identifier,
-        ) = noted;
+        ) = saved_flags;
         can_be
     }
 
@@ -1162,7 +1162,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn await_as_decorator(&mut self) -> ExprId {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return ExprId::NONE;
         }
         // The top level's await context extends into the decorators of a method's parameters.
@@ -1234,7 +1234,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
                 // A token inside the type arguments was scanned differently this time.
                 if self.pos() != template {
-                    self.refuse(Refusal::Unsupported);
+                    self.reject(Rejection::Unsupported);
                 }
                 // `errors` already has whatever the scanner just reported again.
                 self.lx.errors.clear();
@@ -1433,7 +1433,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             // The chain would continue in `expression_rest`.
             T::QuestionDot => {
-                self.refuse(Refusal::Unsupported);
+                self.reject(Rejection::Unsupported);
                 instantiation
             }
             _ => instantiation,
@@ -1451,7 +1451,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.finish_dot((obj, Chain::No), name, start);
         }
         if self.token() == T::PrivateIdentifier && !self.recovers() {
-            self.refuse(Refusal::Unsupported);
+            self.reject(Rejection::Unsupported);
         }
         let is_private = self.token() == T::PrivateIdentifier;
         let (name, at) = (self.lx.atom, (self.lx.start, self.lx.end));
@@ -1469,7 +1469,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.is_callee(false)
             }
             T::LessThan | T::LessThanLessThan | T::QuestionDot => {
-                self.refuse(Refusal::Unsupported);
+                self.reject(Rejection::Unsupported);
                 false
             }
             _ => false,
@@ -1537,7 +1537,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.error(1003, (after_dot, Diagnostic::NO_LENGTH), &[]);
                     return (known::empty, after_dot);
                 }
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
         } else {
             // `createMissingIdentifier`
@@ -1730,7 +1730,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         allows_chain: bool,
     ) -> (ExprId, Chain) {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return (obj, Chain::No);
         }
         let is_optional = self.token() == T::QuestionDot;
@@ -1774,7 +1774,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         type_args: IdList<TypeNodeId>,
     ) -> ExprId {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return callee;
         }
         if matches!(self.token(), T::NoSubstitutionTemplate | T::TemplateHead) {
@@ -1940,11 +1940,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             end = failed_at;
         }
         if type_arguments.is_none() && !self.has_failed() && end.saturating_sub(at.0) > 64 {
-            let place = self.not_type_arguments.partition_point(|it| *it < at);
-            self.not_type_arguments.insert(place, at);
+            let insert_at = self.not_type_arguments.partition_point(|it| *it < at);
+            self.not_type_arguments.insert(insert_at, at);
         }
         if type_arguments.is_none() {
-            self.refuse_type_arguments_with_an_error(less_than);
+            self.reject_type_arguments_with_an_error(less_than);
         }
         type_arguments
     }
@@ -1983,11 +1983,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// Call after a failed attempt to parse type arguments at the `<` at `less_than`.
-    fn refuse_type_arguments_with_an_error(&mut self, less_than: usize) {
+    fn reject_type_arguments_with_an_error(&mut self, less_than: usize) {
         if let Some(failed) = self.was_abandoned_at
             && can_be_type_arguments_with_an_error(self.lx.src, less_than, failed)
         {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         }
     }
 
@@ -2238,8 +2238,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.re_report_unterminated_template();
         }
         // `checkTaggedTemplateExpression`: `checkGrammarTypeArguments` isn't called after the error below.
-        let is_of_list = |it: &Diagnostic| it.code == 1099 && (start..backtick).contains(&it.start);
-        if is_in_chain && type_args.is_empty() && self.f.diagnostics.last().is_some_and(is_of_list)
+        let is_empty_list_error =
+            |it: &Diagnostic| it.code == 1099 && (start..backtick).contains(&it.start);
+        if is_in_chain
+            && type_args.is_empty()
+            && self.f.diagnostics.last().is_some_and(is_empty_list_error)
         {
             self.f.diagnostics.pop();
         }
@@ -2319,14 +2322,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 kind:
                     ExprKind::Instantiation {
                         expr,
-                        type_args: written,
+                        type_args: instantiation_args,
                     },
                 ..
             }) = self.f.exprs.last()
             && !self.is_parenthesized(callee)
         {
             self.pop_expr();
-            (callee, type_args) = (expr, self.f.list_at(written));
+            (callee, type_args) = (expr, self.f.list_at(instantiation_args));
         }
         let (args, close_pos) = match self.token() {
             T::OpenParen => self.argument_list(),
@@ -2356,7 +2359,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn optional_chain_from_new_expression(&mut self, callee: ExprId) {
         if !self.recovers() {
-            return self.refuse(Refusal::Reported);
+            return self.reject(Rejection::Reported);
         }
         let (from, to) = source_range_of(&self.f, callee);
         let src = self.lx.src;
@@ -2434,15 +2437,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     && !self.is_ecmascript
                     && !self.recovers()
                 {
-                    self.refuse(Refusal::Unsupported);
+                    self.reject(Rejection::Unsupported);
                 }
                 self.has_await_identifier = had_identifier;
                 self.expect(T::CloseBracket);
                 // `IsDynamicName`: only a bare literal is a name.
                 let is_bare = self.f.parens.len() == parens;
-                let written = self.f.exprs.get(expression.idx()).copied();
-                let literal = written.map_or((0, 0), |it| (it.pos, it.end));
-                return match written.map(|it| it.kind) {
+                let name_expr = self.f.exprs.get(expression.idx()).copied();
+                let literal = name_expr.map_or((0, 0), |it| (it.pos, it.end));
+                return match name_expr.map(|it| it.kind) {
                     Some(ExprKind::String(name)) if is_bare => {
                         self.drop_last_expr(expression);
                         self.finish_name(literal.0, literal.1);
@@ -2555,7 +2558,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             flags = self.modifiers(ModifiersOf::Declaration);
             let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
             if self.s.modifiers[first_modifier..].iter().any(is_decorator) {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
         }
         if matches!(self.token(), T::Get | T::Set) {

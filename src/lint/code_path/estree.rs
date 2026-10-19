@@ -236,7 +236,7 @@ impl<'a> Walker<'_, '_, 'a> {
     }
 
     /// `getLabel`
-    fn label_around(&self, id: u32) -> Option<Atom> {
+    fn enclosing_label(&self, id: u32) -> Option<Atom> {
         let parent = self.parent(id)?;
         match self.node_type(parent) {
             NodeType::LabeledStatement => label_of(self.node(parent)),
@@ -397,7 +397,7 @@ impl<'a> Walker<'_, '_, 'a> {
                     Value::Nodes(cases) => cases.flatten().any(|case| has_node(case, Field::Test)),
                     _ => false,
                 };
-                let label = self.label_around(id);
+                let label = self.enclosing_label(id);
                 self.with_state(id, |state, _| state.push_switch_context(has_case, label));
             }
             NodeType::SwitchCase => {
@@ -409,7 +409,7 @@ impl<'a> Walker<'_, '_, 'a> {
                 }
             }
             _ if loop_kind(node_type).is_some() => {
-                let label = self.label_around(id);
+                let label = self.enclosing_label(id);
                 self.with_state(id, |state, _| {
                     if let Some(kind) = loop_kind(node_type) {
                         state.push_loop_context(kind, label);

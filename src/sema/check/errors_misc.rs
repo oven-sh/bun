@@ -167,7 +167,7 @@ impl Checker<'_, '_> {
     /// class's own name, and for `x satisfies T` at the keyword.
     pub(super) fn error_start_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         let hir = self.hir(file);
-        let elsewhere = match hir[e].kind {
+        let special_start = match hir[e].kind {
             ExprKind::Fn(f) if hir[f].kind == FnKind::Expr && hir[f].name.is_some() => {
                 Some(hir[f].name_pos)
             }
@@ -184,7 +184,7 @@ impl Checker<'_, '_> {
             ),
             _ => None,
         };
-        elsewhere.unwrap_or_else(|| self.start_inside_parentheses(file, e))
+        special_start.unwrap_or_else(|| self.start_inside_parentheses(file, e))
     }
 
     /// `findOriginatingJSDocSatisfiesTag` for `node`, an `x satisfies T` whose `T` is `target_type`. Returns the

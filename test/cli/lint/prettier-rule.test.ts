@@ -59,12 +59,12 @@ async function lint(files: Record<string, string>, ...flags: string[]) {
   const { root, stdout, stderr, exitCode } = await run(files, "-f", "json", ...flags);
   const results: { filePath: string; messages: Message[]; output?: string }[] = JSON.parse(stdout);
   const name = (path: string) => relative(root, path).replaceAll("\\", "/");
-  const shown = (it: Message) =>
+  const summarize = (it: Message) =>
     it.fix
       ? `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.messageId} [${it.fix.range}] ${JSON.stringify(it.fix.text)} ${it.message}`
       : it.message;
   return {
-    reports: Object.fromEntries(results.map(it => [name(it.filePath), it.messages.map(shown)])),
+    reports: Object.fromEntries(results.map(it => [name(it.filePath), it.messages.map(summarize)])),
     outputs: Object.fromEntries(
       results.flatMap(it => (it.output === undefined ? [] : [[name(it.filePath), it.output]])),
     ),
@@ -365,8 +365,8 @@ describe.concurrent("prettier/prettier", () => {
       "-f",
       "unix",
     );
-    const places = stdout.split("\n").filter(it => it.includes("bun(format)"));
-    expect(places.map(it => it.split(": ")[0])).toEqual(["a.js:3:1"]);
+    const formatReports = stdout.split("\n").filter(it => it.includes("bun(format)"));
+    expect(formatReports.map(it => it.split(": ")[0])).toEqual(["a.js:3:1"]);
     // Without the package, `bun fmt` doesn't sort the classes, so the rule can check these files.
     const { reports, exitCode } = await lint(withClasses);
     expect(reports).toMatchObject({

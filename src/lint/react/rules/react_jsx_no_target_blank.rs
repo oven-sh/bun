@@ -51,11 +51,11 @@ pub struct State<'a> {
 #[derive(Copy, Clone, Default)]
 struct Checked<'a> {
     /// For `target`, true if it can be `_blank`. For `rel`, true if it's always safe.
-    holds: bool,
+    is_match: bool,
     /// The parts of `test ? consequent : alternate`.
     test: Option<Expr<'a>>,
-    holds_in_consequent: bool,
-    holds_in_alternate: bool,
+    is_match_in_consequent: bool,
+    is_match_in_alternate: bool,
 }
 
 /// Facts about the attribute that holds the URL.
@@ -200,12 +200,12 @@ impl JsxNoTargetBlank {
         }
         // In that case oxlint ignores `target`, and has a separate message.
         if is_oxlint && let Some(spread_span) = spread_span {
-            if !rel_valid.holds {
+            if !rel_valid.is_match {
                 self.report(spread_span, EXPLICIT_PROPS_IN_SPREAD_ATTRIBUTES, ADD_NOREFERRER, jsx, component, cx);
             }
             return;
         }
-        if !target_blank.holds && spread_span.is_none() {
+        if !target_blank.is_match && spread_span.is_none() {
             return;
         }
         let is_rel_valid = match (target_blank.test, rel_valid.test, target) {
@@ -214,26 +214,26 @@ impl JsxNoTargetBlank {
                 let exactly = check_value(target, false, is_oxlint, &|it| it == b"_blank");
                 match is_oxlint {
                     true => {
-                        (!target_blank.holds_in_consequent || rel_valid.holds_in_consequent)
-                            && (!target_blank.holds_in_alternate || rel_valid.holds_in_alternate)
+                        (!target_blank.is_match_in_consequent || rel_valid.is_match_in_consequent)
+                            && (!target_blank.is_match_in_alternate || rel_valid.is_match_in_alternate)
                     }
-                    false if exactly.holds_in_consequent => rel_valid.holds_in_consequent,
-                    false => exactly.holds_in_alternate && rel_valid.holds_in_alternate,
+                    false if exactly.is_match_in_consequent => rel_valid.is_match_in_consequent,
+                    false => exactly.is_match_in_alternate && rel_valid.is_match_in_alternate,
                 }
             }
-            _ => rel_valid.holds,
+            _ => rel_valid.is_match,
         };
         if is_rel_valid {
             return;
         }
-        let (message, of_oxlint, help) = match self.allow_referrer {
+        let (message, oxlint_message, help) = match self.allow_referrer {
             true => (NO_TARGET_BLANK_WITHOUT_NOOPENER, TARGET_BLANK_WITHOUT_NOOPENER, ADD_NOREFERRER_OR_NOOPENER),
             false => (NO_TARGET_BLANK_WITHOUT_NOREFERRER, TARGET_BLANK_WITHOUT_NOREFERRER, ADD_NOREFERRER),
         };
         // oxlint reports `target`'s value.
         match target.and_then(get_prop_value) {
-            Some(value) if is_oxlint => self.report(value.span(), of_oxlint, help, jsx, component, cx),
-            _ => self.report(jsx.opening_span(), if is_oxlint { of_oxlint } else { message }, help, jsx, component, cx),
+            Some(value) if is_oxlint => self.report(value.span(), oxlint_message, help, jsx, component, cx),
+            _ => self.report(jsx.opening_span(), if is_oxlint { oxlint_message } else { message }, help, jsx, component, cx),
         }
     }
 
@@ -342,14 +342,14 @@ fn value_of<'a>(attribute: Prop<'a>, literal: StringLiteral<'a>, is_oxlint: bool
     attribute.value().and_then(Expr::as_string).filter(|_| !is_oxlint).map_or(literal.value, Name::bytes)
 }
 
-/// `check_target` and `check_rel`; upstream's `attributeValuePossiblyBlank` and `getStringFromValue`. `is_rel`: `holds`
-/// has to be true for all the strings the value can be, not just one.
-fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, holds: &dyn Fn(&[u8]) -> bool) -> Checked<'a> {
-    let holds_in = |expr: Expr<'a>| {
+/// `check_target` and `check_rel`; upstream's `attributeValuePossiblyBlank` and `getStringFromValue`. `is_rel`:
+/// `predicate` has to be true for all the strings the value can be, not just one.
+fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, predicate: &dyn Fn(&[u8]) -> bool) -> Checked<'a> {
+    let is_match_in = |expr: Expr<'a>| {
         let (mut all, mut any) = (true, false);
         for_each_branch(expr, is_oxlint, |branch| {
-            let it_holds = string_literal(branch, is_oxlint).is_some_and(holds);
-            (all, any) = (all && it_holds, any || it_holds);
+            let branch_matches = string_literal(branch, is_oxlint).is_some_and(predicate);
+            (all, any) = (all && branch_matches, any || branch_matches);
         });
         if is_rel { all } else { any }
     };
@@ -357,25 +357,25 @@ fn check_value<'a>(attribute: Prop<'a>, is_rel: bool, is_oxlint: bool, holds: &d
         return Checked::default();
     };
     if let AttributeValue::StringLiteral(literal) = value {
-        return Checked { holds: holds(value_of(attribute, literal, is_oxlint)), ..Checked::default() };
+        return Checked { is_match: predicate(value_of(attribute, literal, is_oxlint)), ..Checked::default() };
     }
     let Some(expr) = value.as_expression() else {
         return Checked::default();
     };
     match expr.kind() {
         ExprKind::Cond { test, yes, no } if !(is_oxlint && expr.is_parenthesized()) => {
-            let (holds_in_consequent, holds_in_alternate) = (holds_in(yes), holds_in(no));
-            let holds = match is_rel {
-                true => holds_in_consequent && holds_in_alternate,
-                false => holds_in_consequent || holds_in_alternate,
+            let (is_match_in_consequent, is_match_in_alternate) = (is_match_in(yes), is_match_in(no));
+            let is_match = match is_rel {
+                true => is_match_in_consequent && is_match_in_alternate,
+                false => is_match_in_consequent || is_match_in_alternate,
             };
-            Checked { holds, test: Some(test), holds_in_consequent, holds_in_alternate }
+            Checked { is_match, test: Some(test), is_match_in_consequent, is_match_in_alternate }
         }
         // Upstream only reads a template up to its first substitution.
         ExprKind::Template(template) if is_rel && !is_oxlint => {
-            Checked { holds: template.cooked(0).is_some_and(|it| holds(it.bytes())), ..Checked::default() }
+            Checked { is_match: template.cooked(0).is_some_and(|it| predicate(it.bytes())), ..Checked::default() }
         }
-        _ => Checked { holds: holds_in(expr), ..Checked::default() },
+        _ => Checked { is_match: is_match_in(expr), ..Checked::default() },
     }
 }
 

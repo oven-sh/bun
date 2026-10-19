@@ -196,7 +196,7 @@ impl<'a> Targets<'a> {
     fn array(&mut self, elements: List<'a, Expr<'a>>) -> bool {
         let last = elements.len().wrapping_sub(1);
         for (i, element) in elements.iter().enumerate() {
-            let goes_on = match element.kind() {
+            let should_continue = match element.kind() {
                 ExprKind::Missing => true,
                 ExprKind::Spread(_) if i != last => self.stop(element.span(), Problem::RestNotLast),
                 ExprKind::Spread(argument) => {
@@ -206,15 +206,15 @@ impl<'a> Targets<'a> {
                     {
                         self.report(argument.outer_span(), Problem::BadRest);
                     }
-                    let goes_on = self.target(argument);
-                    if goes_on {
+                    let should_continue = self.target(argument);
+                    if should_continue {
                         self.comma_after_rest(element.span().end);
                     }
-                    goes_on
+                    should_continue
                 }
                 _ => self.maybe_default(element),
             };
-            if !goes_on {
+            if !should_continue {
                 return false;
             }
         }
@@ -225,7 +225,7 @@ impl<'a> Targets<'a> {
     fn object(&mut self, props: List<'a, Prop<'a>>) -> bool {
         let last = props.len().wrapping_sub(1);
         for (i, prop) in props.iter().enumerate() {
-            let goes_on = match (prop.kind(), prop.value()) {
+            let should_continue = match (prop.kind(), prop.value()) {
                 (PropKind::Spread, _) if i != last => self.stop(prop.span(), Problem::RestNotLast),
                 (PropKind::Spread, Some(argument)) => {
                     if !is_name_or_member(innermost(argument)) {
@@ -244,7 +244,7 @@ impl<'a> Targets<'a> {
                 }
                 _ => true,
             };
-            if !goes_on {
+            if !should_continue {
                 return false;
             }
         }
@@ -317,7 +317,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     (targets.found.into_iter())
         .filter(|it| gives_up_at.is_none_or(|at| skip_trivia(file.text(), it.noticed) < at))
         .map(|it| {
-            SyntaxError::of_oxc(it.label, it.problem.message())
+            SyntaxError::oxc_error(it.label, it.problem.message())
                 .help(Cow::Borrowed(it.problem.help()))
                 .stage(match it.is_fatal {
                     true => Stage::Fatal,

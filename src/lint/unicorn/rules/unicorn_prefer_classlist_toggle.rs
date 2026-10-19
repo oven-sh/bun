@@ -106,12 +106,12 @@ fn as_classlist_call(expr: Expr<'_>) -> Option<(Call<'_>, Expr<'_>, Name<'_>)> {
         return None;
     };
     let classlist = as_static_member(obj)?;
-    let is_one = call.args().len() == 1
+    let is_plain_classlist_call = call.args().len() == 1
         && !call.is_optional()
         && !member.is_optional()
         && call.args().first()?.tag() != ExprTag::Spread
         && matches!(classlist.kind(), ExprKind::Dot { name, .. } if name.name().is("classList"));
-    is_one.then_some((call, classlist, name.name()))
+    is_plain_classlist_call.then_some((call, classlist, name.name()))
 }
 
 /// The `add` call, and whether it comes first.

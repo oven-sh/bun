@@ -45,7 +45,7 @@ impl Rule for JsxFirstPropNewLine {
             return;
         };
         let (file, node, has_several) = (cx.file(), jsx.opening_span(), jsx.attrs().len() > 1);
-        let wants_new_line = match self.configuration {
+        let expects_new_line = match self.configuration {
             Configuration::Always | Configuration::Multiline => true,
             Configuration::Never => false,
             Configuration::MultilineMultiprop if !has_several => return,
@@ -53,10 +53,10 @@ impl Rule for JsxFirstPropNewLine {
             Configuration::Multiprop => has_several,
         };
         // Check whether both start on the same line.
-        if ast_utils::is_on_one_line(file, Span::before(node.start, first_node.span())) != wants_new_line {
+        if ast_utils::is_on_one_line(file, Span::before(node.start, first_node.span())) != expects_new_line {
             return;
         }
-        if !wants_new_line {
+        if !expects_new_line {
             // The fix removes the type arguments along with the whitespace.
             cx.report(first_node, PROP_ON_SAME_LINE)
                 .listened_on(node)

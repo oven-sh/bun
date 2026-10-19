@@ -25,9 +25,9 @@ fn is_allowed_parameter(pat: Pat) -> bool {
     }
 }
 
-/// `is_of_property` means the pattern is a property's value, after the `:`.
-fn report<'a>(at: Span, kind: &'static str, is_of_property: bool, cx: &Cx<'a, NoEmptyPattern>) {
-    let report = cx.report(at, UNEXPECTED).data("type", kind).hint(match (is_of_property, kind) {
+/// `is_property_value` means the pattern is a property's value, after the `:`.
+fn report<'a>(at: Span, kind: &'static str, is_property_value: bool, cx: &Cx<'a, NoEmptyPattern>) {
+    let report = cx.report(at, UNEXPECTED).data("type", kind).hint(match (is_property_value, kind) {
         (false, _) => "It declares no variables.",
         (true, "array") => "It declares no variables. For a default value, write = [] instead of : [].",
         (true, _) => "It declares no variables. For a default value, write = {} instead of : {}.",

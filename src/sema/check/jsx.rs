@@ -134,7 +134,7 @@ impl<'p, 's> Checker<'p, 's> {
             [] => JsxName::Empty,
             [only] => JsxName::Name(only.name),
             _ => {
-                if let Some(at) = self.place_of_symbol(symbol) {
+                if let Some(at) = self.span_of_symbol(symbol) {
                     self.error_at(at, 2608, &[Arg::Atom(container)]);
                 }
                 JsxName::Missing
@@ -464,10 +464,10 @@ impl<'p, 's> Checker<'p, 's> {
     fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
         // If the signature represents the signatures of a union's members, each member's instance
         // type is considered.
-        let alone = [sig];
+        let single_sig = [sig];
         let parts: &[SigId] = match self.types().sig(sig) {
             SigData::Synth { of, .. } if !of.is_empty() => &of[..],
-            _ => &alone[..],
+            _ => &single_sig[..],
         };
         let mut results = Vec::with_capacity(parts.len());
         for &part in parts {
@@ -533,7 +533,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(declared) = self.jsx_type(file, context, known::IntrinsicClassAttributes) {
             // The type parameters are those of the type's symbol, so the aliased type's. An alias's
             // own stay uninstantiated.
-            let of_instance = match *self.data(declared) {
+            let class_attributes = match *self.data(declared) {
                 TypeData::Ref { target, .. } => {
                     let params = self.type_params_of_symbol(target);
                     if params.is_empty() {
@@ -548,7 +548,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => declared,
             };
-            parts.push(of_instance);
+            parts.push(class_attributes);
         }
         parts.push(attributes);
         // `intersectTypes`

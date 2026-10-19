@@ -76,7 +76,7 @@ use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::{GlobalsFromOptions, InferGlobals, LanguageOptions};
-use crate::languages::{Dialect, Language, Refusal};
+use crate::languages::{Dialect, Language, Rejection};
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Frameworks, Meta, Plugin};
@@ -201,12 +201,12 @@ fn extensions_of(pattern: &[u8]) -> SmallVec<[u64; 8]> {
 }
 
 impl Pattern {
-    fn new(written: &[u8]) -> Pattern {
+    fn new(raw_pattern: &[u8]) -> Pattern {
         // `normalizePattern`
-        let normalized = match written {
+        let normalized = match raw_pattern {
             [b'.', b'/', rest @ ..] => rest.to_vec(),
             [b'!', b'.', b'/', rest @ ..] => [b"!", rest].concat(),
-            written => written.to_vec(),
+            raw_pattern => raw_pattern.to_vec(),
         };
         let bangs = normalized.iter().take_while(|it| **it == b'!').count();
         let is_positive_pattern = bangs == 0 && !normalized.starts_with(b"#");
@@ -240,17 +240,17 @@ impl Pattern {
     }
 
     /// A `files` or `excludeFiles` pattern from an override in an `.oxlintrc.json`.
-    fn of_oxlint(written: &[u8]) -> Pattern {
-        Pattern::of_override(bun_glob::Pattern::of_oxlint(written))
+    fn of_oxlint(raw_pattern: &[u8]) -> Pattern {
+        Pattern::for_override(bun_glob::Pattern::of_oxlint(raw_pattern))
     }
 
     /// A `files` or `excludeFiles` pattern from `[[lint.overrides]]` in bunfig.toml.
-    fn of_bunfig(written: &[u8]) -> Pattern {
-        Pattern::of_override(bun_glob::Pattern::of_bunfig(written))
+    fn of_bunfig(raw_pattern: &[u8]) -> Pattern {
+        Pattern::for_override(bun_glob::Pattern::of_bunfig(raw_pattern))
     }
 
     /// A leading `!` inverts the pattern. Unlike in ESLint, it never un-ignores a file. An override never makes a file linted.
-    fn of_override(matcher: bun_glob::Pattern) -> Pattern {
+    fn for_override(matcher: bun_glob::Pattern) -> Pattern {
         Pattern {
             matcher,
             is_negated: false,
@@ -375,8 +375,8 @@ impl ConfigObject {
     }
 
     /// Keeps `settings` only if it's an object.
-    fn settings_of(written: Json) -> Option<Arc<Json>> {
-        matches!(written, Json::Object(_)).then(|| Arc::new(written))
+    fn settings_of(raw_settings: Json) -> Option<Arc<Json>> {
+        matches!(raw_settings, Json::Object(_)).then(|| Arc::new(raw_settings))
     }
 }
 
@@ -505,10 +505,10 @@ struct ExtensionMatches {
 
 /// The possible starts of a path that all of `patterns` match. One pattern that determines them is enough.
 fn heads_of(patterns: &[Pattern]) -> Option<Vec<&[u8]>> {
-    let says = |it: &&Pattern| !it.is_inverted && !it.is_comment;
+    let is_plain_pattern = |it: &&Pattern| !it.is_inverted && !it.is_comment;
     patterns
         .iter()
-        .filter(says)
+        .filter(is_plain_pattern)
         .find_map(|it| it.matcher.heads())
 }
 
@@ -519,9 +519,9 @@ impl Heads {
             let first = heads.is_listed.len();
             for patterns in object.files.iter().flatten() {
                 let element = heads.is_listed.len() as u32;
-                let of_element = heads_of(patterns).filter(|_| object.base_path.is_none());
-                heads.is_listed.push(of_element.is_some());
-                for head in of_element.into_iter().flatten() {
+                let element_heads = heads_of(patterns).filter(|_| object.base_path.is_none());
+                heads.is_listed.push(element_heads.is_some());
+                for head in element_heads.into_iter().flatten() {
                     let listed = heads.by_head.entry(head.into()).or_default();
                     if listed.last() != Some(&(element, index as u32)) {
                         listed.push((element, index as u32));
@@ -599,15 +599,19 @@ impl Heads {
     /// Two files in a directory with the same result have the same objects.
     fn name_match_key(&self, objects: &[ConfigObject], path: &Candidate) -> Option<NameMatchKey> {
         let extension = extension_of(path.path());
-        let mut said = 0;
-        for (bit, place) in self.by_name.as_ref()?.iter().enumerate() {
-            let files = objects.get(place.object as usize)?.files.as_ref()?;
-            let pattern = (files.get(place.element as usize)?).get(place.pattern as usize)?;
+        let mut match_bits = 0;
+        for (bit, pattern_location) in self.by_name.as_ref()?.iter().enumerate() {
+            let files = objects
+                .get(pattern_location.object as usize)?
+                .files
+                .as_ref()?;
+            let pattern = (files.get(pattern_location.element as usize)?)
+                .get(pattern_location.pattern as usize)?;
             let can_match = pattern.extensions.is_empty()
                 || extension.is_some_and(|it| pattern.extensions.contains(&it));
-            said |= u64::from(can_match && pattern.matches(path, false)) << bit;
+            match_bits |= u64::from(can_match && pattern.matches(path, false)) << bit;
         }
-        Some((extension, said))
+        Some((extension, match_bits))
     }
 
     /// Returns what can match `path`, judging by its extension.
@@ -729,7 +733,7 @@ pub struct Within<'c> {
     relative: Vec<u8>,
     /// The last merged objects, and the result.
     merged: Option<(Indices, Arc<ResolvedConfig>)>,
-    said: Said,
+    directory_verdicts: DirectoryVerdicts,
     known: Known,
     /// [`Config::missing_frameworks`] for this directory. Set by [`Within::with_frameworks`].
     missing_frameworks: Frameworks,
@@ -737,7 +741,7 @@ pub struct Within<'c> {
 
 /// For objects that are [about directories](ConfigObject::depends_only_on_directory), by index: whether the object
 /// applies to the directory's files, and whether that makes ESLint lint them.
-type Said = std::cell::RefCell<SmallVec<[(u32, bool, bool); 2]>>;
+type DirectoryVerdicts = std::cell::RefCell<SmallVec<[(u32, bool, bool); 2]>>;
 
 /// Cached [`Config::matching`] results for the directory's files, keyed by [`Heads::name_match_key`].
 type Known = std::cell::RefCell<Vec<(NameMatchKey, Option<Indices>)>>;
@@ -746,7 +750,7 @@ type Known = std::cell::RefCell<Vec<(NameMatchKey, Option<Indices>)>>;
 struct Entry<'w> {
     name: &'w [u8],
     prefixes_by_object: &'w [(u32, BeforeName)],
-    said: &'w Said,
+    directory_verdicts: &'w DirectoryVerdicts,
     known: &'w Known,
 }
 
@@ -761,8 +765,8 @@ impl Entry<'_> {
     }
 
     fn directory_verdict(&self, index: usize) -> Option<(bool, bool)> {
-        let said = self.said.borrow();
-        let found = said.iter().find(|it| it.0 as usize == index)?;
+        let verdicts = self.directory_verdicts.borrow();
+        let found = verdicts.iter().find(|it| it.0 as usize == index)?;
         Some((found.1, found.2))
     }
 }
@@ -794,7 +798,7 @@ impl Within<'_> {
             Entry {
                 name,
                 prefixes_by_object: &self.seen.by_objects,
-                said: &self.said,
+                directory_verdicts: &self.directory_verdicts,
                 known: &self.known,
             },
         ))
@@ -862,22 +866,25 @@ impl Within<'_> {
                 return FileConfig::Ignored;
             }
             let matching = || config.matching(path, &parts, Some(&entry), must_match);
-            let said = match must_match {
+            let name_key = match must_match {
                 true => config.heads.name_match_key(&config.objects, &parts),
                 false => None,
             };
-            let find = |said: NameMatchKey| {
+            let find = |name_key: NameMatchKey| {
                 let known = entry.known.borrow();
-                known.iter().find(|it| it.0 == said).map(|it| it.1.clone())
+                known
+                    .iter()
+                    .find(|it| it.0 == name_key)
+                    .map(|it| it.1.clone())
             };
-            match (said, said.and_then(find)) {
+            match (name_key, name_key.and_then(find)) {
                 (_, Some(known)) => {
                     debug_assert_eq!(known, matching());
                     known
                 }
-                (Some(said), None) => {
+                (Some(name_key), None) => {
                     let made = matching();
-                    entry.known.borrow_mut().push((said, made.clone()));
+                    entry.known.borrow_mut().push((name_key, made.clone()));
                     made
                 }
                 (None, None) => matching(),
@@ -1151,7 +1158,7 @@ impl Config {
             name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
             relative: seen.before_name.clone().unwrap_or_default(),
             merged: None,
-            said: Said::default(),
+            directory_verdicts: DirectoryVerdicts::default(),
             known: Known::default(),
             missing_frameworks: Frameworks::empty(),
         }
@@ -1297,8 +1304,11 @@ impl Config {
                 continue;
             }
             // Already computed for another file in the directory.
-            let said = entry.filter(|_| has_bit(&self.heads.directory_only_objects, index));
-            if let Some((applies, is_linted)) = said.and_then(|it| it.directory_verdict(index)) {
+            let directory_entry =
+                entry.filter(|_| has_bit(&self.heads.directory_only_objects, index));
+            if let Some((applies, is_linted)) =
+                directory_entry.and_then(|it| it.directory_verdict(index))
+            {
                 if applies {
                     matching.push(index as u32);
                 }
@@ -1347,9 +1357,9 @@ impl Config {
                 Some(own) => status(&Candidate::new(own)),
                 None => status(parts),
             };
-            if let Some(entry) = said {
+            if let Some(entry) = directory_entry {
                 entry
-                    .said
+                    .directory_verdicts
                     .borrow_mut()
                     .push((index as u32, applies, is_linted));
             }
@@ -1387,7 +1397,7 @@ impl Config {
     /// ESLint's `throwRuleNotFoundError` for a plugin that exists. `plugins` are the prefixes of the file's plugins.
     fn missing_js_rule(&self, registry: &Registry, id: &[u8], plugins: &[&[u8]]) -> Vec<u8> {
         let (prefix, name) = super::registry::parse_rule_id(id);
-        let has_it = |other: &&&[u8]| match **other {
+        let has_rule = |other: &&&[u8]| match **other {
             b"@" => registry.get(Plugin::Eslint, name).is_some() || formatting_rule(name).is_some(),
             other => match find_js_rule(&self.js_plugins, &[other, b"/", name].concat()) {
                 Some(found) => found.is_some(),
@@ -1406,7 +1416,7 @@ impl Config {
             b"\".",
         ]
         .concat();
-        if let Some(&other) = plugins.iter().find(has_it) {
+        if let Some(&other) = plugins.iter().find(has_rule) {
             message.extend_from_slice(&[b" Did you mean \"", other, b"/", name, b"\"?"].concat());
         }
         message
@@ -1470,16 +1480,17 @@ impl Config {
         };
         let mut plugins: Vec<&[u8]> = Vec::new();
         // The indices of the file's plugins in `js_locations`, if their names don't determine that.
-        let mut places: Vec<u32> = Vec::new();
-        let prefix_at = |place: u32| self.js_locations.get(place as usize).map(|it| &it.0);
+        let mut plugin_indices: Vec<u32> = Vec::new();
+        let prefix_at =
+            |plugin_index: u32| self.js_locations.get(plugin_index as usize).map(|it| &it.0);
         // In oxlint, `categories` only applies to the plugins that overrides add if one of the overrides lists a
         // different set of plugins than all the plugins that are on for the file.
-        let of_overrides = || {
+        let override_sets = || {
             let objects = indices.iter();
             objects.filter_map(|index| self.objects.get(*index as usize)?.override_plugin_sets)
         };
-        let all_plugins = of_overrides().fold(0, |all, (own, of_files)| all | own | of_files);
-        let have_categories = of_overrides().any(|(own, _)| own != all_plugins);
+        let all_plugins = override_sets().fold(0, |all, (own, files_set)| all | own | files_set);
+        let have_categories = override_sets().any(|(own, _)| own != all_plugins);
         for object in indices
             .iter()
             .filter_map(|index| self.objects.get(*index as usize))
@@ -1488,28 +1499,31 @@ impl Config {
                 config.error.clone_from(&object.error);
                 return config;
             }
-            let of_object = object.plugins.iter().chain(&object.foreign_plugins);
-            plugins.extend(of_object.map(|it| &it[..]));
-            for &place in object.js_plugins.iter().filter(|_| self.has_twins) {
-                let is_twin = |it: &u32| *it != place && prefix_at(*it) == prefix_at(place);
-                if let Some(prefix) = prefix_at(place).filter(|_| places.iter().any(is_twin)) {
+            let object_plugins = object.plugins.iter().chain(&object.foreign_plugins);
+            plugins.extend(object_plugins.map(|it| &it[..]));
+            for &plugin_index in object.js_plugins.iter().filter(|_| self.has_twins) {
+                let is_twin =
+                    |it: &u32| *it != plugin_index && prefix_at(*it) == prefix_at(plugin_index);
+                if let Some(prefix) =
+                    prefix_at(plugin_index).filter(|_| plugin_indices.iter().any(is_twin))
+                {
                     let start = b"Key \"plugins\": Cannot redefine plugin \"";
                     config.error = Some([&start[..], &prefix[..], &b"\"."[..]].concat());
                     return config;
                 }
-                places.push(place);
+                plugin_indices.push(plugin_index);
             }
             let merge_into = match self.is_legacy {
                 true => eslintrc::merge_into,
                 false => merge::deep_merge_into,
             };
             merge_into(&mut language_options, &object.language_options);
-            if let Some(of_object) = &object.settings {
-                if settings.is_none() && merge_is_identity(of_object, self.is_legacy) {
-                    settings = Some(Arc::clone(of_object));
+            if let Some(object_settings) = &object.settings {
+                if settings.is_none() && merge_is_identity(object_settings, self.is_legacy) {
+                    settings = Some(Arc::clone(object_settings));
                 } else {
                     let merged = settings.get_or_insert_with(|| Arc::new(Json::Null));
-                    merge_into(Arc::make_mut(merged), of_object);
+                    merge_into(Arc::make_mut(merged), object_settings);
                 }
             }
             linter.merge_json(&object.linter_options);
@@ -1519,8 +1533,8 @@ impl Config {
                     let skipped = match object.override_plugin_sets.is_some() && !have_categories {
                         true => object.rules.iter().take_while(|it| it.yields).count(),
                         false => {
-                            let of_categories = object.without_rules.iter();
-                            of_categories.for_each(|it| config.skip_rules_of(*it));
+                            let category_plugins = object.without_rules.iter();
+                            category_plugins.for_each(|it| config.skip_rules_of(*it));
                             0
                         }
                     };
@@ -1567,16 +1581,16 @@ impl Config {
                     language,
                     configured,
                 }),
-                Err(Refusal::Invalid(message)) => {
+                Err(Rejection::Invalid(message)) => {
                     config.error = Some([&b"Key \"languageOptions\": "[..], &message].concat());
                     None
                 }
-                Err(Refusal::NeedsPackage) => None,
+                Err(Rejection::NeedsPackage) => None,
             },
             None => None,
         };
         config.line_breaks = line_breaks;
-        let whose = match (self.is_legacy, self.prefers_typescript_rules) {
+        let env_tables = match (self.is_legacy, self.prefers_typescript_rules) {
             (true, _) => Tables::Eslint8,
             (false, true) => Tables::Oxlint,
             (false, false) => Tables::Today,
@@ -1585,7 +1599,7 @@ impl Config {
         // oxlint has no such setting.
         config.has_unknown_resolver =
             !self.prefers_typescript_rules && flat::settings_have_unknown_resolver(&settings);
-        let make = || GlobalsFromOptions::new(&language_options, whose);
+        let make = || GlobalsFromOptions::new(&language_options, env_tables);
         let globals = self.cache.globals(&language_options, make);
         config.language = LanguageOptions::from_json_with(&language_options, settings, globals);
         // oxlint has no `parser`.
@@ -1608,8 +1622,11 @@ impl Config {
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         // Excludes the plugins that the file replaces with another plugin of the same name.
-        let belongs_to_file = |place: u32| {
-            places.contains(&place) || !places.iter().any(|it| prefix_at(*it) == prefix_at(place))
+        let belongs_to_file = |plugin_index: u32| {
+            plugin_indices.contains(&plugin_index)
+                || !plugin_indices
+                    .iter()
+                    .any(|it| prefix_at(*it) == prefix_at(plugin_index))
         };
         let js_plugins: Cow<[Arc<js_plugin::Plugin>]> = match self.has_twins {
             false => Cow::Borrowed(&self.js_plugins),
@@ -1808,8 +1825,8 @@ impl Config {
                 {
                     continue;
                 }
-                let mut of_eslint = config.rules.iter().filter(|it| is_on(it, Plugin::Eslint));
-                if let Some(base) = of_eslint.find(|it| it.entry.meta.name == meta.name) {
+                let mut eslint_rules = config.rules.iter().filter(|it| is_on(it, Plugin::Eslint));
+                if let Some(base) = eslint_rules.find(|it| it.entry.meta.name == meta.name) {
                     config.rules[at].severity = base.severity;
                 }
             }
@@ -1894,9 +1911,9 @@ impl Config {
         config: &'c ResolvedConfig,
         plugins: &[&[u8]],
     ) -> Option<(&'static dyn Language, &'c [u8])> {
-        let written = config.language_name.as_deref()?;
-        let slash = bun_core::strings::last_index_of_char(written, b'/')?;
-        let (prefix, name) = (&written[..slash], &written[slash + 1..]);
+        let full_name = config.language_name.as_deref()?;
+        let slash = bun_core::strings::last_index_of_char(full_name, b'/')?;
+        let (prefix, name) = (&full_name[..slash], &full_name[slash + 1..]);
         let is_built_in = plugins.contains(&prefix)
             && !config.foreign_plugins.iter().any(|it| **it == *prefix)
             && !self.is_legacy

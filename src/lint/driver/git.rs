@@ -270,7 +270,7 @@ impl<'e> Files<'e> {
         }
         // Each entry is `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
         let mut parts = strings::split(&finished.stdout, b"\0");
-        let (mut not_regular_files, mut wanted) = (FxHashSet::default(), Vec::new());
+        let (mut not_regular_files, mut blobs_to_read) = (FxHashSet::default(), Vec::new());
         while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
             let mut fields = strings::split(entry, b" ");
             let (Some(mode), Some(mode_on_disk), Some(id), Some(name)) =
@@ -294,17 +294,17 @@ impl<'e> Files<'e> {
                 self.not_on_disk.push(path.clone());
             }
             if can_be_imported || is_listed {
-                wanted.push((path, id));
+                blobs_to_read.push((path, id));
             }
         }
-        if wanted.is_empty() {
+        if blobs_to_read.is_empty() {
             return Ok(());
         }
-        let ids: Vec<&[u8]> = wanted.iter().map(|it| it.1).collect();
+        let ids: Vec<&[u8]> = blobs_to_read.iter().map(|it| it.1).collect();
         let input = [&ids.join(&b'\n')[..], b"\n"].concat();
         let read = self.git(&[b"cat-file", b"--batch"], &input)?;
         let mut rest = &read.stdout[..];
-        for (path, id) in wanted {
+        for (path, id) in blobs_to_read {
             // The output is `<ID> blob <size>`, a line break, the content, a line break. In a partial clone it can be
             // `<ID> missing`.
             let content = strings::split_once_char(rest, b'\n').and_then(|(first, after)| {
@@ -312,9 +312,10 @@ impl<'e> Files<'e> {
                 after.split_at_checked(bun_core::fmt::parse_decimal::<usize>(size)?)
             });
             let Some((content, after)) = content.filter(|_| read.is_ok) else {
-                let shown = paths::relative(&self.environment.cwd, &path);
-                let (shown, id) = (bstr::BStr::new(&shown), bstr::BStr::new(id));
-                let first = format!("--staged cannot read what is staged of {shown} (blob {id})");
+                let display_path = paths::relative(&self.environment.cwd, &path);
+                let (display_path, id) = (bstr::BStr::new(&display_path), bstr::BStr::new(id));
+                let first =
+                    format!("--staged cannot read what is staged of {display_path} (blob {id})");
                 return Err(with_git_stderr(&first, &read));
             };
             let content = with_checkout_line_endings(&path, content);
@@ -324,17 +325,17 @@ impl<'e> Files<'e> {
         Ok(())
     }
 
-    /// Resolves `written` to a commit ID. Later git calls only get the ID, because they could parse `written` as a flag
-    /// or a range.
-    fn commit(&self, written: &[u8]) -> Result<Vec<u8>, Fatal> {
+    /// Resolves `revision` to a commit ID. Later git calls only get the ID, because they could parse `revision` as a
+    /// flag or a range.
+    fn commit(&self, revision: &[u8]) -> Result<Vec<u8>, Fatal> {
         let unknown = || {
             let rest = b"\" is not a branch, tag or commit in this repository";
-            Fatal([b"\"", written, rest].concat())
+            Fatal([b"\"", revision, rest].concat())
         };
-        if written.starts_with(b"-") {
+        if revision.starts_with(b"-") {
             return Err(unknown());
         }
-        let name = [written, b"^{commit}"].concat();
+        let name = [revision, b"^{commit}"].concat();
         let found = self.git(&[b"rev-parse", b"--verify", b"--quiet", &name], b"")?;
         object_id(&found).map(<[u8]>::to_vec).ok_or_else(unknown)
     }
@@ -423,17 +424,17 @@ impl<'e> Files<'e> {
     #[optimize(size)]
     pub(crate) fn partly_staged_error(&self, files: &mut [Vec<u8>], done: &str) -> Vec<u8> {
         bun_lint::utils::sort::sort_unstable(files);
-        let shown = files
+        let relative_paths = files
             .iter()
             .map(|it| paths::relative(&self.environment.cwd, it));
         let remedy: &[u8] =
             b"\n  Stage the rest with git add, or put it away with git stash --keep-index. Then run this again.";
-        let said: &[u8] = b" both staged and unstaged changes, so ";
+        let reason: &[u8] = b" both staged and unstaged changes, so ";
         match files.len() {
             1 => [
-                &shown.collect::<Vec<_>>().concat()[..],
+                &relative_paths.collect::<Vec<_>>().concat()[..],
                 b" has",
-                said,
+                reason,
                 b"it was not ",
                 done.as_bytes(),
                 remedy,
@@ -443,12 +444,12 @@ impl<'e> Files<'e> {
                 let mut text = [
                     count.to_string().as_bytes(),
                     b" files have",
-                    said,
+                    reason,
                     b"they were not ",
                     done.as_bytes(),
                 ]
                 .concat();
-                for name in shown {
+                for name in relative_paths {
                     text.extend_from_slice(b"\n  ");
                     text.extend_from_slice(&name);
                 }
@@ -458,14 +459,14 @@ impl<'e> Files<'e> {
         }
     }
 
-    /// Re-stages `written`: absolute paths of files that were fully staged and that this run rewrote. Same as `git add`,
-    /// except that paths are never treated as patterns and there can be any number of them.
-    pub(crate) fn stage(&self, written: &[Vec<u8>]) -> Result<(), Fatal> {
-        if *self.only != Only::Staged || written.is_empty() {
+    /// Re-stages `rewritten_files`: absolute paths of files that were fully staged and that this run rewrote. Same as
+    /// `git add`, except that paths are never treated as patterns and there can be any number of them.
+    pub(crate) fn stage(&self, rewritten_files: &[Vec<u8>]) -> Result<(), Fatal> {
+        if *self.only != Only::Staged || rewritten_files.is_empty() {
             return Ok(());
         }
         let mut input = Vec::new();
-        for path in written {
+        for path in rewritten_files {
             let path = self.as_listed(path);
             input.extend_from_slice(&paths::relative(&self.environment.cwd, &path));
             input.push(0);

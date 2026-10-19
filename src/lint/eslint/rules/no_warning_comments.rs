@@ -53,26 +53,26 @@ fn is_self_config(value: &[u8]) -> bool {
 
 /// Returns the words of `comment` joined by single spaces, as many as fit in `CHAR_LIMIT`.
 fn comment_to_display(comment: &[u8]) -> Vec<u8> {
-    let mut shown = Vec::new();
-    let mut shown_len = 0;
+    let mut display = Vec::new();
+    let mut display_len = 0;
     let mut rest = strings::trim_js_whitespace(comment);
     while !rest.is_empty() {
         let mut characters = strings::wtf8_codepoints(rest);
         let end = characters.find(|it| strings::is_js_whitespace(it.1)).map_or(rest.len(), |it| it.0);
         let (word, after) = rest.split_at(end);
-        let len = shown_len + u32::from(!shown.is_empty()) + strings::wtf8_len_utf16(word);
+        let len = display_len + u32::from(!display.is_empty()) + strings::wtf8_len_utf16(word);
         if len > CHAR_LIMIT {
-            shown.extend_from_slice(b"...");
+            display.extend_from_slice(b"...");
             break;
         }
-        if !shown.is_empty() {
-            shown.push(b' ');
+        if !display.is_empty() {
+            display.push(b' ');
         }
-        shown.extend_from_slice(word);
-        shown_len = len;
+        display.extend_from_slice(word);
+        display_len = len;
         rest = strings::trim_js_whitespace_start(after);
     }
-    shown
+    display
 }
 
 /// `/^term\b/iu`, with the `\b` if `term` ends with a `\w`.
@@ -210,13 +210,13 @@ impl Rule for NoWarningComments {
             if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
                 continue;
             }
-            let shown = comment_to_display(value);
+            let display = comment_to_display(value);
             // oxlint reports a comment only once.
             let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
             for term in matches.take(count) {
                 cx.report(comment, UNEXPECTED_COMMENT)
                     .data("matchedTerm", term.text.clone())
-                    .data("comment", shown.clone());
+                    .data("comment", display.clone());
             }
         }
     }

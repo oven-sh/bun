@@ -131,12 +131,12 @@ fn img_rule(node: Jsx) -> Option<Message> {
 
 fn object_rule<'a>(file: &'a File<'a>, node: Jsx<'a>) -> Option<Message> {
     let title = has_jsx_prop_ignore_case(node, "title").and_then(get_string_literal_prop_value);
-    let is_fine = has_label(node) || title.is_some_and(|it| !it.is_empty()) || object_has_accessible_child(file, node);
-    (!is_fine).then_some(MISSING_ALTERNATIVE_TEXT)
+    let has_text_alternative = has_label(node) || title.is_some_and(|it| !it.is_empty()) || object_has_accessible_child(file, node);
+    (!has_text_alternative).then_some(MISSING_ALTERNATIVE_TEXT)
 }
 
 /// Also for `input[type="image"]`.
 fn area_rule(node: Jsx) -> Option<Message> {
-    let is_fine = has_label(node) || has_jsx_prop_ignore_case(node, "alt").is_some_and(is_valid_alt_prop);
-    (!is_fine).then_some(MISSING_ALTERNATIVE_TEXT)
+    let has_text_alternative = has_label(node) || has_jsx_prop_ignore_case(node, "alt").is_some_and(is_valid_alt_prop);
+    (!has_text_alternative).then_some(MISSING_ALTERNATIVE_TEXT)
 }

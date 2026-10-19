@@ -13,7 +13,7 @@ mod for_rules;
 mod prettier;
 mod tailwind;
 
-pub(crate) use files::Negative;
+pub(crate) use files::Exclusions;
 
 use crate::doctor::{Modules, watching};
 use crate::run::{Environment, Fatal, Outcome, Pool};
@@ -64,10 +64,10 @@ const MAKE_IT_A_WARNING: &[u8] = b"\n  Use --allow-unsupported to make this a wa
 /// An error or warning about a file's text, with its location.
 struct Problem {
     message: Vec<u8>,
-    at: Option<Place>,
+    at: Option<SourcePosition>,
 }
 
-struct Place {
+struct SourcePosition {
     line: u32,
     /// 1-based, in UTF-16 code units, like everywhere else in Bun.
     column: u32,
@@ -89,7 +89,7 @@ impl Problem {
         let at = file.position(offset);
         Problem {
             message: message.to_vec(),
-            at: Some(Place {
+            at: Some(SourcePosition {
                 line: at.line,
                 column: at.column + 1,
                 line_text: file.line_text(at.line).to_vec(),
@@ -100,18 +100,17 @@ impl Problem {
     /// For every other language. `offset` is a byte offset in `text`, not counting a byte order mark.
     #[cold]
     fn at(text: &[u8], message: &[u8], offset: u32) -> Problem {
-        Places::new(text).problem(message, offset)
+        PositionFinder::new(text).problem(message, offset)
     }
 
-    /// Prints it like every other Bun error: the line, a caret, the message and the location. `shown` is the file name
-    /// to print.
-    fn print(&self, shown: &[u8], kind: bun_ast::Kind, colors: bool) -> Vec<u8> {
+    /// Prints it like every other Bun error: the line, a caret, the message and the location.
+    fn print(&self, display_name: &[u8], kind: bun_ast::Kind, colors: bool) -> Vec<u8> {
         let message = bun_ast::Msg {
             kind,
             data: bun_ast::Data {
                 text: self.message.clone().into(),
                 location: Some(bun_ast::Location {
-                    file: shown.to_vec().into(),
+                    file: display_name.to_vec().into(),
                     line: self.at.as_ref().map_or(-1, |it| it.line as i32),
                     column: self.at.as_ref().map_or(-1, |it| it.column as i32),
                     line_text: self.at.as_ref().map(|it| it.line_text.clone().into()),
@@ -133,7 +132,7 @@ impl Problem {
 /// Converts offsets in a text to lines and columns. Offsets requested in ascending order cost one pass over the text in
 /// total. A line's text is attached only to the first problem on it, so the output can't grow beyond the text plus the
 /// messages.
-struct Places<'a> {
+struct PositionFinder<'a> {
     text: &'a [u8],
     line: u32,
     line_start: usize,
@@ -142,18 +141,18 @@ struct Places<'a> {
     /// The offset the current line has been measured up to, and its length so far in UTF-16 code units.
     measured: (usize, u32),
     /// The last line whose text was shown.
-    shown: u32,
+    last_shown_line: u32,
 }
 
-impl<'a> Places<'a> {
-    fn new(text: &'a [u8]) -> Places<'a> {
-        Places {
+impl<'a> PositionFinder<'a> {
+    fn new(text: &'a [u8]) -> PositionFinder<'a> {
+        PositionFinder {
             text: strings::without_utf8_bom(text),
             line: 1,
             line_start: 0,
             searched: 0,
             measured: (0, 0),
-            shown: 0,
+            last_shown_line: 0,
         }
     }
 
@@ -161,7 +160,7 @@ impl<'a> Places<'a> {
     fn problem(&mut self, message: &[u8], offset: u32) -> Problem {
         let (text, end) = (self.text, self.text.len().min(offset as usize));
         if end < self.searched {
-            *self = Places::new(text);
+            *self = PositionFinder::new(text);
         }
         while let Some(found) = strings::index_of_any(&text[self.searched..end], b"\n\r") {
             self.searched += found + 1;
@@ -174,7 +173,7 @@ impl<'a> Places<'a> {
         self.searched = end;
         let more = strings::utf8_decoded_len_utf16(&text[self.measured.0..end]) as u32;
         self.measured = (end, self.measured.1 + more);
-        let line_text = match std::mem::replace(&mut self.shown, self.line) == self.line {
+        let line_text = match std::mem::replace(&mut self.last_shown_line, self.line) == self.line {
             true => &[][..],
             false => {
                 let rest = &text[self.line_start..];
@@ -183,7 +182,7 @@ impl<'a> Places<'a> {
         };
         Problem {
             message: message.to_vec(),
-            at: Some(Place {
+            at: Some(SourcePosition {
                 line: self.line,
                 column: self.measured.1 + 1,
                 line_text: line_text.to_vec(),
@@ -203,10 +202,10 @@ enum Failure {
     Unread(Problem),
 }
 
-/// The error for the file printed as `shown` when Tailwind was asked and some class orders are still unknown.
-fn unknown_class_order_error(shown: &[u8]) -> Vec<u8> {
+/// The error for the file `display_name` when Tailwind was asked and some class orders are still unknown.
+fn unknown_class_order_error(display_name: &[u8]) -> Vec<u8> {
     let what = b": sortTailwindcss could not find the order of some classes.";
-    [shown, what].concat()
+    [display_name, what].concat()
 }
 
 /// Returns `.svelte` for `src/a.svelte`, or the whole file name if it has no extension.
@@ -220,8 +219,8 @@ fn cannot_resolve_parser(parser: &[u8]) -> Vec<u8> {
     [b"Couldn't resolve parser \"", parser, b"\"."].concat()
 }
 
-/// The error for passing `--parser` together with the directory argument `written`.
-fn cannot_force_parser_on(written: &[u8], parser: &[u8]) -> Vec<u8> {
+/// The error for passing `--parser` together with a directory.
+fn cannot_force_parser_on(directory_argument: &[u8], parser: &[u8]) -> Vec<u8> {
     let extension: Option<&[u8]> = match parser {
         b"typescript" | b"babel-ts" | b"oxc-ts" => Some(b"ts"),
         b"markdown" | b"remark" => Some(b"md"),
@@ -229,17 +228,17 @@ fn cannot_force_parser_on(written: &[u8], parser: &[u8]) -> Vec<u8> {
         b"json-stringify" => Some(b"json"),
         b"angular" | b"lwc" => Some(b"html"),
         _ if parser.starts_with(b"__") => None,
-        _ if Kind::of_parser(parser) == Some(Kind::Script) => Some(b"js"),
+        _ if Kind::from_parser(parser) == Some(Kind::Script) => Some(b"js"),
         // The other parsers are named after their extension: css, json5, yaml, vue, graphql.
         _ => Some(parser),
     };
     let mut text = [b"--parser ", parser, b" would read every file in \""].concat();
-    text.extend_from_slice(&[written, b"\" as ", parser].concat());
+    text.extend_from_slice(&[directory_argument, b"\" as ", parser].concat());
     let Some(extension) = extension else {
         text.extend_from_slice(b"\n  Name the files, or use a glob.");
         return text;
     };
-    let directory = paths::from_native(written);
+    let directory = paths::from_native(directory_argument);
     let directory = directory.strip_suffix(b"/").unwrap_or(&directory);
     let base = match directory {
         b"." | b"" => Vec::new(),
@@ -260,7 +259,7 @@ fn read_stdin() -> Result<Vec<u8>, Vec<u8>> {
 struct Piped<'p> {
     text: Vec<u8>,
     /// Its name in error messages.
-    shown: &'p [u8],
+    display_name: &'p [u8],
     /// The file names to parse it as. The first one that parses wins.
     paths: &'p [&'p [u8]],
 }
@@ -274,14 +273,14 @@ fn syntaxes_to_try(parser: &[u8], text: &[u8]) -> &'static [&'static [u8]] {
             &[b"stdin.ts", b"stdin.tsx"]
         }
         b"typescript" | b"oxc-ts" | b"babel-ts" => &[b"stdin.tsx", b"stdin.ts"],
-        _ if Kind::of_parser(parser) == Some(Kind::Script) => &[b"stdin.js"],
+        _ if Kind::from_parser(parser) == Some(Kind::Script) => &[b"stdin.js"],
         _ => &[b""],
     }
 }
 
 /// The `is_script` values to parse the file at `path` with, in order, until one parses without errors. Like Prettier's
 /// parsers, it tries a module first, then a script.
-fn kinds(path: &[u8]) -> &'static [bool] {
+fn script_modes(path: &[u8]) -> &'static [bool] {
     match path {
         _ if ends_in(path, b".mjs") || ends_in(path, b".mts") => &[false],
         _ if ends_in(path, b".cjs") || ends_in(path, b".cts") => &[true],
@@ -366,7 +365,7 @@ fn with_tree<'h, R>(
 fn with_file<R>(
     how: &How,
     text: &[u8],
-    then: impl for<'a> FnOnce(&'a File<'a>, Option<&Program<'a>>, Refused<'a>) -> R,
+    then: impl for<'a> FnOnce(&'a File<'a>, Option<&Program<'a>>, ParseErrors<'a>) -> R,
 ) -> R {
     let (path, session) = (how.path, how.memory);
     let arena = session.arena();
@@ -389,7 +388,7 @@ fn with_file<R>(
             return then(
                 &file,
                 program.as_ref(),
-                Refused {
+                ParseErrors {
                     first_error: hir.diagnostics.first(),
                     is_nested_too_deeply: hir.ran_out_of_stack,
                 },
@@ -408,7 +407,7 @@ fn with_file<R>(
             return then(
                 &File::new(path, &hir, &bound, atoms, language, None),
                 program.as_ref(),
-                Refused {
+                ParseErrors {
                     first_error: hir.diagnostics.first(),
                     is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
                 },
@@ -418,7 +417,7 @@ fn with_file<R>(
         then(
             &File::new(path, &hir, bound, atoms, language, None),
             program.as_ref(),
-            Refused {
+            ParseErrors {
                 first_error: hir.diagnostics.first(),
                 is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
             },
@@ -428,7 +427,7 @@ fn with_file<R>(
 
 /// The parser's and binder's errors for a file.
 #[derive(Copy, Clone)]
-struct Refused<'a> {
+struct ParseErrors<'a> {
     first_error: Option<&'a Diagnostic>,
     /// The stack ran out, so nothing else is known about the file.
     is_nested_too_deeply: bool,
@@ -754,9 +753,9 @@ fn format(
             {
                 return Err(Failure::Changed("formatting would change its contents"));
             }
-            let mut places = Places::new(text);
+            let mut positions = PositionFinder::new(text);
             scratch.warnings = (scratch.svelte.unformatted().iter())
-                .map(|it| places.problem(&it.message, it.at))
+                .map(|it| positions.problem(&it.message, it.at))
                 .collect();
             return finish(done, out, "Svelte");
         }
@@ -843,7 +842,7 @@ fn format(
         false => text,
     };
     let mut first_failure = None;
-    for &is_script in kinds(name) {
+    for &is_script in script_modes(name) {
         let how = How {
             path,
             is_script,
@@ -863,29 +862,29 @@ fn format(
 
 fn print<'a>(
     (file, program): (&'a File<'a>, Option<&Program<'a>>),
-    refused: Refused<'_>,
+    parse_errors: ParseErrors<'_>,
     how: &How,
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
-    if refused.is_nested_too_deeply {
+    if parse_errors.is_nested_too_deeply {
         return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
     }
     let options = &how.resolved.options;
     // `babel` rejects TypeScript syntax. The parsers that accept it have to be selected by name.
-    let takes_types = matches!(
+    let accepts_types = matches!(
         options.parser.as_deref(),
         Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts")
     );
-    let types = match takes_types {
+    let types = match accepts_types {
         true => TypesInJavaScript::Tolerated,
-        false => TypesInJavaScript::Refused,
+        false => TypesInJavaScript::Rejected,
     };
-    let refusal = match options.flavor.is_oxfmt() {
+    let rejection = match options.flavor.is_oxfmt() {
         true if how.resolved.formats_recoverable_errors && !file.has_parse_errors() => None,
-        true => bun_lint::linter::oxfmt_refusal(file),
-        false => bun_lint::linter::prettier_refusal(file, types),
+        true => bun_lint::linter::oxfmt_rejection(file),
+        false => bun_lint::linter::prettier_rejection(file, types),
     };
-    if let Some(why) = refusal {
+    if let Some(why) = rejection {
         return Err(Failure::Syntax(Problem::in_file(
             file,
             &why.message,
@@ -905,7 +904,10 @@ fn print<'a>(
     ) {
         Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => {
-            return Err(Failure::Syntax(syntax_error(file, refused.first_error)));
+            return Err(Failure::Syntax(syntax_error(
+                file,
+                parse_errors.first_error,
+            )));
         }
         Err(FormatError::SyntaxErrorAt(error)) => {
             return Err(Failure::Syntax(syntax_error_at(file.text(), error)));
@@ -948,29 +950,29 @@ fn print<'a>(
 }
 
 fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatted, Failure> {
-    with_file(how, text, |file, program, refused| {
-        if refused.is_nested_too_deeply {
+    with_file(how, text, |file, program, parse_errors| {
+        if parse_errors.is_nested_too_deeply {
             return Err(Failure::Syntax(Problem::new(NESTED_TOO_DEEPLY)));
         }
         // If sorting moves imports, the file is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-            Some(sorted) => with_file(how, &sorted, |after, program, refused| {
+            Some(sorted) => with_file(how, &sorted, |after, program, parse_errors| {
                 if how.verifies && !how_to_sort.is_some_and(|it| it.keeps_imports(file, after)) {
                     return Err(Failure::Changed(
                         "sorting imports would change what the code does",
                     ));
                 }
-                print((after, program), refused, how, scratch)
+                print((after, program), parse_errors, how, scratch)
             }),
-            None => print((file, program), refused, how, scratch),
+            None => print((file, program), parse_errors, how, scratch),
         }
     })
 }
 
 /// Why `bun fmt` didn't format a file.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Refusal {
+pub enum FormatFailure {
     /// It has a syntax error or is nested too deeply.
     Syntax,
     /// A formatter bug that the formatter detected itself.
@@ -983,7 +985,7 @@ pub fn format_for_tests(
     path: &[u8],
     text: &[u8],
     options: &FormatOptions,
-) -> Result<(Vec<u8>, Option<u32>), Refusal> {
+) -> Result<(Vec<u8>, Option<u32>), FormatFailure> {
     let resolved = Resolved {
         options: FormatOptions {
             format_javascript: Some(format_block),
@@ -1004,8 +1006,8 @@ pub fn format_for_tests(
         false,
     )
     .map_err(|failure| match failure {
-        Failure::Syntax(_) | Failure::Unread(_) => Refusal::Syntax,
-        Failure::Bug | Failure::Changed(_) => Refusal::Bug,
+        Failure::Syntax(_) | Failure::Unread(_) => FormatFailure::Syntax,
+        Failure::Bug | Failure::Changed(_) => FormatFailure::Bug,
     })
 }
 
@@ -1064,7 +1066,7 @@ enum Done {
     /// A message to print. The exit code is 2.
     Failed(Vec<u8>),
     /// Also exits with 2.
-    Refused(Failure),
+    NotFormatted(Failure),
 }
 
 struct Run<'r> {
@@ -1087,7 +1089,7 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
+        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
@@ -1120,13 +1122,13 @@ impl Run<'_> {
     }
 
     /// Prints `src/a.js (1ms)`, which is how `oxfmt --check` lists a file.
-    fn log_with_time(&mut self, shown: &[u8], took: Duration) {
+    fn log_with_time(&mut self, display_name: &[u8], took: Duration) {
         if self.options.log_level >= LogLevel::Log {
             pretty!(
                 &mut self.out.stdout,
                 self.colors(),
                 "<yellow>{}<r> ({}ms)\n",
-                BStr::new(shown),
+                BStr::new(display_name),
                 took.as_millis()
             );
         }
@@ -1135,9 +1137,9 @@ impl Run<'_> {
     /// Prints oxfmt's end-of-run summary. The counts are unformatted files, formatted files, and files that failed.
     fn print_oxfmt_summary(&mut self, [different, unchanged, failed]: [usize; 3], threads: usize) {
         let total = different + unchanged + failed;
-        let says_errors = self.options.log_level >= LogLevel::Error;
+        let prints_errors = self.options.log_level >= LogLevel::Error;
         if failed > 0 {
-            if says_errors {
+            if prints_errors {
                 let text = b"Error occurred when checking code style in the above files.\n";
                 self.out.stderr.extend_from_slice(text);
             }
@@ -1148,7 +1150,7 @@ impl Run<'_> {
             if self.out.exit_code != 0 {
                 return;
             }
-            if says_errors {
+            if prints_errors {
                 let text = b"No files found matching the given patterns.\n";
                 self.out.stderr.extend_from_slice(text);
             }
@@ -1265,19 +1267,19 @@ impl Run<'_> {
         out
     }
 
-    /// Prints warnings about the file printed as `shown`, which was formatted anyway.
-    fn report_warnings(&mut self, shown: &[u8], warnings: &[Problem]) {
+    /// Prints warnings about the file `display_name`, which was formatted anyway.
+    fn report_warnings(&mut self, display_name: &[u8], warnings: &[Problem]) {
         if self.options.log_level >= LogLevel::Warn {
             for problem in warnings {
-                let printed = problem.print(shown, bun_ast::Kind::Warn, self.colors());
+                let printed = problem.print(display_name, bun_ast::Kind::Warn, self.colors());
                 self.out.stderr.extend_from_slice(&printed);
             }
         }
     }
 
-    /// Prints why the file printed as `shown` wasn't formatted. It doesn't copy Prettier's or oxfmt's layout, since
-    /// their messages differ from ours anyway.
-    fn report(&mut self, shown: &[u8], failure: &Failure) {
+    /// Prints why the file `display_name` wasn't formatted. It doesn't copy Prettier's or oxfmt's layout, since their
+    /// messages differ from ours anyway.
+    fn report(&mut self, display_name: &[u8], failure: &Failure) {
         let (problem, kind, level) = match failure {
             Failure::Unread(problem) => (problem, bun_ast::Kind::Warn, LogLevel::Warn),
             Failure::Syntax(problem) => (problem, bun_ast::Kind::Err, LogLevel::Error),
@@ -1292,7 +1294,7 @@ impl Run<'_> {
             }
         };
         if self.options.log_level >= level {
-            let printed = problem.print(shown, kind, self.colors());
+            let printed = problem.print(display_name, kind, self.colors());
             self.out.stderr.extend_from_slice(&printed);
         }
         if kind == bun_ast::Kind::Err {
@@ -1385,7 +1387,7 @@ impl Run<'_> {
         tailwind::only_where_sorted(&mut options.options, kind);
         let piped = Piped {
             text,
-            shown: name,
+            display_name: name,
             paths: &[&path],
         };
         self.print_stdin(configs, piped, options)
@@ -1424,7 +1426,7 @@ impl Run<'_> {
             return self.out;
         };
         let is_formatted = |kind: &Kind| *kind != Kind::Svelte || options.options.svelte.is_on;
-        let Some(kind) = Kind::of_parser(&parser).filter(is_formatted) else {
+        let Some(kind) = Kind::from_parser(&parser).filter(is_formatted) else {
             // Without the plugin, Prettier has no `svelte` parser either.
             if &*parser == b"svelte" || !configs.lists_unknown_plugins(&scope, None) {
                 self.error(&cannot_resolve_parser(&parser));
@@ -1457,7 +1459,7 @@ impl Run<'_> {
         let paths = syntaxes_to_try(&parser, &text);
         let piped = Piped {
             text,
-            shown: b"stdin",
+            display_name: b"stdin",
             paths,
         };
         self.print_stdin(configs, piped, options)
@@ -1484,11 +1486,11 @@ impl Run<'_> {
         missing
     }
 
-    /// Formats standard input in a plugin's language. See `prettier.rs`. `shown` is its name in error messages.
+    /// Formats standard input in a plugin's language. See `prettier.rs`. `display_name` is its name in error messages.
     fn format_stdin_with_prettier(
         mut self,
         (path, config): (Option<&[u8]>, Option<&[u8]>),
-        (shown, text): (&[u8], &[u8]),
+        (display_name, text): (&[u8], &[u8]),
     ) -> Outcome {
         let is_read_only = self.options.check || self.options.list_different;
         let size = (1, text.len() as u64);
@@ -1507,7 +1509,7 @@ impl Run<'_> {
                 self.error(&message[..end]);
                 self.out.exit_code = 1;
             }
-            Err(why) => self.error(&[shown, b": ", &prettier::describe(why)].concat()),
+            Err(why) => self.error(&[display_name, b": ", &prettier::describe(why)].concat()),
             Ok(formatted) if is_read_only => {
                 if formatted != text && !self.options.write {
                     self.log(b"(stdin)");
@@ -1524,7 +1526,7 @@ impl Run<'_> {
     fn print_stdin(mut self, configs: &Configs, piped: Piped, mut options: Resolved) -> Outcome {
         let Piped {
             text,
-            shown: name,
+            display_name: name,
             paths,
         } = piped;
         let is_read_only = self.options.check || self.options.list_different;
@@ -1597,8 +1599,8 @@ impl Run<'_> {
                 }
             }
             Ok(_) if verifies => {
-                let is_named = !self.options.formats_unnamed_stdin();
-                let path = paths.first().filter(|_| is_named);
+                let has_file_name = !self.options.formats_unnamed_stdin();
+                let path = paths.first().filter(|_| has_file_name);
                 self.out.stdout = Self::name_of_stdin(path.copied());
             }
             Ok((formatted, cursor)) => {
@@ -1616,8 +1618,8 @@ impl Run<'_> {
     fn format_files(mut self, configs: &Configs, ignored: &mut Ignored) -> Outcome {
         let (options, cwd) = (self.options, &self.environment.cwd);
         // Files are written unless a flag disables that.
-        let asks_for_different = (options.check || options.list_different) && !options.write;
-        let is_read_only = asks_for_different || options.debug_check;
+        let reports_unformatted_only = (options.check || options.list_different) && !options.write;
+        let is_read_only = reports_unformatted_only || options.debug_check;
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
         let only = (options.only.as_ref()).map(|it| git::Files::read(it, self.environment, false));
         let only = match only.transpose() {
@@ -1674,7 +1676,7 @@ impl Run<'_> {
         let mut others: Vec<(&[u8], usize)> = Vec::new();
         // How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
         let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
-        let is_wanted = |target: &Target| match target.is_named {
+        let is_included = |target: &Target| match target.is_named {
             true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
             // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
             false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
@@ -1702,7 +1704,7 @@ impl Run<'_> {
                 false => configs.missing_plugins(&target.scope, Some(&target.path)),
             };
             match language_of(configs, &target.scope, &target.path) {
-                _ if !is_wanted(target) => {}
+                _ if !is_included(target) => {}
                 Language::Supported if !missing_plugins.is_empty() => {
                     left_for_plugins.0 += 1;
                     for name in missing_plugins {
@@ -1795,7 +1797,7 @@ impl Run<'_> {
         let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
         // Tailwind can't be asked and `--allow-unsupported` permits that, so classes stay unsorted.
         let skips_class_sorting = AtomicBool::new(false);
-        let once = fs::Written::default();
+        let written_files = fs::WrittenFiles::default();
         // A file with several hard links is overwritten in place. A thread reading it through another link at the same
         // time could see partial text and write that back. So each link is locked from its read to its write. The lock
         // is picked by inode modulo 32, so unrelated files occasionally wait for each other.
@@ -1808,7 +1810,7 @@ impl Run<'_> {
             let (index, target) = work[at];
             let _link_lock = lock_for(target);
             let began = Instant::now();
-            let shown = paths::relative(cwd, &target.path);
+            let display_name = paths::relative(cwd, &target.path);
             let mut scratch = scratches.lock().pop().unwrap_or_default();
             let result = (|| {
                 let mut options = configs
@@ -1820,7 +1822,7 @@ impl Run<'_> {
                 let text = git::read(only.as_ref(), &target.path).map_err(|error| {
                     [
                         b"Unable to read file \"",
-                        &shown[..],
+                        &display_name[..],
                         b"\":\n",
                         &fs::describe(&error),
                     ]
@@ -1837,7 +1839,7 @@ impl Run<'_> {
                     self.options.debug_check,
                 ) {
                     Ok((formatted, _)) => formatted,
-                    Err(failure) => return Ok(Done::Refused(failure)),
+                    Err(failure) => return Ok(Done::NotFormatted(failure)),
                 };
                 if options
                     .options
@@ -1858,9 +1860,17 @@ impl Run<'_> {
                     return Ok(Done::PartlyStaged);
                 }
                 if !is_read_only {
-                    fs::write_atomically(&once, cwd, &target.path, &formatted).map_err(|why| {
-                        [b"Unable to write file \"", &shown[..], b"\":\n", &why].concat()
-                    })?;
+                    fs::write_atomically(&written_files, cwd, &target.path, &formatted).map_err(
+                        |why| {
+                            [
+                                b"Unable to write file \"",
+                                &display_name[..],
+                                b"\":\n",
+                                &why,
+                            ]
+                            .concat()
+                        },
+                    )?;
                 }
                 Ok(Done::Different(began.elapsed()))
             })();
@@ -1874,23 +1884,24 @@ impl Run<'_> {
         let mut classes_are_unknown = None;
         if !deferred.is_empty() {
             classes_are_unknown = configs.classes.ask(self.environment).err();
-            // A Tailwind that can't be asked fails only its own files. This second pass has the answers of the others.
+            // This second pass runs even if `ask` failed. A Tailwind that can't be asked fails only its own files, and
+            // the other Tailwinds' answers are stored.
             pool.for_each(deferred.len(), 1, &|at| format_at(deferred[at]));
             if let Some(error) = &mut classes_are_unknown {
-                let left: Vec<usize> = (deferred.iter().copied())
+                let still_deferred: Vec<usize> = (deferred.iter().copied())
                     .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
                     .collect();
-                let count = left.len();
-                let said = match (options.allow_unsupported, count) {
+                let count = still_deferred.len();
+                let detail = match (options.allow_unsupported, count) {
                     (true, 1) => "\nClasses were not sorted in 1 file.".to_owned(),
                     (true, _) => format!("\nClasses were not sorted in {count} files."),
                     (false, 1) => "\n1 file with classes was not formatted.".to_owned(),
                     (false, _) => format!("\n{count} files with classes were not formatted."),
                 };
-                error.extend_from_slice(said.as_bytes());
+                error.extend_from_slice(detail.as_bytes());
                 if options.allow_unsupported {
                     skips_class_sorting.store(true, Ordering::Relaxed);
-                    pool.for_each(left.len(), 1, &|at| format_at(left[at]));
+                    pool.for_each(still_deferred.len(), 1, &|at| format_at(still_deferred[at]));
                 }
             }
         }
@@ -1900,9 +1911,9 @@ impl Run<'_> {
                 let (index, target) = handed_over[at];
                 let _link_lock = lock_for(target);
                 let began = Instant::now();
-                let shown = paths::relative(cwd, &target.path);
+                let display_name = paths::relative(cwd, &target.path);
                 let config = configs.config_file_path(&target.scope);
-                let file = (&target.path[..], &shown[..]);
+                let file = (&target.path[..], &display_name[..]);
                 let writes = !is_read_only && !is_partly_staged(target);
                 let formatted = bridge.format_file(file, config, writes, only.as_ref());
                 results.lock()[index] = Some(match formatted {
@@ -1916,7 +1927,7 @@ impl Run<'_> {
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
-        let (mut written, mut partly_staged) = (Vec::new(), Vec::new());
+        let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
         let mut warnings = warnings.into_iter().peekable();
@@ -1950,25 +1961,25 @@ impl Run<'_> {
                 }
                 Expanded::File(target) => target,
             };
-            let shown = paths::relative(cwd, &target.path);
+            let display_name = paths::relative(cwd, &target.path);
             if let Some((_, all)) = warnings.next_if(|it| it.0 == index) {
-                self.report_warnings(&shown, &all);
+                self.report_warnings(&display_name, &all);
             }
             match done {
                 None => {}
                 Some(Done::Unchanged) => {
                     unchanged += 1;
                     if options.debug_check {
-                        self.log(&shown);
+                        self.log(&display_name);
                     }
                 }
-                Some(Done::Refused(failure @ Failure::Unread(_))) => {
+                Some(Done::NotFormatted(failure @ Failure::Unread(_))) => {
                     unchanged += 1;
-                    self.report(&shown, &failure);
+                    self.report(&display_name, &failure);
                 }
-                Some(Done::Refused(failure)) => {
+                Some(Done::NotFormatted(failure)) => {
                     failed += 1;
-                    self.report(&shown, &failure);
+                    self.report(&display_name, &failure);
                 }
                 // Prettier stops at this error.
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
@@ -1982,7 +1993,7 @@ impl Run<'_> {
                 }
                 Some(Done::Deferred) => {
                     failed += 1;
-                    let text = unknown_class_order_error(&shown);
+                    let text = unknown_class_order_error(&display_name);
                     self.error(&[&text[..], b" It was not formatted."].concat());
                 }
                 Some(Done::PartlyStaged) => {
@@ -1992,24 +2003,24 @@ impl Run<'_> {
                 Some(Done::Different(took)) => {
                     different += 1;
                     if !is_read_only && only.is_some() {
-                        written.push(target.path.clone());
+                        written_paths.push(target.path.clone());
                     }
                     match (is_oxfmt, options.check) {
-                        (true, true) => self.log_with_time(&shown, took),
+                        (true, true) => self.log_with_time(&display_name, took),
                         // oxfmt doesn't list the files it writes.
                         (true, false) if !options.list_different => {}
-                        (false, true) if !self.is_native => self.list_as_prettier(&shown),
+                        (false, true) if !self.is_native => self.list_as_prettier(&display_name),
                         // The file list is `--check`'s result, so it goes to stdout.
                         (false, true) if options.log_level >= LogLevel::Warn => {
-                            self.out.stdout.extend_from_slice(&shown);
+                            self.out.stdout.extend_from_slice(&display_name);
                             self.out.stdout.push(b'\n');
                         }
                         // `--debug-check` lists every passing file below.
                         (false, false) if options.debug_check && !options.list_different => {}
-                        _ => self.log(&shown),
+                        _ => self.log(&display_name),
                     }
                     if options.debug_check {
-                        self.log(&shown);
+                        self.log(&display_name);
                     }
                 }
             }
@@ -2018,7 +2029,7 @@ impl Run<'_> {
             if !partly_staged.is_empty() {
                 self.error(&only.partly_staged_error(&mut partly_staged, "formatted"));
             }
-            if let Err(Fatal(error)) = only.stage(&written) {
+            if let Err(Fatal(error)) = only.stage(&written_paths) {
                 self.error(&error);
             }
         }
@@ -2070,7 +2081,7 @@ impl Run<'_> {
                 );
             }
         }
-        if asks_for_different && different > 0 && self.out.exit_code == 0 {
+        if reports_unformatted_only && different > 0 && self.out.exit_code == 0 {
             self.out.exit_code = 1;
         }
         let sums_up = match self.is_native {
@@ -2184,14 +2195,14 @@ impl Run<'_> {
             1 => ("file was", "its"),
             _ => ("files were", "their"),
         };
-        let kinds: Vec<Vec<u8>> = others
+        let extension_counts: Vec<Vec<u8>> = others
             .iter()
             .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
             .collect();
         let text = format!(
             "{count} {noun} not formatted because bun fmt does not support {its} language yet: "
         );
-        let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
+        let text = [text.as_bytes(), &extension_counts.join(&b", "[..])].concat();
         self.warn_not_installed(not_installed);
         match self.options.allow_unsupported {
             true => self.warn(&text),
@@ -2258,8 +2269,8 @@ impl Run<'_> {
         }
         // Prettier and oxfmt both report this before they look at files, patterns or config.
         let is_oxfmt = configs.flavor == Flavor::Oxfmt;
-        if let Some(refusal) = options.mode_conflict_error(is_oxfmt) {
-            let mut out = self.fail(&refusal);
+        if let Some(conflict) = options.mode_conflict_error(is_oxfmt) {
+            let mut out = self.fail(&conflict);
             out.exit_code = 1;
             return out;
         }
@@ -2275,8 +2286,8 @@ impl Run<'_> {
             };
             return match &scope.config {
                 Some(config) => {
-                    let shown = paths::relative(&environment.cwd, &config.path);
-                    self.log(&shown);
+                    let display_name = paths::relative(&environment.cwd, &config.path);
+                    self.log(&display_name);
                     self.out
                 }
                 None => {
@@ -2291,14 +2302,14 @@ impl Run<'_> {
             return self.fail_to_start(configs.flavor, &error);
         }
         let from_flag = options.format.iter().rfind(|it| it.0 == b"parser");
-        let is_unknown = |it: &&(&[u8], Vec<u8>)| Kind::of_parser(&it.1).is_none();
+        let is_unknown = |it: &&(&[u8], Vec<u8>)| Kind::from_parser(&it.1).is_none();
         if let Some((_, parser)) = from_flag.filter(is_unknown).filter(|_| !is_unnamed) {
             return self.fail(&cannot_resolve_parser(parser));
         }
         // Prettier parses everything in the directory with that parser: lock files, dotfiles, LICENSE. We only do that
         // with a Prettier config. oxfmt has no `--parser`.
-        let is_directory = |written: &&Vec<u8>| {
-            let path = paths::resolve(&environment.cwd, &paths::from_native(written));
+        let is_directory = |pattern: &&Vec<u8>| {
+            let path = paths::resolve(&environment.cwd, &paths::from_native(pattern));
             matches!(
                 fs::link_kind_and_size(&path),
                 Some((fs::LinkKind::Directory, _))
@@ -2313,7 +2324,7 @@ impl Run<'_> {
             return self.fail(&cannot_force_parser_on(directory, parser));
         }
         // `--doctor` already lists it with its own notes.
-        let is_said = options.log_level >= LogLevel::Warn && !options.doctor;
+        let prints_note = options.log_level >= LogLevel::Warn && !options.doctor;
         let colors = self.colors();
         let mut out = if is_unnamed {
             self.format_unnamed_stdin(&configs)
@@ -2328,7 +2339,7 @@ impl Run<'_> {
                 None => self.format_files(&configs, &mut ignored),
             }
         };
-        if let Some(note) = configs.note().filter(|_| is_said) {
+        if let Some(note) = configs.note().filter(|_| prints_note) {
             let note = BStr::new(note);
             pretty!(&mut out.stderr, colors, "<blue>note<r><d>:<r> {}\n", note);
         }

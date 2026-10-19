@@ -213,12 +213,12 @@ impl<'a> Ident<'a> {
     #[inline(never)]
     fn source_len(self) -> usize {
         let (text, name) = (self.name.file.text(), self.name.bytes());
-        let written = text.get(self.start as usize..).unwrap_or_default();
-        match !name.is_empty() && !self.is_string() && written.starts_with(name) {
+        let source_text = text.get(self.start as usize..).unwrap_or_default();
+        match !name.is_empty() && !self.is_string() && source_text.starts_with(name) {
             true => name.len(),
             // It's written with escapes or in quotes. A quoted name can start with its own value and continue, like
             // `"\""`.
-            false => crate::tokens::token_len(written),
+            false => crate::tokens::token_len(source_text),
         }
     }
 }

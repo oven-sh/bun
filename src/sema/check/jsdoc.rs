@@ -132,12 +132,12 @@ impl Outline {
         is_stack_low: &dyn Fn() -> bool,
     ) {
         let (from, to) = (start as usize, end as usize);
-        let written = text.get(from..to).unwrap_or_default();
-        if !is_jsdoc_like(written) {
+        let comment_source = text.get(from..to).unwrap_or_default();
+        if !is_jsdoc_like(comment_source) {
             return;
         }
         let first_tag = self.tags.len() as u32;
-        if strings::contains_char(written, b'@') {
+        if strings::contains_char(comment_source, b'@') {
             let mut reader = Reader::new(text, from, to, flavor, false, is_stack_low);
             reader.parse_jsdoc_comment_worker(from);
             self.tags.extend_from_slice(&reader.tags);
@@ -1144,8 +1144,8 @@ impl<'a, 's> Reader<'a, 's> {
     /// `type_name_comment` finds in the tag.
     fn parse_oxc_tag(&mut self, at: usize) {
         let text = self.text;
-        let written = |from: usize, to: usize| text.get(from..to).unwrap_or_default();
-        let name_end = at + find_token_range(written(at, text.len())).map_or(1, |name| name.end);
+        let slice_of = |from: usize, to: usize| text.get(from..to).unwrap_or_default();
+        let name_end = at + find_token_range(slice_of(at, text.len())).map_or(1, |name| name.end);
         self.reset_pos(name_end);
         self.next_token_jsdoc();
         self.parse_tag_comments(0, None);
@@ -1155,14 +1155,14 @@ impl<'a, 's> Reader<'a, 's> {
                 Range::new((from + found.start) as u32, (from + found.end) as u32)
             })
         };
-        let ty = found_from(name_end, find_type_range(written(name_end, end)));
+        let ty = found_from(name_end, find_type_range(slice_of(name_end, end)));
         let after_type = if ty.is_some() {
             ty.end as usize
         } else {
             name_end
         };
-        let name = found_from(after_type, find_type_name_range(written(after_type, end)));
-        let name_text = written(name.start as usize, name.end as usize);
+        let name = found_from(after_type, find_type_name_range(slice_of(after_type, end)));
+        let name_text = slice_of(name.start as usize, name.end as usize);
         let default = match strings::index_of_char(name_text, b'=') {
             Some(equals) if name_text.starts_with(b"[") && name_text.ends_with(b"]") => {
                 Range::new(name.start + equals + 1, name.end - 1)
@@ -1323,12 +1323,12 @@ impl<'a, 's> Reader<'a, 's> {
         {
             row.ty = Range::new(open as u32, end as u32);
         }
-        let written = &self.text[inside..end];
+        let type_text = &self.text[inside..end];
         TypeExpr {
             entry,
             pos: inside as u32,
             end: end as u32,
-            shape: match is_object_or_object_array_type_reference(written) {
+            shape: match is_object_or_object_array_type_reference(type_text) {
                 true => TypeShape::OBJECT_OR_OBJECT_ARRAY,
                 false => TypeShape::empty(),
             },
@@ -1677,8 +1677,8 @@ impl<'a, 's> Reader<'a, 's> {
                 has_children = true;
                 match child.kind {
                     TagKind::Template(_) => self.report_misplaced_template_tag(child.name_pos),
-                    TagKind::Type(written) if child_type_tag.is_none() => {
-                        child_type_tag = Some((written, child.end as usize));
+                    TagKind::Type(type_expr) if child_type_tag.is_none() => {
+                        child_type_tag = Some((type_expr, child.end as usize));
                     }
                     TagKind::Type(_) => self.error_at_token(8033, &[]),
                     _ if self.syntax.is_some() => properties.push(child),
@@ -1687,8 +1687,8 @@ impl<'a, 's> Reader<'a, 's> {
             }
             if has_children {
                 (ty, end) = match child_type_tag {
-                    Some((written, end)) if !is_object_or_object_array(written) => {
-                        (TagType::Expr(written), end)
+                    Some((type_expr, end)) if !is_object_or_object_array(type_expr) => {
+                        (TagType::Expr(type_expr), end)
                     }
                     _ => {
                         let literal = TagType::Literal {
@@ -1872,7 +1872,7 @@ impl<'a, 's> Reader<'a, 's> {
         self.next_token_jsdoc();
         let tag_name = self.parse_tag_name();
         let indent_text = self.skip_whitespace_or_asterisk();
-        let fits = match &*tag_name.text {
+        let tag_target = match &*tag_name.text {
             b"prop" | b"property" => PROPERTY,
             b"arg" | b"argument" | b"param" => PARAMETER | CALLBACK_PARAMETER,
             _ => 0,
@@ -1894,7 +1894,7 @@ impl<'a, 's> Reader<'a, 's> {
             word @ (b"template" | b"this") => {
                 Some(self.parse_tag_without_children(start, word, indent, indent_text))
             }
-            _ if target & fits != 0 => {
+            _ if target & tag_target != 0 => {
                 let saved = std::mem::replace(&mut self.saves_comment_text, has_syntax);
                 let kind = self.parse_parameter_or_property_tag(start, target, indent, name);
                 self.saves_comment_text = saved;
@@ -2084,8 +2084,8 @@ impl<'a, 's> Reader<'a, 's> {
     /// collected.
     fn save_comment_text(&mut self, start: usize, end: usize) {
         if self.saves_comment_text {
-            let written = self.text.get(start..end).unwrap_or_default();
-            self.comment_text.extend_from_slice(written);
+            let copied_text = self.text.get(start..end).unwrap_or_default();
+            self.comment_text.extend_from_slice(copied_text);
         }
     }
 

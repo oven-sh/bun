@@ -89,7 +89,7 @@ pub(super) struct Inference {
     /// because tsgo has no such limit.
     calls: u32,
     /// The walk has reached a signature for which `is_sig_of_context_sensitive_function` is true.
-    has_met_contextual_function: bool,
+    has_reached_contextual_function: bool,
     /// The parameter type an inference started from.
     original_target: TypeId,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
@@ -98,10 +98,10 @@ pub(super) struct Inference {
     /// The mapper for the outer type parameters of the source signature. Its own type parameters
     /// that aren't clones aren't instantiated with it, so their constraints have to be instantiated
     /// through this.
-    pub(super) around_source: MapperId,
+    pub(super) source_outer_mapper: MapperId,
     /// Without a signature, for `infer`: the mapper for the outer type parameters of the
     /// conditional type. The constraints of the parameters may mention them.
-    pub(super) around: MapperId,
+    pub(super) conditional_outer_mapper: MapperId,
     /// `propagationType`
     propagated: Option<TypeId>,
     /// `returnMapper`, stored as the context whose `mapper` it is, so nothing is inferred until
@@ -136,11 +136,11 @@ impl Inference {
             expanding: 0,
             depth: 0,
             calls: 0,
-            has_met_contextual_function: false,
+            has_reached_contextual_function: false,
             original_target: TypeId::NEVER,
             any_default: false,
-            around_source: MapperId::IDENTITY,
-            around: MapperId::IDENTITY,
+            source_outer_mapper: MapperId::IDENTITY,
+            conditional_outer_mapper: MapperId::IDENTITY,
             propagated: None,
             return_context: None,
             outer_return_context: None,
@@ -176,11 +176,11 @@ impl Inference {
             expanding,
             depth,
             calls,
-            has_met_contextual_function,
+            has_reached_contextual_function,
             original_target,
             any_default,
-            around_source,
-            around,
+            source_outer_mapper,
+            conditional_outer_mapper,
             propagated,
             return_context,
             outer_return_context,
@@ -198,12 +198,13 @@ impl Inference {
         inferred_type_params.clear();
         intra_expression_inference_sites.clear();
         (*sig, *propagated, *return_context, *outer_return_context) = (None, None, None, None);
-        (*contra, *bivariant, *has_met_contextual_function) = (false, false, false);
+        (*contra, *bivariant, *has_reached_contextual_function) = (false, false, false);
         (*any_default, *no_default, *skipped_generic_function) = (false, false, false);
         (*priority, *inference_priority) = (0, PRIORITY_MAX);
         (*expanding, *depth, *calls) = (0, 0, 0);
         *original_target = TypeId::NEVER;
-        (*around_source, *around) = (MapperId::IDENTITY, MapperId::IDENTITY);
+        (*source_outer_mapper, *conditional_outer_mapper) =
+            (MapperId::IDENTITY, MapperId::IDENTITY);
     }
 
     /// `clearCachedInferences`
@@ -227,11 +228,15 @@ impl<'p, 's> Checker<'p, 's> {
         params: &[TypeId],
         source: TypeId,
         target: TypeId,
-        around: MapperId,
+        conditional_outer_mapper: MapperId,
     ) -> Vec<TypeId> {
-        self.infer_from_types_comparing(params, source, target, around, &mut |c, s, t| {
-            c.is_assignable(s, t)
-        })
+        self.infer_from_types_comparing(
+            params,
+            source,
+            target,
+            conditional_outer_mapper,
+            &mut |c, s, t| c.is_assignable(s, t),
+        )
     }
 
     pub(super) fn infer_from_types_comparing(
@@ -239,11 +244,11 @@ impl<'p, 's> Checker<'p, 's> {
         params: &[TypeId],
         source: TypeId,
         target: TypeId,
-        around: MapperId,
+        conditional_outer_mapper: MapperId,
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> Vec<TypeId> {
         let mut inference = Inference::for_params(params, None);
-        inference.around = around;
+        inference.conditional_outer_mapper = conditional_outer_mapper;
         self.infer(
             &mut inference,
             source,
@@ -288,7 +293,7 @@ impl<'p, 's> Checker<'p, 's> {
         n.expanding = 0;
         n.depth = 0;
         n.calls = 0;
-        n.has_met_contextual_function = false;
+        n.has_reached_contextual_function = false;
         n.original_target = target;
         // Fast path: `n.priority` only grows during inference and a candidate with a worse priority than the existing inference is
         // discarded, so nothing can be recorded. Limited to `InferencePriorityReturnType`: at other priorities inference can still
@@ -395,10 +400,10 @@ impl<'p, 's> Checker<'p, 's> {
                 // to `string[] & Iterable<T>` the `string[]` stays, and yields `string` for `T`.
                 && !self.is_union(source) =>
             {
-                let alone = [source];
+                let source_only = [source];
                 let mut sources = Unmatched::Borrowed(match self.data(source) {
                     TypeData::Intersection(parts) => &parts[..],
-                    _ => &alone[..],
+                    _ => &source_only[..],
                 });
                 let mut targets = Unmatched::Borrowed(&target_parts[..]);
                 self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
@@ -620,22 +625,22 @@ impl<'p, 's> Checker<'p, 's> {
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
 
-    /// `inferFromTypeArguments` between two instantiations of `of`. Cached variances are read in
-    /// place. All threads share them, so bumping a reference count for every pair of references
-    /// would slow down every thread.
+    /// `inferFromTypeArguments` between two instantiations of `generic_symbol`. Cached variances are
+    /// read in place. All threads share them, so bumping a reference count for every pair of
+    /// references would slow down every thread.
     fn infer_from_type_arguments_of(
         &mut self,
         n: &mut Inference,
-        of: Sym,
+        generic_symbol: Sym,
         sources: &[TypeId],
         targets: &[TypeId],
     ) {
-        if let Some(known) = self.p.variances.get_ref(&self.task, &of) {
-            self.note_inferred_by_variances(of, sources.len().min(targets.len()));
+        if let Some(known) = self.p.variances.get_ref(&self.task, &generic_symbol) {
+            self.note_inferred_by_variances(generic_symbol, sources.len().min(targets.len()));
             return self.infer_from_type_arguments(n, sources, targets, known);
         }
-        let variances = self.variances_of(of);
-        self.note_inferred_by_variances(of, sources.len().min(targets.len()));
+        let variances = self.variances_of(generic_symbol);
+        self.note_inferred_by_variances(generic_symbol, sources.len().min(targets.len()));
         self.infer_from_type_arguments(n, sources, targets, variances);
     }
 
@@ -775,22 +780,22 @@ impl<'p, 's> Checker<'p, 's> {
             let symbol = c.is_object_type(ty).then(|| c.symbol_of_type(ty));
             (symbol.flatten(), c.alias_symbol_of_type(ty))
         };
-        let mut of_sources: SmallVec<[_; 8]> = SmallVec::new();
+        let mut source_symbols: SmallVec<[_; 8]> = SmallVec::new();
         let mut matched = Matched::default();
         for (j, &t) in targets.iter().enumerate() {
             let (symbol, alias) = symbols_of(self, t);
             if symbol.is_none() && alias.is_none() {
                 continue;
             }
-            if of_sources.is_empty() {
-                of_sources.extend(sources.iter().map(|&s| symbols_of(self, s)));
+            if source_symbols.is_empty() {
+                source_symbols.extend(sources.iter().map(|&s| symbols_of(self, s)));
             }
             for (i, &s) in sources.iter().enumerate() {
-                let has_symbol = symbol.is_some() && of_sources[i].0 == symbol;
+                let has_symbol = symbol.is_some() && source_symbols[i].0 == symbol;
                 // `same_alias` returns `None` unless `alias_symbol_of_type` is the same `Some` for
                 // both types, and up to that test it only calls `&self` methods. So the call can be
                 // skipped when the test fails.
-                let may_have_alias = alias.is_some() && of_sources[i].1 == alias;
+                let may_have_alias = alias.is_some() && source_symbols[i].1 == alias;
 
                 if has_symbol
                     || may_have_alias
@@ -816,10 +821,10 @@ impl<'p, 's> Checker<'p, 's> {
         let mut type_variable_count = 0;
         if kind == Multiple::Union {
             let mut naked = TypeId::NEVER;
-            let alone = [source];
+            let source_only = [source];
             let sources: &[TypeId] = match self.is_union(source) {
                 true => self.parts(source),
-                false => &alone,
+                false => &source_only,
             };
             let mut matched: SmallVec<[bool; 8]> = smallvec![false; sources.len()];
             let mut circularity = false;
@@ -1116,9 +1121,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `parseBigIntLiteralType`
             if right_flags & tf::BIGINT != 0 {
-                let written = c.atoms().intern(digits);
+                let digits_atom = c.atoms().intern(digits);
                 return c.intern(TypeData::BigIntLit {
-                    text: written,
+                    text: digits_atom,
                     negative,
                     fresh: false,
                 });
@@ -1127,12 +1132,12 @@ impl<'p, 's> Checker<'p, 's> {
                 return left;
             }
             if let TypeData::BigIntLit {
-                text: written,
+                text: literal_text,
                 negative: minus,
                 ..
             } = *c.data(right)
                 && minus == negative
-                && c.atoms().bytes(written) == digits
+                && c.atoms().bytes(literal_text) == digits
             {
                 return right;
             }
@@ -1605,11 +1610,11 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         (tm.shape().props.iter()).any(|tp| {
-            let of_target = (tp, tm.mapper);
+            let target_prop = (tp, tm.mapper);
             self.is_unmatched_property(
                 source,
                 sm.as_ref(),
-                of_target,
+                target_prop,
                 match_discriminant_properties,
             )
         })
@@ -1733,13 +1738,13 @@ impl<'p, 's> Checker<'p, 's> {
         if mapper == MapperId::IDENTITY {
             return sig;
         }
-        let stands = match self.data(ty) {
+        let has_cached_signatures = match self.data(ty) {
             TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
             _ => self.is_object_type(ty),
         };
-        if stands {
-            let kept = self.signatures(ty, construct);
-            if let [only] = kept[..] {
+        if has_cached_signatures {
+            let cached_signatures = self.signatures(ty, construct);
+            if let [only] = cached_signatures[..] {
                 return only;
             }
         }
@@ -1796,7 +1801,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: SigId,
         return_only: bool,
     ) {
-        n.has_met_contextual_function |= self.is_sig_of_context_sensitive_function(source)
+        n.has_reached_contextual_function |= self.is_sig_of_context_sensitive_function(source)
             || self.is_sig_of_context_sensitive_function(target);
         let source = self.base_sig(source);
         let declared = self.declared_sig(target);
@@ -1957,12 +1962,12 @@ impl<'p, 's> Checker<'p, 's> {
         // A type known to have exactly its visible properties has an implicit index signature.
         // `inferFromTypes` has replaced the source with `getApparentType(source)`, unless the
         // constraints of type parameters are to be ignored.
-        let looks = if n.priority & PRIORITY_NO_CONSTRAINTS != 0 {
+        let apparent_source = if n.priority & PRIORITY_NO_CONSTRAINTS != 0 {
             source
         } else {
             self.apparent_type_of_intersection(source)
         };
-        if self.is_object_type_with_inferable_index(looks) {
+        if self.is_object_type_with_inferable_index(apparent_source) {
             for info in tm.index_infos() {
                 let expected = self.instantiate(info.value, tm.mapper);
                 let mut types = Parts::new();
@@ -2475,7 +2480,7 @@ impl<'p, 's> Checker<'p, 's> {
         if params.is_empty() {
             return sig;
         }
-        let outer = self.mapper_around_sig(sig);
+        let outer = self.outer_mapper_of_sig(sig);
         let mut bases: SmallVec<[TypeId; 4]> = params
             .iter()
             .map(|&p| match self.constraint_of_type_param(p) {
@@ -2548,7 +2553,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Its constraint and default are already instantiated with the signature's outer mapper. For
     /// any other type parameter that still has to be done.
     fn is_cloned_type_param(&self, param: TypeId) -> bool {
-        matches!(*self.data(param), TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY)
+        matches!(*self.data(param), TypeData::TypeParam(_, _, outer_mapper) if outer_mapper != MapperId::IDENTITY)
     }
 
     // ───────────────────────────── conclusions ─────────────────────────────
@@ -2796,8 +2801,8 @@ impl<'p, 's> Checker<'p, 's> {
             MapperId::IDENTITY
         } else {
             match n.sig {
-                Some(sig) => self.mapper_around_sig(sig),
-                None => n.around,
+                Some(sig) => self.outer_mapper_of_sig(sig),
+                None => n.conditional_outer_mapper,
             }
         };
         let mut inferred = None;
@@ -2923,7 +2928,7 @@ impl<'p, 's> Checker<'p, 's> {
         constraint: TypeId,
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> bool {
-        if n.around_source == MapperId::IDENTITY
+        if n.source_outer_mapper == MapperId::IDENTITY
             || !matches!(self.data(ty), TypeData::TypeParam(..))
             || self.is_cloned_type_param(ty)
         {
@@ -2932,7 +2937,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(declared) = self.constraint_of_type_param(ty) else {
             return false;
         };
-        let extended = self.instantiate(declared, n.around_source);
+        let extended = self.instantiate(declared, n.source_outer_mapper);
         extended != declared && (extended == constraint || compare(self, extended, constraint))
     }
 

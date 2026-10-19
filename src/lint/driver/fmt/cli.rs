@@ -124,7 +124,7 @@ const OTHER: &[Param] = &[
     clap::param!("--help-all                      The same as <b>--help --all<r>"),
 ];
 
-const OF_PRETTIER: &[Param] = &[
+const PRETTIER_COMPAT: &[Param] = &[
     clap::param!("-w, --write                     Write the files. This is the default"),
     clap::param!(
         "--config-precedence <which>     <b>cli-override<r> <d>(default)<r>, <b>file-override<r>, or <b>prefer-file<r>"
@@ -163,7 +163,7 @@ const OF_PRETTIER: &[Param] = &[
     clap::param!("--experimental-cli              No effect"),
 ];
 
-const OF_OXFMT: &[Param] = &[
+const OXFMT_COMPAT: &[Param] = &[
     clap::param!(
         "--flavor <which>                Without a config file, format like <b>prettier<r> or like <b>oxfmt<r>"
     ),
@@ -204,11 +204,11 @@ pub const HELP: Help = Help {
         },
         Group {
             title: "Compatibility with Prettier",
-            params: OF_PRETTIER,
+            params: PRETTIER_COMPAT,
         },
         Group {
             title: "Compatibility with oxfmt",
-            params: OF_OXFMT,
+            params: OXFMT_COMPAT,
         },
     ],
     common: &[
@@ -236,8 +236,8 @@ pub(crate) const PARAMS: &[Param] = clap::concat_params!(
     FILES,
     OUTPUT,
     OTHER,
-    OF_PRETTIER,
-    OF_OXFMT,
+    PRETTIER_COMPAT,
+    OXFMT_COMPAT,
     OPPOSITES
 );
 
@@ -597,18 +597,18 @@ impl Options {
 
     /// The tool's own error message if it rejects this combination of mode flags.
     pub(crate) fn mode_conflict_error(&self, is_oxfmt: bool) -> Option<Vec<u8>> {
-        let of_debug_check = || {
+        let debug_check_conflict = || {
             (self.write && self.debug_check)
                 .then(|| b"Cannot use --write and --debug-check together.".to_vec())
         };
         if !is_oxfmt {
             return (self.check && self.list_different)
                 .then(|| b"Cannot use --check and --list-different together.".to_vec())
-                .or_else(of_debug_check);
+                .or_else(debug_check_conflict);
         }
         // oxfmt stops at the second one, whatever follows.
         let &[first, second, ..] = &self.modes[..] else {
-            return of_debug_check();
+            return debug_check_conflict();
         };
         Some(match first == second {
             true => [
@@ -646,9 +646,9 @@ impl Options {
         if directory != b"." && !is_named {
             let files = self.ignore_path.iter_mut().flatten();
             for it in self.config.iter_mut().chain(files) {
-                let written = paths::from_native(it);
-                if !paths::is_absolute(&written) {
-                    *it = paths::join_normalized(&directory, &written);
+                let portable = paths::from_native(it);
+                if !paths::is_absolute(&portable) {
+                    *it = paths::join_normalized(&directory, &portable);
                 }
             }
         }

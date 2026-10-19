@@ -155,13 +155,13 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
 pub(crate) struct NamedPipes(Vec<(Vec<u8>, Vec<u8>)>);
 
 impl NamedPipes {
-    /// Reads and caches every path in `named` that is a pipe. The paths are as the user typed them, relative to `cwd`.
-    /// `Err` is the message to show the user. A pipe with no writer is an error. Treating it as empty would make
+    /// Reads and caches every path in `arguments` that is a pipe. The paths are as the user typed them, relative to
+    /// `cwd`. `Err` is the message to show the user. A pipe with no writer is an error. Treating it as empty would make
     /// `--ignore-path` ignore nothing. Waiting for a writer would let a pipe in a checkout hang any CI job that passes
     /// its path.
-    pub(crate) fn load(&mut self, cwd: &[u8], named: &[Vec<u8>]) -> Result<(), Vec<u8>> {
-        for written in named.iter().filter(|_| cfg!(unix)) {
-            let path = paths::resolve(cwd, &paths::from_native(written));
+    pub(crate) fn load(&mut self, cwd: &[u8], arguments: &[Vec<u8>]) -> Result<(), Vec<u8>> {
+        for argument in arguments.iter().filter(|_| cfg!(unix)) {
+            let path = paths::resolve(cwd, &paths::from_native(argument));
             if self.0.iter().any(|it| it.0 == path) {
                 continue;
             }
@@ -175,7 +175,7 @@ impl NamedPipes {
             if !is_pipe {
                 continue;
             }
-            let cannot_read = |why: &[u8]| [b"cannot read ", &written[..], b": ", why].concat();
+            let cannot_read = |why: &[u8]| [b"cannot read ", &argument[..], b": ", why].concat();
             // A pipe whose writer has closed it polls as hung up, so `<(true)` is an empty file and not an error.
             let had_writer = || bun_core::is_readable(file.handle()) == bun_core::Pollable::Hup;
             match read_stream(&file) {
@@ -358,7 +358,7 @@ fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     ) else {
         return Ok(false);
     };
-    let written = file.stat().and_then(|created| {
+    let write_result = file.stat().and_then(|created| {
         if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
             return Ok(false);
         }
@@ -376,24 +376,24 @@ fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
         file.write_all(text).map(|()| true)
     });
     drop(file);
-    let is_replaced = matches!(written, Ok(true)) && rename(&temporary, real).is_ok();
+    let is_replaced = matches!(write_result, Ok(true)) && rename(&temporary, real).is_ok();
     if !is_replaced {
         remove(&temporary);
     }
-    written.map(|_| is_replaced)
+    write_result.map(|_| is_replaced)
 }
 
 /// Writes `text` at offset 0 of `file`. On failure, returns the error and the number of bytes already written.
 fn write_at_start(file: &File, text: &[u8]) -> Result<(), (bun_sys::Error, usize)> {
-    let mut written = 0;
-    while written < text.len() {
-        match bun_sys::pwrite(file.handle(), &text[written..], written as i64) {
+    let mut bytes_written = 0;
+    while bytes_written < text.len() {
+        match bun_sys::pwrite(file.handle(), &text[bytes_written..], bytes_written as i64) {
             Ok(0) => {
                 let error = bun_sys::Error::from_code(bun_sys::E::EIO, bun_sys::Tag::write);
-                return Err((error, written));
+                return Err((error, bytes_written));
             }
-            Ok(count) => written += count,
-            Err(error) => return Err((error, written)),
+            Ok(count) => bytes_written += count,
+            Err(error) => return Err((error, bytes_written)),
         }
     }
     Ok(())
@@ -407,7 +407,7 @@ fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
         .and_then(|file| file.read_to_end().map(|old| (file, old)))
         .map_err(|error| describe(&error))?;
     let truncate_to = |length: usize| bun_sys::ftruncate(file.handle(), length as i64);
-    let (error, written) = match write_at_start(&file, text) {
+    let (error, bytes_written) = match write_at_start(&file, text) {
         Ok(()) => match truncate_to(text.len()) {
             Ok(()) => return Ok(()),
             Err(error) => (error, text.len()),
@@ -416,9 +416,9 @@ fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     };
     // Restore only the overwritten bytes. A file size limit also rejects rewriting existing bytes past the limit, and
     // on macOS it rejects truncating to the file's current length if that is past the limit.
-    let restored = write_at_start(&file, &old[..written.min(old.len())])
+    let restored = write_at_start(&file, &old[..bytes_written.min(old.len())])
         .map_err(|(error, _)| error)
-        .and_then(|()| match written > old.len() {
+        .and_then(|()| match bytes_written > old.len() {
             true => truncate_to(old.len()),
             false => Ok(()),
         });
@@ -486,13 +486,13 @@ fn escapes_repository(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
 /// and two threads replacing the same file at the same time sometimes fail on Windows. Hard links each have their own
 /// real path, so `bun fmt` detects those by [`Identity`].
 #[derive(Default)]
-pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
+pub(crate) struct WrittenFiles(Guarded<FxHashSet<Vec<u8>>>);
 
 /// Replaces the text of the existing file at `path`. Links to the file stay intact. `Err` is the reason it wasn't
 /// written. A symlink inside `cwd`, the working directory, isn't followed out of the repository, because nobody reviews
-/// the symlinks in a checkout. A file that's already in `written` is skipped.
+/// the symlinks in a checkout. A file that's already in `already_written` is skipped.
 pub(crate) fn write_atomically(
-    written: &Written,
+    already_written: &WrittenFiles,
     cwd: &[u8],
     path: &[u8],
     text: &[u8],
@@ -513,7 +513,7 @@ pub(crate) fn write_atomically(
     if escapes_repository(cwd, path, &real) {
         return Err(ESCAPES_REPOSITORY.to_vec());
     }
-    if !written.0.lock().insert(real.clone()) {
+    if !already_written.0.lock().insert(real.clone()) {
         return Ok(());
     }
     write_through(&real, text)

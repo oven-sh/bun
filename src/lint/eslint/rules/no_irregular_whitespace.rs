@@ -85,22 +85,24 @@ fn kind_of_token_in(node: Node, offset: u32, piece: &mut Span) -> Option<TokenKi
     }
 }
 
-/// For each of `places`, which are sorted, returns the kind of the token it starts in, where that can be determined
-/// without tokenizing the file. Only nodes that contain one of them are visited.
-fn kinds_of_tokens_around<'a>(file: &'a File<'a>, places: &[Span]) -> Vec<Option<TokenKind>> {
-    let mut kinds = vec![None; places.len()];
+/// For each of `whitespace_spans`, which are sorted, returns the kind of the token it starts in, where that can be
+/// determined without tokenizing the file. Only nodes that contain one of them are visited.
+fn token_kinds_at<'a>(file: &'a File<'a>, whitespace_spans: &[Span]) -> Vec<Option<TokenKind>> {
+    let mut kinds = vec![None; whitespace_spans.len()];
     // In JSX, what counts as a string depends on where it is.
     if file.has_exprs([ExprTag::Jsx]) {
         return kinds;
     }
     let mut piece = Span::default();
-    let mut pending = vec![(Node::File(file), 0..places.len())];
+    let mut pending = vec![(Node::File(file), 0..whitespace_spans.len())];
     while let Some((node, within)) = pending.pop() {
-        // These places are in `node` but in none of its children.
+        // These spans are in `node` but in none of its children.
         let mut look_at = |own: std::ops::Range<usize>| {
             let own = (kinds.get_mut(own.clone()).unwrap_or_default().iter_mut())
-                .zip(places.get(own).unwrap_or_default());
-            own.for_each(|(kind, place)| *kind = kind_of_token_in(node, place.start, &mut piece));
+                .zip(whitespace_spans.get(own).unwrap_or_default());
+            own.for_each(|(kind, whitespace_span)| {
+                *kind = kind_of_token_in(node, whitespace_span.start, &mut piece)
+            });
         };
         let mut next = within.start;
         node.for_each_child(|child| {
@@ -109,7 +111,7 @@ fn kinds_of_tokens_around<'a>(file: &'a File<'a>, places: &[Span]) -> Vec<Option
             }
             let (span, rest) = (
                 child.span(),
-                places.get(next..within.end).unwrap_or_default(),
+                whitespace_spans.get(next..within.end).unwrap_or_default(),
             );
             let first = next + rest.partition_point(|it| it.start < span.start);
             let after = next + rest.partition_point(|it| it.start < span.end);
@@ -131,11 +133,11 @@ impl NoIrregularWhitespace {
     /// `known` is the kind of the token that contains it.
     fn is_skipped<'a>(&self, file: &'a File<'a>, offset: u32, known: Option<TokenKind>) -> bool {
         debug_assert!(
-            known.is_none() || known == file.token_or_comment_around(offset).map(Token::kind)
+            known.is_none() || known == file.token_or_comment_containing(offset).map(Token::kind)
         );
         let token = match known {
             Some(_) => None,
-            None => file.token_or_comment_around(offset),
+            None => file.token_or_comment_containing(offset),
         };
         let Some(kind) = known.or_else(|| token.map(Token::kind)) else {
             return false;
@@ -200,21 +202,25 @@ impl NoIrregularWhitespace {
             return;
         }
         // oxc's lexer makes the line separator that ends a `//` comment part of the comment, and doesn't record it.
-        let ends_comment = |place: Span| {
-            let before = place.start.checked_sub(1);
+        let ends_comment = |whitespace_span: Span| {
+            let before = whitespace_span.start.checked_sub(1);
             cx.language().is_oxlint
                 && matches!(
-                    irregular_at(cx.slice(place)),
+                    irregular_at(cx.slice(whitespace_span)),
                     Some((Irregular::LineTerminator, _))
                 )
                 && before
-                    .and_then(|it| cx.file().token_or_comment_around(it))
-                    .is_some_and(|it| it.kind() == TokenKind::Line && it.span().end == place.start)
+                    .and_then(|it| cx.file().token_or_comment_containing(it))
+                    .is_some_and(|it| {
+                        it.kind() == TokenKind::Line && it.span().end == whitespace_span.start
+                    })
         };
-        for (&place, kind) in found.iter().zip(kinds_of_tokens_around(cx.file(), &found)) {
-            if !self.is_skipped(cx.file(), place.start, kind) && !ends_comment(place) {
-                cx.report(place, NO_IRREGULAR_WHITESPACE).hint_with(|| {
-                    let character = strings::wtf8_first_codepoint(cx.slice(place))?;
+        for (&whitespace_span, kind) in found.iter().zip(token_kinds_at(cx.file(), &found)) {
+            if !self.is_skipped(cx.file(), whitespace_span.start, kind)
+                && !ends_comment(whitespace_span)
+            {
+                cx.report(whitespace_span, NO_IRREGULAR_WHITESPACE).hint_with(|| {
+                    let character = strings::wtf8_first_codepoint(cx.slice(whitespace_span))?;
                     Some(format!("It is the character U+{character:04X}. Replace it with a plain space or a line break."))
                 });
             }

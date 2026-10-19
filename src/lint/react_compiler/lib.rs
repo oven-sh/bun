@@ -71,12 +71,12 @@ pub fn findings<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Finding] {
         let findings = program::compile_program(file, flavor, wanted);
         #[cfg(debug_assertions)]
         {
-            let of_wanted = |all: &[Finding]| -> Vec<Finding> {
+            let only_wanted = |all: &[Finding]| -> Vec<Finding> {
                 let is_wanted = |it: &&Finding| wanted.has(it.category);
                 all.iter().filter(is_wanted).cloned().collect()
             };
             let all = program::compile_program(file, flavor, Categories::ALL);
-            debug_assert_eq!(of_wanted(&findings), of_wanted(&all));
+            debug_assert_eq!(only_wanted(&findings), only_wanted(&all));
         }
         (findings, wanted)
     });

@@ -888,7 +888,7 @@ impl<'a> VarDecl<'a> {
 
     #[inline]
     pub fn ty(self) -> Option<TypeNode<'a>> {
-        TypeNode::written(self.file, self.raw().ty)
+        TypeNode::in_source(self.file, self.raw().ty)
     }
 
     #[inline]

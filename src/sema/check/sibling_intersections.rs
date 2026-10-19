@@ -149,30 +149,30 @@ pub(super) struct FactsOfName<'a, 'p> {
     /// `SiblingIntersections::numbers_of` for the intersection's members.
     numbers: &'a [u32],
     /// For each property: the index of its member in `numbers`, and its position in the member's shape.
-    places: &'a [(u32, u32)],
+    prop_locations: &'a [(u32, u32)],
 }
 
 impl<'a, 'p> FactsOfName<'a, 'p> {
     pub(super) fn new(
         all: &'a mut SiblingIntersections<'p>,
         numbers: &'a [u32],
-        places: &'a [(u32, u32)],
+        prop_locations: &'a [(u32, u32)],
     ) -> FactsOfName<'a, 'p> {
         all.name += 1;
         FactsOfName {
             all,
             numbers,
-            places,
+            prop_locations,
         }
     }
 
-    /// `nth` is an index into `places`.
+    /// `nth` is an index into `prop_locations`.
     #[inline]
     fn fact(&mut self, nth: usize) -> Option<&mut Fact> {
-        let &(at, position) = self.places.get(nth)?;
+        let &(at, position) = self.prop_locations.get(nth)?;
         let &number = self.numbers.get(at as usize)?;
-        let of_member = self.all.facts.get_mut(number as usize)?;
-        let fact = of_member.get_mut(position as usize)?;
+        let member_facts = self.all.facts.get_mut(number as usize)?;
+        let fact = member_facts.get_mut(position as usize)?;
         if fact.generation != self.all.generation {
             fact.generation = self.all.generation;
             (fact.instantiation_effects, fact.type_effects) = (Effects::Unknown, Effects::Unknown);
@@ -181,7 +181,7 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
     }
 
     /// `propSet.Add`: returns false if an equal `symbol` was added since `new`. `nth` is the property's index in
-    /// `places`.
+    /// `prop_locations`.
     #[inline]
     pub(super) fn add_symbol(&mut self, nth: usize, symbol: PropOfConstituent<'p>) -> bool {
         let known = self.fact(nth).map_or(0, |it| it.symbol);

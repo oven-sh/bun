@@ -59,12 +59,12 @@ impl Defaults {
         let mut on = FxHashMap::default();
         let config = configs::defaults(registry);
         for path in [&b"/a.js"[..], b"/a.jsx", b"/a.ts", b"/a.tsx"] {
-            let Some(FileConfig::Matched(of_file)) =
+            let Some(FileConfig::Matched(file_config)) =
                 config.as_ref().map(|it| it.get(registry, path))
             else {
                 continue;
             };
-            for rule in of_file.configured() {
+            for rule in file_config.configured() {
                 let meta = rule.entry.meta;
                 let (severity, _) = on
                     .entry((meta.plugin, meta.name))
@@ -223,11 +223,11 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry) {
 pub(crate) fn write_rules_by_plugin(out: &mut Vec<u8>, registry: &Registry, colors: bool) {
     let (descriptions, defaults) = (descriptions(), Defaults::new(registry));
     let all = listed(registry);
-    for of_plugin in all.chunk_by(|a, b| a.0 == b.0) {
-        let rows: Vec<_> = (of_plugin.iter())
+    for plugin_rules in all.chunk_by(|a, b| a.0 == b.0) {
+        let rows: Vec<_> = (plugin_rules.iter())
             .map(|(_, meta)| (registry.names_of(meta).id, *meta))
             .collect();
-        let directory = of_plugin[0].1.plugin.docs_directory();
+        let directory = plugin_rules[0].1.plugin.docs_directory();
         let noun = if rows.len() == 1 { "rule" } else { "rules" };
         pretty!(
             out,
@@ -318,8 +318,8 @@ fn facts(
 /// matches, or more than one.
 fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
     // A rule for another language can only be looked up by its ESLint name.
-    let of_language = |id: &[u8]| registry.find(id).filter(|it| !it.meta.languages.is_empty());
-    let by_name = |id: &[u8]| registry.find_by_any_name(id).or_else(|| of_language(id));
+    let language_rule = |id: &[u8]| registry.find(id).filter(|it| !it.meta.languages.is_empty());
+    let by_name = |id: &[u8]| registry.find_by_any_name(id).or_else(|| language_rule(id));
     if let Some(entry) = by_name(name) {
         return Ok(entry.meta);
     }

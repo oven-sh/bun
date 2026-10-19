@@ -9,7 +9,7 @@ use super::Error;
 use super::ast::{self, Call, Head, Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::lexer::{Token, TokenKind, id_len};
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal};
+use crate::syntax_error::{Message, Rejection};
 use bun_core::strings;
 use smallvec::SmallVec;
 
@@ -23,8 +23,8 @@ pub(crate) enum StatementKind {
     Mustache {
         node: NodeId,
         is_valid: bool,
-        /// See `Node::is_as_written`.
-        is_as_written: bool,
+        /// See `Node::is_verbatim`.
+        is_verbatim: bool,
     },
     /// The statements after `{{#a}}` come next in the list, up to `first_end`. Then come the statements after
     /// `{{else}}`, up to `next`.
@@ -35,7 +35,7 @@ pub(crate) enum StatementKind {
         /// `{{^a}}`
         is_inverted: bool,
         is_valid: bool,
-        is_as_written: bool,
+        is_verbatim: bool,
         block_params: Range,
     },
     /// Partials and decorators.
@@ -98,7 +98,7 @@ struct Header {
     path: Expression,
     call: Call,
     is_valid: bool,
-    is_as_written: bool,
+    is_verbatim: bool,
     block_params: Range,
     strip: Strip,
 }
@@ -109,7 +109,7 @@ struct Inverse {
     /// `{{else if a}}`: the block it turns into.
     chained: Option<NodeId>,
     /// The chained block is printed verbatim. It doesn't have its own closing tag, so the enclosing block must be too.
-    is_as_written: bool,
+    is_verbatim: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -139,7 +139,7 @@ fn is_this_path(original: &[u8]) -> bool {
 
 struct Parser<'a> {
     source: &'a [u8],
-    refusal: &'a Refusal,
+    rejection: &'a Rejection,
     tokens: &'a [Token],
     at: usize,
     tree: &'a mut Tree,
@@ -190,7 +190,7 @@ impl Parser<'_> {
         let (kind, start) = token.map_or((TokenKind::Eof, self.source.len() as u32), |it| {
             (it.kind, it.start)
         });
-        Error::Syntax(self.refusal.note(
+        Error::Syntax(self.rejection.note(
             match kind {
                 TokenKind::Eof => Message::UnexpectedEnd,
                 _ => message,
@@ -586,7 +586,7 @@ impl Parser<'_> {
         let is_splat = text == b"...attributes";
         // Of the dropped segments, only a leading `this` is printed again. And `[a/b]`, a single name, would be printed
         // like `a/b`, which is two.
-        let is_as_written = has_private_name
+        let is_verbatim = has_private_name
             || dropped != usize::from(is_this)
             || (has_slash
                 && segments.iter().any(|segment| {
@@ -650,8 +650,8 @@ impl Parser<'_> {
         };
         let tail = self.tree.add_names(tail);
         let node = self.tree.add(Kind::Path { head, name, tail }, start, end);
-        if is_as_written {
-            self.tree.keep_as_written(node);
+        if is_verbatim {
+            self.tree.keep_verbatim(node);
         }
         Ok(Expression {
             node,
@@ -703,13 +703,13 @@ impl Parser<'_> {
         &mut self,
         open: Token,
         close: TokenKind,
-        takes_block_params: bool,
+        allows_block_params: bool,
     ) -> Result<Header, Error> {
         self.has_dropped = false;
         let path = self.helper_name()?;
         let (call, is_valid) = self.call(path)?;
         let block_params = match self.peek().kind {
-            TokenKind::OpenBlockParams if takes_block_params => self.block_params()?,
+            TokenKind::OpenBlockParams if allows_block_params => self.block_params()?,
             _ => Range::default(),
         };
         let close = self.expect(close)?;
@@ -717,7 +717,7 @@ impl Parser<'_> {
             path,
             call,
             is_valid,
-            is_as_written: self.has_dropped,
+            is_verbatim: self.has_dropped,
             block_params,
             strip: self.strip(open, close),
         })
@@ -730,7 +730,7 @@ impl Parser<'_> {
         let last = self.expect(TokenKind::Close)?;
         if !self.closes(open, path.original) {
             return Err(Error::Syntax(
-                self.refusal
+                self.rejection
                     .note(Message::WrongNameAtEndOfBlock, first.start),
             ));
         }
@@ -744,7 +744,7 @@ impl Parser<'_> {
         Ok(Inverse {
             strip: self.strip(token, token),
             chained: None,
-            is_as_written: false,
+            is_verbatim: false,
         })
     }
 
@@ -789,8 +789,7 @@ impl Parser<'_> {
             is_inverted,
             // Without an `{{else}}` part, `{{^a}}` has no `program`.
             is_valid: header.is_valid && (!is_inverted || inverse.is_some()),
-            is_as_written: header.is_as_written
-                || inverse.is_some_and(|inverse| inverse.is_as_written),
+            is_verbatim: header.is_verbatim || inverse.is_some_and(|inverse| inverse.is_verbatim),
             block_params: header.block_params,
         };
         self.end_statement(index, kind);
@@ -819,8 +818,8 @@ impl Parser<'_> {
                 Ok(Some(Inverse {
                     strip: header.strip,
                     chained: Some(node),
-                    is_as_written: header.is_as_written
-                        || inverse.is_some_and(|inverse| inverse.is_as_written),
+                    is_verbatim: header.is_verbatim
+                        || inverse.is_some_and(|inverse| inverse.is_verbatim),
                 }))
             }
             _ => Ok(None),
@@ -844,7 +843,7 @@ impl Parser<'_> {
         };
         if self.peek().kind == TokenKind::Eof {
             return Err(Error::Syntax(
-                self.refusal.note(Message::UnclosedBlock, open.start),
+                self.rejection.note(Message::UnclosedBlock, open.start),
             ));
         }
         let close = self.close_block(header.path.original)?;
@@ -872,7 +871,7 @@ impl Parser<'_> {
         // `@glimmer/syntax` turns it into an ordinary block, so it's printed verbatim.
         let header = Header {
             strip: Strip::default(),
-            is_as_written: true,
+            is_verbatim: true,
             ..self.header(open, TokenKind::CloseRawBlock, false)?
         };
         let index = self.add_statement(StatementKind::Unsupported, open.start, open.end);
@@ -884,7 +883,7 @@ impl Parser<'_> {
         let name = Text::source(close.start as usize + 5, close.end as usize - 4);
         if !self.closes(header.path.original, Original::Text(name)) {
             return Err(Error::Syntax(
-                self.refusal
+                self.rejection
                     .note(Message::WrongNameAtEndOfBlock, close.start),
             ));
         }
@@ -940,12 +939,12 @@ impl Parser<'_> {
         };
         let node = self.tree.add(kind, open.start as usize, close.end as usize);
         let is_valid = is_valid && !path.is_some_and(|path| path.is_splat);
-        let is_as_written = self.has_dropped;
+        let is_verbatim = self.has_dropped;
         self.add_statement(
             StatementKind::Mustache {
                 node,
                 is_valid,
-                is_as_written,
+                is_verbatim,
             },
             open.start,
             close.end,
@@ -1024,11 +1023,11 @@ pub(crate) fn parse(
     tokens: &[Token],
     tree: &mut Tree,
     statements: &mut Vec<Statement>,
-    refusal: &Refusal,
+    rejection: &Rejection,
 ) -> Result<(), Error> {
     let mut parser = Parser {
         source,
-        refusal,
+        rejection,
         tokens,
         at: 0,
         tree,

@@ -131,7 +131,7 @@ pub(super) fn body_with_directives(parent: Node<'_>) -> Option<List<'_, Stmt<'_>
 
 /// Fast path: true if `statement` is a call, an assignment or an `await`, like most. [`check`] never reports those.
 #[inline]
-pub fn is_plainly_used(statement: Stmt) -> bool {
+pub fn is_obviously_used(statement: Stmt) -> bool {
     statement.as_expr().is_some_and(|e| matches!(e.tag(), ExprTag::Call | ExprTag::Assign | ExprTag::Await))
 }
 
@@ -169,7 +169,7 @@ impl Rule for NoUnusedExpressions {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if is_plainly_used(statement) {
+        if is_obviously_used(statement) {
             return;
         }
         let mut prologue = std::mem::take(&mut cx.state);

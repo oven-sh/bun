@@ -115,7 +115,7 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
 }
 
 /// Returns the line break between the backticks and the text, or `None` if there's none.
-fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
+fn surrounding_line(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     if options.html_whitespace_sensitivity == HtmlWhitespaceSensitivity::Ignore {
         return Some(LineMode::Hard);
     }
@@ -176,7 +176,7 @@ pub(crate) fn label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<Label> {
     };
     let parser = parser_of(quasi, template, f).filter(|_| !is_blank(template))?;
     let text = text_with_placeholders(template, f.options().html_template_depth);
-    super::can_be_parsed(&text, parser).then(|| match line_around(&text, f.options()) {
+    super::can_be_parsed(&text, parser).then(|| match surrounding_line(&text, f.options()) {
         Some(_) => Label::Embed,
         None => Label::EmbedWithoutHug,
     })
@@ -357,7 +357,7 @@ pub(crate) fn write_template<'a>(
         cursor_offset: None,
         ..super::options_of_host(f.options(), parser)
     };
-    let line = line_around(&text, &options);
+    let line = surrounding_line(&text, &options);
     // The printer decides where the lines start. But languages that are printed separately (JSON, YAML, ..) need to
     // know the available width up front, so assume the indentation the file would have if it had been formatted before.
     let indent_level = indent_level_in_source(e, &options, f) + u32::from(line.is_some());
@@ -366,11 +366,11 @@ pub(crate) fn write_template<'a>(
     let context = JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     // This is all that's ever checked about the file name.
     let path = options.is_in_html_file.then_some(&b".html"[..]);
-    let written = f.write_embedded(context, &text, |f| {
+    let write_result = f.write_embedded(context, &text, |f| {
         super::write_document(&text, parser, path, &options, true, Some(indent_level), f)
     });
     let document = f.end_capture(slot);
-    let Ok(top_level_count) = written else {
+    let Ok(top_level_count) = write_result else {
         return false;
     };
     // Both tools format the HTML with Prettier's options.

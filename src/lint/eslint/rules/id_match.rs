@@ -356,8 +356,8 @@ impl IdMatch {
         };
         if is_checked {
             // For oxlint the type annotation isn't part of the span.
-            let place = if cx.language().is_oxlint { pat.span() } else { estree_span(pat.into()) };
-            self.report(place, name.bytes(), cx);
+            let report_span = if cx.language().is_oxlint { pat.span() } else { estree_span(pat.into()) };
+            self.report(report_span, name.bytes(), cx);
         }
     }
 

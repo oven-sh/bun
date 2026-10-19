@@ -63,7 +63,7 @@ impl Rule for VarsOnTop {
                 is_var_on_top(statement, body, skips_prologue)
             }),
             // ESLint only checks a namespace's body for an exported declaration.
-            Node::Stmt(around) => match around.kind() {
+            Node::Stmt(container) => match container.kind() {
                 // oxlint doesn't report it.
                 StmtKind::Module(_) if statement.is_exported() && is_oxlint => true,
                 StmtKind::Module(module) if statement.is_exported() => {
@@ -72,7 +72,7 @@ impl Rule for VarsOnTop {
                 // For oxlint, a block directly in a function's body has a top too.
                 StmtKind::Block(body)
                     if is_oxlint
-                        && matches!(around.parent(), Node::Func(func) if func.kind() != FnKind::StaticBlock) =>
+                        && matches!(container.parent(), Node::Func(func) if func.kind() != FnKind::StaticBlock) =>
                 {
                     is_var_on_top(statement, body, true)
                 }

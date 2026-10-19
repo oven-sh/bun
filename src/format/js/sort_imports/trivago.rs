@@ -108,11 +108,14 @@ impl Options {
 
 /// `isSortImportsIgnored`
 fn is_ignored(model: &Model, comments: super::babel::List) -> bool {
-    let is_js_blank = |byte: &u8| byte.is_ascii_whitespace() || *byte == 0x0B;
+    let is_js_whitespace = |byte: &u8| byte.is_ascii_whitespace() || *byte == 0x0B;
     model.list(comments).iter().any(|comment| {
         let value = model.comment_value(*comment);
-        let blanks = value.iter().take_while(|byte| is_js_blank(byte)).count();
-        value[blanks..].starts_with(b"sort-imports-ignore")
+        let whitespace_len = value
+            .iter()
+            .take_while(|byte| is_js_whitespace(byte))
+            .count();
+        value[whitespace_len..].starts_with(b"sort-imports-ignore")
     })
 }
 

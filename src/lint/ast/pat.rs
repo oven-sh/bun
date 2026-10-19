@@ -76,7 +76,7 @@ impl<'a> Pat<'a> {
 
     /// The pattern that contains `inner` as a property value or an element.
     #[inline]
-    fn around(file: &'a super::File<'a>, inner: hir::PatId) -> Node<'a> {
+    fn enclosing_pattern(file: &'a super::File<'a>, inner: hir::PatId) -> Node<'a> {
         match file.bound.pat_parent.get(inner.idx()) {
             Some(&(PatParent::Prop(owner, _) | PatParent::Elem(owner, _))) => {
                 Node::Pat(Pat::new(file, owner))
@@ -188,7 +188,7 @@ impl<'a> PatProp<'a> {
     /// The object pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Pat::around(self.file, self.value().id())
+        Pat::enclosing_pattern(self.file, self.value().id())
     }
 }
 
@@ -227,7 +227,7 @@ impl<'a> PatElem<'a> {
     /// The array pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Pat::around(
+        Pat::enclosing_pattern(
             self.file,
             self.file
                 .hir

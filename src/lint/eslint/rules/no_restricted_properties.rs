@@ -43,7 +43,7 @@ impl ReportSpans {
     }
 
     /// `key` is the key of a property in the pattern.
-    fn of_pattern(pattern: Span, key: Option<Span>) -> ReportSpans {
+    fn for_pattern(pattern: Span, key: Option<Span>) -> ReportSpans {
         ReportSpans { eslint: pattern, ..ReportSpans::all_at(key.unwrap_or(pattern)) }
     }
 }
@@ -209,7 +209,7 @@ impl NoRestrictedProperties {
             let property_name = ast_utils::get_static_property_name(property);
             let spans = || {
                 let key = property.key().map(|it| it.inner_span(cx.file()));
-                ReportSpans::of_pattern(utils::estree_span(Node::Pat(pat)), key)
+                ReportSpans::for_pattern(utils::estree_span(Node::Pat(pat)), key)
             };
             self.check_property_access(spans, object_name, property_name, cx);
         }
@@ -230,7 +230,7 @@ impl NoRestrictedProperties {
         };
         for property in properties {
             let property_name = ast_utils::get_static_property_name(property);
-            let spans = || ReportSpans::of_pattern(e.span(), property.key().map(|it| it.inner_span(cx.file())));
+            let spans = || ReportSpans::for_pattern(e.span(), property.key().map(|it| it.inner_span(cx.file())));
             self.check_property_access(spans, object_name, property_name, cx);
         }
     }

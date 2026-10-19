@@ -226,7 +226,7 @@ impl<'a> VNode<'a> {
             (_, NamePart(i)) => self.names_through(i.max(1)),
             (_, Qualified(i) | MemberName(i)) if i + 1 >= self.name_len() => self.owner_of_name(),
             (_, Qualified(i) | MemberName(i)) => self.names_through(i + 1),
-            (Node::Param(param), Decorator(_)) => VNode::of_param(param),
+            (Node::Param(param), Decorator(_)) => VNode::from_param(param),
             (_, Decorator(_)) => main,
 
             (Node::Expr(e), part) => match part {
@@ -410,7 +410,7 @@ impl<'a> VNode<'a> {
                     && matches!(e.parent(), Node::Expr(above)
                         if matches!(above.kind(), ExprKind::Binary { op: BinOp::Comma, left, .. } if left == e));
                 if !is_operand_of_comma {
-                    root(VNode::of_expr(e));
+                    root(VNode::from_expr(e));
                 }
                 // Nothing calls this with the placeholder in `{}`, so its nodes are visited here, with the element.
                 if let ExprKind::Jsx(jsx) = e.kind() {
@@ -421,13 +421,13 @@ impl<'a> VNode<'a> {
                         .chain(values)
                         .filter(|it| it.is_missing())
                     {
-                        VNode::of_expr(empty)
+                        VNode::from_expr(empty)
                             .into_iter()
                             .for_each(|it| descend(it, visit));
                     }
                 }
             }
-            Node::Stmt(statement) => root(Some(VNode::of_stmt(statement))),
+            Node::Stmt(statement) => root(Some(VNode::from_stmt(statement))),
             Node::Func(func) => match function_node(func).base == node {
                 true => root(Some(VNode::new(func, Part::Main))),
                 false => root(
@@ -437,7 +437,7 @@ impl<'a> VNode<'a> {
                 ),
             },
             Node::Param(param) => {
-                let outermost = VNode::of_param(param);
+                let outermost = VNode::from_param(param);
                 match outermost.base == node {
                     true => root(Some(outermost)),
                     false => super::Nodes::decorators(param, param.modifiers()).for_each(root),
@@ -458,11 +458,11 @@ impl<'a> VNode<'a> {
             } else if VNode::is_heritage(ty) {
                 VNode::new(ty, Part::Heritage)
             } else {
-                VNode::of_type(ty)
+                VNode::from_type(ty)
             })),
-            Node::Pat(pat) => root(VNode::of_pat(pat)),
-            Node::PatElem(element) => root(VNode::of_pat_elem(element)),
-            Node::TupleElem(element) => root(Some(VNode::of_tuple_elem(element))),
+            Node::Pat(pat) => root(VNode::from_pat(pat)),
+            Node::PatElem(element) => root(VNode::from_pat_elem(element)),
+            Node::TupleElem(element) => root(Some(VNode::from_tuple_elem(element))),
             _ => root(Some(VNode::new(node, Part::Main))),
         }
     }

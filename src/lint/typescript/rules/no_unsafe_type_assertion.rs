@@ -48,7 +48,7 @@ impl NoUnsafeTypeAssertion {
         let expression_type = expression.ty();
         let asserted_type = type_annotation.ty();
         // oxlint points at the expression: `<A>b`.
-        let place = if cx.language().is_oxlint { expression.outer_span() } else { node.span() };
+        let report_span = if cx.language().is_oxlint { expression.outer_span() } else { node.span() };
         // `as A`, `<A>`
         let (operand, annotation) = (expression.outer_span(), type_annotation.outer_span());
         let assertion = match node.span().start < operand.start {
@@ -73,7 +73,7 @@ impl NoUnsafeTypeAssertion {
 
         // Asserting unknown ==> any.
         if is_type_any_type(asserted_type) && is_type_unknown_type(expression_type) {
-            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
+            cx.report(report_span, UNSAFE_TO_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", "`any`")
                 .labels_with(labels);
@@ -81,7 +81,7 @@ impl NoUnsafeTypeAssertion {
         }
 
         if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, expression) {
-            cx.report(place, UNSAFE_OF_ANY_TYPE_ASSERTION)
+            cx.report(report_span, UNSAFE_OF_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_expression_any.sender))
                 .labels_with(labels);
@@ -89,7 +89,7 @@ impl NoUnsafeTypeAssertion {
         }
 
         if let Some(unsafe_asserted_any) = is_unsafe_assignment(asserted_type, expression_type, None::<Expr<'a>>) {
-            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
+            cx.report(report_span, UNSAFE_TO_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_asserted_any.sender))
                 .labels_with(labels);
@@ -115,7 +115,7 @@ impl NoUnsafeTypeAssertion {
                 Some(_) => {}
             }
         }
-        cx.report(place, message)
+        cx.report(report_span, message)
             .comments_apply_at(assertion)
             .data("type", asserted_type.to_text())
             .labels_with(labels);

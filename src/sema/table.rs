@@ -347,7 +347,7 @@ impl<A: Alloc> Bases<A> {
     fn count_in(&self, file: FileId) -> usize {
         match self.1.get(file.idx()) {
             Some(&count) => count as usize,
-            None => self.of_file(file).len(),
+            None => self.range_of(file).len(),
         }
     }
 
@@ -367,7 +367,7 @@ impl<A: Alloc> Bases<A> {
     }
 
     /// Returns the range of `file`'s nodes in the concatenation.
-    fn of_file(&self, file: FileId) -> std::ops::Range<usize> {
+    fn range_of(&self, file: FileId) -> std::ops::Range<usize> {
         let (end, start) = (self.0[file.idx() + 1], self.0[file.idx()]);
         start as usize..end as usize
     }
@@ -477,13 +477,13 @@ pub struct Footprint {
     /// Nonzero cells, or map entries.
     pub entries: usize,
     /// Values stored out of line.
-    pub kept: usize,
+    pub out_of_line_values: usize,
 }
 
 impl Footprint {
     const PAGE: usize = 16 << 10;
 
-    fn of_cells<C: Cell>(cells: &[C]) -> Footprint {
+    fn from_cells<C: Cell>(cells: &[C]) -> Footprint {
         let mut all = Footprint {
             allocated: size_of_val(cells),
             ..Footprint::default()
@@ -501,16 +501,16 @@ impl Footprint {
             allocated: self.allocated + other.allocated,
             touched: self.touched + other.touched,
             entries: self.entries + other.entries,
-            kept: self.kept + other.kept,
+            out_of_line_values: self.out_of_line_values + other.out_of_line_values,
         }
     }
 
-    fn with_indirect<T, A: Alloc>(self, kept: &AppendVec<T, A>) -> Footprint {
-        let bytes = kept.len() as usize * size_of::<T>();
+    fn with_indirect<T, A: Alloc>(self, values: &AppendVec<T, A>) -> Footprint {
+        let bytes = values.len() as usize * size_of::<T>();
         Footprint {
             allocated: self.allocated + bytes,
             touched: self.touched + bytes,
-            kept: kept.len() as usize,
+            out_of_line_values: values.len() as usize,
             ..self
         }
     }
@@ -607,7 +607,7 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
     }
 
     pub fn footprint(&self) -> Footprint {
-        let pages = self.cells.written().map(Footprint::of_cells);
+        let pages = self.cells.written().map(Footprint::from_cells);
         Footprint {
             allocated: self.bases.total().div_ceil(Self::PER_CELL) * size_of::<V::Cell>(),
             ..pages.fold(Footprint::default(), Footprint::plus)
@@ -656,19 +656,19 @@ impl Follow for Handle {
 /// never moves.
 pub struct ByNodeIndirect<K, T, P: Policy = Frozen, A: Alloc = Global> {
     handles: ByNode<K, Handle, P, A>,
-    kept: AppendVec<T, A>,
+    values: AppendVec<T, A>,
     in_task: Slot<IndirectInTask<T>>,
 }
 
 impl<K: NodeKey, T, P: Policy, A: Alloc> ByNodeIndirect<K, T, P, A> {
     pub fn footprint(&self) -> Footprint {
-        self.handles.footprint().with_indirect(&self.kept)
+        self.handles.footprint().with_indirect(&self.values)
     }
 
     pub fn new_in(bases: &Bases<A>, alloc: A) -> Self {
         ByNodeIndirect {
             handles: ByNode::new_in(bases, alloc.clone()),
-            kept: AppendVec::new_in(alloc),
+            values: AppendVec::new_in(alloc),
             in_task: Slot::NONE,
         }
     }
@@ -704,7 +704,7 @@ impl<I: Id, V: Packed, P: Policy, A: Alloc> ById<I, V, P, A> {
     }
 
     pub fn footprint(&self) -> Footprint {
-        let chunks = self.cells.allocated().map(Footprint::of_cells);
+        let chunks = self.cells.allocated().map(Footprint::from_cells);
         chunks.fold(Footprint::default(), Footprint::plus)
     }
 
@@ -721,7 +721,7 @@ impl<I: Id, V: Packed, P: Policy, A: Alloc> ById<I, V, P, A> {
 /// A value too large for a cell, for some of the ids of a kind that's numbered in creation order.
 pub struct ByIdIndirect<I, T, P: Policy = Frozen, A: Alloc = Global> {
     handles: ById<I, Handle, P, A>,
-    kept: AppendVec<T, A>,
+    values: AppendVec<T, A>,
     in_task: Slot<IndirectInTask<T>>,
     /// See `hold_handles_of`.
     held_handle: Option<fn(&mut T) -> &mut Handle>,
@@ -737,7 +737,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
     pub fn new_in(alloc: A) -> Self {
         ByIdIndirect {
             handles: ById::new_in(alloc.clone()),
-            kept: AppendVec::new_in(alloc),
+            values: AppendVec::new_in(alloc),
             in_task: Slot::NONE,
             held_handle: None,
         }
@@ -746,7 +746,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
 
 impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
     pub fn footprint(&self) -> Footprint {
-        self.handles.footprint().with_indirect(&self.kept)
+        self.handles.footprint().with_indirect(&self.values)
     }
 
     pub(crate) fn set_slot(&mut self, slot: SlotNumber) {
@@ -779,7 +779,7 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
             allocated: bytes,
             touched: bytes,
             entries,
-            kept: 0,
+            out_of_line_values: 0,
         }
     }
 
@@ -821,15 +821,17 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, Frozen, A> {
 impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
     #[inline]
     pub fn get_ref(&self, key: &K) -> Option<&T> {
-        self.handles.get(key).map(|handle| self.kept.get(handle.0))
+        self.handles
+            .get(key)
+            .map(|handle| self.values.get(handle.0))
     }
 
     /// Doesn't overwrite an existing value. Returns the stored value. The value is written before
     /// its handle is stored in a cell. If the cell already holds another handle, the new value is
     /// unreachable.
     pub fn insert_ref(&self, key: K, value: T) -> &T {
-        let handle = Handle(self.kept.push(value));
-        self.kept.get(self.handles.insert(key, handle).0)
+        let handle = Handle(self.values.push(value));
+        self.values.get(self.handles.insert(key, handle).0)
     }
 
     #[inline]
@@ -878,8 +880,8 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
 //   entry.
 // - An entry under a node or a symbol counts as absent, for `get` and for `insert`, if it was stored by a commit that
 //   the task doesn't see in that file (`ByNode::seen`). The task computes its own entry, which loses when it commits.
-// - A value that's stored out of line goes to the shared `kept` when it's inserted, unless the entry is bound. A commit
-//   stores only the handle.
+// - A value that's stored out of line goes to the shared `values` when it's inserted, unless the entry is bound. A
+//   commit stores only the handle.
 // - `insert` and `rewrite` of a table keyed by a record store into the shared part immediately where
 //   `Task::may_write_immediately` allows it. `get` doesn't change. It reads the shared part, then the task-local part,
 //   which has the entries that are bound or waiting for a commit.
@@ -1005,7 +1007,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     #[cold]
     #[inline(never)]
     fn adopt(&self, task: &Task, buffer: &mut Buffer<'_>, file: u32) {
-        let (slot, nodes) = (self.own_slot(), self.bases.of_file(FileId(file)));
+        let (slot, nodes) = (self.own_slot(), self.bases.range_of(FileId(file)));
         buffer.cover(slot, file, &nodes, self.bases.count_in(FileId(file)));
         if !Self::has_a_whole_row(task, file) {
             return;
@@ -1059,7 +1061,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     #[inline(never)]
     fn put(&self, task: &Task, file: u32, index: u32, raw: u32, replaces: bool) -> u32 {
         let buffer = task.buffer();
-        let (kept, is_stored) = match self.cell_for(task, buffer, file, index) {
+        let (current, is_stored) = match self.cell_for(task, buffer, file, index) {
             Ok(cell) => {
                 let is_stored = replaces || *cell == 0;
                 if is_stored {
@@ -1074,7 +1076,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             }
         };
         if W::KEEPS_VISITED_FILE_LOCAL && file == buffer.file() {
-            return kept;
+            return current;
         }
         if is_stored {
             buffer.log_node(self.own_slot(), file, index);
@@ -1084,7 +1086,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         if task.writes_immediately() && self.bases.at(FileId(file), index).is_some() {
             task.hold_back();
         }
-        kept
+        current
     }
 
     #[inline]
@@ -1255,13 +1257,13 @@ type IndirectInTask<T> = ListInTask<(u64, T)>;
 /// Any holder, such as one of the checker's caches, must release it by then.
 #[inline]
 fn indirect_at<'p, 's, T: Send + 's, A: Alloc>(
-    kept: &'p AppendVec<T, A>,
+    values: &'p AppendVec<T, A>,
     slot: &Slot<IndirectInTask<T>>,
     task: &Task<'s>,
     handle: Handle,
 ) -> &'p T {
     match handle.local_number() {
-        None => kept.get(handle.0),
+        None => values.get(handle.0),
         Some(number) => {
             let value = &task.buffer().typed(slot).unwrap().get(number).1;
             // SAFETY: a `LocalVec` element never moves and lives until the task ends. See above.
@@ -1279,17 +1281,17 @@ fn store_in_task<'s, T: Send + 's>(
     Handle(task.buffer().typed_or_new(slot).push((key, value)) | LOCAL)
 }
 
-/// Stores a new entry's value, in the shared `kept` or in the task, and returns its handle. `may_be_shared` means that
-/// only `value` can make the entry bound. A value in `kept` whose handle is never committed stays there, unreachable,
-/// until the program is freed.
+/// Stores a new entry's value, in the shared `values` or in the task, and returns its handle. `may_be_shared` means
+/// that only `value` can make the entry bound. A value in `values` whose handle is never committed stays there,
+/// unreachable, until the program is freed.
 fn store_value<'s, T: Follow + Send + 's, A: Alloc>(
-    (kept, slot): (&AppendVec<T, A>, &Slot<IndirectInTask<T>>),
+    (values, slot): (&AppendVec<T, A>, &Slot<IndirectInTask<T>>),
     task: &Task<'s>,
     (key, may_be_shared): (u64, bool),
     value: T,
 ) -> Handle {
     if may_be_shared && task.shares_what_it_stores() && !value.is_bound(&task.own) {
-        return Handle(kept.push(value));
+        return Handle(values.push(value));
     }
     store_in_task(slot, task, key, value)
 }
@@ -1300,7 +1302,7 @@ impl<'s, K: NodeKey, T: Follow + Send + 's, W: Location, A: Alloc>
     #[inline]
     pub fn get_ref(&self, task: &Task<'s>, key: &K) -> Option<&T> {
         let handle = self.handles.get(task, key)?;
-        Some(indirect_at(&self.kept, &self.in_task, task, handle))
+        Some(indirect_at(&self.values, &self.in_task, task, handle))
     }
 
     /// See `ByNode::commit_of`.
@@ -1314,10 +1316,10 @@ impl<'s, K: NodeKey, T: Follow + Send + 's, W: Location, A: Alloc>
         let handle = self.handles.get(task, &key).unwrap_or_else(|| {
             let word = node_word(key.file().0, key.index());
             let has_cell = self.handles.bases.at(key.file(), key.index()).is_some();
-            let kept = store_value((&self.kept, slot), task, (word, has_cell), value);
-            self.handles.insert(task, key, kept, stored)
+            let new_handle = store_value((&self.values, slot), task, (word, has_cell), value);
+            self.handles.insert(task, key, new_handle, stored)
         });
-        indirect_at(&self.kept, slot, task, handle)
+        indirect_at(&self.values, slot, task, handle)
     }
 
     #[inline]
@@ -1354,7 +1356,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
     /// See `indirect_at` for how long the reference is valid.
     #[inline]
     pub fn at(&self, task: &Task<'s>, handle: Handle) -> &T {
-        indirect_at(&self.kept, &self.in_task, task, handle)
+        indirect_at(&self.values, &self.in_task, task, handle)
     }
 
     /// Doesn't overwrite an existing value. Returns the stored value.
@@ -1371,8 +1373,8 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
             && !value.is_bound(&task.own);
         let is_immediate = task.may_write_immediately(self.handles.slot, stored);
         if is_for_all && is_immediate && stays_in_task(task, &key) {
-            let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
-            return self.handles.insert_for_this_task(task, key, kept);
+            let new_handle = store_in_task(&self.in_task, task, u64::from(key.number()), value);
+            return self.handles.insert_for_this_task(task, key, new_handle);
         }
         // A handle with `LOCAL` is meaningless to another task.
         let holds_own =
@@ -1381,12 +1383,12 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
             if is_for_all {
                 task.hold_back();
             }
-            let kept = store_in_task(&self.in_task, task, u64::from(key.number()), value);
-            return self.handles.insert_in_task(task, key, kept);
+            let new_handle = store_in_task(&self.in_task, task, u64::from(key.number()), value);
+            return self.handles.insert_in_task(task, key, new_handle);
         }
         // A value that loses the race stays allocated, and nothing refers to it.
-        let kept = Handle(self.kept.push(value));
-        self.handles.insert(task, key, kept, stored)
+        let new_handle = Handle(self.values.push(value));
+        self.handles.insert(task, key, new_handle, stored)
     }
 
     #[inline]
@@ -1404,15 +1406,15 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         self.insert_ref(task, key, value, stored).1.clone()
     }
 
-    /// Declares that this table's values hold handles of `held`, in the field that `field` returns. A
-    /// value whose handle is task-local stays in the task. `held` must come before this table in
-    /// `buffered_fields!`. Call this after `set_slot`.
+    /// Declares that this table's values hold handles of `referenced`, in the field that `field`
+    /// returns. A value whose handle is task-local stays in the task. `referenced` must come before
+    /// this table in `buffered_fields!`. Call this after `set_slot`.
     pub(crate) fn hold_handles_of<J: Id, U, X: Location>(
         &mut self,
-        held: &ByIdIndirect<J, U, Buffered<X>, A>,
+        referenced: &ByIdIndirect<J, U, Buffered<X>, A>,
         field: fn(&mut T) -> &mut Handle,
     ) {
-        assert!(held.handles.slot < self.handles.slot);
+        assert!(referenced.handles.slot < self.handles.slot);
         self.held_handle = Some(field);
     }
 }
@@ -1474,13 +1476,13 @@ where
         replaces: bool,
     ) -> V {
         let is_committed = match self.put_immediately(task, (spread, &key, value), stored) {
-            Ok(held) => return held,
+            Ok(shared_value) => return shared_value,
             Err(is_committed) => is_committed,
         };
         let is_shared = is_committed && !key.is_local();
         let own = task.buffer().typed_or_new(&self.slot);
-        let place = own.len();
-        let kept = match replaces {
+        let new_index = own.len();
+        let current = match replaces {
             true => {
                 own.replace(spread, key, value);
                 value
@@ -1488,10 +1490,11 @@ where
             false => *own.insert(spread, key, value),
         };
         // An existing entry is already logged, and a commit stores whatever value it has at that point.
-        if is_shared && own.len() != place {
-            task.buffer().log_record(self.slot.number(), place as u32);
+        if is_shared && own.len() != new_index {
+            task.buffer()
+                .log_record(self.slot.number(), new_index as u32);
         }
-        kept
+        current
     }
 
     #[inline]
@@ -1759,7 +1762,7 @@ where
 // ───────────────────────────── `FileLocal` ─────────────────────────────
 
 /// Where a `FileLocal` table stores a node's value.
-struct Place {
+struct WordAndShift {
     /// Index of the word among the file's words.
     word: u32,
     /// Bit offset of the node's value within the word.
@@ -1770,13 +1773,13 @@ struct Place {
 /// with the neighboring nodes' values.
 impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
     #[inline]
-    fn place(index: u32) -> Place {
+    fn word_and_shift(index: u32) -> WordAndShift {
         match V::BITS {
-            0 => Place {
+            0 => WordAndShift {
                 word: index,
                 shift: 0,
             },
-            bits => Place {
+            bits => WordAndShift {
                 word: index / (64 / bits),
                 shift: index % (64 / bits) * bits,
             },
@@ -1785,7 +1788,7 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
 
     #[inline]
     pub fn get(&self, task: &Task, key: &K) -> Option<V> {
-        let Place { word, shift } = Self::place(key.index());
+        let WordAndShift { word, shift } = Self::word_and_shift(key.index());
         let raw = task.file_local().cell(self.slot, key.file().0, word) >> shift & Self::MASK;
         (raw != 0).then(|| V::unpack(V::Cell::narrow(raw)))
     }
@@ -1798,15 +1801,15 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
             return value;
         }
         if V::BITS != 0 {
-            if let Some(kept) = self.get(task, &key) {
-                return kept;
+            if let Some(previous) = self.get(task, &key) {
+                return previous;
             }
             self.rewrite(task, key, value);
             return value;
         }
         let raw = V::Cell::widen(value.pack());
-        let kept = (task.file_local()).put_if_empty(self.slot, key.file().0, key.index(), raw);
-        V::unpack(V::Cell::narrow(kept))
+        let current = (task.file_local()).put_if_empty(self.slot, key.file().0, key.index(), raw);
+        V::unpack(V::Cell::narrow(current))
     }
 
     /// Stores `value`, overwriting any existing value.
@@ -1816,7 +1819,7 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, FileLocal, A> {
             return;
         }
         let (file, raw) = (key.file().0, V::Cell::widen(value.pack()));
-        let Place { word, shift } = Self::place(key.index());
+        let WordAndShift { word, shift } = Self::word_and_shift(key.index());
         let raw = match V::BITS {
             0 => raw,
             _ => {

@@ -78,8 +78,8 @@ impl FuncNameMatching {
             (true, false) => NOT_MATCH_VARIABLE,
         };
         // oxlint reports at the function's name.
-        let place = if cx.language().is_oxlint { func_name.span() } else { node.span() };
-        cx.report(place, message).data("name", name).data("funcName", func_name);
+        let report_span = if cx.language().is_oxlint { func_name.span() } else { node.span() };
+        cx.report(report_span, message).data("name", name).data("funcName", func_name);
     }
 
     fn check_assignment<'a>(

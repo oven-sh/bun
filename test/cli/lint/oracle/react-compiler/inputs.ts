@@ -534,7 +534,8 @@ export function Component() {
   return <F text={text} />;
 }
 `,
-    // At the first function, not at the declaration of the second, which comes first.
+    // The fork reports this at the first function. Upstream reports it at the unreachable block's first instruction,
+    // which is the hoisted declaration of `second`.
     "unreachable.jsx": `function Component(props) {
   return <div>{first()}</div>;
 

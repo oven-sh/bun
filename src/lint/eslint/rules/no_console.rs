@@ -111,13 +111,13 @@ impl Rule for NoConsole {
             return;
         }
         // For oxlint the span ends with the name, before the `]`.
-        let place = match member.kind() {
+        let report_span = match member.kind() {
             ExprKind::Index { index, .. } if cx.language().is_oxlint => member.span().to(index.span()),
             _ => member.span(),
         };
         let report = match self.allowed.is_empty() {
-            true => cx.report(place, UNEXPECTED),
-            false => cx.report(place, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
+            true => cx.report(report_span, UNEXPECTED),
+            false => cx.report(report_span, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
         };
         if cx.language().is_oxlint {
             if let Some((at, text)) = oxlint_replacement(member) {

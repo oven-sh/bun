@@ -3,7 +3,7 @@
 //! The tree is flat. A node stores its kind, its span, and its children in source order, which are all the nodes that
 //! graphql-js puts inside it. A child's role in its parent follows from its kind and its position among its siblings.
 
-use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
+use crate::syntax_error::{Message, Rejected, Rejection, SyntaxError};
 use bun_core::fmt::{hex_digit_value, parse_hex4};
 use bun_lint::span::Span;
 
@@ -140,7 +140,7 @@ impl Tree {
     }
 }
 
-type Result<T> = std::result::Result<T, Refused>;
+type Result<T> = std::result::Result<T, Rejected>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum TokenKind {
@@ -230,7 +230,7 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
 struct Parser<'t> {
     text: &'t [u8],
     tree: &'t mut Tree,
-    refusal: Refusal,
+    rejection: Rejection,
     token: Token,
     /// The token after `token`, if it has been read already.
     next: Option<Token>,
@@ -250,7 +250,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), Syn
     let mut parser = Parser {
         text,
         tree,
-        refusal: Refusal::default(),
+        rejection: Rejection::default(),
         token: Token {
             kind: TokenKind::StartOfFile,
             start: 0,
@@ -260,7 +260,9 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), Syn
         last_end: 0,
         stack_check: crate::stack::check_for_tree(),
     };
-    parser.parse_document().map_err(|_| parser.refusal.reason())
+    parser
+        .parse_document()
+        .map_err(|_| parser.rejection.reason())
 }
 
 /// The error for a missing token of `kind`.
@@ -352,7 +354,7 @@ impl Parser<'_> {
                 }
                 _ => {
                     return Err(self
-                        .refusal
+                        .rejection
                         .note(Message::UnexpectedCharacter, position as u32));
                 }
             };
@@ -364,7 +366,7 @@ impl Parser<'_> {
     fn read_digits(&self, position: usize) -> Result<usize> {
         let rest = self.text.get(position..).unwrap_or_default();
         match rest.iter().take_while(|byte| byte.is_ascii_digit()).count() {
-            0 => Err(self.refusal.note(Message::ExpectedDigit, position as u32)),
+            0 => Err(self.rejection.note(Message::ExpectedDigit, position as u32)),
             count => Ok(position + count),
         }
     }
@@ -381,7 +383,7 @@ impl Parser<'_> {
                 .byte(position)
                 .is_some_and(|byte| byte.is_ascii_digit())
             {
-                return Err(self.refusal.note(Message::InvalidNumber, start as u32));
+                return Err(self.rejection.note(Message::InvalidNumber, start as u32));
             }
         } else {
             position = self.read_digits(position)?;
@@ -400,7 +402,7 @@ impl Parser<'_> {
         }
         match self.byte(position) {
             Some(byte) if byte == b'.' || is_name_start(byte) => {
-                Err(self.refusal.note(Message::InvalidNumber, start as u32))
+                Err(self.rejection.note(Message::InvalidNumber, start as u32))
             }
             _ => Ok((kind, position)),
         }
@@ -412,18 +414,18 @@ impl Parser<'_> {
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
             position += bun_core::strings::index_of_any(rest, b"\"\\\n\r")
-                .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
+                .ok_or_else(|| self.rejection.note(Message::UnclosedString, start as u32))?;
             match self.byte(position) {
                 Some(b'"') => return Ok(position + 1),
                 Some(b'\\') => {
                     position += read_escape(&self.text[position..])
                         .ok_or_else(|| {
-                            self.refusal
+                            self.rejection
                                 .note(Message::InvalidEscapeSequence, position as u32)
                         })?
                         .1
                 }
-                _ => return Err(self.refusal.note(Message::UnclosedString, start as u32)),
+                _ => return Err(self.rejection.note(Message::UnclosedString, start as u32)),
             }
         }
     }
@@ -433,7 +435,7 @@ impl Parser<'_> {
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
             position += bun_core::strings::index_of(rest, b"\"\"\"")
-                .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
+                .ok_or_else(|| self.rejection.note(Message::UnclosedString, start as u32))?;
             // `\"""` doesn't end the string.
             if position > start + 3 && self.byte(position - 1) == Some(b'\\') {
                 position += 3;
@@ -480,12 +482,12 @@ impl Parser<'_> {
 
     /// Reports `message` at the current token.
     #[cold]
-    fn unexpected(&self, message: Message) -> Refused {
+    fn unexpected(&self, message: Message) -> Rejected {
         let message = match self.token.kind {
             TokenKind::EndOfFile => Message::UnexpectedEnd,
             _ => message,
         };
-        self.refusal.note(message, self.token.start)
+        self.rejection.note(message, self.token.start)
     }
 
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
@@ -498,11 +500,11 @@ impl Parser<'_> {
     }
 
     fn eat(&mut self, kind: TokenKind) -> Result<bool> {
-        let is_there = self.peek(kind);
-        if is_there {
+        let is_match = self.peek(kind);
+        if is_match {
             self.advance()?;
         }
-        Ok(is_there)
+        Ok(is_match)
     }
 
     fn expect_keyword(&mut self, keyword: &[u8]) -> Result<()> {
@@ -513,11 +515,11 @@ impl Parser<'_> {
     }
 
     fn eat_keyword(&mut self, keyword: &[u8]) -> Result<bool> {
-        let is_there = self.is_keyword(self.token, keyword);
-        if is_there {
+        let is_match = self.is_keyword(self.token, keyword);
+        if is_match {
             self.advance()?;
         }
-        Ok(is_there)
+        Ok(is_match)
     }
 
     // ───────────────────────────── nodes ─────────────────────────────
@@ -556,7 +558,7 @@ impl Parser<'_> {
         match self.stack_check.is_safe_to_recurse() {
             true => Ok(()),
             false => Err(self
-                .refusal
+                .rejection
                 .note(Message::NestedTooDeeply, self.token.start)),
         }
     }
@@ -584,11 +586,11 @@ impl Parser<'_> {
         item: fn(&mut Self) -> Result<()>,
         close: TokenKind,
     ) -> Result<bool> {
-        let is_there = self.peek(open);
-        if is_there {
+        let is_present = self.peek(open);
+        if is_present {
             self.many(open, item, close)?;
         }
-        Ok(is_there)
+        Ok(is_present)
     }
 
     /// `open item* close`
@@ -695,7 +697,9 @@ impl Parser<'_> {
             b"query" => Ok(QUERY),
             b"mutation" => Ok(MUTATION),
             b"subscription" => Ok(SUBSCRIPTION),
-            _ => Err(self.refusal.note(Message::ExpectedDefinition, token.start)),
+            _ => Err(self
+                .rejection
+                .note(Message::ExpectedDefinition, token.start)),
         }
     }
 
@@ -888,7 +892,7 @@ impl Parser<'_> {
 
     /// Returns true if there's at least one directive.
     fn parse_directives_of(&mut self, argument: fn(&mut Self) -> Result<()>) -> Result<bool> {
-        let is_there = self.peek(TokenKind::At);
+        let has_any = self.peek(TokenKind::At);
         while self.peek(TokenKind::At) {
             let begin = self.begin();
             self.advance()?;
@@ -896,7 +900,7 @@ impl Parser<'_> {
             self.optional_many(TokenKind::ParenL, argument, TokenKind::ParenR)?;
             self.finish(Kind::Directive, 0, begin);
         }
-        Ok(is_there)
+        Ok(has_any)
     }
 
     fn parse_directives(&mut self) -> Result<bool> {
@@ -989,11 +993,11 @@ impl Parser<'_> {
     }
 
     fn parse_implements_interfaces(&mut self) -> Result<bool> {
-        let is_there = self.eat_keyword(b"implements")?;
-        if is_there {
+        let has_keyword = self.eat_keyword(b"implements")?;
+        if has_keyword {
             self.delimited_many(TokenKind::Amp, Self::parse_named_type)?;
         }
-        Ok(is_there)
+        Ok(has_keyword)
     }
 
     fn parse_fields_definition(&mut self) -> Result<bool> {
@@ -1050,11 +1054,11 @@ impl Parser<'_> {
     }
 
     fn parse_union_member_types(&mut self) -> Result<bool> {
-        let is_there = self.eat(TokenKind::Equals)?;
-        if is_there {
+        let has_equals = self.eat(TokenKind::Equals)?;
+        if has_equals {
             self.delimited_many(TokenKind::Pipe, Self::parse_named_type)?;
         }
-        Ok(is_there)
+        Ok(has_equals)
     }
 
     fn parse_enum_type_definition(&mut self) -> Result<()> {
@@ -1164,7 +1168,7 @@ impl Parser<'_> {
             _ => return Err(self.unexpected(Message::ExpectedDefinition)),
         };
         if !adds_something {
-            return Err(self.refusal.note(Message::EmptyExtension, self.last_end));
+            return Err(self.rejection.note(Message::EmptyExtension, self.last_end));
         }
         self.finish(kind, 0, begin);
         Ok(())

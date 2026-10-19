@@ -30,15 +30,11 @@ impl<'a> Node<'a> {
     fn children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
         match self {
             Node::Expr(e) if e.is_name_or_literal() => {}
-            _ => self.children_of_what_can_have_some_into(near, visit),
+            _ => self.children_of_non_leaf_into(near, visit),
         }
     }
 
-    fn children_of_what_can_have_some_into(
-        self,
-        near: Option<u32>,
-        visit: &mut dyn FnMut(Node<'a>),
-    ) {
+    fn children_of_non_leaf_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
         macro_rules! one {
             ($it:expr) => {
                 visit($it.into())

@@ -259,11 +259,11 @@ impl Checker<'_, '_> {
         } else {
             // A namespace import's target can be a copy of the module (`resolveESModuleSymbol`), so the type is read
             // from the alias.
-            let written = bound
+            let unresolved_symbol = bound
                 .expr_scope
                 .get(&e)
                 .and_then(|&scope| files.resolve_name(file, scope, name, meaning));
-            self.type_of_symbol(written.unwrap_or(symbol))
+            self.type_of_symbol(unresolved_symbol.unwrap_or(symbol))
         })
     }
 

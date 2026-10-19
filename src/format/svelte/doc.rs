@@ -299,12 +299,12 @@ pub(crate) fn trim_left<'a>(mut group: &mut Vec<Doc<'a>>, is_white_space: fn(&Do
 pub(crate) fn trim_right<'a>(mut group: &mut Vec<Doc<'a>>, is_white_space: fn(&Doc<'a>) -> bool) {
     loop {
         // One more than `lastNonWhitespace`.
-        let kept = (group
+        let trimmed_len = (group
             .iter()
             .rposition(|doc| !doc.is_empty() && !is_white_space(doc)))
         .map_or(0, |at| at + 1);
-        if kept < group.len() {
-            if !group.drain(kept..).all(|doc| doc.is_empty()) {
+        if trimmed_len < group.len() {
+            if !group.drain(trimmed_len..).all(|doc| doc.is_empty()) {
                 return;
             }
         } else {
@@ -342,8 +342,8 @@ pub(crate) struct Write<'w, 'a> {
 }
 
 /// Writes `doc` and frees each part as soon as it's written, because the written form takes as much memory again.
-pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Write<'_, 'a>) {
-    if !how.stack.has_room() {
+pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, context: &mut Write<'_, 'a>) {
+    if !context.stack.has_room() {
         return;
     }
     match &mut doc {
@@ -355,7 +355,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
         }
         Doc::List(parts) => {
             for part in std::mem::take(parts) {
-                write(part, out, how);
+                write(part, out, context);
             }
         }
         // The writer counts any start/end pair as content, even an empty one.
@@ -363,7 +363,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
         Doc::Group(contents) => {
             let id = ends_with_soft_line(contents).then(|| out.new_group_id());
             out.start_group_with(false, id);
-            write(contents.take(), out, how);
+            write(contents.take(), out, context);
             out.end_group();
             if let Some(id) = id {
                 out.note_line_at_end_of_group(id);
@@ -371,24 +371,24 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
         }
         Doc::Indent(contents) => {
             out.start_indent();
-            write(contents.take(), out, how);
+            write(contents.take(), out, context);
             out.end_indent();
         }
         Doc::Dedent(contents) => {
             out.start_dedent();
-            write(contents.take(), out, how);
+            write(contents.take(), out, context);
             out.end_dedent();
         }
         Doc::LineSuffix(contents) => {
             out.start_line_suffix();
-            write(contents.take(), out, how);
+            write(contents.take(), out, context);
             out.end_line_suffix();
         }
         Doc::Fill(parts) => {
             out.start_fill();
             for part in std::mem::take(parts) {
                 out.start_item();
-                write(part, out, how);
+                write(part, out, context);
                 out.end_item();
             }
             out.end_fill();
@@ -399,7 +399,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
         Doc::Literalline => out.text(b"\n"),
         Doc::BreakParent => out.break_parent(),
         Doc::Code(code) => {
-            (how.code)(code, out);
+            (context.code)(code, out);
             // A comment in the code that's deferred to the end of the line must not move past the `}`:
             // `{a[0 // b\n]}`.
             if matches!(**code, Code::Js(_)) {

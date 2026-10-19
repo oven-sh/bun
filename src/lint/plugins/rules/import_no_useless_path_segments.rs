@@ -96,8 +96,8 @@ impl Context<'_> {
         let diff = count_import_path.checked_sub(count_expected).filter(|it| *it > 0)?;
 
         let import_path_split = || strings::split(import_path, b"/");
-        let kept = import_path_split().take(count_expected).chain(import_path_split().skip(count_import_path + diff));
-        Some(to_relative_path(kept.collect::<Vec<&[u8]>>().join(&b'/')))
+        let remaining_segments = import_path_split().take(count_expected).chain(import_path_split().skip(count_import_path + diff));
+        Some(to_relative_path(remaining_segments.collect::<Vec<&[u8]>>().join(&b'/')))
     }
 }
 

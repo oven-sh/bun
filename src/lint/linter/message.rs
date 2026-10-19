@@ -238,11 +238,15 @@ impl LintMessage {
             is_hidden[from] = true;
             let fix = messages[from].fix.take();
             let suggestions = std::mem::take(&mut messages[from].suggestions);
-            let shown = &mut messages[with_types[found].1];
-            shown.fix = shown.fix.take().or(fix);
+            let typed_report = &mut messages[with_types[found].1];
+            typed_report.fix = typed_report.fix.take().or(fix);
             for suggestion in suggestions {
-                if !shown.suggestions.iter().any(|it| it.fix == suggestion.fix) {
-                    shown.suggestions.push(suggestion);
+                if !typed_report
+                    .suggestions
+                    .iter()
+                    .any(|it| it.fix == suggestion.fix)
+                {
+                    typed_report.suggestions.push(suggestion);
                 }
             }
         }
@@ -267,9 +271,9 @@ impl LintMessage {
         self.text(Part::Note, |it| &it.note)
     }
 
-    fn text(&self, part: Part, said: fn(&Details) -> &str) -> &str {
-        match self.details.as_deref().map(said) {
-            Some(said) if !said.is_empty() => said,
+    fn text(&self, part: Part, select_field: fn(&Details) -> &str) -> &str {
+        match self.details.as_deref().map(select_field) {
+            Some(selected) if !selected.is_empty() => selected,
             _ => self.constant_help.map_or("", |it| it.constant(part)),
         }
     }
@@ -411,11 +415,11 @@ pub(crate) fn write_json_with(
             }
         }
         value = loop {
-            let Some((parent, written)) = open.last_mut() else {
+            let Some((parent, written_count)) = open.last_mut() else {
                 return;
             };
-            let at = *written;
-            *written += 1;
+            let at = *written_count;
+            *written_count += 1;
             let comma: &[u8] = if at > 0 { b"," } else { b"" };
             match parent {
                 Json::Array(items) => match items.get(at) {
@@ -587,15 +591,15 @@ fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
 impl LintMessage {
     /// Sorts by line and column. The sort is stable. Most lists are already sorted.
     pub fn sort(messages: &mut [LintMessage]) {
-        let place = |it: &LintMessage| (it.line as i32, it.column as i32);
-        if !messages.is_sorted_by_key(place) {
-            crate::utils::sort::sort_by_key(messages, place);
+        let sort_key = |it: &LintMessage| (it.line as i32, it.column as i32);
+        if !messages.is_sorted_by_key(sort_key) {
+            crate::utils::sort::sort_by_key(messages, sort_key);
         }
     }
 
     /// The line and column to jump to. A report before the first line maps to the start of the file, and one before the
     /// first column maps to the start of the line.
-    pub fn place(&self) -> (u32, u32) {
+    pub fn line_and_column(&self) -> (u32, u32) {
         let is_of_rule = !matches!(self.rule_id, None | Some(RuleId::Unknown(_)));
         match is_of_rule && self.line as i32 <= 0 {
             true => (1, 1),
@@ -604,12 +608,12 @@ impl LintMessage {
     }
 
     /// Used where there's no ESLint to match. ESLint's own formats print whatever the rule passed. After this, the
-    /// message starts at [`LintMessage::place`] in every format and doesn't end before that.
+    /// message starts at [`LintMessage::line_and_column`] in every format and doesn't end before that.
     pub(crate) fn clamp_to_file(&mut self) {
         let signed = |(line, column): (u32, u32)| (line as i32, column as i32);
-        let place = self.place();
-        (self.line, self.column) = place;
-        self.end = self.end.filter(|end| signed(*end) >= signed(place));
+        let clamped_start = self.line_and_column();
+        (self.line, self.column) = clamped_start;
+        self.end = self.end.filter(|end| signed(*end) >= signed(clamped_start));
         self.not_numbers = NotNumbers::default();
     }
 

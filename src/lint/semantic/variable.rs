@@ -53,7 +53,7 @@ fn is_class_name(symbol: Symbol) -> bool {
 }
 
 /// Returns the class declaration that declares `symbol` and contains `from`.
-fn class_around<'a>(symbol: Symbol<'a>, from: Scope<'a>) -> Option<Class<'a>> {
+fn enclosing_class<'a>(symbol: Symbol<'a>, from: Scope<'a>) -> Option<Class<'a>> {
     if !is_class_name(symbol) {
         return None;
     }
@@ -153,7 +153,7 @@ impl<'a> Symbol<'a> {
     /// Returns the variable this symbol is for code in `from`. Inside a class declaration that it names, that's the one
     /// in the class's scope.
     pub fn variable_in(self, from: Scope<'a>) -> Variable<'a> {
-        let kind = match class_around(self, from) {
+        let kind = match enclosing_class(self, from) {
             Some(class) => VariableKind::NameInClass { class, outer: self },
             None => VariableKind::Declared(self),
         };

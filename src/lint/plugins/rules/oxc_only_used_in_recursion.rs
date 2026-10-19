@@ -93,7 +93,7 @@ fn symbol_references(symbol: Symbol<'_>) -> impl Iterator<Item = Reference<'_>> 
 }
 
 /// Returns the call that directly contains the reference, as an argument or as the callee.
-fn call_around(reference: Reference<'_>) -> Option<(Expr<'_>, Call<'_>)> {
+fn enclosing_call(reference: Reference<'_>) -> Option<(Expr<'_>, Call<'_>)> {
     let identifier = reference.expr().filter(|it| !it.is_parenthesized())?;
     let parent = identifier.parent().as_expr()?;
     Some((parent, parent.as_call()?))
@@ -161,7 +161,7 @@ fn report_parameter<'a>(
         fix.extend(symbol_references(symbol).map(|it| delete_with_preceding_separator(fixer, it.span())));
         // Also remove the argument from calls outside the function.
         let function_span = func.estree_span();
-        for (call_expr, call) in symbol_references(function).filter_map(call_around) {
+        for (call_expr, call) in symbol_references(function).filter_map(enclosing_call) {
             if call.args().len() == parameter_index + 1
                 && !function_span.contains(call_expr.span())
                 && let Some(argument) = call.args().get(parameter_index)
@@ -191,21 +191,21 @@ fn report_jsx_property<'a>(
             return None;
         }
         let mut fix = vec![delete_with_surrounding_separators(fixer, property.span())];
-        fix.extend(symbol_references(symbol).filter_map(|it| jsx_attribute_around(it.node())).map(|it| fixer.remove(it)));
+        fix.extend(symbol_references(symbol).filter_map(|it| enclosing_jsx_attribute(it.node())).map(|it| fixer.remove(it)));
         Some(fix)
     });
 }
 
 /// Returns the JSX attributes that contain `node`, innermost first, including spread attributes.
-fn jsx_attribute_items_around(node: Node<'_>) -> impl Iterator<Item = Prop<'_>> {
+fn enclosing_jsx_attribute_items(node: Node<'_>) -> impl Iterator<Item = Prop<'_>> {
     node.ancestors().filter_map(|it| match it {
         Node::Prop(prop) if prop.is_jsx_attribute() => Some(prop),
         _ => None,
     })
 }
 
-fn jsx_attribute_around(node: Node<'_>) -> Option<Prop<'_>> {
-    jsx_attribute_items_around(node).find(|it| it.kind() != PropKind::Spread)
+fn enclosing_jsx_attribute(node: Node<'_>) -> Option<Prop<'_>> {
+    enclosing_jsx_attribute_items(node).find(|it| it.kind() != PropKind::Spread)
 }
 
 fn jsx_element_of(attribute: Prop<'_>) -> Option<Jsx<'_>> {
@@ -216,7 +216,7 @@ fn jsx_element_of(attribute: Prop<'_>) -> Option<Jsx<'_>> {
 }
 
 fn is_used_with_spread_attribute(reference: Reference) -> bool {
-    jsx_attribute_items_around(reference.node())
+    enclosing_jsx_attribute_items(reference.node())
         .filter_map(jsx_element_of)
         .any(|element| element.attrs().iter().any(|it| it.kind() == PropKind::Spread))
 }
@@ -225,7 +225,7 @@ fn is_parameter_only_used_in_recursion<'a>(function: Symbol<'a>, parameter: Symb
     let mut is_used = false;
     for reference in symbol_references(parameter) {
         is_used = true;
-        let Some((_, call)) = call_around(reference) else {
+        let Some((_, call)) = enclosing_call(reference) else {
             return false;
         };
         let Some(call_arg) = call.args().get(parameter_index) else {
@@ -255,10 +255,10 @@ fn is_jsx_property_only_used_in_recursion<'a>(symbol: Symbol<'a>, property_name:
         let is_same_name = |key: Key<'a>| {
             matches!(key.kind(), KeyKind::Ident(name) if name == property_name && !bun_core::strings::contains_char(name.bytes(), b':'))
         };
-        if !jsx_attribute_around(node).and_then(Prop::key).is_some_and(is_same_name) {
+        if !enclosing_jsx_attribute(node).and_then(Prop::key).is_some_and(is_same_name) {
             return false;
         }
-        let element = jsx_attribute_items_around(node).next().and_then(jsx_element_of);
+        let element = enclosing_jsx_attribute_items(node).next().and_then(jsx_element_of);
         if element.and_then(get_jsx_element_symbol) != Some(function) {
             return false;
         }

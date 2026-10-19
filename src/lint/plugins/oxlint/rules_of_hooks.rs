@@ -61,8 +61,8 @@ fn is_function_like(func: &Func) -> bool {
     func.has_body() && func.kind() != FnKind::StaticBlock
 }
 
-fn function_around<'a>(node: Node<'a>, memo: &mut Memo<'a>) -> Option<Func<'a>> {
-    memo.function_around
+fn enclosing_function_of<'a>(node: Node<'a>, memo: &mut Memo<'a>) -> Option<Func<'a>> {
+    memo.enclosing_function
         .find(node, |_, parent| parent.as_func().filter(is_function_like))
 }
 
@@ -136,15 +136,17 @@ fn is_named_like_component_or_hook(func: Func) -> bool {
 /// True if a function enclosing `node` is named like a component or a hook, or is inside a `memo` or `forwardRef` call.
 fn is_somewhere_inside_component_or_hook<'a>(node: Node<'a>, memo: &mut Memo<'a>) -> bool {
     // Start at the innermost function, whose ancestors include every outer function's.
-    let Some(innermost) = function_around(node, memo) else {
+    let Some(innermost) = enclosing_function_of(node, memo) else {
         return false;
     };
-    let is_one = |it: Node<'a>| match it.as_func().filter(is_function_like) {
+    let is_component_or_hook = |it: Node<'a>| match it.as_func().filter(is_function_like) {
         Some(func) => is_named_like_component_or_hook(func),
         None => is_memo_or_forward_ref_call(it),
     };
     memo.inside_component_or_hook
-        .find(Node::Func(innermost), |it, _| is_one(it).then_some(()))
+        .find(Node::Func(innermost), |it, _| {
+            is_component_or_hook(it).then_some(())
+        })
         .is_some()
 }
 
@@ -265,7 +267,7 @@ pub(crate) fn check<'a, R: Rule>(
     let Some(func) = root
         .as_func()
         .filter(is_function_like)
-        .or_else(|| function_around(root, memo))
+        .or_else(|| enclosing_function_of(root, memo))
     else {
         report(
             TOP_LEVEL,
@@ -338,7 +340,8 @@ pub(crate) fn check<'a, R: Rule>(
     }
     // True if more of the statements enclose the call than enclose the function.
     let is_within = |statements: &Ranges| {
-        statements.count_around(node.span().start) > statements.count_around(func.span().start)
+        statements.count_containing(node.span().start)
+            > statements.count_containing(func.span().start)
     };
     let is_inside_try_catch = is_within(memo.try_statements(cx.file()));
     if is_use {

@@ -12,7 +12,7 @@ use super::stmt::{ModifiersOf, Start};
 use super::{Checkpoint, ListKind, Parser, ctx, take_span};
 use crate::lexer::Mark;
 use crate::token::T;
-use crate::{Options, Refusal};
+use crate::{Options, Rejection};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::check::jsdoc::syntax::{
@@ -341,7 +341,7 @@ fn is_jsdoc_only_token(at: JSDocScannerState) -> bool {
 impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, COMMENTS> {
     fn next_token(&mut self, from: usize) -> JSDocScannerState {
         if self.has_failed() {
-            return self.given_up();
+            return self.rejected_state();
         }
         self.scan_from(from);
         self.take_scanner_errors();
@@ -400,9 +400,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, C
         let base = self.s.modifiers.len();
         self.modifiers(ModifiersOf::TypeParameter);
         self.take_scanner_errors();
-        let written = self.s.modifiers.get(base..).unwrap_or_default();
-        let has_any = !written.is_empty();
-        for modifier in written {
+        let own_modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+        let has_any = !own_modifiers.is_empty();
+        for modifier in own_modifiers {
             if let ModifierKind::Keyword(flag) = modifier.kind {
                 modifiers.push((flag, modifier.pos));
             }
@@ -471,7 +471,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// The lexer's `ScannerState`.
     fn state(&self) -> JSDocScannerState {
         if self.has_failed() {
-            return self.given_up();
+            return self.rejected_state();
         }
         JSDocScannerState {
             token: token_of(self.lx.token),
@@ -485,7 +485,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// The state to return once the file is rejected. It makes the reader skip the rest of the comment.
-    fn given_up(&self) -> JSDocScannerState {
+    fn rejected_state(&self) -> JSDocScannerState {
         let end = self.lx.src.len();
         JSDocScannerState {
             token: JSDocToken::EndOfFile,
@@ -556,8 +556,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.rollback(&first.checkpoint);
         self.f.diagnostics.append(&mut reported);
         // `rollback` moved the lexer, so put the token back at the end of the text.
-        if let Some(why) = self.lx.refusal {
-            self.lx.refuse(why);
+        if let Some(why) = self.lx.rejection {
+            self.lx.reject(why);
         }
         after
     }
@@ -725,7 +725,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lx.skips_jsdoc_asterisks = false;
         // The specifiers store the index the declaration was expected to get.
         if self.f.imports.len() != imports {
-            self.refuse(Refusal::Unsupported);
+            self.reject(Rejection::Unsupported);
         }
         if spec.is_some() {
             self.f.specifier_uses.push(SpecifierUse {
@@ -819,11 +819,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lx
             .set_src(outer.src.get(..cut as usize).unwrap_or(outer.src));
         // The top level isn't an await context until the file is known to be a module.
-        let kept = match self.has_context(ctx::TOP_LEVEL) {
+        let inherited = match self.has_context(ctx::TOP_LEVEL) {
             true => ctx::YIELD | ctx::AMBIENT | ctx::TOP_LEVEL,
             false => ctx::YIELD | ctx::AMBIENT | ctx::AWAIT,
         };
-        self.context = self.context & kept | ctx::TYPE;
+        self.context = self.context & inherited | ctx::TYPE;
         // `PCJSDocComment`: like `PCJsxChildren`, every token is an element of it, so no list skips a token.
         self.lists = 1 << ListKind::JsxChildren as u32;
         self.errors_at = (u32::MAX, 0);
@@ -833,9 +833,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// The second half of `parseJSDocComment`, without the diagnostics.
     fn leave_comment(&mut self, outer: Outer<'a>) {
-        // A `T?` has no node yet.
+        // Never true, because nothing increments `unclaimed_nullable_types`.
         if self.unclaimed_nullable_types > outer.unclaimed_nullable_types {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         }
         self.lx.skips_jsdoc_asterisks = false;
         self.lx.set_src(outer.src);
@@ -852,13 +852,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;
         self.jsdoc.is_in_comment = false;
-        match self.lx.refusal {
+        match self.lx.rejection {
             None => {}
             // `Syntax` would only end the speculation in progress, and an error in a comment says nothing about that
             // speculation.
-            Some(Refusal::Syntax) => self.refuse(Refusal::Reported),
+            Some(Rejection::Syntax) => self.reject(Rejection::Reported),
             // Put the token back at the end of the whole text.
-            Some(why) => self.lx.refuse(why),
+            Some(why) => self.lx.reject(why),
         }
     }
 
@@ -868,14 +868,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             return None;
         }
         let comments = &self.lx.comments;
-        let behind = comments.partition_point(|comment| comment.pos as usize <= pos);
-        let around = behind.checked_sub(1).and_then(|index| comments.get(index));
-        match around {
+        let started = comments.partition_point(|comment| comment.pos as usize <= pos);
+        let containing = started.checked_sub(1).and_then(|index| comments.get(index));
+        match containing {
             Some(&Comment { end, .. }) if pos + 2 <= end as usize => {
                 Some(self.enter_comment(end - 2))
             }
             _ => {
-                self.refuse(Refusal::Unsupported);
+                self.reject(Rejection::Unsupported);
                 None
             }
         }
@@ -907,7 +907,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
         self.leave_comment(outer);
         if was_low.get() {
-            self.refuse(Refusal::TooDeep);
+            self.reject(Rejection::TooDeep);
         }
         doc
     }
@@ -1016,14 +1016,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 src.get(before..start as usize).unwrap_or_default(),
             );
             before = end as usize;
-            let is_like = is_jsdoc_like(comment);
+            let is_jsdoc = is_jsdoc_like(comment);
             // In JavaScript every comment is read, and nothing needs `SEE_OR_LINK`.
-            let found = match is_like && !self.f.is_js {
+            let found = match is_jsdoc && !self.f.is_js {
                 true => flags::JSDOC_LIKE | scan_jsdoc_comment_for_tags(comment),
                 false => flags::JSDOC_LIKE,
             };
             attached.has_see_or_link |= found & flags::SEE_OR_LINK != 0;
-            if !is_collecting || !is_like {
+            if !is_collecting || !is_jsdoc {
                 // A line comment ends with its line.
                 is_collecting |= comment.starts_with(b"//");
                 continue;
@@ -1162,7 +1162,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[cold]
     #[inline(never)]
     pub(crate) fn member_jsdoc(&mut self, member: &mut Member, first_modifier: usize) {
-        let (first_overload, written) = (self.s.members.len(), self.s.modifiers.len());
+        let (first_overload, modifiers_end) = (self.s.members.len(), self.s.modifiers.len());
         let mut host = Host::ClassMember(*member);
         self.with_jsdoc(member.start, member.loc.pos, false, &mut host);
         if let Host::ClassMember(documented) = host {
@@ -1173,12 +1173,15 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             return;
         }
         // An overload gets the keyword modifiers from the source, but not the ones from tags, and no decorators.
-        let written = self.s.modifiers.get(first_modifier..written);
-        let written = written.unwrap_or_default();
+        let source_modifiers = self.s.modifiers.get(first_modifier..modifiers_end);
+        let source_modifiers = source_modifiers.unwrap_or_default();
         let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
-        let keywords: SmallVec<[Modifier; 4]> =
-            written.iter().filter(is_keyword).copied().collect();
-        let decorators = written.len() - keywords.len();
+        let keywords: SmallVec<[Modifier; 4]> = source_modifiers
+            .iter()
+            .filter(is_keyword)
+            .copied()
+            .collect();
+        let decorators = source_modifiers.len() - keywords.len();
         let list = match keywords.is_empty() {
             true => Span::EMPTY,
             false => self.f.add_modifiers(&keywords),
@@ -1297,8 +1300,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[cold]
     #[inline(never)]
     pub(crate) fn list_reparsed(&mut self, from: usize) {
-        let made = self.jsdoc.reparsed.get(from..).unwrap_or_default();
-        self.s.ids.extend(made.iter().map(|statement| statement.0));
+        let created = self.jsdoc.reparsed.get(from..).unwrap_or_default();
+        self.s
+            .ids
+            .extend(created.iter().map(|statement| statement.0));
         self.jsdoc.reparsed.truncate(from);
     }
 
@@ -1311,14 +1316,14 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let mut index = 0;
         self.jsdoc.reparsed.retain(|&statement| {
             index += 1;
-            let is_passed_on = matches!(
+            let is_left_for_outer_list = matches!(
                 file.stmts.get(statement.idx()),
                 Some(Stmt {
                     kind: StmtKind::TypeAlias(_) | StmtKind::Import(_),
                     ..
                 })
             );
-            if index > from && !is_passed_on {
+            if index > from && !is_left_for_outer_list {
                 ids.push(statement.0);
                 return false;
             }

@@ -59,18 +59,18 @@ impl<'a> Reader<'a> {
             });
         }
         let token = token?;
-        let written = self.text.get(token.start..token.end)?;
-        let has_escapes = token.value.len() + 2 != written.len();
+        let source_text = self.text.get(token.start..token.end)?;
+        let has_escapes = token.value.len() + 2 != source_text.len();
         match token.kind {
             Kind::LineComment | Kind::BlockComment if self.mode == Mode::Json => {
                 Some((token.start, b"Comments are not allowed in JSON5"))
             }
-            Kind::String if written.starts_with(b"'") => {
+            Kind::String if source_text.starts_with(b"'") => {
                 Some((token.start, b"Strings must be in double quotes"))
             }
-            Kind::String if has_escapes => first_json5_only_escape(written)
+            Kind::String if has_escapes => first_json5_only_escape(source_text)
                 .map(|at| (token.start + at, &b"Invalid escape sequence"[..])),
-            Kind::Number if !is_json_number(written) => {
+            Kind::Number if !is_json_number(source_text) => {
                 Some(parse_error(Error::InvalidNumber { pos: token.start }))
             }
             _ => None,
@@ -118,8 +118,8 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Par
                 return Err(parse_error(Error::UnexpectedEof { pos: end }));
             }
             State::Value(Some(token)) => {
-                let written = reader.text.get(token.start..token.end).unwrap_or_default();
-                let kind = match (token.kind, written) {
+                let source_text = reader.text.get(token.start..token.end).unwrap_or_default();
+                let kind = match (token.kind, source_text) {
                     (Kind::String, _) => NodeKind::String,
                     (Kind::Boolean, _) => NodeKind::Boolean,
                     (Kind::Null, _) => NodeKind::Null,
@@ -137,7 +137,7 @@ fn run(reader: &mut Reader, tree: &mut Tree, options: Options) -> Result<(), Par
                 let index = tree.push(&token, kind);
                 // The only rule that reads string values looks for lone surrogates, and only an escape can produce one.
                 if kind == NodeKind::String
-                    && token.value.len() + 2 != written.len()
+                    && token.value.len() + 2 != source_text.len()
                     && strings::wtf8_has_surrogate(token.value)
                 {
                     tree.store_unescaped(index, token.value);

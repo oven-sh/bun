@@ -194,7 +194,7 @@ fn strings(value: &Json, name: &str) -> Result<Vec<Vec<u8>>, Vec<u8>> {
         .collect()
 }
 
-fn shown(name: &[u8]) -> &bstr::BStr {
+fn printable(name: &[u8]) -> &bstr::BStr {
     bstr::BStr::new(name)
 }
 
@@ -354,7 +354,7 @@ pub(crate) fn compile(
         {
             return Err(invalid(&format!(
                 "unknown group name `{}` in `groups`",
-                shown(name)
+                printable(name)
             )));
         }
     }
@@ -364,7 +364,7 @@ pub(crate) fn compile(
     {
         return Err(invalid(&format!(
             "`customGroups` name `{}` conflicts with a predefined group name; predefined names and `unknown` cannot be used as `groupName`",
-            shown(&definition.name)
+            printable(&definition.name)
         )));
     }
 

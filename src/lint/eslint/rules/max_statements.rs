@@ -20,7 +20,7 @@ pub struct State<'a> {
     /// own body or anything in nested functions and static blocks.
     in_blocks: Vec<u32>,
     /// The function or static block that contains a block.
-    around: AncestorMemo<'a, Func<'a>>,
+    enclosing_functions: AncestorMemo<'a, Func<'a>>,
     /// With `ignoreTopLevelFunctions`: how many functions aren't inside another function or static block.
     count: usize,
     /// The functions with too many statements, and how many each has.
@@ -34,20 +34,20 @@ impl MaxStatements {
     #[inline(never)]
     fn report<'a>(func: Func<'a>, count: usize, max: usize, cx: &Cx<'a, Self>) {
         // oxlint reports the whole function, and only uses the function's own name.
-        let (name, place) = match (cx.language().is_oxlint, func.name()) {
+        let (name, report_span) = match (cx.language().is_oxlint, func.name()) {
             (true, Some(name)) => ([&b"function `"[..], name.bytes(), b"`"].concat(), func.estree_span()),
             (true, None) => (b"function".to_vec(), func.estree_span()),
             (false, _) => {
                 let name = ast_utils::get_function_name_with_kind(func);
                 // Before ESLint 10, the report covers the whole function.
-                let place = match cx.language().eslint_major < 10 {
+                let report_span = match cx.language().eslint_major < 10 {
                     true => func.estree_span(),
                     false => ast_utils::get_function_head_loc(func),
                 };
-                (text::upper_case_first(&name).into_owned(), place)
+                (text::upper_case_first(&name).into_owned(), report_span)
             }
         };
-        cx.report(place, EXCEED)
+        cx.report(report_span, EXCEED)
             .data("name", name)
             .data("count", count)
             .data("max", max);
@@ -83,7 +83,7 @@ impl Rule for MaxStatements {
         // A `with` statement has the same tag.
         let len = block.as_block().map_or(0, List::len);
         if len > 0
-            && let Some(func) = cx.state.around.find(Node::Stmt(block), |_, parent| parent.as_func())
+            && let Some(func) = cx.state.enclosing_functions.find(Node::Stmt(block), |_, parent| parent.as_func())
         {
             let at = func.id().idx();
             if at >= cx.state.in_blocks.len() {

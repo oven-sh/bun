@@ -210,7 +210,7 @@ impl<'a> Node<'a> {
 
     /// The `Expr`, `Stmt`, `Member` or `Prop` that owns a function or a class. Any other node is returned as is.
     #[inline]
-    pub fn as_written(self) -> Node<'a> {
+    pub fn owner_or_self(self) -> Node<'a> {
         match self {
             Node::Func(func) => func.owner(),
             Node::Class(class) => class.owner(),
@@ -261,7 +261,7 @@ impl<'a> Node<'a> {
     }
 
     /// The node for the binder's `parent`.
-    fn of_parent(file: &'a File<'a>, parent: Parent) -> Node<'a> {
+    fn from_binder_parent(file: &'a File<'a>, parent: Parent) -> Node<'a> {
         let (hir, bound) = (&file.hir, &file.bound);
         match parent {
             Parent::None | Parent::File => Node::File(file),
@@ -497,7 +497,7 @@ impl<'a> Expr<'a> {
                 }
                 _ => Node::Expr(Expr::new(file, parent)),
             },
-            parent => Node::of_parent(file, parent),
+            parent => Node::from_binder_parent(file, parent),
         }
     }
 }
@@ -542,7 +542,7 @@ impl<'a> Stmt<'a> {
 
     #[inline(never)]
     fn parent_in_rare_cases(self, parent: Parent) -> Node<'a> {
-        match Node::of_parent(self.file, parent) {
+        match Node::from_binder_parent(self.file, parent) {
             // The binder records the `switch` as the parent of a statement in a clause.
             Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.as_switch() {
                 Some((_, cases)) => cases

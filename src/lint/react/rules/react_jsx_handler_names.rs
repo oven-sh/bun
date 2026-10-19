@@ -142,9 +142,9 @@ impl UpstreamOptions {
         let mut regexes = None;
         if !is_plain("eventHandlerPrefix") || !is_plain("eventHandlerPropPrefix") {
             let regex = |parts: &[&[u8]]| Regex::from_bytes(&parts.concat(), b"");
-            let of_props = event_handler_prop_prefix.as_deref().unwrap_or_default();
+            let prop_prefix = event_handler_prop_prefix.as_deref().unwrap_or_default();
             let event_handler = (event_handler_prefix.as_deref())
-                .map(|it| regex(&[b"^((props\\.", of_props, b")|((.*\\.)?", it, b"))[0-9]*[A-Z].*$"]))
+                .map(|it| regex(&[b"^((props\\.", prop_prefix, b")|((.*\\.)?", it, b"))[0-9]*[A-Z].*$"]))
                 .transpose()?;
             let prop_event_handler =
                 event_handler_prop_prefix.as_deref().map(|it| regex(&[b"^(", it, b"[A-Z].*|ref)$"])).transpose()?;
@@ -454,12 +454,12 @@ impl JsxHandlerNames {
         let (mut at, end) = (within.start as usize, within.end as usize);
         while let Some(found) = text.get(at..end).and_then(|rest| strings::index_of_char_usize(rest, byte)) {
             at += found + 1;
-            let end_of_it = match byte {
+            let match_end = match byte {
                 b'.' => end_of_handler_name_start(&self.event_handler_prefixes, text, at as u32, is_oxlint),
                 _ => end_of_literal(text, at as u32, b":", is_oxlint),
             };
-            if let Some(end_of_it) = end_of_it {
-                visit(at as u32 - 1, end_of_it);
+            if let Some(match_end) = match_end {
+                visit(at as u32 - 1, match_end);
             }
         }
     }

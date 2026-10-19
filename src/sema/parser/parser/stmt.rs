@@ -3,7 +3,7 @@
 use super::declared::Declares;
 use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::token::T;
-use crate::{Goal, Refusal};
+use crate::{Goal, Rejection};
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
@@ -203,7 +203,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.statement_jsdoc(statement);
         }
         match self.f.stmts.get(statement.idx()).map(|it| it.kind) {
-            // The other parser takes these for statements of the file if no block is around them.
+            // These make the file a module even as the body of an `if`, a loop, a `with` or a label. An
+            // enclosing block undoes that: see `statements_until_close_brace`.
             Some(StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. }) => {
                 self.f.has_module_syntax = true;
             }
@@ -623,8 +624,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => flags.intersects(!(Flags::EXPORT | Flags::DEFAULT)),
         };
         if (is_decorated || is_odd) && self.is_for_oxc() {
-            let place = self.place();
-            oxc::declaration(&mut self.f, self.lx.src, statement, place);
+            let site = self.call_site();
+            oxc::declaration(&mut self.f, self.lx.src, statement, site);
         }
         if self.options.is_javascript {
             self.check_js_statement(statement);
@@ -634,9 +635,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// True if a keyword is repeated among the modifiers above `base`, whose combined flags are `flags`.
     fn has_duplicate_modifier(&self, base: usize, flags: Flags) -> bool {
-        let written = self.s.modifiers.get(base..).unwrap_or_default();
+        let modifier_list = self.s.modifiers.get(base..).unwrap_or_default();
         let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
-        written.iter().filter(is_keyword).count() != flags.bits().count_ones() as usize
+        modifier_list.iter().filter(is_keyword).count() != flags.bits().count_ones() as usize
     }
 
     /// oxc's `parse_ts_declaration_statement` clears the await context before `declare`, `abstract`
@@ -736,13 +737,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Wraps `expression` in a statement. It belongs to a decorator that decorates nothing, which
     /// `checkDecorators` doesn't visit. `at`: its `@`. `end`: the end of the decorators.
     fn stray_decorator(&mut self, expression: ExprId, at: u32, end: u32) -> StmtId {
-        let written = self.f.exprs.get(expression.idx());
-        let written = written.map_or((at, at), |it| (it.pos, it.end));
+        let expression_span = self.f.exprs.get(expression.idx());
+        let expression_span = expression_span.map_or((at, at), |it| (it.pos, it.end));
         // The outermost parentheses are the last.
-        let is_around = |it: &&(ExprId, u32, u32)| it.0 == expression;
-        let (start, last) = match self.f.parens.iter().rfind(is_around) {
+        let wraps_expression = |it: &&(ExprId, u32, u32)| it.0 == expression;
+        let (start, last) = match self.f.parens.iter().rfind(wraps_expression) {
             Some(&(_, open, close)) => (open, close),
-            None => written,
+            None => expression_span,
         };
         self.f.stray_decorators.push((start, end));
         let id = StmtId(self.f.stmts.len() as u32);
@@ -1043,8 +1044,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let name = (member.pos, self.prev_end());
                 oxc::enum_member_name(&mut self.f.diagnostics, self.lx.src, name);
             }
-            if let Some(written) = bigint {
-                key = PropKey::Name(self.atom(written));
+            if let Some(bigint_text) = bigint {
+                key = PropKey::Name(self.atom(bigint_text));
             }
             let (name, computed_name) = match key {
                 PropKey::Name(name) | PropKey::Private(name) => {
@@ -1517,7 +1518,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             true => Atom::NONE,
             false if !self.is_identifier() => self.missing_identifier(0, 0).0,
             false => {
-                // The reference notes the name at the start of the statement.
+                // `keyword_identifier_positions` may hold the start of the parent node instead of the
+                // identifier's own position. Only the oxc dialect records the label itself.
                 let label = self.lx.atom;
                 let at = match self.options.dialect.oxc {
                     true => self.pos(),
@@ -1683,7 +1685,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let init = match self.token() {
                     T::Equals if self.recovers() => self.initializer(),
                     T::Equals => {
-                        self.refuse(Refusal::Reported);
+                        self.reject(Rejection::Reported);
                         ExprId::NONE
                     }
                     _ => ExprId::NONE,

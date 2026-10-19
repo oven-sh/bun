@@ -604,7 +604,7 @@ pub(crate) fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
 }
 
 /// Returns the `export` or `export default` wrapper of `statement`, if it's an exported declaration.
-fn export_around<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
+fn export_wrapper<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
     if matches!(
         statement.tag(),
         StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar
@@ -624,7 +624,7 @@ fn export_around<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
 impl<'a> AsAstNodes<'a> for Stmt<'a> {
     /// Includes the `export` wrapper of a declaration.
     fn as_ast_nodes(self) -> AstNodes<'a> {
-        export_around(self).unwrap_or_else(|| inner_of_stmt(self))
+        export_wrapper(self).unwrap_or_else(|| inner_of_stmt(self))
     }
 }
 
@@ -815,7 +815,7 @@ fn parent_of_owner<'a>(owner: Node<'a>) -> AstNodes<'a> {
     match owner {
         Node::Expr(e) => parent_of_expr(e, Level::Itself),
         Node::Stmt(statement) => {
-            export_around(statement).unwrap_or_else(|| parent_of_stmt(statement))
+            export_wrapper(statement).unwrap_or_else(|| parent_of_stmt(statement))
         }
         Node::Member(member) => member.as_ast_nodes(),
         Node::Type(ty) => ty.ast_parent(),
@@ -1001,7 +1001,7 @@ impl<'a> AstNodes<'a> {
             | N::TSImportEqualsDeclaration(statement)
             | N::TSExportAssignment(statement)
             | N::TSNamespaceExportDeclaration(statement) => {
-                export_around(statement).unwrap_or_else(|| parent_of_stmt(statement))
+                export_wrapper(statement).unwrap_or_else(|| parent_of_stmt(statement))
             }
 
             N::SwitchCase(case) => match case.parent() {

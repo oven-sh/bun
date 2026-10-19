@@ -54,28 +54,28 @@ impl<'a> BeforeNormalizing<'a> {
     }
 }
 
-/// Where a parser records its syntax error. The error type that it propagates, [`Refused`], is zero-sized, so the
+/// Where a parser records its syntax error. The error type that it propagates, [`Rejected`], is zero-sized, so the
 /// success path doesn't pay for carrying the reason.
-pub(crate) struct Refusal(std::cell::Cell<SyntaxError>);
+pub(crate) struct Rejection(std::cell::Cell<SyntaxError>);
 
-impl Default for Refusal {
+impl Default for Rejection {
     fn default() -> Self {
-        Refusal(std::cell::Cell::new(SyntaxError(
+        Rejection(std::cell::Cell::new(SyntaxError(
             Message::UnexpectedToken,
             0,
         )))
     }
 }
 
-/// The input was rejected, and the reason was recorded in a [`Refusal`].
+/// The input was rejected, and the reason was recorded in a [`Rejection`].
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct Refused(());
+pub(crate) struct Rejected(());
 
-impl Refusal {
+impl Rejection {
     #[cold]
-    pub(crate) fn note(&self, message: Message, offset: u32) -> Refused {
+    pub(crate) fn note(&self, message: Message, offset: u32) -> Rejected {
         self.0.set(SyntaxError(message, offset));
-        Refused(())
+        Rejected(())
     }
 
     /// The most recently recorded error.

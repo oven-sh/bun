@@ -318,11 +318,11 @@ struct WrittenRule {
 /// The `rules` of `json`.
 fn written_rules(json: &Json) -> Vec<WrittenRule> {
     let rules = json.get(b"rules").and_then(Json::as_object);
-    let written = |(id, setting): &(Vec<u8>, Json)| {
+    let to_written_rule = |(id, setting): &(Vec<u8>, Json)| {
         let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
         let plugin = match (prefix, parse_rule_id(&key).0) {
             (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
-            (b"", of_key) => Cow::Borrowed(of_key),
+            (b"", key_prefix) => Cow::Borrowed(key_prefix),
             (prefix, _) => canonical_oxlint_plugin(prefix),
         };
         let plugin = match &*plugin {
@@ -338,7 +338,11 @@ fn written_rules(json: &Json) -> Vec<WrittenRule> {
             replaced_duplicate: false,
         }
     };
-    rules.unwrap_or_default().iter().map(written).collect()
+    rules
+        .unwrap_or_default()
+        .iter()
+        .map(to_written_rule)
+        .collect()
 }
 
 /// oxlint's `Oxlintrc::merge` for rules. The rules of `extended` that `own` doesn't list are added, and the result is
@@ -351,13 +355,16 @@ fn merged(own: Vec<WrittenRule>, extended: Vec<WrittenRule>) -> Vec<WrittenRule>
     // The first entry for each name, in insertion order, and the names' hashes.
     let mut firsts: Vec<(usize, bool)> = Vec::new();
     let mut hashes: Vec<u32> = Vec::new();
-    let mut places: FxHashMap<(&str, &str), usize> = FxHashMap::default();
+    let mut first_index_by_name: FxHashMap<(&str, &str), usize> = FxHashMap::default();
     for (at, it) in all.iter().flatten().enumerate() {
         let name = (text(&it.plugin), text(&it.name));
-        match places.get(&name).and_then(|place| firsts.get_mut(*place)) {
+        match first_index_by_name
+            .get(&name)
+            .and_then(|first_index| firsts.get_mut(*first_index))
+        {
             Some(first) => first.1 = true,
             None => {
-                places.insert(name, firsts.len());
+                first_index_by_name.insert(name, firsts.len());
                 hashes.push(FxBuildHasher.hash_one(name) as u32);
                 firsts.push((at, it.replaced_duplicate));
             }
@@ -365,7 +372,7 @@ fn merged(own: Vec<WrittenRule>, extended: Vec<WrittenRule>) -> Vec<WrittenRule>
     }
     let order = crate::semantic::hashbrown_table_order(&hashes, 0);
     let order: Vec<(usize, bool)> = (order.iter())
-        .filter_map(|place| firsts.get(*place as usize).copied())
+        .filter_map(|first_index| firsts.get(*first_index as usize).copied())
         .collect();
     let in_order = order.iter().filter_map(|&(at, replaced_duplicate)| {
         let it = all.get_mut(at)?.take()?;
@@ -537,11 +544,11 @@ impl Rc<'_, '_> {
             if find_js_rule(js_plugins, id).is_some() {
                 continue;
             }
-            let (key, (written, name)) = (oxlint_rule_key(id), parse_rule_id(id));
-            let plugin = match (written, parse_rule_id(&key).0) {
+            let (key, (written_prefix, name)) = (oxlint_rule_key(id), parse_rule_id(id));
+            let plugin = match (written_prefix, parse_rule_id(&key).0) {
                 (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
-                (b"", of_key) => Cow::Borrowed(of_key),
-                (written, _) => canonical_oxlint_plugin(written),
+                (b"", key_prefix) => Cow::Borrowed(key_prefix),
+                (written_prefix, _) => canonical_oxlint_plugin(written_prefix),
             };
             let is_on = *plugin == *b"eslint"
                 || plugins
@@ -550,7 +557,7 @@ impl Rc<'_, '_> {
             let options = setting.as_array().and_then(|it| it.get(1..));
             if is_on
                 && is_in_oxlint(&plugin, name, &key)
-                && let Some(why) = oxlint_options::refusal(&key, options.unwrap_or_default())
+                && let Some(why) = oxlint_options::options_error(&key, options.unwrap_or_default())
             {
                 let start: &[u8] = b"Invalid configuration for rule `";
                 let name = parse_rule_id(&key).1;
@@ -739,12 +746,13 @@ impl Rc<'_, '_> {
             })?);
         }
         let categories = json.get(b"categories");
-        let of_the_file = json.get(b"$categoriesOfTheFile").or(categories);
-        for (written, all) in [
+        let own_categories = json.get(b"$categoriesOfTheFile").or(categories);
+        for (category_json, all) in [
             (categories, &mut self.categories),
-            (of_the_file, &mut self.file_categories),
+            (own_categories, &mut self.file_categories),
         ] {
-            for (category, severity) in written.and_then(Json::as_object).unwrap_or_default() {
+            for (category, severity) in category_json.and_then(Json::as_object).unwrap_or_default()
+            {
                 let severity = match severity.as_str() {
                     Some(b"allow") => Some(Severity::Off),
                     Some(b"deny") => Some(Severity::Error),
@@ -833,8 +841,8 @@ impl Rc<'_, '_> {
         // All files' plugins are on, or oxlint's defaults if no file lists any.
         let on = self.named_plugins.clone().unwrap_or(plugins);
         if !is_extended {
-            let written: Vec<_> = (rules.iter().map(|it| (&it.id[..], &it.setting))).collect();
-            self.reject_invalid_options(&written, &on)?;
+            let rule_entries: Vec<_> = (rules.iter().map(|it| (&it.id[..], &it.setting))).collect();
+            self.reject_invalid_options(&rule_entries, &on)?;
         }
         if is_merged && !is_extended {
             self.apply_later_aliases(&rules)?;
@@ -877,9 +885,12 @@ impl Rc<'_, '_> {
         }
         // One override at a time, starting with those of the extended files.
         if !is_extended {
-            for (written, plugins) in &self.override_rules {
-                let written: Vec<_> = written.iter().map(|it| (&it.0[..], &it.1)).collect();
-                self.reject_invalid_options(&written, &[&on[..], plugins].concat())?;
+            for (override_entries, plugins) in &self.override_rules {
+                let rule_entries: Vec<_> = override_entries
+                    .iter()
+                    .map(|it| (&it.0[..], &it.1))
+                    .collect();
+                self.reject_invalid_options(&rule_entries, &[&on[..], plugins].concat())?;
             }
         }
         Ok(rules)
@@ -891,14 +902,14 @@ impl Rc<'_, '_> {
             return Ok(None);
         };
         let mut names = Vec::with_capacity(plugins.len());
-        for written in plugins.iter().filter_map(Json::as_str) {
-            let name = (written.strip_prefix(b"eslint-plugin-"))
-                .or_else(|| written.strip_prefix(b"oxlint-plugin-"))
-                .unwrap_or(written);
+        for plugin_entry in plugins.iter().filter_map(Json::as_str) {
+            let name = (plugin_entry.strip_prefix(b"eslint-plugin-"))
+                .or_else(|| plugin_entry.strip_prefix(b"oxlint-plugin-"))
+                .unwrap_or(plugin_entry);
             if !PLUGIN_NAMES.contains(&name) {
                 return Err(ConfigError::new(&[
                     b"Failed to parse config with error Error(\"Unknown plugin: '",
-                    written,
+                    plugin_entry,
                     b"'.\", line: 0, column: 0)",
                 ]));
             }
@@ -982,9 +993,11 @@ impl Rc<'_, '_> {
     /// flags don't count for that, but see [`ConfigObject::override_plugin_sets`].
     fn take_overrides(&mut self) -> Vec<ConfigObject> {
         let overrides = std::mem::take(&mut self.overrides);
-        let of_files = plugin_bits(&self.file_plugins);
+        let file_plugin_bits = plugin_bits(&self.file_plugins);
         let objects = overrides.into_iter().map(|(mut object, plugins)| {
-            object.override_plugin_sets = plugins.as_deref().map(|it| (plugin_bits(it), of_files));
+            object.override_plugin_sets = plugins
+                .as_deref()
+                .map(|it| (plugin_bits(it), file_plugin_bits));
             let plugins = plugins.unwrap_or_default();
             let is_own = |it: Plugin| !self.has_plugin(it) && is_among(it, &plugins);
             (object.rules).retain(|it| {
@@ -1043,7 +1056,7 @@ impl Rc<'_, '_> {
     /// the categories' rules.
     fn printed(&self, json: &Json, categories_at: usize) -> Vec<(Vec<u8>, Json)> {
         let mut rules: Vec<(Vec<u8>, &RuleSetting)> = Vec::new();
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut rule_index_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         for (at, object) in self.reader.objects.iter().enumerate() {
             let is_told = |it: &&RuleSetting| {
                 (at != categories_at || it.severity != Severity::Off)
@@ -1055,10 +1068,10 @@ impl Rc<'_, '_> {
             };
             for setting in object.rules.iter().filter(is_told).filter(is_native) {
                 let key = oxlint_rule_key(&setting.id);
-                match places.get(&key) {
-                    Some(&place) => rules[place].1 = setting,
+                match rule_index_by_key.get(&key) {
+                    Some(&rule_index) => rules[rule_index].1 = setting,
                     None => {
-                        places.insert(key.clone(), rules.len());
+                        rule_index_by_key.insert(key.clone(), rules.len());
                         rules.push((printed_key(&key), setting));
                     }
                 }
@@ -1075,9 +1088,9 @@ impl Rc<'_, '_> {
         };
         let plugins = PRINTED_PLUGINS.iter().filter(is_on);
         let plugins = plugins.map(|it| Json::String(it.to_vec()));
-        let written = json.get(b"categories").and_then(Json::as_object);
+        let file_category_json = json.get(b"categories").and_then(Json::as_object);
         let categories = PRINTED_CATEGORIES.iter().filter_map(|name| {
-            written?.iter().find(|it| it.0 == **name)?;
+            file_category_json?.iter().find(|it| it.0 == **name)?;
             let severity = self.categories.iter().find(|it| it.0 == **name)?.1;
             Some((name.to_vec(), printed_setting(severity, &[])))
         });

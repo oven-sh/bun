@@ -57,7 +57,7 @@ fn write_call<'a>(
         return write_member_chain(e, f);
     }
 
-    let arguments = InTailwindContext(context, FormatArguments::of_call(e, call));
+    let arguments = InTailwindContext(context, FormatArguments::from_call(e, call));
     let content = format_args!(head, arguments);
     match is_call_expression(callee, f) {
         true => write!(f, group(&content)),
@@ -134,7 +134,7 @@ pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Form
     if is_template_on_its_own_line_only_argument(call.args(), f) {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
     }
-    let content = format_args!(head, FormatArguments::of_call(e, call));
+    let content = format_args!(head, FormatArguments::from_call(e, call));
     match is_call_expression(call.callee(), f) {
         true => write!(f, group(&content)),
         false => write!(f, content),
@@ -189,12 +189,12 @@ fn is_template_on_its_own_line_only_argument<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> bool {
-    let is_one = |only| {
+    let is_own_line_template = |only| {
         is_multiline_template_starting_on_same_line(only, f.source_text())
             && !arguments::has_embed_label(only, f)
             && !is_cast_target(only, f)
     };
-    args.len() == 1 && args.first().is_some_and(is_one)
+    args.len() == 1 && args.first().is_some_and(is_own_line_template)
 }
 
 /// True if the only argument is a string without comments.

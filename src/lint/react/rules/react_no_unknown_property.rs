@@ -422,8 +422,8 @@ fn matches_html_tag_conventions(tag: &[u8]) -> bool {
     tag.first().is_some_and(u8::is_ascii_lowercase) && !strings::contains_char(tag, b'-')
 }
 
-fn any_char(name: &[u8], is_it: impl Fn(char) -> bool) -> bool {
-    strings::wtf8_codepoints(name).filter_map(|it| char::from_u32(it.1)).any(is_it)
+fn any_char(name: &[u8], predicate: impl Fn(char) -> bool) -> bool {
+    strings::wtf8_codepoints(name).filter_map(|it| char::from_u32(it.1)).any(predicate)
 }
 
 impl Rule for NoUnknownProperty {

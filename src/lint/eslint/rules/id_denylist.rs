@@ -318,9 +318,9 @@ impl<const IS_BLACKLIST: bool> Rule for IdList<IS_BLACKLIST> {
                 return report(utils::estree_span(pat.into()), name.bytes(), cx);
             }
             // For oxlint the type annotation isn't part of the span, and an index signature's parameter has no name.
-            let is_of_index_signature = matches!(pat.parent(), Node::Param(param)
+            let is_index_signature_param = matches!(pat.parent(), Node::Param(param)
                 if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature));
-            if !is_of_index_signature {
+            if !is_index_signature_param {
                 report(pat.span(), name.bytes(), cx);
             }
         }

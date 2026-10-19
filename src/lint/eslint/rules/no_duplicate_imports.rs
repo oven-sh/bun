@@ -50,13 +50,13 @@ fn can_be_merged(a: &Entry, b: &Entry) -> bool {
 const MERGED_WITH_IMPORT: &str = "Can be merged with this import";
 
 /// Where oxlint reports: at an import's specifier, or at an export's first name.
-fn oxlint_place(statement: Stmt) -> Span {
-    let place = match statement.kind() {
+fn oxlint_report_span(statement: Stmt) -> Span {
+    let specific_span = match statement.kind() {
         StmtKind::Import(_) => statement.module_specifier_span(),
         StmtKind::ExportNamed(export) => export.items().first().map(|it| it.span()),
         _ => None,
     };
-    place.unwrap_or_else(|| statement.span())
+    specific_span.unwrap_or_else(|| statement.span())
 }
 
 /// oxlint's state for the names imported from a module so far.
@@ -127,8 +127,8 @@ impl NoDuplicateImports {
             let (imported, is_type) = (all.entry(import.spec()).or_default(), import.is_type_only());
             let has_names = imported.by_import_type || imported.by_other_imports;
             if has_names && imported.can_merge(first, is_type, self.allow_separate_type_imports) {
-                cx.report(oxlint_place(statement), IMPORT).data("module", import.spec()).labels_with(|labels| {
-                    labels.push(imported.first.map(oxlint_place).unwrap_or_default(), MERGED_WITH_IMPORT)
+                cx.report(oxlint_report_span(statement), IMPORT).data("module", import.spec()).labels_with(|labels| {
+                    labels.push(imported.first.map(oxlint_report_span).unwrap_or_default(), MERGED_WITH_IMPORT)
                 });
                 match first {
                     Type::ImportDefault => default = false,
@@ -157,9 +157,9 @@ impl NoDuplicateImports {
         for (statement, import) in imports() {
             let first = *all.entry(import.spec()).or_default().first.get_or_insert(statement);
             if first != statement {
-                cx.report(oxlint_place(statement), IMPORT)
+                cx.report(oxlint_report_span(statement), IMPORT)
                     .data("module", import.spec())
-                    .labels_with(|labels| labels.push(oxlint_place(first), MERGED_WITH_IMPORT));
+                    .labels_with(|labels| labels.push(oxlint_report_span(first), MERGED_WITH_IMPORT));
             }
         }
     }
@@ -194,13 +194,13 @@ impl NoDuplicateImports {
             }
             _ => return,
         };
-        let written = module.map_or(&[][..], Name::bytes);
-        let (name, module) = (module.map(|it| it.atom().0), strings::trim_js_whitespace(written));
+        let raw_module = module.map_or(&[][..], Name::bytes);
+        let (name, module) = (module.map(|it| it.atom().0), strings::trim_js_whitespace(raw_module));
         if !module.is_empty() {
             cx.state.push(Entry {
                 statement,
                 module,
-                name: name.filter(|_| module.len() == written.len()),
+                name: name.filter(|_| module.len() == raw_module.len()),
                 ty,
                 is_type_only,
                 is_export,
@@ -253,10 +253,10 @@ impl Rule for NoDuplicateImports {
         let mut entries = std::mem::take(&mut cx.state);
         let is_oxlint = cx.language().is_oxlint;
         if is_oxlint && !self.include_exports {
-            let names_module = |it: Stmt| {
+            let has_module_name = |it: Stmt| {
                 it.as_import().is_some_and(|import| !strings::trim_js_whitespace(import.spec().bytes()).is_empty())
             };
-            if cx.file().stmts_of_kind(StmtTag::Import).any(names_module) {
+            if cx.file().stmts_of_kind(StmtTag::Import).any(has_module_name) {
                 self.check_imports_as_oxlint(cx);
             }
             return;
@@ -268,8 +268,8 @@ impl Rule for NoDuplicateImports {
             return;
         }
         // oxlint only looks at imports without names if the file has no other imports.
-        let is_import_of_names = |it: &Entry| !it.is_export && it.ty != Type::SideEffectImport;
-        if is_oxlint && entries.iter().any(is_import_of_names) {
+        let imports_names = |it: &Entry| !it.is_export && it.ty != Type::SideEffectImport;
+        if is_oxlint && entries.iter().any(imports_names) {
             entries.retain(|it| it.is_export || it.ty != Type::SideEffectImport);
         }
         // oxlint visits all of a file's imports before its exports.
@@ -279,19 +279,19 @@ impl Rule for NoDuplicateImports {
                 .then_with(|| is_later(a).cmp(&is_later(b)))
                 .then_with(|| a.statement.span().start.cmp(&b.statement.span().start))
         });
-        for of_module in entries.chunk_by(|a, b| a.module == b.module) {
+        for module_entries in entries.chunk_by(|a, b| a.module == b.module) {
             // One entry of each kind among those before `entry`. There are 20 kinds.
             let mut previous: SmallVec<[&Entry; 4]> = SmallVec::new();
-            for entry in of_module {
+            for entry in module_entries {
                 let messages = match entry.is_export {
                     true => [(EXPORT, true), (EXPORT_AS, false)],
                     false => [(IMPORT, false), (IMPORT_AS, true)],
                 };
                 for (message, exports) in messages {
                     if self.should_report(entry, &previous, exports) {
-                        let place = if is_oxlint { oxlint_place(entry.statement) } else { entry.statement.span() };
-                        cx.report(place, message).data("module", entry.module).labels_with(|labels| {
-                            let first = of_module.first().map(|it| oxlint_place(it.statement)).unwrap_or_default();
+                        let report_span = if is_oxlint { oxlint_report_span(entry.statement) } else { entry.statement.span() };
+                        cx.report(report_span, message).data("module", entry.module).labels_with(|labels| {
+                            let first = module_entries.first().map(|it| oxlint_report_span(it.statement)).unwrap_or_default();
                             let is_import = message.id == IMPORT.id;
                             labels.push(first, if is_import { MERGED_WITH_IMPORT } else { "Can be merged with this" });
                         });

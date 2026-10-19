@@ -94,7 +94,7 @@ fn oxc_parent(at: Node<'_>) -> Option<(ParentKind, Node<'_>, bool)> {
     let is_pattern = |it: Node| matches!(it, Node::Expr(it) if it.is_assignment_target());
     let parent = at.parent();
     Some(match (at, parent) {
-        (Node::Expr(e), Node::Expr(around)) => match around.kind() {
+        (Node::Expr(e), Node::Expr(parent_expr)) => match parent_expr.kind() {
             ExprKind::Unary {
                 op: UnOp::Delete, ..
             } => (ParentKind::Delete, parent, false),
@@ -124,9 +124,9 @@ fn oxc_parent(at: Node<'_>) -> Option<(ParentKind, Node<'_>, bool)> {
 /// oxlint's test for an assignment to `member`, which looks at the two nearest ancestors. Parentheses count as
 /// ancestors, except around an assignment target.
 fn oxlint_is_assignee(member: Expr) -> bool {
-    let mut around = [ParentKind::Other; 2];
+    let mut ancestor_kinds = [ParentKind::Other; 2];
     let (mut at, mut parentheses) = (Node::Expr(member), 0);
-    for it in &mut around {
+    for it in &mut ancestor_kinds {
         let Some((kind, parent, is_assigned_to)) = oxc_parent(at) else {
             break;
         };
@@ -136,7 +136,7 @@ fn oxlint_is_assignee(member: Expr) -> bool {
         }
         (*it, at, parentheses) = (kind, parent, 0);
     }
-    let [first, second] = around;
+    let [first, second] = ancestor_kinds;
     !matches!(first, ParentKind::Member | ParentKind::Other)
         || second == ParentKind::Pattern && first != ParentKind::Member
 }

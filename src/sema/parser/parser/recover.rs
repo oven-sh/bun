@@ -6,7 +6,7 @@
 //! speculative parse, so a text without errors only pays for one flag test per list.
 
 use super::{Checkpoint, Parser, ctx};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -220,7 +220,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => self.errors_at = (self.lx.start, 0),
         }
         if self.errors_at.1 > 1 << 17 {
-            return self.refuse(Refusal::Unsupported);
+            return self.reject(Rejection::Unsupported);
         }
         self.take_scanner_errors();
         self.add_error(Diagnostic::new(DiagnosticKind::Parse, at, code, args));
@@ -335,9 +335,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// The token is a word with an escape. It's used as a name, so drop the error it would get as a keyword.
     #[cold]
     #[inline(never)]
-    pub(crate) fn forget_escaped_keyword(&mut self) {
+    pub(crate) fn discard_escaped_keyword_error(&mut self) {
         let at = self.lx.start;
-        if self.recovers() && !self.lx.forget_escaped_keyword() {
+        if self.recovers() && !self.lx.discard_escaped_keyword_error() {
             (self.f.diagnostics).retain(|it| it.code != 1260 || it.start != at);
         }
     }
@@ -468,7 +468,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let full = self.full_start();
         match self.missing_identifier(0, 0) {
             (name, _) if name == known::empty => (name, full),
-            written => written,
+            other => other,
         }
     }
 

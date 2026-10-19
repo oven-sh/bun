@@ -220,9 +220,9 @@ fn name_or_literal_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option
 fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     let modifiers = member.modifiers();
     if !modifiers.is_empty() {
-        write!(f, FormatDecorators::of_member(member));
+        write!(f, FormatDecorators::from_member(member));
         write_comments_between_modifiers(member, f);
-        let written = modifiers
+        let present_flags = modifiers
             .iter()
             .fold(Flags::empty(), |all, it| all | it.flag());
         for (flag, keyword) in [
@@ -236,11 +236,11 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
             (Flags::READONLY, "readonly "),
             (Flags::ACCESSOR, "accessor "),
         ] {
-            if written.contains(flag) {
+            if present_flags.contains(flag) {
                 write!(f, keyword);
             }
         }
-        if written.intersects(Flags::IN | Flags::OUT) {
+        if present_flags.intersects(Flags::IN | Flags::OUT) {
             crate::js::print::flow::write_variance_sign(modifiers, f);
         }
     }
@@ -1075,11 +1075,11 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     }
     // Prettier's `printCallExpression`: only a call of a member can be a member chain. Every call is checked: in
     // `a.b().c()()` that catches the second from the right.
-    let asked = match only_last_call_can_be_member_chain(f) {
+    let checked_calls = match only_last_call_can_be_member_chain(f) {
         true => call_expressions.get(..1).unwrap_or_default(),
         false => &call_expressions[..],
     };
-    !asked.iter().any(|&call_expression| {
+    !checked_calls.iter().any(|&call_expression| {
         call_expression
             .callee()
             .is_some_and(|callee| match callee.as_ast_nodes() {

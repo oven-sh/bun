@@ -134,7 +134,7 @@ fn end_with_comments<'a>(import: Stmt<'a>, fixer: Fixer<'a>) -> (u32, bool) {
 }
 
 fn is_end_of_line_comment<'a>(file: &'a File<'a>, at: u32) -> bool {
-    let comment = at.checked_sub(1).and_then(|it| file.comment_around(it));
+    let comment = at.checked_sub(1).and_then(|it| file.comment_containing(it));
     comment.is_some_and(|it| it.kind() == TokenKind::Line)
 }
 
@@ -219,8 +219,8 @@ impl<'a> ErrorInfo<'a> {
         let names_module = |it: Stmt| {
             matches!(it.tag(), StmtTag::ExportNamed | StmtTag::ExportStar) && it.module_specifier_span().is_some()
         };
-        let mut passed = file.body().iter().filter(|it| Span::empty(insert_at).between(*last).contains(it.span()));
-        if passed.any(names_module) || removed.iter().any(|it| joins_statements(file, *it)) {
+        let mut crossed_statements = file.body().iter().filter(|it| Span::empty(insert_at).between(*last).contains(it.span()));
+        if crossed_statements.any(names_module) || removed.iter().any(|it| joins_statements(file, *it)) {
             return None;
         }
         if last_legal_imp.is_none() {
@@ -241,11 +241,11 @@ impl<'a> ErrorInfo<'a> {
         let start_of_text = if file.has_bom() { 3 } else { 0 };
         let mut replace_source_code = file.slice(Span::new(start_of_text, insert_at)).to_vec();
         replace_source_code.append(&mut insert_source_code);
-        let mut kept_from = insert_at;
+        let mut retained_from = insert_at;
         for range in &removed {
-            replace_source_code.extend_from_slice(file.slice(Span::before(kept_from, *range)));
-            kept_from = range.end;
+            replace_source_code.extend_from_slice(file.slice(Span::before(retained_from, *range)));
+            retained_from = range.end;
         }
-        Some(fixer.replace(Span::new(start_of_text, kept_from), replace_source_code))
+        Some(fixer.replace(Span::new(start_of_text, retained_from), replace_source_code))
     }
 }

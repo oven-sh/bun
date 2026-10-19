@@ -3,7 +3,7 @@ import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, longLimit, spawn } from "../children";
-import { env, inTurns, linesOf, modulesInRings, tsc } from "./differential";
+import { env, inBatches, linesOf, modulesInCycles, tsc } from "./differential";
 
 afterAll(endChildren);
 
@@ -34,7 +34,7 @@ test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for m
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
     // With 52 or 60 modules TypeScript 7.0 reports TS2321 in every file and 7.1 in none. Up to 48 they agree.
-    ...modulesInRings(isDebug || isASAN ? 24 : 48),
+    ...modulesInCycles(isDebug || isASAN ? 24 : 48),
   });
   const root = String(dir);
   const [theirs, ours] = await Promise.all([
@@ -54,7 +54,7 @@ test.concurrent.skipIf(!tsc)("matches `tsc --singleThreaded` on one thread for m
  * place. A group has three files, which declare the interface, declare the property, and only call the function, in one
  * of the six orders.
  */
-function ringsEnteredFromThreeSides(groups: number) {
+function cyclesEnteredFromThreeSides(groups: number) {
   const files: Record<string, string> = {};
   const orders = ["abc", "bac", "cab", "bca", "acb", "cba"];
   for (let g = 0; g < groups; g++) {
@@ -83,7 +83,7 @@ export {};
 test.concurrent.skipIf(!tsc)("enters a cycle where `tsc --singleThreaded` does on any thread count", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
-    ...ringsEnteredFromThreeSides(isDebug || isASAN ? 6 : 24),
+    ...cyclesEnteredFromThreeSides(isDebug || isASAN ? 6 : 24),
   });
   const root = String(dir);
   const [theirs, ...ours] = await Promise.all([
@@ -247,7 +247,7 @@ test.concurrent.skipIf(!tsc)("matches tsc on any thread count for aliases throug
  * and through a package and back, a UMD global, `import a = b.c` in scripts, and another module's augmentations of a
  * module and of the globals.
  */
-function modulesThatDependOnFilesTheyDoNotImport(chains: number, length: number) {
+function modulesReadingUnimportedFiles(chains: number, length: number) {
   const files: Record<string, string> = {
     "globals.ts": `declare namespace G { const g: "g"; namespace Inner { type T = "T of Inner"; const v: "v of Inner"; } }
 import GI = G.Inner;
@@ -316,7 +316,7 @@ test.concurrent.skipIf(!tsc)(
   async () => {
     using dir = tempDir("bun-check-differential", {
       "tsconfig.json": tsconfig,
-      ...modulesThatDependOnFilesTheyDoNotImport(6, isDebug || isASAN ? 2 : 4),
+      ...modulesReadingUnimportedFiles(6, isDebug || isASAN ? 2 : 4),
     });
     const root = String(dir);
     const [theirs, ...ours] = await Promise.all([
@@ -329,7 +329,7 @@ test.concurrent.skipIf(!tsc)(
 );
 
 /** Cycles of aliases in which one link isn't an import but a reference to a module's UMD global. */
-function ringsOfAliasesThroughGlobals() {
+function aliasCyclesThroughGlobals() {
   const files: Record<string, string> = {};
   for (const n of [2, 3, 5]) {
     for (let i = 0; i < n; i++) {
@@ -361,7 +361,7 @@ test.concurrent.skipIf(!tsc)("reports TS2303 for alias cycles through UMD global
   const options = { ...JSON.parse(tsconfig).compilerOptions, lib: ["es5"], skipLibCheck: false };
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": JSON.stringify({ compilerOptions: options }),
-    ...ringsOfAliasesThroughGlobals(),
+    ...aliasCyclesThroughGlobals(),
   });
   const root = String(dir);
   const [theirs, ...ours] = await Promise.all([
@@ -374,10 +374,10 @@ test.concurrent.skipIf(!tsc)("reports TS2303 for alias cycles through UMD global
 
 /**
  * A chain of `length` modules, each of which imports from the previous one and re-exports a name. Some export a default
- * that doesn't exist, which the next one imports. Next to it are `beside` modules, in cycles of two with a circular
+ * that doesn't exist, which the next one imports. Next to it are `sideCount` modules, in cycles of two with a circular
  * alias, each of which imports from somewhere in the chain.
  */
-function aChainAndModulesBesideIt(length: number, beside: number) {
+function chainWithSideModules(length: number, sideCount: number) {
   const files: Record<string, string> = {};
   for (let i = 0; i < length; i++) {
     const lines = [`export const c${i} = "c${i}" as const;`];
@@ -397,7 +397,7 @@ function aChainAndModulesBesideIt(length: number, beside: number) {
     lines.push(`export const read${i}: never[] = [${read.join(", ")}];`);
     files[`c${i}.ts`] = lines.join("\n") + "\n";
   }
-  for (let i = 0; i < beside; i++) {
+  for (let i = 0; i < sideCount; i++) {
     const [at, partner] = [(i * 37) % length, i ^ 1];
     files[`w${i}.ts`] = [
       `import { first, c${at} as fromTheChain } from "./c${at}";`,
@@ -416,7 +416,7 @@ function aChainAndModulesBesideIt(length: number, beside: number) {
 test.concurrent.skipIf(!tsc)("matches tsc on any thread count for a long module chain with side modules", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
-    ...(isDebug || isASAN ? aChainAndModulesBesideIt(152, 40) : aChainAndModulesBesideIt(1000, 200)),
+    ...(isDebug || isASAN ? chainWithSideModules(152, 40) : chainWithSideModules(1000, 200)),
   });
   const root = String(dir);
   const [theirs, ...ours] = await Promise.all([
@@ -544,8 +544,8 @@ const firstTags = `
 `
   .trim()
   .split(/\s+/);
-const isAboutTheRuntime = (line: string) => line.includes("error TS2875:");
-const placesOfTheRuntimeError = (lines: string[]) => lines.filter(isAboutTheRuntime).map(line => line.split(":")[0]);
+const isJsxRuntimeError = (line: string) => line.includes("error TS2875:");
+const jsxRuntimeErrorPositions = (lines: string[]) => lines.filter(isJsxRuntimeError).map(line => line.split(":")[0]);
 
 test.concurrent.skipIf(!tsc)("reports TS2875 at the file's first tag on any thread count", async () => {
   const modules = isDebug || isASAN ? 28 : 56;
@@ -559,8 +559,8 @@ test.concurrent.skipIf(!tsc)("reports TS2875 at the file's first tag on any thre
     ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
   ]);
   for (const lines of ours) {
-    expect(placesOfTheRuntimeError(lines).sort()).toEqual(firstTags.slice(0, modules).sort());
-    expect(lines.filter(line => !isAboutTheRuntime(line))).toEqual(theirs.filter(line => !isAboutTheRuntime(line)));
+    expect(jsxRuntimeErrorPositions(lines).sort()).toEqual(firstTags.slice(0, modules).sort());
+    expect(lines.filter(line => !isJsxRuntimeError(line))).toEqual(theirs.filter(line => !isJsxRuntimeError(line)));
   }
 });
 
@@ -581,7 +581,7 @@ test.concurrent("reports TS2875 at the file's first tag, whether that tag is che
     [1, 8].map(threads => linesOf([bunExe(), "check", "--threads", String(threads)], root, root)),
   );
   for (const lines of ours) {
-    expect(placesOfTheRuntimeError(lines)).toEqual([
+    expect(jsxRuntimeErrorPositions(lines)).toEqual([
       "deferred.tsx(1,21)",
       "extends.tsx(1,26)",
       "fragment.tsx(1,21)",
@@ -1371,8 +1371,8 @@ const overloadedCalls = [
   ]),
 ];
 // `R`: the reference back. `C`: the call.
-const aroundTheCall = ["R, C", "C, R", "C", "R, C, C"];
-// `X`: the name. `B`: one of `aroundTheCall`.
+const callContexts = ["R, C", "C, R", "C", "R, C, C"];
+// `X`: the name. `B`: one of `callContexts`.
 const circularDeclarations: [reference: string, declaration: string][] = [
   ["X", "const X = g(() => [B]);"],
   ["X", "const X = h(() => [B]);"],
@@ -1387,10 +1387,10 @@ const circularDeclarations: [reference: string, declaration: string][] = [
   ["this.p", "class X { p = g(() => [B]); }"],
   ["this.p()", "class X { p() { return g(() => [B]); } }"],
 ];
-const callsAfterCircularReferences = [...product(circularDeclarations, aroundTheCall, overloadedCalls)].map(
-  ([[reference, declaration], around, call], index) =>
+const callsAfterCircularReferences = [...product(circularDeclarations, callContexts, overloadedCalls)].map(
+  ([[reference, declaration], callContext, call], index) =>
     declaration
-      .replace("B", () => around.replace(/\bR\b/g, () => reference).replace(/\bC\b/g, () => call))
+      .replace("B", () => callContext.replace(/\bR\b/g, () => reference).replace(/\bC\b/g, () => call))
       .replace(/\bX\b/g, () => `x${index}`),
 );
 
@@ -1411,7 +1411,7 @@ differential(
       ...["O", "T", "keyof O", "`a${T}`", "Uppercase<T>", "{ [P in keyof O]: 1 }", "[...U]", "O['x' & keyof O]"],
       ...["T extends 'a' ? 1 : 2", "'a' & { [P in keyof O]: 1 }", "T | 'a'", "{ a: O }", "[O]"],
     ];
-    const places = [
+    const positions = [
       "{ [K in 'a' | 'b' as K & X]: 1 }",
       "{ [K in ('a' & X) | 'b']: 1 }",
       "{ [K in X & string]: 1 }",
@@ -1424,9 +1424,9 @@ differential(
       "[X] extends ['a'] ? 1 : 2",
       "Omit<X, 'a'>",
     ];
-    const cases = [...product(types, places)].map(
-      ([type, place], i) =>
-        `function f${i}<T extends string, U extends unknown[], O>(v: ${place.replace(/\bX\b/g, () => `(${type})`).replace(/\bY\b/g, () => type)}) { const n: never = v; }`,
+    const cases = [...product(types, positions)].map(
+      ([type, position], i) =>
+        `function f${i}<T extends string, U extends unknown[], O>(v: ${position.replace(/\bX\b/g, () => `(${type})`).replace(/\bY\b/g, () => type)}) { const n: never = v; }`,
     );
     const rest = types.map(
       (type, i) =>
@@ -1666,7 +1666,7 @@ differential("matches tsc on a conditional type whose check type an enclosing co
 // hidden by `skipLibCheck`, only its consequences show. src/js/builtins.d.ts declares `promise.$then` like that. `M<D>`
 // gets its members from what `D` itself declares and, where `keyof D` is evaluated immediately, from `D`'s base types
 // that are resolved before it.
-const basesOfThemselves = {
+const selfReferentialBases = {
   renamed: "{ [K in keyof T as `$${K & string}`]: T[K] }",
   filtered: "{ [K in keyof T as T[K] extends Function ? `$${K & string}` : never]: T[K] }",
   unconstrained: "{ [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] }",
@@ -1685,7 +1685,7 @@ const basesOfThemselves = {
 // Returns `D`'s declaration with the base type `M<D>`, and a type that refers to `D`.
 type Extending = (D: string, M: string) => [string, string];
 const beforeAnotherBase: Extending = (D, M) => [`interface ${D} extends ${M}<${D}>, Other { m(): void; n: number }`, D];
-const extendingThemselves: Extending[] = [
+const selfExtendingDeclarations: Extending[] = [
   (D, M) => [`interface ${D} extends ${M}<${D}> { m(): void; n: number }`, D],
   (D, M) => [`interface ${D}<X> extends ${M}<${D}<X>> { m(): X; n: number }`, `${D}<string>`],
   (D, M) => [`interface ${D} { m(): void } interface ${D} extends ${M}<${D}> { n: number }`, D],
@@ -1696,7 +1696,7 @@ const extendingThemselves: Extending[] = [
   (D, M) => [`declare class ${D} { m(): void; n: number } interface ${D} extends ${M}<${D}> {}`, D],
   (D, M) => [`interface ${D} extends ${M}<${D}> { (): void; m(): void; n: number }`, D],
 ];
-const usesOfThemselves = [
+const usesOfInterface = [
   ...["$m", "$$m", "$n", "$b", "extra", "getM", "m", "anything"].map(name => `const v: 1 = d.${name};`),
   ...["$m", "m", "$$m", "$b", "b", "extra", "getM", "anything"].map(name => `const v: 1 = null! as Has<"${name}", D>;`),
   "const v: { $m(): void } = d;",
@@ -1706,7 +1706,7 @@ const usesOfThemselves = [
 ];
 const isBaseAssignable = "const v: 1 = null! as (M extends D ? true : false);";
 // `M<D>` is requested before `D`, which then ends up without `M<D>`'s members.
-const usesOfTheirBases = [
+const usesOfBase = [
   ...["$m", "m", "$$m", "$b", "b", "extra", "getM", "anything"].map(name => `const v: 1 = null! as Has<"${name}", M>;`),
   "const v: M = d;",
   "const v: D = null! as M;",
@@ -1717,16 +1717,16 @@ const usesOfTheirBases = [
   "const f: M = null!; f; const v: 1 = d.$m;",
   "const f: M = null!; f.$m; const v: 1 = d.$m;",
 ];
-const declarationsForThemselves = [
+const sharedDeclarations = [
   "type Has<K, T> = K extends keyof T ? true : false;",
   "interface Other { b(): void; [Symbol.iterator](): void }",
-  ...Object.entries(basesOfThemselves).map(([name, type]) => `type ${name}<T> = ${type};`),
+  ...Object.entries(selfReferentialBases).map(([name, type]) => `type ${name}<T> = ${type};`),
 ];
 const everyThird = isDebug || isASAN ? 3 : 1;
 // In typescript-go the result depends on what's requested first, so every use gets its own interface. Each entry is the
 // declaration and the use.
 const extendedAndUsed = [
-  ...product(Object.keys(basesOfThemselves), extendingThemselves, [...usesOfThemselves, ...usesOfTheirBases]),
+  ...product(Object.keys(selfReferentialBases), selfExtendingDeclarations, [...usesOfInterface, ...usesOfBase]),
 ].map(([base, extending, use], index) => {
   const [declaration, type] = extending(`D${index}`, base);
   const used = use.replace(/\b[DM]\b/g, (name: string) => (name === "D" ? type : `${base}<${type}>`));
@@ -1736,7 +1736,7 @@ const extendedAndUsed = [
 differential(
   "matches tsc on an interface that extends a type built from its own members, in an unchecked declaration file",
   async () => {
-    const declarations = [...declarationsForThemselves, ...extendedAndUsed.map(([declaration]) => declaration)];
+    const declarations = [...sharedDeclarations, ...extendedAndUsed.map(([declaration]) => declaration)];
     const files = { "declarations.d.ts": declarations.join("\n") + "\n" };
     const cases = extendedAndUsed.map(([, use]) => use);
     expect(await casesThatDiffer({}, [], cases, everyThird, files)).toEqual([]);
@@ -1778,7 +1778,7 @@ differential(
   "matches tsc on an interface that extends a type built from its own members, declared right before its use",
   async () => {
     const cases = extendedAndUsed.map(([declaration, use]) => `${declaration} ${use}`);
-    expect(await casesThatDiffer({}, declarationsForThemselves, cases, everyThird)).toEqual([]);
+    expect(await casesThatDiffer({}, sharedDeclarations, cases, everyThird)).toEqual([]);
   },
 );
 
@@ -1990,7 +1990,7 @@ differential("matches tsc on valid and invalid values of tsconfig.json options",
   );
   const root = String(dir);
   const results: { options: object; bun: string[]; tsc: string[] }[] = [];
-  await inTurns([...cases.entries()], async ([i, options]) => {
+  await inBatches([...cases.entries()], async ([i, options]) => {
     const [bun, typescript] = await Promise.all([
       linesOf([bunExe(), "check", "-p", `c${i}`], root, root),
       linesOf([tsc!, "-p", `c${i}`, "--pretty", "false"], root, root),
@@ -2033,7 +2033,7 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
     "[]",
   ];
   // A reference's `path` is left out, because TypeScript 7.0.2 crashes unless it's a string.
-  const places: ((value: string) => string)[] = [
+  const positions: ((value: string) => string)[] = [
     value => `{ "compilerOptions": { "strict": ${value} } }`,
     value => `{ "compilerOptions": { "target": ${value} } }`,
     value => `{ "compilerOptions": { "outDir": ${value} } }`,
@@ -2070,7 +2070,7 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
   // Each case takes two processes, so only the diagonals are sampled. That still covers every position and every value,
   // except in a debug build.
   const step = isDebug || isASAN ? 280 : 12;
-  const cases = places.flatMap((place, i) => values.filter((_, j) => (i + j) % step === 0).map(place));
+  const cases = positions.flatMap((position, i) => values.filter((_, j) => (i + j) % step === 0).map(position));
   // The root is an array. TypeScript 7.0.2 uses the first object in it as the configuration, and only reports the array
   // (TS5092) if it contains no object.
   const implicit = (value: boolean) => `{ "compilerOptions": { "noImplicitAny": ${value} } }`;
@@ -2097,7 +2097,7 @@ differential("matches tsc on values that aren't valid JSON in tsconfig.json", as
   );
   const root = String(dir);
   const results: { text: string; bun: string[]; tsc: string[] }[] = [];
-  await inTurns([...cases.entries()], async ([i, text]) => {
+  await inBatches([...cases.entries()], async ([i, text]) => {
     // `tsc -b` rejects `--skipLibCheck`.
     const build = text.includes(`"references"`);
     const project = [build ? "-b" : "-p", `c${i}`];
@@ -2158,7 +2158,7 @@ differential("reports a build's errors project by project like `tsc -b`", async 
   using dir = tempDir("bun-check-differential", files);
   const root = String(dir);
   const different: Record<string, object> = {};
-  await inTurns([...combinations.keys()], async index => {
+  await inBatches([...combinations.keys()], async index => {
     const cwd = join(root, String(index));
     // `bun check` runs first, because `tsc -b` writes files.
     const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
@@ -2551,7 +2551,7 @@ differential("matches `tsc -b` on which files a project with references may impo
   using dir = tempDir("bun-check-differential", files);
   const root = String(dir);
   const different: Record<string, object> = {};
-  await inTurns(
+  await inBatches(
     [...combinations.keys()].filter(index => index % everyConfiguration === 0),
     async index => {
       const cwd = join(root, String(index));
@@ -2580,10 +2580,10 @@ differential("matches tsc on paths in an extended tsconfig file", async () => {
   ];
   // A drive letter or a server name starts a path only on Windows. Elsewhere neither tool finds such a file, but
   // TypeScript prints its name as on Windows.
-  const isOfWindows = (path: string) => /^([a-z]:[\\/]|\\\\)/i.test(path);
+  const isWindowsPath = (path: string) => /^([a-z]:[\\/]|\\\\)/i.test(path);
   const cases = ["include", "exclude", "files"]
     .flatMap(name => paths.map(path => [name, path]))
-    .filter(([name, path]) => isWindows || name !== "files" || !isOfWindows(path))
+    .filter(([name, path]) => isWindows || name !== "files" || !isWindowsPath(path))
     .filter((_, index) => index % everyProject === 0)
     .map(([name, path]) => ({ [name]: [path] }));
   using dir = tempDir(
@@ -2602,7 +2602,7 @@ differential("matches tsc on paths in an extended tsconfig file", async () => {
   );
   const root = String(dir);
   const results: { base: object; bun: string[]; tsc: string[] }[] = [];
-  await inTurns([...cases.entries()], async ([i, base]) => {
+  await inBatches([...cases.entries()], async ([i, base]) => {
     const [bun, typescript] = await Promise.all([
       linesOf([bunExe(), "check", "-p", `c${i}/project`], root, root),
       linesOf([tsc!, "-p", `c${i}/project`, "--pretty", "false"], root, root),
@@ -2627,7 +2627,7 @@ const casingSettings: [string, object][] = [
   ["tsconfig.off.json", { forceConsistentCasingInFileNames: false }],
   ["tsconfig.on.json", { forceConsistentCasingInFileNames: true }],
 ];
-const isAboutCasing = (line: string) => /error TS(1149|1261):/.test(line);
+const isCasingError = (line: string) => /error TS(1149|1261):/.test(line);
 
 const isCaseSensitive = (() => {
   using probe = tempDir("bun-check-differential", { "probe": "" });
@@ -2635,9 +2635,9 @@ const isCaseSensitive = (() => {
 })();
 // TypeScript assumes every file system has the case sensitivity of the one its executable is on. `bun check` probes the
 // project's.
-const aboutCase = test.concurrent.skipIf(!tsc || isCaseSensitive !== !existsSync(swapCase(tsc)));
+const casingTest = test.concurrent.skipIf(!tsc || isCaseSensitive !== !existsSync(swapCase(tsc)));
 
-aboutCase("matches tsc on file names that differ only in case", async () => {
+casingTest("matches tsc on file names that differ only in case", async () => {
   const target = `export class T { private secret = 1; }\nexport const wrong: number = "1";\n`;
   // How a file refers to `S`, a specifier without an extension. `I` makes its names unique.
   const forms: Record<string, string> = {
@@ -2664,7 +2664,7 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
   ];
 
   const shared: Record<string, Record<string, string>> = {};
-  const alone: Record<string, { files: Record<string, string>; top?: object }> = {};
+  const separateProjects: Record<string, { files: Record<string, string>; top?: object }> = {};
   // The referring file comes before or after it among the root files.
   for (const [form, from, order] of product(Object.keys(forms), ["App", "zapp"], orders)) {
     shared[`one-${form}-${from}-${order.join("-")}`] = {
@@ -2758,7 +2758,7 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
     ["button.js", "Button.js"],
   ];
   for (const files of lists) {
-    alone[`listed-${lists.indexOf(files)}`] = {
+    separateProjects[`listed-${lists.indexOf(files)}`] = {
       files: { "App.ts": refer("import", ["./button"]), "button.ts": target },
       top: { files },
     };
@@ -2768,7 +2768,7 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
     // Two files.
     const some: Spelling[][] = [["right"], ["wrong"], ["right", "wrong"], ["wrong", "right"]];
     for (const [form, from, order] of product(["import", "path"], ["App", "zapp"], some)) {
-      alone[`both-${form}-${from}-${order.join("-")}`] = {
+      separateProjects[`both-${form}-${from}-${order.join("-")}`] = {
         files: {
           [`${from}.ts`]:
             refer(
@@ -2780,7 +2780,7 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
         },
       };
     }
-    alone["both"] = { files: { "button.ts": target, "Button.ts": target } };
+    separateProjects["both"] = { files: { "button.ts": target, "Button.ts": target } };
   }
 
   const files: Record<string, string> = {};
@@ -2788,16 +2788,17 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
   for (const [name, of] of Object.entries(shared)) {
     for (const [path, text] of Object.entries(of)) files[`shared/${name}/${path}`] = text;
   }
-  const projects = Object.keys(alone).filter((_, index) => index % everyProject === 0);
+  const projects = Object.keys(separateProjects).filter((_, index) => index % everyProject === 0);
   for (const name of projects) {
-    for (const [config, more] of casingSettings) files[`alone/${name}/${config}`] = casingConfig(more, alone[name].top);
-    for (const [path, text] of Object.entries(alone[name].files)) files[`alone/${name}/${path}`] = text;
+    for (const [config, more] of casingSettings)
+      files[`alone/${name}/${config}`] = casingConfig(more, separateProjects[name].top);
+    for (const [path, text] of Object.entries(separateProjects[name].files)) files[`alone/${name}/${path}`] = text;
   }
   using dir = tempDir("bun-check-differential", files);
   const root = String(dir);
 
   // Which package id a path gets, and so which copy of a package file is kept, is a race between TypeScript's threads.
-  const both = async (directory: string, config: string) => {
+  const runBoth = async (directory: string, config: string) => {
     const [theirs, ours] = await Promise.all([
       linesOf([tsc!, "-p", config, "--pretty", "false", "--singleThreaded"], join(root, directory), root),
       linesOf([bunExe(), "check", "-p", config], join(root, directory), root),
@@ -2805,8 +2806,8 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
     return { theirs, ours };
   };
   const different: Record<string, object> = {};
-  let aboutCasing = 0;
-  await inTurns(
+  let casingErrorCount = 0;
+  await inBatches(
     [
       ...product(
         ["shared", ...projects.map(it => `alone/${it}`)],
@@ -2814,8 +2815,8 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
       ),
     ],
     async ([directory, config]) => {
-      const { theirs, ours } = await both(directory, config);
-      aboutCasing += theirs.filter(isAboutCasing).length;
+      const { theirs, ours } = await runBoth(directory, config);
+      casingErrorCount += theirs.filter(isCasingError).length;
       // Only the differences, because the lists are long.
       const only = (a: string[], b: string[]) => a.filter(line => !b.includes(line));
       if (!Bun.deepEquals(theirs, ours)) {
@@ -2826,12 +2827,12 @@ aboutCase("matches tsc on file names that differ only in case", async () => {
   );
   expect(different).toEqual({});
   // Makes sure the oracle reports casing errors at all.
-  expect(aboutCasing).toBeGreaterThan(isCaseSensitive ? 4 : 200);
+  expect(casingErrorCount).toBeGreaterThan(isCaseSensitive ? 4 : 200);
 });
 
 // A project referenced under a spelling the directory doesn't have, or under two spellings, is one project, named as in
 // the last reference. `tsc -b` is the oracle.
-aboutCase("matches `tsc -b` on project references that differ only in case", async () => {
+casingTest("matches `tsc -b` on project references that differ only in case", async () => {
   const options = { ...casingOptions, noEmit: false, composite: true, outDir: "out", rootDir: "." };
   const config = (top: object = {}) => JSON.stringify({ compilerOptions: options, ...top });
   const combinations = [
@@ -2853,7 +2854,7 @@ aboutCase("matches `tsc -b` on project references that differ only in case", asy
   using dir = tempDir("bun-check-differential", files);
   const root = String(dir);
   const different: Record<string, object> = {};
-  await inTurns([...combinations.keys()], async index => {
+  await inBatches([...combinations.keys()], async index => {
     const cwd = join(root, String(index), "app");
     // `bun check` runs first, because `tsc -b` writes files.
     const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
@@ -2954,7 +2955,7 @@ differential("checks the same files as tsc for every project layout and command 
   };
   const different: Record<string, object> = {};
   let compared = 0;
-  await inTurns([...cells.entries()], async ([index, { layout, it, args }]) => {
+  await inBatches([...cells.entries()], async ([index, { layout, it, args }]) => {
     const [directory, file, before] = it;
     const given = args.map(arg => (arg === "FILE" ? file : arg));
     const [theirRoot, ourRoot] = ["theirs", "ours"].map(side => join(String(dir), `${index}`, side));
@@ -2972,7 +2973,7 @@ differential("checks the same files as tsc for every project layout and command 
 });
 
 /** Returns what the two print for a project in which each of `cases` is its own module. */
-async function modulesChecked(cases: string[]) {
+async function checkModules(cases: string[]) {
   const name = (index: number) => `c${String(index).padStart(2, "0")}.ts`;
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
@@ -2990,7 +2991,7 @@ async function modulesChecked(cases: string[]) {
 // `await` as the operator, only if the first parse found a reference to `await`. A parameter, property or declaration
 // name isn't one, and neither is anything in a function body.
 differential("parses a top-level arrow function whose first parameter is `await` only once, like tsc", async () => {
-  const { theirs, ours } = await modulesChecked([
+  const { theirs, ours } = await checkModules([
     "var f = (await) => {};",
     "var f = (await: number) => {};",
     "declare function g(x: unknown): void; g((await: number) => {});",
@@ -3034,7 +3035,7 @@ differential("parses a top-level arrow function whose first parameter is `await`
 // In the second parse `(await` doesn't start an arrow function and `{ await }` isn't a shorthand property. A default
 // export, `export =` and an exported class are parsed that way the first time.
 differential("matches tsc on a name `await` in a statement reparsed with `await` as the operator", async () => {
-  const { theirs, ours } = await modulesChecked([
+  const { theirs, ours } = await checkModules([
     "var f = (await: number) => await + 1;",
     "var g = await (1), f = (await: number) => {};",
     "var f = (await: number, b = await) => {};",
@@ -3068,7 +3069,7 @@ differential("matches tsc on a name `await` in a statement reparsed with `await`
 });
 
 differential("matches tsc on an initializer in an interface or a type literal", async () => {
-  const { theirs, ours } = await modulesChecked([
+  const { theirs, ours } = await checkModules([
     "declare const e: unique symbol; interface C { [e] = 1 }",
     "declare const e: unique symbol; interface C { readonly [e] = 1 }",
     "declare const e: unique symbol; interface C { [e]? = 1 }",
@@ -3085,7 +3086,7 @@ differential("matches tsc on an initializer in an interface or a type literal", 
 
 // A build that isn't optimized runs out of stack at a smaller depth.
 test.concurrent.skipIf(!tsc || isDebug || isASAN)("matches tsc on expressions nested over 1,000 deep", async () => {
-  const { theirs, ours } = await modulesChecked([
+  const { theirs, ours } = await checkModules([
     `declare const c: boolean; export const x: string = ${"c ? 1 : ".repeat(1_200)}2;`,
     `declare const c: boolean; export const x: string = ${"c || (".repeat(1_500)}1${")".repeat(1_500)};`,
     `export const x: string = ${"!".repeat(1_200)}1;`,

@@ -51,7 +51,7 @@ const KNOWN_LONG_BITS: u32 = 6;
 /// The number of consecutive slots a text can be in, starting at its first slot.
 const WINDOW: usize = 8;
 /// In `Names::spans`: the text is in `Names::cooked`, not in the source.
-const COOKED: u32 = OwnTexts::ELSEWHERE;
+const COOKED: u32 = OwnTexts::NOT_IN_SOURCE;
 /// The `Names::spans` entries of `KNOWN_TEXTS`, which are concatenated at the start of `Names::cooked`, and their total
 /// length.
 const KNOWN_SPANS: ([(u32, u32); KNOWN_TEXTS.len()], usize) = {
@@ -277,7 +277,7 @@ pub(crate) struct Text<'a> {
 
 impl<'a> Text<'a> {
     #[inline(always)]
-    pub(crate) fn of_source(source: &'a [u8], start: usize, end: usize) -> Self {
+    pub(crate) fn from_source(source: &'a [u8], start: usize, end: usize) -> Self {
         Text {
             source,
             start: Some(start as u32),
@@ -286,7 +286,7 @@ impl<'a> Text<'a> {
     }
 
     #[inline(always)]
-    pub(crate) fn elsewhere(source: &'a [u8], text: &'a [u8]) -> Self {
+    pub(crate) fn not_in_source(source: &'a [u8], text: &'a [u8]) -> Self {
         Text {
             source,
             start: None,
@@ -418,11 +418,11 @@ impl Names {
         found.map(|it| it.1).filter(|&atom| atom != u32::MAX)
     }
 
-    /// Returns the fixed number, if any, of the text with `len` bytes (16 to 32) and the words `words`. `place` is
+    /// Returns the fixed number, if any, of the text with `len` bytes (16 to 32) and the words `words`. `home_slot` is
     /// their `long_slot`.
     #[inline]
-    fn known_long(&self, words: [u64; 4], place: usize, len: usize) -> Option<u32> {
-        let mut at = place >> (LONG_BITS - KNOWN_LONG_BITS);
+    fn known_long(&self, words: [u64; 4], home_slot: usize, len: usize) -> Option<u32> {
+        let mut at = home_slot >> (LONG_BITS - KNOWN_LONG_BITS);
         loop {
             let entry = &self.known_long[at];
             if entry.len == 0 {
@@ -479,7 +479,7 @@ impl Names {
             self.short[at] = Short { words, atom, kind };
             return (Atom(atom), kind);
         }
-        let text = Text::of_source(source, start, start + len as usize);
+        let text = Text::from_source(source, start, start + len as usize);
         self.short_slow(words, text, atoms)
     }
 
@@ -553,8 +553,8 @@ impl Names {
         let Some(words) = long_words(text.text) else {
             return self.other(text, atoms);
         };
-        let place = long_slot(words);
-        let (first, mask) = (place & self.long_mask, self.long_mask);
+        let home_slot = long_slot(words);
+        let (first, mask) = (home_slot & self.long_mask, self.long_mask);
         let mut free = None;
         for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.long[at];
@@ -572,7 +572,7 @@ impl Names {
             None => first,
         };
         let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
-        let known = self.known_long(words, place, text.text.len());
+        let known = self.known_long(words, home_slot, text.text.len());
         let atom = self.new_atom(text, bit, known, atoms);
         self.long[at] = Long {
             words,
@@ -638,10 +638,10 @@ impl Names {
             }
             known
         } else if let (16..=32, Some(words)) = (text.len(), long_words(text)) {
-            let place = long_slot(words);
-            let known = self.known_long(words, place, text.len());
+            let home_slot = long_slot(words);
+            let known = self.known_long(words, home_slot, text.len());
             if known.is_none() {
-                let (first, mask) = (place & self.long_mask, self.long_mask);
+                let (first, mask) = (home_slot & self.long_mask, self.long_mask);
                 for at in (first..first + WINDOW).map(|at| at & mask) {
                     let entry = &self.long[at];
                     if entry.len == 0 {
@@ -678,12 +678,12 @@ impl Names {
     }
 }
 
-/// A growable table from a text's hash to a number. The texts themselves are stored elsewhere.
+/// A growable table from a text's hash to a number. The texts themselves aren't stored in the table.
 #[derive(Default)]
 struct Table {
     /// The length is a power of two, or 0. At most half of the slots are taken.
     slots: Vec<Slot>,
-    taken: usize,
+    occupied: usize,
     /// A slot from another generation is free. Never 0 once there are slots.
     generation: u16,
 }
@@ -697,7 +697,7 @@ struct Slot {
 
 impl Table {
     fn clear(&mut self) {
-        self.taken = 0;
+        self.occupied = 0;
         self.generation = match self.generation.checked_add(1) {
             Some(next) => next,
             None => {
@@ -728,7 +728,7 @@ impl Table {
         if self.generation == 0 {
             self.generation = 1;
         }
-        if (self.taken + 1) * 2 > self.slots.len() {
+        if (self.occupied + 1) * 2 > self.slots.len() {
             let old = std::mem::take(&mut self.slots);
             self.slots = vec![Slot::default(); (old.len() * 2).max(256)];
             let generation = self.generation;
@@ -736,7 +736,7 @@ impl Table {
                 self.put(*slot);
             }
         }
-        self.taken += 1;
+        self.occupied += 1;
         self.put(Slot {
             hash,
             number,
@@ -785,7 +785,7 @@ impl Default for Chunk {
 }
 
 impl Late {
-    fn place(&self, number: u32) -> &OnceLock<Box<[u8]>> {
+    fn text_cell(&self, number: u32) -> &OnceLock<Box<[u8]>> {
         let (mut chunk, mut number) = (&self.texts, number as usize);
         while number >= chunk.texts.len() {
             let room = chunk.texts.len();
@@ -815,8 +815,8 @@ impl Late {
         if let Some(number) = numbers.find(hash, |number| self.bytes(number) == text) {
             return number;
         }
-        let number = numbers.taken as u32;
-        let _ = self.place(number).set(text.into());
+        let number = numbers.occupied as u32;
+        let _ = self.text_cell(number).set(text.into());
         numbers.insert(hash, number);
         number
     }

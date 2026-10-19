@@ -63,7 +63,7 @@ impl Primitive {
     }
 
     /// `literalToPrimitiveTypeFlags[typeFlags]`
-    fn of_literal(type_flags: TypeFlags) -> Option<Primitive> {
+    fn from_literal_flags(type_flags: TypeFlags) -> Option<Primitive> {
         if type_flags == TypeFlags::BIG_INT_LITERAL {
             Some(Primitive::BigInt)
         } else if type_flags == TypeFlags::BOOLEAN_LITERAL {
@@ -240,10 +240,10 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
 /// `Partial<A>`.
 fn unresolved_reference<'a>(mut type_node: TypeNode<'a>, error: Type<'a>, name: &[u8]) -> Option<TypeNode<'a>> {
     loop {
-        let TypeKind::Ref { name: written, args } = type_node.kind() else {
+        let TypeKind::Ref { name: reference_name, args } = type_node.kind() else {
             return None;
         };
-        if written.last().is_some_and(|it| it.bytes() == name) {
+        if reference_name.last().is_some_and(|it| it.bytes() == name) {
             return Some(type_node);
         }
         type_node = args.iter().find(|it| it.ty() == error)?;
@@ -300,7 +300,7 @@ fn get_type_node_type_part_flags<'a>(
     let type_flags = match type_flags {
         Some(type_flags) => type_flags,
         None => {
-            let of_type = |type_part: Type<'a>| TypeFlagsWithName {
+            let part_from_type = |type_part: Type<'a>| TypeFlagsWithName {
                 type_flags: match type_part.is_unresolved() {
                     true => TypeFlags::empty(),
                     false => type_part.flags(),
@@ -327,8 +327,8 @@ fn get_type_node_type_part_flags<'a>(
                 false => node_type.has_flags(TypeFlags::BOOLEAN),
             };
             match is_boolean_type {
-                true => parts.push(of_type(node_type)),
-                false => parts.extend(union_constituents(node_type).iter().map(of_type)),
+                true => parts.push(part_from_type(node_type)),
+                false => parts.extend(union_constituents(node_type).iter().map(part_from_type)),
             }
             return;
         }
@@ -360,11 +360,11 @@ fn report_any<'a>(
 ) {
     let type_name = type_part.type_name();
     let message = if type_name == b"any" { OVERRIDES } else { ERROR_TYPE_OVERRIDES };
-    cx.report(place(type_node), message).data("container", container).data("typeName", type_name);
+    cx.report(report_span(type_node), message).data("container", container).data("typeName", type_name);
 }
 
 /// oxlint's span includes the parentheses around a constituent.
-fn place(type_node: TypeNode) -> Span {
+fn report_span(type_node: TypeNode) -> Span {
     if type_node.file().language().is_oxlint { type_node.outer_span() } else { type_node.span() }
 }
 
@@ -386,10 +386,10 @@ impl NoRedundantTypeConstituents {
                     report_any(type_part, type_node, "intersection", cx);
                 } else if type_flags == TypeFlags::NEVER || type_flags == TypeFlags::UNKNOWN {
                     let is_never = type_flags == TypeFlags::NEVER;
-                    cx.report(place(type_node), if is_never { OVERRIDES } else { OVERRIDDEN })
+                    cx.report(report_span(type_node), if is_never { OVERRIDES } else { OVERRIDDEN })
                         .data("container", "intersection")
                         .data("typeName", type_part.type_name());
-                } else if let Some(primitive) = Primitive::of_literal(type_flags) {
+                } else if let Some(primitive) = Primitive::from_literal_flags(type_flags) {
                     seen_literal_types.add(primitive);
                 } else if let Some(primitive) =
                     Primitive::ALL.into_iter().find(|it| type_flags == it.flag())
@@ -410,7 +410,7 @@ impl NoRedundantTypeConstituents {
                     continue;
                 }
                 let primitive_of = |type_value: &TypeFlagsWithName| {
-                    Primitive::of_literal(type_value.type_flags)
+                    Primitive::from_literal_flags(type_value.type_flags)
                         .filter(|&it| seen_primitive_types.has(it))
                 };
                 if let Some(primitive) = type_values.last().and_then(primitive_of)
@@ -422,7 +422,7 @@ impl NoRedundantTypeConstituents {
                         true => type_values_literal.get_or_insert_with(|| join(type_values.iter().copied())).clone(),
                         false => join(type_values.iter().copied()),
                     };
-                    let report = cx.report(place(type_ref), PRIMITIVE_OVERRIDDEN);
+                    let report = cx.report(report_span(type_ref), PRIMITIVE_OVERRIDDEN);
                     // tsgolint swaps the two here.
                     match is_oxlint {
                         true => report.data("literal", primitive.name()).data("primitive", literal),
@@ -442,13 +442,13 @@ impl NoRedundantTypeConstituents {
                 .parts
                 .iter()
                 .copied()
-                .filter(|it| Primitive::of_literal(it.type_flags) == Some(primitive));
+                .filter(|it| Primitive::from_literal_flags(it.type_flags) == Some(primitive));
             let matched_literal_types = join(matched_literal_types);
             for (type_node, type_part_flags) in constituents.iter() {
                 if !type_part_flags.iter().any(|it| it.type_flags == primitive.flag()) {
                     continue;
                 }
-                cx.report(place(type_node), PRIMITIVE_OVERRIDDEN)
+                cx.report(report_span(type_node), PRIMITIVE_OVERRIDDEN)
                     .data("literal", matched_literal_types.clone())
                     .data("primitive", primitive.name());
             }
@@ -471,16 +471,16 @@ impl NoRedundantTypeConstituents {
                 if type_flags == TypeFlags::ANY {
                     report_any(type_part, type_node, "union", cx);
                 } else if type_flags == TypeFlags::UNKNOWN {
-                    cx.report(place(type_node), OVERRIDES)
+                    cx.report(report_span(type_node), OVERRIDES)
                         .data("container", "union")
                         .data("typeName", type_part.type_name());
                 } else if type_flags == TypeFlags::NEVER {
                     if !is_node_inside_return_type(node) {
-                        cx.report(place(type_node), OVERRIDDEN)
+                        cx.report(report_span(type_node), OVERRIDDEN)
                             .data("container", "union")
                             .data("typeName", "never");
                     }
-                } else if let Some(primitive) = Primitive::of_literal(type_flags) {
+                } else if let Some(primitive) = Primitive::from_literal_flags(type_flags) {
                     if !seen_literal_types.contains(&primitive) {
                         seen_literal_types.push(primitive);
                     }
@@ -501,9 +501,9 @@ impl NoRedundantTypeConstituents {
             }
             for (type_node, type_part_flags) in constituents.iter() {
                 let is_overridden =
-                    |it: &TypeFlagsWithName| Primitive::of_literal(it.type_flags) == Some(primitive);
+                    |it: &TypeFlagsWithName| Primitive::from_literal_flags(it.type_flags) == Some(primitive);
                 if type_part_flags.iter().any(is_overridden) {
-                    cx.report(place(type_node), LITERAL_OVERRIDDEN)
+                    cx.report(report_span(type_node), LITERAL_OVERRIDDEN)
                         .data("literal", join(type_part_flags.iter().copied().filter(is_overridden)))
                         .data("primitive", primitive.name());
                 }

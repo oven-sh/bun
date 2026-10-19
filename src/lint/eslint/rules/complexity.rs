@@ -68,7 +68,7 @@ impl Complexity {
         utils::sort::sort_unstable_by_key(&mut outermost, |it| it.0.start);
         // The index of the last function that starts before the found node.
         let mut at = 0;
-        let mut around = Vec::with_capacity(found.len());
+        let mut enclosing_indices = Vec::with_capacity(found.len());
         for &(start, by, _) in &found {
             let is_at = outermost.get(at).is_some_and(|it| it.0.start <= start)
                 && outermost.get(at + 1).is_none_or(|it| start < it.0.start);
@@ -77,7 +77,7 @@ impl Complexity {
                     .partition_point(|it| it.0.start <= start)
                     .wrapping_sub(1);
             }
-            around.push(match outermost.get_mut(at).filter(|it| start < it.0.end) {
+            enclosing_indices.push(match outermost.get_mut(at).filter(|it| start < it.0.end) {
                 Some(function) => {
                     function.1 += by;
                     at
@@ -85,8 +85,11 @@ impl Complexity {
                 None => usize::MAX,
             });
         }
-        for (&(_, by, node), around) in found.iter().zip(around) {
-            if outermost.get(around).is_none_or(|it| it.1 >= threshold) {
+        for (&(_, by, node), enclosing_index) in found.iter().zip(enclosing_indices) {
+            if outermost
+                .get(enclosing_index)
+                .is_none_or(|it| it.1 >= threshold)
+            {
                 Self::add(node, by, cx);
             }
         }

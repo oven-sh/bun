@@ -77,8 +77,8 @@ impl Rule for JsxBooleanValue {
                 (Some(false), false) => (OMIT_PROP_AND_BOOLEAN, whole, Some(whole)),
                 (Some(false), true) => (BOOLEAN_VALUE_UNDEFINED_FALSE, whole, Some(whole)),
             };
-            let shown = if is_namespaced { &b"[object Object]"[..] } else { name };
-            cx.report(at, message).data(if is_oxlint { "attr" } else { "propName" }, shown).fix(|fixer| match removed {
+            let display_name = if is_namespaced { &b"[object Object]"[..] } else { name };
+            cx.report(at, message).data(if is_oxlint { "attr" } else { "propName" }, display_name).fix(|fixer| match removed {
                 Some(removed) => fixer.remove(removed),
                 None => fixer.insert_after(ident, "={true}"),
             });

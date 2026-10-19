@@ -185,7 +185,7 @@ pub(super) fn check_satisfies(
     c.check_type_assignable_to_and_optionally_elaborate(
         source,
         target,
-        Some(c.place_of_token(file, at)),
+        Some(c.span_of_token(file, at)),
         Some((file, expr)),
         false,
         Some(1360),

@@ -163,8 +163,8 @@ impl<'a> Tidy<'a> {
                 reached = comment.span().end;
             }
             let rest = self.slice(Span::new(reached, limit));
-            let blanks = rest.len() - rest.trim_ascii_start().len();
-            if next.is_some() && !strings::contains_js_line_break(&rest[..blanks]) {
+            let whitespace_len = rest.len() - rest.trim_ascii_start().len();
+            if next.is_some() && !strings::contains_js_line_break(&rest[..whitespace_len]) {
                 reached = after;
             }
             chunks.push(Chunk {
@@ -461,11 +461,11 @@ impl<'a> Tidy<'a> {
                     merged.extend(own(false));
                     continue;
                 }
-                let fits = match (default, entry.import.default()) {
+                let has_same_default = match (default, entry.import.default()) {
                     (Some(one), Some(other)) => self.slice(one) == self.slice(other.span()),
                     _ => true,
                 };
-                if target.is_some() && entry.can_be_removed && fits {
+                if target.is_some() && entry.can_be_removed && has_same_default {
                     default = default.or_else(|| Some(entry.import.default()?.span()));
                     merged.extend(own(true));
                     self.remove(entry.statement);
@@ -529,16 +529,16 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
     for (index, statement) in body.iter().enumerate() {
         let span = statement.span();
         let next_start = (body.get(index + 1)).map_or(text.len() as u32, |it| it.span().start);
-        let around = [
+        let surrounding = [
             Span::before(previous_end, span),
             tidy.rest_of_line(span, next_start),
         ];
-        previous_end = around[1].end;
+        previous_end = surrounding[1].end;
         match statement.kind() {
             StmtKind::Import(import)
-                if !import.is_side_effect() && !tidy.has_ignore_comment(around) =>
+                if !import.is_side_effect() && !tidy.has_ignore_comment(surrounding) =>
             {
-                entries.push(tidy.entry(statement, import, around));
+                entries.push(tidy.entry(statement, import, surrounding));
             }
             _ => {
                 tidy.tidy(&entries);

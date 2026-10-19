@@ -29,7 +29,7 @@ pub enum Verdict {
     Unmentioned,
     Ignored,
     /// A `!` line matched.
-    Kept,
+    Unignored,
 }
 
 struct Rule {
@@ -60,29 +60,29 @@ struct Line {
 /// Parses a line for git and the npm package. Only called for lines that [`parses_like_package`] accepts.
 /// Returns `None` for a comment or a blank line.
 fn parse_plain(line: &[u8], ignores_case: bool) -> Option<Line> {
-    let mut written = line.trim_ascii_end();
-    if written.starts_with(b"#") {
+    let mut stripped = line.trim_ascii_end();
+    if stripped.starts_with(b"#") {
         return None;
     }
-    let is_negated = written.starts_with(b"!");
-    written = &written[usize::from(is_negated)..];
-    let is_for_directories = written.len() > 1 && written.ends_with(b"/");
-    written = &written[..written.len() - usize::from(is_for_directories)];
+    let is_negated = stripped.starts_with(b"!");
+    stripped = &stripped[usize::from(is_negated)..];
+    let is_for_directories = stripped.len() > 1 && stripped.ends_with(b"/");
+    stripped = &stripped[..stripped.len() - usize::from(is_for_directories)];
     // A `/` anchors the line to the ignore file's directory. A leading `**/` undoes that.
-    let mut is_anchored = strings::contains_char(written, b'/');
-    written = written.strip_prefix(b"/").unwrap_or(written);
-    while let Some(rest) = written.strip_prefix(b"**/") {
-        (written, is_anchored) = (rest, false);
+    let mut is_anchored = strings::contains_char(stripped, b'/');
+    stripped = stripped.strip_prefix(b"/").unwrap_or(stripped);
+    while let Some(rest) = stripped.strip_prefix(b"**/") {
+        (stripped, is_anchored) = (rest, false);
     }
-    if written.is_empty() {
+    if stripped.is_empty() {
         return None;
     }
-    let mut pattern = Vec::with_capacity(written.len() + 4);
+    let mut pattern = Vec::with_capacity(stripped.len() + 4);
     if !is_anchored {
         pattern.extend_from_slice(b"**/");
     }
     let text_start = pattern.len();
-    for (at, &byte) in written.iter().enumerate() {
+    for (at, &byte) in stripped.iter().enumerate() {
         match byte {
             b'{' | b'}' | b'(' => pattern.extend_from_slice(&[b'\\', byte]),
             b'!' if at == 0 && is_anchored => pattern.extend_from_slice(b"\\!"),
@@ -124,49 +124,49 @@ fn parse_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> 
     if line.starts_with(b"#") {
         return Ok(None);
     }
-    let mut written = match line.ends_with(b"\\ ") {
+    let mut stripped = match line.ends_with(b"\\ ") {
         true => line,
         false => strings::trim_unicode_whitespace_end(line),
     };
-    if written.is_empty() {
+    if stripped.is_empty() {
         return Ok(None);
     }
     let (mut is_negated, mut is_anchored) = (false, false);
-    if written.starts_with(b"\\!") || written.starts_with(b"\\#") {
-        written = &written[1..];
+    if stripped.starts_with(b"\\!") || stripped.starts_with(b"\\#") {
+        stripped = &stripped[1..];
     } else {
-        if let Some(rest) = written.strip_prefix(b"!") {
-            (written, is_negated) = (rest, true);
+        if let Some(rest) = stripped.strip_prefix(b"!") {
+            (stripped, is_negated) = (rest, true);
         }
-        if let Some(rest) = written.strip_prefix(b"/") {
-            (written, is_anchored) = (rest, true);
+        if let Some(rest) = stripped.strip_prefix(b"/") {
+            (stripped, is_anchored) = (rest, true);
         }
     }
     let mut is_for_directories = false;
-    if let Some(rest) = written.strip_suffix(b"/") {
+    if let Some(rest) = stripped.strip_suffix(b"/") {
         is_for_directories = true;
         // A `\` that escapes the trailing `/` is removed with it.
-        written = rest.strip_suffix(b"\\").unwrap_or(rest);
+        stripped = rest.strip_suffix(b"\\").unwrap_or(rest);
     }
-    is_anchored |= strings::contains_char(written, b'/');
-    while let Some(rest) = written.strip_prefix(b"**/") {
-        (written, is_anchored) = (rest, false);
+    is_anchored |= strings::contains_char(stripped, b'/');
+    while let Some(rest) = stripped.strip_prefix(b"**/") {
+        (stripped, is_anchored) = (rest, false);
     }
     // Nothing is left of a line like `!` or `**/`. It matches everything.
-    if written.is_empty() && !is_anchored {
-        written = b"**";
+    if stripped.is_empty() && !is_anchored {
+        stripped = b"**";
     }
-    let mut pattern = Vec::with_capacity(written.len() + 8);
-    if !is_anchored && written != b"**" {
+    let mut pattern = Vec::with_capacity(stripped.len() + 8);
+    if !is_anchored && stripped != b"**" {
         pattern.extend_from_slice(b"**/");
     }
     let text_start = pattern.len();
     let (mut at, mut depth, mut has_unclosed_class) = (0, 0_usize, false);
-    while let Some(&byte) = written.get(at) {
+    while let Some(&byte) = stripped.get(at) {
         at += 1;
         match byte {
             b'\\' => {
-                let escaped = *written.get(at).ok_or(())?;
+                let escaped = *stripped.get(at).ok_or(())?;
                 at += 1;
                 // Bun reads `\n` and friends as control characters. Here an escaped letter is just the letter.
                 if !escaped.is_ascii_alphanumeric() {
@@ -175,7 +175,7 @@ fn parse_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> 
                 pattern.push(escaped);
             }
             b'[' if !has_unclosed_class => {
-                match crate::glob::from_globset_class(written, at - 1, true, &mut pattern)? {
+                match crate::glob::from_globset_class(stripped, at - 1, true, &mut pattern)? {
                     Some(end) => at = end,
                     None => {
                         has_unclosed_class = true;
@@ -193,7 +193,7 @@ fn parse_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> 
                 pattern.push(byte);
             }
             // `{1..3}` isn't a sequence.
-            b'.' if written.get(at) == Some(&b'.') => pattern.extend_from_slice(b"\\."),
+            b'.' if stripped.get(at) == Some(&b'.') => pattern.extend_from_slice(b"\\."),
             b'!' if at == 1 => pattern.extend_from_slice(b"\\!"),
             _ => pattern.push(byte),
         }
@@ -285,8 +285,8 @@ fn package_regex(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
             13 => {
                 let (range, end_escape, close) = (found.bytes(2), found.bytes(3), found.bytes(4));
                 if found.get(1).is_some() {
-                    let kept = &end_escape[..even(end_escape)];
-                    out.extend_from_slice(&[b"\\[", range, kept, close].concat());
+                    let paired_escapes = &end_escape[..even(end_escape)];
+                    out.extend_from_slice(&[b"\\[", range, paired_escapes, close].concat());
                 } else if close == b"]" && end_escape.len() % 2 == 0 {
                     // `sanitizeRange` drops reversed ranges like `b-a`.
                     let sanitized = RANGE.replace_with(range, |it, out| {
@@ -361,7 +361,7 @@ pub struct IgnoreRules {
     options: IgnoreOptions,
     rules: Vec<Rule>,
     /// Lines that were rejected.
-    refused: Vec<Box<[u8]>>,
+    rejected: Vec<Box<[u8]>>,
     /// Indexes that pick the rules to try: `name` by file name, `/a/b` by path, `*.ext` by extension. Keys are lower case when folding.
     by_name: RuleIndex,
     by_path: RuleIndex,
@@ -380,7 +380,7 @@ pub struct IgnoreRules {
     has_package_only_rules: bool,
 }
 
-fn places<'m>(map: &'m RuleIndex, key: &[u8]) -> Option<&'m [u32]> {
+fn rules_for_key<'m>(map: &'m RuleIndex, key: &[u8]) -> Option<&'m [u32]> {
     match map.is_empty() {
         true => None,
         false => map.get(key).map(|it| &it[..]),
@@ -397,7 +397,7 @@ impl IgnoreRules {
         IgnoreRules {
             options,
             rules: Vec::new(),
-            refused: Vec::new(),
+            rejected: Vec::new(),
             by_name: RuleIndex::new(),
             by_path: RuleIndex::new(),
             longest_path: 0,
@@ -449,13 +449,13 @@ impl IgnoreRules {
         let read = match read {
             Ok(Some(read)) => read,
             Ok(None) => return,
-            Err(()) => return self.refused.push(line.into()),
+            Err(()) => return self.rejected.push(line.into()),
         };
         let at = self.rules.len() as u32;
-        let (written, is_anchored) = (&read.pattern[read.text_start..], read.is_anchored);
-        let first_len = strings::index_of_char_usize(written, b'/');
+        let (own_text, is_anchored) = (&read.pattern[read.text_start..], read.is_anchored);
+        let first_len = strings::index_of_char_usize(own_text, b'/');
         // For these three shapes an index hit is already a match.
-        let found_by_key = match written {
+        let found_by_key = match own_text {
             name if !is_anchored && first_len.is_none() && is_literal(name) => {
                 Some((&mut self.by_name, name))
             }
@@ -475,15 +475,15 @@ impl IgnoreRules {
         };
         let is_found_by_key = found_by_key.is_some();
         let index_entry = found_by_key.or_else(|| {
-            let first = &written[..first_len.filter(|_| is_anchored)?];
+            let first = &own_text[..first_len.filter(|_| is_anchored)?];
             is_literal(first).then_some((&mut self.by_first_name, first))
         });
         match index_entry {
-            Some((places, key)) => {
-                bun_core::handle_oom(places.get_or_put_value(key, Vec::new())).push(at);
+            Some((rule_index, key)) => {
+                bun_core::handle_oom(rule_index.get_or_put_value(key, Vec::new())).push(at);
             }
             // `**` can still reach into directories.
-            None if is_anchored && first_len.is_none() && !strings::contains(written, b"**") => {
+            None if is_anchored && first_len.is_none() && !strings::contains(own_text, b"**") => {
                 self.at_top.push(at)
             }
             None => self.others.push(at),
@@ -492,7 +492,7 @@ impl IgnoreRules {
         self.rules.push(Rule {
             // `may_keep_inside` needs the pattern of every `!` line.
             pattern: (!is_found_by_key || read.is_negated).then(|| Pattern::new(&read.pattern)),
-            matches_empty_path: bun_glob::matcher::match_on::<false>(written, b"").matches(),
+            matches_empty_path: bun_glob::matcher::match_on::<false>(own_text, b"").matches(),
             package_rule: package_rule.map(|it| (it.into(), OnceLock::new())),
             needs_package_regex: false,
             is_negated: read.is_negated,
@@ -532,8 +532,8 @@ impl IgnoreRules {
     }
 
     /// Lines that were rejected. Only the brace flavor rejects lines.
-    pub fn refused(&self) -> &[Box<[u8]>] {
-        &self.refused
+    pub fn rejected(&self) -> &[Box<[u8]>] {
+        &self.rejected
     }
 
     /// Tests the package's regex. `text` is the path, with a trailing `/` for a directory.
@@ -614,19 +614,22 @@ impl IgnoreRules {
         let first = (!self.by_first_name.is_empty()).then(|| &path[..first_len()]);
         let mut best = None;
         for found in [
-            (places(&self.by_name, name), true),
+            (rules_for_key(&self.by_name, name), true),
             (
                 match path.len() <= self.longest_path {
-                    true => places(&self.by_path, path),
+                    true => rules_for_key(&self.by_path, path),
                     false => None,
                 },
                 true,
             ),
             (
-                extension.and_then(|it| places(&self.by_extension, it)),
+                extension.and_then(|it| rules_for_key(&self.by_extension, it)),
                 true,
             ),
-            (first.and_then(|it| places(&self.by_first_name, it)), false),
+            (
+                first.and_then(|it| rules_for_key(&self.by_first_name, it)),
+                false,
+            ),
             (
                 (name.len() == path.len()).then_some(&self.at_top[..]),
                 false,
@@ -642,7 +645,7 @@ impl IgnoreRules {
     pub fn verdict(&self, path: &[u8], is_directory: bool) -> Verdict {
         match self.last_match(path, is_directory) {
             None => Verdict::Unmentioned,
-            Some(rule) if rule.is_negated => Verdict::Kept,
+            Some(rule) if rule.is_negated => Verdict::Unignored,
             Some(_) => Verdict::Ignored,
         }
     }

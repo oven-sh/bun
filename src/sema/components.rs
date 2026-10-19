@@ -79,13 +79,13 @@ impl<'s> Components<'s> {
             level: levels[number],
             imports: arena.alloc_slice_fill_iter(imports[number].iter().map(|&it| index_of[it])),
         };
-        let of_node = |&node: &u32| match number_of.get(node as usize) {
+        let index_of_node = |&node: &u32| match number_of.get(node as usize) {
             Some(&number) => index_of[number as usize],
             None => u32::MAX,
         };
         Components {
             all: arena.alloc_slice_fill_iter(in_program_order.iter().map(component)),
-            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(of_node)),
+            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(index_of_node)),
         }
     }
 }

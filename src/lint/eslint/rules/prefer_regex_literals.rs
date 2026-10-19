@@ -166,7 +166,7 @@ fn resolve_escapes(character: &[u8]) -> Option<&'static [u8; 2]> {
 /// ESLint's `isValidRegexForEcmaVersion`
 fn is_valid_regex_for_ecma_version(file: &File<'_>, pattern: &[u8], flags: &[u8]) -> bool {
     let options = regexpp_options(file);
-    validate_pattern(pattern, Mode::of_flags(flags), options, &mut Ignore).is_ok()
+    validate_pattern(pattern, Mode::from_flags(flags), options, &mut Ignore).is_ok()
         && (flags.is_empty() || validate_flags(flags, options, &mut Ignore).is_ok())
 }
 
@@ -247,7 +247,7 @@ fn replace_with_equivalent_literal<'a>(
     if content.is_empty() {
         literal.extend_from_slice(b"(?:)");
     } else {
-        let ast = parse_pattern(content, Mode::of_flags(flags), regexpp_options(fixer.file())).ok()?;
+        let ast = parse_pattern(content, Mode::from_flags(flags), regexpp_options(fixer.file())).ok()?;
         let mut copied = 0;
         for character in ast.root().descendants().filter(|it| it.ty() == NodeType::Character) {
             if let Some(escaped) = resolve_escapes(character.raw()) {

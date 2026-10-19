@@ -26,7 +26,7 @@ const IN_COMPONENT: u8 = 1 << 2;
 #[derive(Default)]
 pub struct State<'a> {
     /// Caches what a node is inside of, up to the innermost class.
-    around: AncestorWalk<'a, u8, u8>,
+    enclosing_context: AncestorWalk<'a, u8, u8>,
     /// For upstream: the assignments to and updates of something in `this.state`.
     mutations: Vec<Expr<'a>>,
 }
@@ -112,7 +112,7 @@ fn state_of(target: Expr<'_>, is_oxlint: bool) -> Option<Expr<'_>> {
 }
 
 fn should_ignore_component<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoDirectMutationState>) -> bool {
-    let found = cx.state.around.run(Node::Expr(e), 0, |_, parent, found| match parent {
+    let found = cx.state.enclosing_context.run(Node::Expr(e), 0, |_, parent, found| match parent {
         Node::Member(_) if as_method_definition(parent).is_some_and(Member::is_constructor) => {
             ControlFlow::Continue(found | IN_CONSTRUCTOR)
         }

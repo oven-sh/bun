@@ -48,10 +48,10 @@ impl TypeSet {
         TypeSet::where_(|it| types.contains(&it))
     }
 
-    /// The types for which `holds` returns true.
-    pub(super) fn where_(holds: impl Fn(NodeType) -> bool) -> TypeSet {
+    /// The types for which `predicate` returns true.
+    pub(super) fn where_(predicate: impl Fn(NodeType) -> bool) -> TypeSet {
         let mut set = TypeSet::default();
-        for &node_type in NodeType::ALL.iter().filter(|it| holds(**it)) {
+        for &node_type in NodeType::ALL.iter().filter(|it| predicate(**it)) {
             set.0[node_type as usize / 64] |= 1 << (node_type as usize % 64);
         }
         set

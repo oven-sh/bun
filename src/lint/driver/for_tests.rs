@@ -16,7 +16,7 @@ use bun_lint::linter::{
     Registry, RuleId, write_json,
 };
 use bun_lint::options::Json;
-use bun_lint_conformance::{Case, Host, Place};
+use bun_lint_conformance::{Case, Host, LintContext};
 use bun_lint_graph::{Graph, Store};
 use bun_sema::atom::Interner;
 use bun_sema::session::Session;
@@ -39,14 +39,14 @@ impl Host for Tester<'_> {
         if case.prepare.is_some() {
             return None;
         }
-        let directory = match case.place {
-            Place::Nowhere => &self.environment.cwd[..],
-            Place::Project(project) => project,
-            Place::Program(tsconfig) => crate::paths::dirname(tsconfig),
+        let directory = match case.lint_context {
+            LintContext::Standalone => &self.environment.cwd[..],
+            LintContext::Project(project) => project,
+            LintContext::Program(tsconfig) => crate::paths::dirname(tsconfig),
         };
         let options = Options {
-            tsconfig: match case.place {
-                Place::Program(tsconfig) => Some(tsconfig.to_vec()),
+            tsconfig: match case.lint_context {
+                LintContext::Program(tsconfig) => Some(tsconfig.to_vec()),
                 _ => None,
             },
             threads: 1,
@@ -60,15 +60,15 @@ impl Host for Tester<'_> {
         let (store, timing, pool) = (Store::new(directory), Timing::default(), Pool::new(1));
         let modules = Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let of_the_run = (&self.linter, &environment, &self.js_plugins);
-            crate::discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
+            let run_state = (&self.linter, &environment, &self.js_plugins);
+            crate::discover::list_as_eslint_8(run_state, &pool, patterns, extensions)
         }));
         let context = Context {
             linter: &self.linter,
             options: &options,
             cwd: directory,
             only: None,
-            of_oxlint: None,
+            oxlint_config: None,
             checks_types: false,
             keeps_text: true,
             reads_fixes: true,
@@ -93,13 +93,18 @@ impl Host for Tester<'_> {
             invalid_tsconfigs: &bun_threading::Guarded::new(Default::default()),
         };
         let config = Arc::new(case.config.clone());
-        match case.place {
-            Place::Nowhere => Some(match Framework::of(case.path) {
+        match case.lint_context {
+            LintContext::Standalone => Some(match Framework::of(case.path) {
                 _ if let Some(dialect) = &config.dialect => {
-                    let of_the_file = (&*config, dialect);
+                    let config_and_dialect = (&*config, dialect);
                     let fixes = Fixes::default();
-                    let linted =
-                        context.verify_in_language(case.path, None, case.code, of_the_file, fixes);
+                    let linted = context.verify_in_language(
+                        case.path,
+                        None,
+                        case.code,
+                        config_and_dialect,
+                        fixes,
+                    );
                     linted.messages
                 }
                 Some(framework) if config.language.is_oxlint => {
@@ -108,7 +113,7 @@ impl Host for Tester<'_> {
                 }
                 _ => context.verify(case.path, case.code, &config).messages,
             }),
-            Place::Project(_) => {
+            LintContext::Project(_) => {
                 let mut result = context.verify_text(
                     case.path.to_vec(),
                     case.path,
@@ -127,7 +132,7 @@ impl Host for Tester<'_> {
                 }
                 Some(result.messages)
             }
-            Place::Program(_) => {
+            LintContext::Program(_) => {
                 let file = Typed {
                     path: case.path,
                     config: &config,

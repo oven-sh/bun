@@ -422,7 +422,7 @@ fn new_regex<'a>(pattern: Cow<'a, [u8]>, flags: &[u8]) -> Option<StaticValue<'a>
     let flags: Cow<'a, [u8]> = Cow::Owned(sorted_flags(flags)?.into_owned());
     validate_pattern(
         &pattern,
-        Mode::of_flags(&flags),
+        Mode::from_flags(&flags),
         Options::default(),
         &mut Ignore,
     )
@@ -738,13 +738,13 @@ fn array_method<'a>(
             boolean(false)
         }
         b"filter" => {
-            let mut kept = Vec::new();
+            let mut filtered = Vec::new();
             for (i, item) in present() {
                 if test(i, item)? {
-                    kept.push(item.clone());
+                    filtered.push(item.clone());
                 }
             }
-            Ok(StaticValue::Array(kept))
+            Ok(StaticValue::Array(filtered))
         }
         b"find" | b"findIndex" => {
             for (i, item) in items.iter().enumerate() {

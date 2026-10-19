@@ -116,8 +116,8 @@ impl Checker<'_, '_> {
             _ => None,
         };
         if let Some(index) = repeated
-            && let Some((written, text)) = &walk.text_of_expr[index]
-            && *written == ty
+            && let Some((printed_type, text)) = &walk.text_of_expr[index]
+            && *printed_type == ty
         {
             return text.clone();
         }
@@ -262,7 +262,7 @@ impl Checker<'_, '_> {
         decl: Decl,
     ) -> Option<ResolutionMode> {
         let (hir, files) = (self.hir(file), self.files());
-        let written = match decl {
+        let declared_mode = match decl {
             Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].mode,
             Decl::ImportSpec(spec) => hir[hir[spec].import].mode,
             Decl::ExportSpec(spec) => {
@@ -282,7 +282,7 @@ impl Checker<'_, '_> {
             }
             _ => return None,
         };
-        Some(files.mode_of_import(file, written))
+        Some(files.mode_of_import(file, declared_mode))
     }
 }
 

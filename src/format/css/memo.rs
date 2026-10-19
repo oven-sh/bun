@@ -104,7 +104,7 @@ impl Memo {
             self.table.clear();
             self.table.resize(len, 0);
             for index in 0..self.entries.len() {
-                self.place(index);
+                self.insert_into_table(index);
             }
         }
         let (text_range, output) = (self.add(text), self.add(output));
@@ -115,11 +115,11 @@ impl Memo {
             output,
             has_group,
         });
-        self.place(self.entries.len() - 1);
+        self.insert_into_table(self.entries.len() - 1);
     }
 
     /// Inserts entry `index` into the table, which must have a free slot.
-    fn place(&mut self, index: usize) {
+    fn insert_into_table(&mut self, index: usize) {
         let mask = self.table.len() - 1;
         let mut at = self.entries[index].hash as usize & mask;
         while self.table[at] != 0 {

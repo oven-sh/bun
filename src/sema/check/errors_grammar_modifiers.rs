@@ -315,7 +315,7 @@ impl Checker<'_, '_> {
         }
         // `node.Parent` of a type parameter
         let is_type_parameter = kind == Kind::TypeParameter;
-        let around = if is_type_parameter {
+        let parent_kind = if is_type_parameter {
             hir.kind(hir.parent(location))
         } else {
             Kind::Unknown
@@ -416,11 +416,11 @@ impl Checker<'_, '_> {
         let mut first_decorator = None;
         let (mut saw_export_before_decorators, mut has_leading_decorators) = (false, false);
         for &Modifier {
-            kind: written,
+            kind: modifier_kind,
             pos: start,
         } in modifiers
         {
-            let modifier = match written {
+            let modifier = match modifier_kind {
                 ModifierKind::Keyword(modifier) => modifier,
                 ModifierKind::Decorator(e) => {
                     // `!NodeCanBeDecorated(..)`
@@ -491,10 +491,10 @@ impl Checker<'_, '_> {
                     return self.grammar_error_on(file, location, 1248, [text, ""]);
                 }
                 if is_type_parameter
-                    && !around.is_function_like_declaration()
-                    && !around.is_class_like()
+                    && !parent_kind.is_function_like_declaration()
+                    && !parent_kind.is_class_like()
                     && !matches!(
-                        around,
+                        parent_kind,
                         Kind::FunctionType
                             | Kind::ConstructorType
                             | Kind::CallSignature
@@ -685,9 +685,9 @@ impl Checker<'_, '_> {
                 }
                 last_async = start;
             } else if modifier == Flags::IN || modifier == Flags::OUT {
-                if !around.is_class_like()
+                if !parent_kind.is_class_like()
                     && !matches!(
-                        around,
+                        parent_kind,
                         Kind::InterfaceDeclaration
                             | Kind::TypeAliasDeclaration
                             | Kind::JSTypeAliasDeclaration

@@ -18,10 +18,10 @@ pub struct NoUnusedState;
 const UNUSED_STATE_FIELD: Message = Message::new("unusedStateField", "Unused state field: '{{name}}'");
 
 /// `quasis[0].value.raw` for the text between the backticks. espree normalizes each line break in it to `\n`.
-fn raw_of<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
+fn raw_of<'a>(file: &File<'a>, raw_text: &'a [u8]) -> Cow<'a, [u8]> {
     match file.uses_typescript_parser() {
-        true => Cow::Borrowed(written),
-        false => strings::crlf_as_lf(written),
+        true => Cow::Borrowed(raw_text),
+        false => strings::crlf_as_lf(raw_text),
     }
 }
 
@@ -41,7 +41,7 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         }
         // For a template literal, use the raw source text.
         KeyKind::ComputedString(name) => Some(match file.slice(key.inner_span(file)) {
-            [b'`', written @ .., b'`'] => raw_of(file, written),
+            [b'`', raw_text @ .., b'`'] => raw_of(file, raw_text),
             _ => Cow::Borrowed(name.bytes()),
         }),
         KeyKind::Private(_) => None,
@@ -139,7 +139,7 @@ struct Walk<'a> {
 
 impl<'a> Walk<'a> {
     /// Functions enclosing `node`, innermost first.
-    fn functions_around(&mut self, node: Node<'a>) -> impl Iterator<Item = Func<'a>> + use<'a> {
+    fn functions_enclosing(&mut self, node: Node<'a>) -> impl Iterator<Item = Func<'a>> + use<'a> {
         successors(self.enclosing_functions.find(node, |_, parent| parent.as_func()), |it| it.enclosing())
     }
 
@@ -157,7 +157,7 @@ impl<'a> Walk<'a> {
             return !is_deeper && is_es5_component(parent, &self.pragmas);
         }
         let above = estree_parent(parent);
-        let grandparent = match parent.as_written() {
+        let grandparent = match parent.owner_or_self() {
             Node::Prop(property) if property.is_jsx_attribute() => return false,
             Node::Prop(_) | Node::Param(_) => above,
             // The grandparent is a `ChainExpression`, which this AST doesn't have. The enclosing call's callee has the
@@ -368,7 +368,7 @@ impl<'a> Walk<'a> {
         let unwrapped_left = unwrap_ts_as_expression(target);
         let unwrapped_right = unwrap_ts_as_expression(value);
         if unwrapped_right.tag() == ExprTag::Object && is_member_of_this(unwrapped_left, b"state") {
-            let mut functions = self.functions_around(Node::Expr(node));
+            let mut functions = self.functions_enclosing(Node::Expr(node));
             let function = functions.find(|it| estree_type_name(Node::Func(*it)) == "FunctionExpression");
             if function.is_some_and(|it| matches!(it.owner(), Node::Member(parent) if parent.is_constructor())) {
                 self.add_state_fields(unwrapped_right);
@@ -538,7 +538,7 @@ impl Rule for NoUnusedState {
                 continue;
             }
             walked_to = component.span().end;
-            walk.state_parameters = walk.functions_around(component).filter_map(state_parameter).collect();
+            walk.state_parameters = walk.functions_enclosing(component).filter_map(state_parameter).collect();
             walk_node(component, &mut walk);
         }
         for (node, name) in walk.unused {

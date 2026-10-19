@@ -6,7 +6,7 @@
 
 use crate::configs::{Flavor, Loaded, Loader, inherit_frameworks, read_frameworks};
 use crate::embedded::Framework;
-use crate::fmt::Negative;
+use crate::fmt::Exclusions;
 use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
@@ -131,8 +131,9 @@ struct Search {
 /// ESLint 8's `dotfilesPattern`: checks whether a path segment in `argument` starts with a dot and is neither `.` nor
 /// `..`.
 fn dotfiles_for(argument: &[u8]) -> Dotfiles {
-    let is_one = |name: &[u8]| matches!(name, [b'.', next, ..] if !matches!(next, b'.' | b'\\'));
-    match strings::split(argument, b"/").any(is_one) {
+    let is_dotfile =
+        |name: &[u8]| matches!(name, [b'.', next, ..] if !matches!(next, b'.' | b'\\'));
+    match strings::split(argument, b"/").any(is_dotfile) {
         true => Dotfiles::Linted,
         false => Dotfiles::AsConfigured,
     }
@@ -256,7 +257,7 @@ fn search(
     loader: &Loader,
     pool: &Pool,
     search: &Search,
-    negative: &Negative,
+    exclusions: &Exclusions,
     are_all_in_repositories: &(dyn Fn() -> bool + Sync),
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
@@ -411,7 +412,7 @@ fn search(
                 if reads_ignore_files && ignores.is_ignored(&path, entry.is_directory) {
                     continue;
                 }
-                if negative.matches(&loader.environment().cwd, &path) {
+                if exclusions.matches(&loader.environment().cwd, &path) {
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
@@ -515,13 +516,13 @@ pub(crate) fn list_as_eslint_8(
         ext: Some(extensions.iter().map(|it| it.to_vec()).collect()),
         ..Default::default()
     };
-    let loader = Loader::of_eslint_8(linter, &options, environment, js_plugins);
+    let loader = Loader::for_eslint_8(linter, &options, environment, js_plugins);
     let patterns: Vec<Vec<u8>> = patterns.iter().map(|it| it.to_vec()).collect();
     let mut targets = find_files(&loader, pool, &patterns, true).map_err(|error| error.0)?;
     bun_lint::utils::sort::sort_by(&mut targets, |a, b| a.path.cmp(&b.path));
     // `ConfigurationNotFoundError`
     let mut directories = targets.iter().map(|it| paths::dirname(&it.path));
-    let has_none = |it: &&[u8]| !paths::ancestors(it).any(crate::eslintrc::has_one);
+    let has_none = |it: &&[u8]| !paths::ancestors(it).any(crate::eslintrc::has_eslintrc_file);
     if let Some(directory) = directories.find(has_none) {
         return Err([b"No ESLint configuration found in ", directory, b"."].concat());
     }
@@ -546,18 +547,20 @@ pub(crate) fn list_as_eslint_8(
 fn split_exclusions<'p>(
     loader: &Loader,
     patterns: &'p [Vec<u8>],
-) -> (Cow<'p, [Vec<u8>]>, Negative) {
-    let mut negative = Negative::default();
+) -> (Cow<'p, [Vec<u8>]>, Exclusions) {
+    let mut exclusions = Exclusions::default();
     if !patterns.iter().any(|it| it.starts_with(b"!")) {
-        return (Cow::Borrowed(patterns), negative);
+        return (Cow::Borrowed(patterns), exclusions);
     }
     let cwd = &loader.environment().cwd;
     let mut selecting = Vec::new();
-    for written in patterns {
-        let pattern = paths::from_native(written);
+    for raw_pattern in patterns {
+        let pattern = paths::from_native(raw_pattern);
         match pattern.strip_prefix(b"!") {
-            Some(rest) if fs::kind(&paths::resolve(cwd, &pattern)).is_none() => negative.push(rest),
-            _ => selecting.push(written.clone()),
+            Some(rest) if fs::kind(&paths::resolve(cwd, &pattern)).is_none() => {
+                exclusions.push(rest)
+            }
+            _ => selecting.push(raw_pattern.clone()),
         }
     }
     if selecting.is_empty()
@@ -565,7 +568,7 @@ fn split_exclusions<'p>(
     {
         selecting.push(b".".to_vec());
     }
-    (Cow::Owned(selecting), negative)
+    (Cow::Owned(selecting), exclusions)
 }
 
 /// ESLint's `findFiles`. `patterns` is the list of arguments. The files are in no particular order, without duplicates.
@@ -577,7 +580,7 @@ pub(crate) fn find_files(
 ) -> Result<Vec<Target>, Fatal> {
     let cwd = &loader.environment().cwd;
     let first = patterns.first();
-    let (patterns, negative) = split_exclusions(loader, patterns);
+    let (patterns, exclusions) = split_exclusions(loader, patterns);
     let patterns = &patterns[..];
     if let (true, Some(first)) = (patterns.is_empty() && error_on_unmatched_pattern, first) {
         return Err(no_files_found(first));
@@ -620,21 +623,21 @@ pub(crate) fn find_files(
             None => {}
         }
     }
-    let (mut missing, mut left_out) = (None, None);
+    let (mut missing, mut excluded_argument) = (None, None);
     for pattern in patterns {
         let pattern = paths::from_native(pattern);
         let path = paths::resolve(cwd, &pattern);
-        let there = fs::kind_and_size(&path);
-        if there.is_none()
+        let existing = fs::kind_and_size(&path);
+        if existing.is_none()
             && let Err(error) = fs::link_target_kind(&path)
             && let Some(thrown) = eslint_8_stat_error(&error, &path)
             && is_for_eslint_8(paths::dirname(&path))
         {
             return Err(thrown);
         }
-        match there {
-            Some((fs::Kind::File, _)) if negative.matches(cwd, &path) => {
-                left_out.get_or_insert(pattern);
+        match existing {
+            Some((fs::Kind::File, _)) if exclusions.matches(cwd, &path) => {
+                excluded_argument.get_or_insert(pattern);
             }
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
@@ -681,10 +684,10 @@ pub(crate) fn find_files(
     {
         return Err(no_files_found(&missing));
     }
-    if let Some(left_out) = left_out
+    if let Some(excluded_argument) = excluded_argument
         && error_on_unmatched_pattern
     {
-        return Err(all_files_ignored(&left_out));
+        return Err(all_files_ignored(&excluded_argument));
     }
     let mut unmatched = None;
     let wanted = || searches.iter().filter(|it| !it.patterns.is_empty());
@@ -708,7 +711,7 @@ pub(crate) fn find_files(
             loader,
             pool,
             it,
-            &negative,
+            &exclusions,
             &|| *are_all_in_repositories,
             &mut searched,
         )? {
@@ -741,11 +744,11 @@ pub(crate) fn find_files_not_on_disk<'f>(
     files: impl Iterator<Item = (&'f [u8], u64)>,
 ) -> Result<Vec<Target>, Fatal> {
     let cwd = &loader.environment().cwd;
-    let (patterns, negative) = split_exclusions(loader, patterns);
+    let (patterns, exclusions) = split_exclusions(loader, patterns);
     // A search doesn't enter an excluded directory.
-    let is_left_out = |file: &[u8]| paths::ancestors(file).any(|it| negative.matches(cwd, it));
+    let is_excluded = |file: &[u8]| paths::ancestors(file).any(|it| exclusions.matches(cwd, it));
     let is_wanted = |file: &[u8]| {
-        !is_left_out(file)
+        !is_excluded(file)
             && patterns.iter().any(|pattern| {
                 let pattern = paths::from_native(pattern);
                 let resolved = paths::resolve(cwd, &pattern);

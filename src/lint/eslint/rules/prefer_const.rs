@@ -162,8 +162,8 @@ impl<'a> Caches<'a> {
         if left.tag() == ExprTag::Ident {
             return false;
         }
-        if let Some(&known) = self.assignments.get(&(host, scope)) {
-            return known;
+        if let Some(&cached) = self.assignments.get(&(host, scope)) {
+            return cached;
         }
         let found = self.has_outer_variables(left, scope) || has_member_expression_assignment(left);
         self.assignments.insert((host, scope), found);
@@ -269,8 +269,8 @@ struct DeclarationFacts {
 
 impl<'a> Checked<'a> {
     fn facts_of(&mut self, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> DeclarationFacts {
-        if let Some((known, facts)) = self.declaration
-            && known == statement
+        if let Some((cached_statement, facts)) = self.declaration
+            && cached_statement == statement
         {
             return facts;
         }
@@ -298,7 +298,7 @@ impl PreferConst {
     fn get_identifier_if_should_be_const<'a>(
         &self,
         variable: Symbol<'a>,
-        known: &mut Caches<'a>,
+        caches: &mut Caches<'a>,
     ) -> Option<Node<'a>> {
         let scope = variable.scope();
         if scope.kind() == ScopeKind::Global && variable.is_marked_used() {
@@ -311,9 +311,9 @@ impl PreferConst {
                 if writer.is_some_and(|it| it.ident().start() != reference.ident().start()) {
                     return None;
                 }
-                if let Some(Node::Expr(host)) = get_destructuring_host(reference, &mut known.patterns)
+                if let Some(Node::Expr(host)) = get_destructuring_host(reference, &mut caches.patterns)
                     && let ExprKind::Assign { target, .. } = host.kind()
-                    && known.has_undeclarable_targets(host, target, scope)
+                    && caches.has_undeclarable_targets(host, target, scope)
                 {
                     return None;
                 }
@@ -330,7 +330,7 @@ impl PreferConst {
         if writer.is_read() && variable.file().language().is_oxlint {
             return None;
         }
-        if writer.scope() != scope || !can_become_variable_declaration(writer.node(), &mut known.patterns) {
+        if writer.scope() != scope || !can_become_variable_declaration(writer.node(), &mut caches.patterns) {
             return None;
         }
         if !is_read_before_init {
@@ -343,15 +343,15 @@ impl PreferConst {
     }
 
     /// ESLint's `groupByDestructuring`, for one variable.
-    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Caches<'a>) {
+    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, caches: &mut Caches<'a>) {
         let is_redeclared = variable.declarations().len() > 1;
-        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(variable) {
+        if is_redeclared && let Some((identifier, hosts)) = caches.redeclared.get(variable) {
             for &host in hosts {
                 groups.push(host, *identifier);
             }
             return;
         }
-        let identifier = self.get_identifier_if_should_be_const(variable, known);
+        let identifier = self.get_identifier_if_should_be_const(variable, caches);
         let mut hosts = SmallVec::new();
         let mut previous = None;
         for reference in variable.references() {
@@ -359,7 +359,7 @@ impl PreferConst {
             if previous.replace(id) == Some(id) {
                 continue;
             }
-            if let Some(host) = get_destructuring_host(reference, &mut known.patterns)
+            if let Some(host) = get_destructuring_host(reference, &mut caches.patterns)
                 // A group that is a single `None` has no effect.
                 && (identifier.is_some() || is_destructuring(host))
             {
@@ -371,7 +371,7 @@ impl PreferConst {
             }
         }
         if is_redeclared {
-            known.redeclared.insert(variable, (identifier, hosts));
+            caches.redeclared.insert(variable, (identifier, hosts));
         }
     }
 
@@ -487,7 +487,7 @@ impl Rule for PreferConst {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
-        let (mut groups, mut known) = (Groups::default(), Caches::default());
+        let (mut groups, mut caches) = (Groups::default(), Caches::default());
         for statement in statements {
             let StmtKind::Var(declarations) = statement.kind() else {
                 continue;
@@ -499,7 +499,7 @@ impl Rule for PreferConst {
                     declaration.pat().for_each_binding(&mut |pat| {
                         let variable = pat.symbol().filter(|_| is_all_const);
                         is_all_const =
-                            variable.is_some_and(|it| self.get_identifier_if_should_be_const(it, &mut known).is_some());
+                            variable.is_some_and(|it| self.get_identifier_if_should_be_const(it, &mut caches).is_some());
                     });
                 }
                 if !is_all_const {
@@ -509,14 +509,14 @@ impl Rule for PreferConst {
             for declaration in declarations {
                 declaration.pat().for_each_binding(&mut |pat| {
                     if let Some(variable) = pat.symbol() {
-                        self.group(variable, &mut groups, &mut known);
+                        self.group(variable, &mut groups, &mut caches);
                     }
                 });
             }
         }
         let mut checked = Checked::default();
         for nodes in &groups.nodes {
-            self.check_group(nodes, &mut checked, &mut known.patterns, cx);
+            self.check_group(nodes, &mut checked, &mut caches.patterns, cx);
         }
     }
 }

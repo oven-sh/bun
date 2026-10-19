@@ -633,10 +633,10 @@ describe.concurrent("a bunfig.toml in a parent of the working directory", () => 
     const found = [...stdout.replaceAll("\\", "/").matchAll(/^(\S+?):(\d+):\d+: .* \[\w+\/(.+)\]$/gm)].map(
       ([, path, line, rule]) => {
         // oxlint's paths are relative to the working directory.
-        const whole = path.includes("bun-lint_")
+        const fromRoot = path.includes("bun-lint_")
           ? path.replace(/^.*bun-lint_\w+\//, "")
           : join(cwd, path).replaceAll("\\", "/");
-        return `${whole}:${line} ${rule.replace(/^eslint\((.+)\)$/, "$1").replace(/^(\w+)\((.+)\)$/, "$1/$2")}`;
+        return `${fromRoot}:${line} ${rule.replace(/^eslint\((.+)\)$/, "$1").replace(/^(\w+)\((.+)\)$/, "$1/$2")}`;
       },
     );
     return {
@@ -1303,9 +1303,9 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
 
   test.each(["../../shared.toml", "absolute"])(
     "--init with --config=%s still creates bunfig.toml in the working directory",
-    async named => {
+    async configArg => {
       using dir = tempDir("bun-lint", { "shared.toml": `[lint]\nquiet = false\n`, "packages/app/a.js": code });
-      const path = named === "absolute" ? join(String(dir), "shared.toml") : named;
+      const path = configArg === "absolute" ? join(String(dir), "shared.toml") : configArg;
       await using proc = spawn({
         cmd: [bunExe(), `--config=${path}`, "lint", "--init"],
         env,
@@ -1482,7 +1482,7 @@ rules = { "no-console" = "off" }
 files = "*.md"
 rules = { "no-var" = "error" }
 `;
-  const left = ["scripts/vendor/e.js no-console error", "sub/c.js no-console error"];
+  const remaining = ["scripts/vendor/e.js no-console error", "sub/c.js no-console error"];
   const flat = `module.exports = [{ rules: { "no-console": "warn" } }];\n`;
   const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules: { "no-console": "warn" } });
   const configs: Record<string, Record<string, string>> = {
@@ -1497,7 +1497,7 @@ rules = { "no-var" = "error" }
 
     // A pattern without a slash matches a file name in any directory. Others match the path relative to bunfig.toml.
     test("an override applies to files that match `files` but not `excludeFiles`", async () => {
-      expect(await problems(files)).toEqual(left);
+      expect(await problems(files)).toEqual(remaining);
     });
 
     test("`files` doesn't add files to the run", async () => {
@@ -1621,10 +1621,10 @@ globals = { mine = "off" }
 
   test("patterns are relative to bunfig.toml's directory, wherever the config file is", async () => {
     const files = { ...tree, "bunfig.toml": bunfig, "config/mine.json": oxlintrc, "config/mine.js": flat };
-    expect(await problems(files, ["--config", "config/mine.json"])).toEqual(left);
-    expect(await problems(files, ["--config", "config/mine.js"])).toEqual(left);
+    expect(await problems(files, ["--config", "config/mine.json"])).toEqual(remaining);
+    expect(await problems(files, ["--config", "config/mine.js"])).toEqual(remaining);
     const nested = { ...tree, "bunfig.toml": bunfig, ".oxlintrc.json": "{}", "scripts/.oxlintrc.json": oxlintrc };
-    expect(await problems(nested)).toEqual(left);
+    expect(await problems(nested)).toEqual(remaining);
     // That's the bunfig.toml in the working directory.
     const below = { ...tree, "bunfig.toml": "", "scripts/bunfig.toml": bunfig.replaceAll("scripts/", "") };
     expect(await problems(below, ["--cwd", "scripts"])).toEqual(["scripts/vendor/e.js no-console error"]);
@@ -1730,10 +1730,10 @@ files = "scripts/*"
       "3:17",
     ],
     [inOverride("settings = 1"), "expected object but received number", "3:12"],
-  ])("%s is rejected", async (bunfig, message, place) => {
+  ])("%s is rejected", async (bunfig, message, location) => {
     const { stdout, stderr, exitCode } = await lint({ "a.js": log, "bunfig.toml": `${bunfig}\n` }, []);
     expect(stderr).toContain(`error: ${message}`);
-    expect(stderr).toEndWith(`\n    at bunfig.toml:${place}`);
+    expect(stderr).toEndWith(`\n    at bunfig.toml:${location}`);
     expect(stdout).toBe("");
     expect(exitCode).toBe(2);
   });

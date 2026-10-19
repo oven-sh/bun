@@ -5,7 +5,7 @@
 
 use super::type_parameters::type_arguments;
 use crate::css::embed;
-use crate::cursor::around_node_at;
+use crate::cursor::with_node_marks_at;
 use crate::ir::width::string_width_as;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::tailwindcss::{
@@ -76,7 +76,7 @@ pub(crate) fn write_embedded_template_expression<'a>(
         let expression = FormatTemplateExpression {
             expression,
             interpolation: template.interpolation_span(i),
-            place: Place::Unknown,
+            line_position: LinePosition::Unknown,
         };
         expression.fmt(f);
     }
@@ -227,9 +227,11 @@ impl<'a> TemplateLike<'a> {
             Some(FormatTemplateExpression {
                 expression: self.expression(i)?,
                 interpolation: self.interpolation_span(i),
-                place: match indention.0 == 0 && matches!(quasi_text.last(), Some(b'\n' | b'\r')) {
-                    true => Place::StartOfLine,
-                    false => Place::After(indention),
+                line_position: match indention.0 == 0
+                    && matches!(quasi_text.last(), Some(b'\n' | b'\r'))
+                {
+                    true => LinePosition::StartOfLine,
+                    false => LinePosition::After(indention),
                 },
             })
         })
@@ -246,7 +248,7 @@ impl<'a> Format<'a> for TemplateLike<'a> {
             .expressions(false, f)
             .map(|it| match collapses_line_breaks {
                 true => FormatTemplateExpression {
-                    place: Place::After(TemplateElementIndention::default()),
+                    line_position: LinePosition::After(TemplateElementIndention::default()),
                     ..it
                 },
                 false => it,
@@ -258,11 +260,11 @@ impl<'a> Format<'a> for TemplateLike<'a> {
                 .filter(|_| has_white_space(source))
                 .and_then(|context| {
                     let tailwind = f.options().tailwind.as_deref()?;
-                    let place = (i == 0, i + 1 == count);
-                    sorted_template_text(source, place, context, tailwind)
+                    let first_and_last = (i == 0, i + 1 == count);
+                    sorted_template_text(source, first_and_last, context, tailwind)
                 });
             let raw = sorted.as_deref().unwrap_or(source);
-            around_node_at(
+            with_node_marks_at(
                 || self.content_span(i),
                 f,
                 |f| match bun_core::strings::contains_char(raw, b'\r') {
@@ -298,12 +300,12 @@ struct FormatTemplateExpression<'a> {
     expression: TemplateExpression<'a>,
     /// The span between the `${` and the `}`.
     interpolation: Span,
-    place: Place,
+    line_position: LinePosition,
 }
 
 /// Where a `${` is on its line.
 #[derive(Clone, Copy)]
-enum Place {
+enum LinePosition {
     /// How the text before it will be printed isn't known.
     Unknown,
     /// It's the first thing on its line.
@@ -374,10 +376,10 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             }
         });
 
-        let format_indented = format_with(|f| match self.place {
-            Place::Unknown => write!(f, format_inner),
-            Place::StartOfLine => write!(f, dedent_to_root(&format_inner)),
-            Place::After(indention) => {
+        let format_indented = format_with(|f| match self.line_position {
+            LinePosition::Unknown => write!(f, format_inner),
+            LinePosition::StartOfLine => write!(f, dedent_to_root(&format_inner)),
+            LinePosition::After(indention) => {
                 write_with_indention(&format_inner, indention, f.options().indent_width, f)
             }
         });

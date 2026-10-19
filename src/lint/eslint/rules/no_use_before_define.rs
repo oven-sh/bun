@@ -318,18 +318,20 @@ fn is_heritage(ty: TypeNode) -> bool {
 }
 
 fn parent_of_identifier(reference: Reference, is_in_type_query: bool) -> Parent {
-    let of_name = |name: EntityName, alone: Parent| match name.len() {
-        0 | 1 => alone,
+    let parent_for_name = |name: EntityName, single_name_parent: Parent| match name.len() {
+        0 | 1 => single_name_parent,
         _ => Parent::QualifiedName,
     };
     match reference.node() {
         Node::Type(ty) => match ty.kind() {
-            TypeKind::Ref { name, .. } if !is_heritage(ty) => of_name(name, Parent::TypeReference),
+            TypeKind::Ref { name, .. } if !is_heritage(ty) => {
+                parent_for_name(name, Parent::TypeReference)
+            }
             _ => Parent::Other,
         },
         Node::Stmt(statement) => match statement.kind() {
             StmtKind::ImportEquals(import) => match import.target() {
-                ImportEqualsTarget::Entity(name) => of_name(name, Parent::Other),
+                ImportEqualsTarget::Entity(name) => parent_for_name(name, Parent::Other),
                 ImportEqualsTarget::Require(_) => Parent::Other,
             },
             _ => Parent::Other,

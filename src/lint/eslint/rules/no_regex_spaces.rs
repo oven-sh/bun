@@ -38,7 +38,7 @@ fn check_regex<'a>(
     flags: &[u8],
     cx: &mut Cx<'a, NoRegexSpaces>,
 ) {
-    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default())
+    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default())
     else {
         return;
     };
@@ -129,7 +129,7 @@ fn check_function<'a>(_: &NoRegexSpaces, e: Expr<'a>, cx: &mut Cx<'a, NoRegexSpa
 /// at the spaces.
 fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
     let pattern = match e.kind() {
-        ExprKind::Regex(literal) if has_double_space(literal.pattern()) => Pattern::of_literal(e),
+        ExprKind::Regex(literal) if has_double_space(literal.pattern()) => Pattern::from_literal(e),
         ExprKind::Call(call) | ExprKind::New(call) if get_inner_expression(call.callee()).is_ident("RegExp") => {
             let args = call.args();
             let may_be_flags = |it: Expr| match it.tag() {

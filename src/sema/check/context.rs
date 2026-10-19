@@ -96,14 +96,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// outermost first, so that a query about something inside doesn't become circular through
     /// them.
     pub fn prepare_enclosing(&mut self, file: FileId, e: ExprId) {
-        self.prepare_around(file, e);
+        self.prepare_ancestors(file, e);
         self.prepare_context(file, e);
     }
 
     /// `prepare_parent` for the ancestors of `e`. In the file being checked, `e` and its ancestor
     /// expressions are marked on the way up. A descendant of a marked expression is in the same
     /// function, which has already been through `prepare_outermost_first`.
-    fn prepare_around(&mut self, file: FileId, e: ExprId) {
+    fn prepare_ancestors(&mut self, file: FileId, e: ExprId) {
         let bound = self.bound(file);
         if self.prepared_exprs.0 != file {
             if self.task.file != Some(file) {
@@ -840,7 +840,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// element of a pattern, replaces.
     fn contextual_type_for_binding_element(&mut self, file: FileId, pat: PatId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (parent, place) = match bound.pat_parent[pat.idx()] {
+        let (parent, key_or_index) = match bound.pat_parent[pat.idx()] {
             PatParent::Prop(parent, prop) if !hir[prop].is_rest => {
                 // `IsComputedNonLiteralName`: a name that has to be evaluated isn't looked up.
                 if let PropKey::Computed(k) = hir[prop].key
@@ -887,7 +887,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => return None,
         };
-        match place {
+        match key_or_index {
             Ok(key) => {
                 let name = self.member_name(file, key)?;
                 self.type_of_property_of_type(parent_ty, name)
@@ -968,7 +968,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.bailed_out_from(stored.map_or(top, |above| innermost + 1 + above));
             return None;
         }
-        // Results computed in the outer visit aren't valid in this one, and vice versa.
+        // Results rechecked under a pushed contextual type aren't valid for this recheck, which has
+        // nothing pushed, and vice versa.
         let found_outside = self.set_rechecked_aside();
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, initializer, CheckMode::empty());
@@ -1039,11 +1040,11 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(context);
         }
         let parts = self.parts(context);
-        let asked = self.members_to_search_for_context(context, name);
+        let members_to_search = self.members_to_search_for_context(context, name);
         let mut types = Parts::new();
-        match &asked {
-            Some(asked) => {
-                for at in asked.iter() {
+        match &members_to_search {
+            Some(members_to_search) => {
+                for at in members_to_search.iter() {
                     types.extend(self.contextual_property_of_member(parts[at], name, name_type));
                 }
             }
@@ -1318,8 +1319,8 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             None
         };
-        let around = match sig {
-            Some(sig) => self.mapper_around_sig(sig),
+        let outer_mapper = match sig {
+            Some(sig) => self.outer_mapper_of_sig(sig),
             None => MapperId::IDENTITY,
         };
         Some(self.map_type_unreduced(instantiated, |c, t| {
@@ -1329,7 +1330,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `getApparentType`
             let constraint = if c.is_deferred(t) {
                 let constraint = c.base_constraint(t);
-                c.filled_in_around(t, constraint, around)
+                c.with_outer_type_arguments(t, constraint, outer_mapper)
             } else {
                 t
             };
@@ -1560,7 +1561,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // Only names the binder knows count. A computed name is skipped.
-        let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
+        let (mut items, mut given_names) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
         let mut all_values_are_final = true;
         for p in props.iter() {
             let prop = &hir[p];
@@ -1570,7 +1571,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(name) = prop.key.name() else {
                 continue;
             };
-            written.push(name);
+            given_names.push(name);
             let counts = prop.value.is_some()
                 && match prop.kind {
                     PropKind::Init => Self::is_possibly_discriminant_value(hir, prop.value),
@@ -1583,7 +1584,7 @@ impl<'p, 's> Checker<'p, 's> {
                 items.push((name, actual));
             }
         }
-        self.push_omitted_discriminants(context, &written, &mut items);
+        self.push_omitted_discriminants(context, &given_names, &mut items);
         (
             self.discriminate_by_items(context, &items, Self::is_assignable),
             all_values_are_final,
@@ -1642,7 +1643,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Jsx(j) = hir[element].kind else {
             return context;
         };
-        let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
+        let (mut items, mut given_names) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
         for p in hir[j].attrs.iter() {
             let attr = &hir[p];
             if attr.kind == PropKind::Spread {
@@ -1651,7 +1652,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(name) = attr.key.name() else {
                 continue;
             };
-            written.push(name);
+            given_names.push(name);
             if (attr.value.is_none() || Self::is_possibly_discriminant_value(hir, attr.value))
                 && self.is_discriminant_property(context, name)
             {
@@ -1671,9 +1672,9 @@ impl<'p, 's> Checker<'p, 's> {
             && let super::jsx::JsxName::Name(children) =
                 self.jsx_children_property_name(file, hir.node(element))
         {
-            written.push(children);
+            given_names.push(children);
         }
-        self.push_omitted_discriminants(context, &written, &mut items);
+        self.push_omitted_discriminants(context, &given_names, &mut items);
         self.discriminate_by_items(context, &items, Self::is_assignable)
     }
 
@@ -1720,11 +1721,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The second half of the discriminators: an optional discriminant property of the union
-    /// `context` that isn't in `written` is treated as `undefined`.
+    /// `context` that isn't in `given_names` is treated as `undefined`.
     fn push_omitted_discriminants(
         &mut self,
         context: TypeId,
-        written: &[Atom],
+        given_names: &[Atom],
         items: &mut Discriminants,
     ) {
         // `getPropertiesOfType`
@@ -1747,7 +1748,7 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     continue;
                 }
-                if written.contains(&name) || !self.is_discriminant_property(context, name) {
+                if given_names.contains(&name) || !self.is_discriminant_property(context, name) {
                     continue;
                 }
                 // `createUnionOrIntersectionProperty`: it's optional if it's optional in some
@@ -1823,16 +1824,16 @@ impl<'p, 's> Checker<'p, 's> {
         if !include.contains(&OUT) {
             return context;
         }
-        let kept: Parts = types
+        let included: Parts = types
             .iter()
             .zip(&include)
             .filter(|(_, slot)| **slot == IN)
             .map(|(&t, _)| t)
             .collect();
-        if kept.is_empty() {
+        if included.is_empty() {
             context
         } else {
-            self.union_unreduced(&kept)
+            self.union_unreduced(&included)
         }
     }
 

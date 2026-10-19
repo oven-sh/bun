@@ -32,7 +32,7 @@ struct SyntaxError {
     /// only report a start position.
     end: u32,
     message: Vec<u8>,
-    of_oxc: OxcDetails,
+    oxc_details: OxcDetails,
 }
 
 /// Everything oxlint prints for an error besides the message and the first label's position, plus what determines the
@@ -69,14 +69,14 @@ enum Stage {
 impl SyntaxError {
     /// An oxc error whose first label is at `label`.
     #[inline(always)]
-    fn of_oxc(label: Span, message: impl AsRef<[u8]>) -> SyntaxError {
-        Self::of_oxc_with(label, message.as_ref())
+    fn oxc_error(label: Span, message: impl AsRef<[u8]>) -> SyntaxError {
+        Self::oxc_error_with(label, message.as_ref())
     }
 
     /// Out of line so that the hundred or so call sites share one body.
     #[cold]
     #[inline(never)]
-    fn of_oxc_with(label: Span, message: &[u8]) -> SyntaxError {
+    fn oxc_error_with(label: Span, message: &[u8]) -> SyntaxError {
         SyntaxError {
             at: label.start,
             end: match label.end == label.start {
@@ -84,7 +84,7 @@ impl SyntaxError {
                 false => label.end,
             },
             message: message.to_vec(),
-            of_oxc: OxcDetails::default(),
+            oxc_details: OxcDetails::default(),
         }
     }
 
@@ -100,7 +100,7 @@ impl SyntaxError {
             found,
             b"`",
         ];
-        Self::of_oxc_with(label, &texts.concat()).says([wanted, " expected"].concat())
+        Self::oxc_error_with(label, &texts.concat()).label_text([wanted, " expected"].concat())
     }
 
     /// oxc parsed the code ending at `after` as a statement and gives up at whatever follows on the same line.
@@ -109,7 +109,7 @@ impl SyntaxError {
     fn semicolon_after(after: u32) -> SyntaxError {
         let message =
             "Expected a semicolon or an implicit semicolon after a statement, but found none";
-        Self::of_oxc(Span::empty(after), message)
+        Self::oxc_error(Span::empty(after), message)
             .help("Try inserting a semicolon here")
             .stage(Stage::Fatal)
     }
@@ -119,54 +119,58 @@ impl SyntaxError {
     #[inline(never)]
     fn redeclared(what: &str, name: &[u8], first: Span, again: Span) -> SyntaxError {
         let name = bstr::BStr::new(name);
-        Self::of_oxc(first, format!("{what} `{name}` has already been declared"))
-            .says(format!("`{name}` has already been declared here"))
+        Self::oxc_error(first, format!("{what} `{name}` has already been declared"))
+            .label_text(format!("`{name}` has already been declared here"))
             .and(again, "It can not be redeclared here")
     }
 
     /// `TS(code)`
     fn code(mut self, code: u16) -> SyntaxError {
-        self.of_oxc.code = code;
+        self.oxc_details.code = code;
         self
     }
 
     /// Sets the first label's text.
-    fn says(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
-        self.of_oxc.first_label = text.into();
+    fn label_text(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
+        self.oxc_details.first_label = text.into();
         self
     }
 
     /// Adds another label.
     fn and(mut self, label: Span, text: impl Into<Cow<'static, str>>) -> SyntaxError {
-        self.of_oxc.labels.push((label, text.into()));
+        self.oxc_details.labels.push((label, text.into()));
         self
     }
 
     fn help(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
-        self.of_oxc.help = text.into();
+        self.oxc_details.help = text.into();
         self
     }
 
     fn note(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
-        self.of_oxc.note = text.into();
+        self.oxc_details.note = text.into();
         self
     }
 
     fn stage(mut self, stage: Stage) -> SyntaxError {
-        self.of_oxc.stage = stage;
+        self.oxc_details.stage = stage;
         self
     }
 
     /// [`OxcDetails::noticed`]
     fn noticed_at(mut self, at: u32) -> SyntaxError {
-        self.of_oxc.noticed = Some(at);
+        self.oxc_details.noticed = Some(at);
         self
     }
 
     /// [`OxcDetails::noticed`], or where the last label starts.
     fn order(&self) -> u32 {
-        let last = self.of_oxc.labels.last().map_or(self.at, |it| it.0.start);
-        self.of_oxc.noticed.unwrap_or(last)
+        let last = self
+            .oxc_details
+            .labels
+            .last()
+            .map_or(self.at, |it| it.0.start);
+        self.oxc_details.noticed.unwrap_or(last)
     }
 }
 
@@ -203,10 +207,11 @@ fn first_parser_error<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> 
     if !file.has_parse_errors() {
         return None;
     }
-    let mut of_parser = (file.hir.diagnostics.iter()).filter(|it| it.kind == DiagnosticKind::Parse);
-    match of_parser.clone().find(|it| !is_tolerated(file, it)) {
+    let mut parse_diagnostics =
+        (file.hir.diagnostics.iter()).filter(|it| it.kind == DiagnosticKind::Parse);
+    match parse_diagnostics.clone().find(|it| !is_tolerated(file, it)) {
         Some(first) => Some(Some(first)),
-        None if of_parser.next().is_some() => None,
+        None if parse_diagnostics.next().is_some() => None,
         None => Some(None),
     }
 }
@@ -227,17 +232,20 @@ fn to_oxc_errors<'a>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],
 ) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
-    let of_parser = diagnostics.iter().enumerate();
-    let mut of_parser = of_parser.filter(|it| it.1.kind == DiagnosticKind::Parse);
+    let parse_diagnostics = diagnostics.iter().enumerate();
+    let mut parse_diagnostics = parse_diagnostics.filter(|it| it.1.kind == DiagnosticKind::Parse);
     let mut all = Vec::new();
     // TypeScript's parser doesn't recover well from an invalid character (1127), but oxc's lexer continues. After the
     // first one, only errors about other invalid characters are used.
-    let mut lost = None;
-    for (place, it) in of_parser.clone().filter(|it| !is_tolerated(file, it.1)) {
-        if lost.is_some() && it.code != 1127 {
+    let mut first_invalid_character = None;
+    for (index, it) in parse_diagnostics
+        .clone()
+        .filter(|it| !is_tolerated(file, it.1))
+    {
+        if first_invalid_character.is_some() && it.code != 1127 {
             continue;
         }
-        let mut errors = oxc::of_typescript(file, it);
+        let mut errors = oxc::translate_typescript_error(file, it);
         if errors.is_empty() {
             let mut message = Vec::new();
             match bun_sema::messages::message(it.code) {
@@ -253,20 +261,21 @@ fn to_oxc_errors<'a>(
             errors.push(error.stage(Stage::Fatal));
         }
         // Nothing can follow an unterminated comment.
-        let is_last = it.code == 1010 || errors.iter().any(|it| it.of_oxc.stage == Stage::Fatal);
+        let is_last =
+            it.code == 1010 || errors.iter().any(|it| it.oxc_details.stage == Stage::Fatal);
         all.append(&mut errors);
         if is_last {
-            return (all, lost.or(Some((place, it.start))));
+            return (all, first_invalid_character.or(Some((index, it.start))));
         }
         if it.code == 1127 {
-            lost = lost.or(Some((place, it.start)));
+            first_invalid_character = first_invalid_character.or(Some((index, it.start)));
         }
     }
-    if lost.is_some() {
-        return (all, lost);
+    if first_invalid_character.is_some() {
+        return (all, first_invalid_character);
     }
     // The parser failed without a diagnostic.
-    if all.is_empty() && of_parser.next().is_none() {
+    if all.is_empty() && parse_diagnostics.next().is_none() {
         let error = SyntaxError {
             message: b"Unexpected token".to_vec(),
             ..SyntaxError::default()
@@ -340,21 +349,21 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
     if parser == Parser::Espree
         && let Some(message) = espree::editions::invalid_parser_options(file)
     {
-        let refused = LintMessage {
+        let options_error = LintMessage {
             message: [b"Parsing error: ", &message[..]].concat(),
             is_fatal: true,
             ..LintMessage::default()
         };
-        return (vec![refused], true);
+        return (vec![options_error], true);
     }
     if !file.language().rejects_what_parser_rejects {
-        let (of_parser, stop) = parser_errors_for_oxc(file);
-        let all = oxc::errors(file, of_parser, stop.map(|it| it.0), false);
-        let is_of_parser = all.iter().any(|it| it.of_oxc.stage != Stage::Semantic);
+        let (parser_errors, stop) = parser_errors_for_oxc(file);
+        let all = oxc::errors(file, parser_errors, stop.map(|it| it.0), false);
+        let is_from_parser = all.iter().any(|it| it.oxc_details.stage != Stage::Semantic);
         let messages = all.into_iter().map(|it| message_of(file, it)).collect();
-        return (messages, is_of_parser);
+        return (messages, is_from_parser);
     }
-    let of_parser = first_parser_error(file).map(|diagnostic| {
+    let parser_error = first_parser_error(file).map(|diagnostic| {
         let mut message = Vec::new();
         match diagnostic.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
             Some((it, text)) => bun_sema::messages::format(&mut message, text, &it.args),
@@ -371,14 +380,14 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
         )
     });
     let one = |it: Option<SyntaxError>| it.into_iter().collect::<Vec<_>>();
-    let errors = match (parser, of_parser) {
+    let errors = match (parser, parser_error) {
         // typescript-estree converts the tree only if the parser reported no errors.
         (Parser::TypeScript, None) => one(typescript_estree::first_error(file, false)),
-        (Parser::Espree, of_parser) => one(espree::first_error(
+        (Parser::Espree, parser_error) => one(espree::first_error(
             file,
-            of_parser.map(|it| (it.0, it.1.at)),
+            parser_error.map(|it| (it.0, it.1.at)),
         )),
-        (_, of_parser) => one(of_parser.map(|it| it.1)),
+        (_, parser_error) => one(parser_error.map(|it| it.1)),
     };
     let messages = (errors.into_iter())
         .map(|it| message_of(file, it))
@@ -398,7 +407,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         });
         (end.line, end.column + 1)
     });
-    let place = |at: u32| {
+    let line_and_column = |at: u32| {
         let it = file.position(at);
         (it.line, it.column + 1)
     };
@@ -409,7 +418,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         help,
         note,
         ..
-    } = error.of_oxc;
+    } = error.oxc_details;
     let has_details = code != 0
         || !first_label.is_empty()
         || !labels.is_empty()
@@ -420,7 +429,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         Box::new(Details {
             first_label,
             labels: labels
-                .map(|(span, text)| (place(span.start), place(span.end), text))
+                .map(|(span, text)| (line_and_column(span.start), line_and_column(span.end), text))
                 .collect(),
             help,
             note,
@@ -464,7 +473,7 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
     // oxc recovers from some errors and continues to the end of the file.
     let gives_up_at = match parser_errors_for_oxc(file) {
         (_, Some((_, at))) => Some(at),
-        (of_parser, None) if !of_parser.is_empty() => None,
+        (parser_errors, None) if !parser_errors.is_empty() => None,
         _ => espree::typescript_in_javascript(file).map(|it| it.at),
     };
     gives_up_at.is_none_or(|at| first.start < at)
@@ -502,19 +511,19 @@ pub fn is_flow_file(text: &[u8], path: &[u8]) -> bool {
 pub enum TypesInJavaScript {
     /// `babel` throws. Prettier picks `babel` for a `.js`, `.jsx`, `.mjs` or `.cjs` file and for a `js` block in
     /// Markdown.
-    Refused,
+    Rejected,
     /// The user explicitly chose `flow`, `babel-flow`, `typescript` or `babel-ts` as the parser. Some of Prettier's own
     /// tests do too and list `babel` as failing: `js/babel-plugins/typescript.js` is `const x: number = 0;`.
     Tolerated,
 }
 
 /// True if Prettier refuses to format the file. `types` controls how TypeScript syntax in JavaScript is treated.
-pub fn refused_by_prettier_with<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> bool {
-    prettier_refusal(file, types).is_some()
+pub fn rejected_by_prettier_with<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> bool {
+    prettier_rejection(file, types).is_some()
 }
 
 /// The reason Prettier refuses to format a file.
-pub struct Refusal {
+pub struct Rejection {
     /// Doesn't include the position. For a TypeScript file this is Prettier's wording. For a JavaScript file it's the
     /// wording of TypeScript's parser or acorn, where Prettier would print Babel's.
     pub message: Vec<u8>,
@@ -522,39 +531,39 @@ pub struct Refusal {
     pub at: u32,
 }
 
-/// Like [`refused_by_prettier_with`], but returns the reason.
-pub fn prettier_refusal<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
-    refusal(file, types, true)
+/// Like [`rejected_by_prettier_with`], but returns the reason.
+pub fn prettier_rejection<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Rejection> {
+    rejection(file, types, true)
 }
 
 /// The reason oxfmt refuses to format a file, which is the first error oxc's parser reports. The file must have been
 /// parsed with oxlint's settings. oxfmt doesn't run the semantic pass or parse regular expressions.
-pub fn oxfmt_refusal<'a>(file: &'a File<'a>) -> Option<Refusal> {
-    let (of_parser, stop) = parser_errors_for_oxc(file);
-    let all = oxc::errors(file, of_parser, stop.map(|it| it.0), true);
-    all.into_iter().next().map(|it| Refusal {
+pub fn oxfmt_rejection<'a>(file: &'a File<'a>) -> Option<Rejection> {
+    let (parser_errors, stop) = parser_errors_for_oxc(file);
+    let all = oxc::errors(file, parser_errors, stop.map(|it| it.0), true);
+    all.into_iter().next().map(|it| Rejection {
         message: it.message,
         at: it.at,
     })
 }
 
-fn refusal<'a>(
+fn rejection<'a>(
     file: &'a File<'a>,
     types: TypesInJavaScript,
     finds_candidates: bool,
-) -> Option<Refusal> {
-    let of_diagnostic = |it: &Diagnostic| {
+) -> Option<Rejection> {
+    let from_diagnostic = |it: &Diagnostic| {
         let mut message = Vec::new();
         match bun_sema::messages::message(it.code) {
             Some((_, text)) => bun_sema::messages::format(&mut message, text, &it.args),
             None => message.extend_from_slice(b"Unexpected token"),
         }
-        Refusal {
+        Rejection {
             message,
             at: it.start,
         }
     };
-    let of_check = |it: SyntaxError| Refusal {
+    let from_syntax_error = |it: SyntaxError| Rejection {
         message: it.message,
         at: it.at,
     };
@@ -563,28 +572,31 @@ fn refusal<'a>(
     let is_reported = |it: &&Diagnostic| {
         it.kind == DiagnosticKind::Parse && it.code != 2880 && !file.is_in_jsdoc(it.start)
     };
-    let of_parser = file.hir.diagnostics.iter();
+    let all_diagnostics = file.hir.diagnostics.iter();
     if file.has_parse_errors() {
-        if let Some(it) = of_parser.clone().find(is_reported) {
-            return Some(of_diagnostic(it));
+        if let Some(it) = all_diagnostics.clone().find(is_reported) {
+            return Some(from_diagnostic(it));
         }
-        if !of_parser.clone().any(|it| it.kind == DiagnosticKind::Parse) {
-            return Some(Refusal {
+        if !all_diagnostics
+            .clone()
+            .any(|it| it.kind == DiagnosticKind::Parse)
+        {
+            return Some(Rejection {
                 message: b"Unexpected token".to_vec(),
                 at: 0,
             });
         }
     }
     if !file.is_javascript() {
-        return typescript_estree::first_error(file, true).map(of_check);
+        return typescript_estree::first_error(file, true).map(from_syntax_error);
     }
-    let of_babel = || espree::babel_refusal(file, finds_candidates).map(of_check);
+    let babel_error = || espree::babel_rejection(file, finds_candidates).map(from_syntax_error);
     if file.is_flow() || is_flow_file(file.text(), file.path()) {
-        return of_babel();
+        return babel_error();
     }
     // Rejected even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides
     // of `export`.
-    let is_strict = types == TypesInJavaScript::Refused;
+    let is_strict = types == TypesInJavaScript::Rejected;
     let is_typescript = |it: &&Diagnostic| {
         (is_strict && it.kind == DiagnosticKind::Js
             || matches!(it.kind, DiagnosticKind::Js | DiagnosticKind::Grammar)
@@ -593,35 +605,38 @@ fn refusal<'a>(
     };
     // The parser has no diagnostic for `declare module "a" {}`, `declare global {}` or `export as namespace A`. Babel
     // parses `declare` as an identifier, and after `export` it expects the `{` of `export {}`.
-    let of_declaration = |it: Stmt| {
+    let reject_declaration = |it: Stmt| {
         let start = it.span().start;
         let after_first_token =
             start + token_len(file.text().get(start as usize..).unwrap_or_default()) as u32;
         match it.try_raw()?.kind {
-            StmtKind::Module(_) => Some(Refusal {
+            StmtKind::Module(_) => Some(Rejection {
                 message: b"Missing semicolon.".to_vec(),
                 at: after_first_token,
             }),
-            StmtKind::ExportAsNamespace(_) => Some(Refusal {
+            StmtKind::ExportAsNamespace(_) => Some(Rejection {
                 message: b"Unexpected token, expected \"{\"".to_vec(),
                 at: skip_trivia(file.text(), after_first_token),
             }),
             _ => None,
         }
     };
-    let of_typescript = of_parser
+    let typescript_diagnostic = all_diagnostics
         .clone()
         .filter(is_typescript)
         .min_by_key(|it| it.start);
-    let of_declaration = match is_strict {
-        true => file.body().iter().find_map(of_declaration),
+    let declaration_rejection = match is_strict {
+        true => file.body().iter().find_map(reject_declaration),
         false => None,
     };
     // Babel throws immediately at code it can't parse. It recovers from an early error, and Prettier throws that one at
     // the end.
-    [of_typescript.map(of_diagnostic), of_declaration]
-        .into_iter()
-        .flatten()
-        .min_by_key(|it| it.at)
-        .or_else(of_babel)
+    [
+        typescript_diagnostic.map(from_diagnostic),
+        declaration_rejection,
+    ]
+    .into_iter()
+    .flatten()
+    .min_by_key(|it| it.at)
+    .or_else(babel_error)
 }

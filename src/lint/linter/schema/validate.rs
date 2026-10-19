@@ -206,7 +206,7 @@ fn regex_of(pattern: &[u8]) -> Option<Regex> {
     Regex::new(std::str::from_utf8(pattern).ok()?, "").ok()
 }
 
-fn written(number: f64) -> Vec<u8> {
+fn format_number(number: f64) -> Vec<u8> {
     let mut out = Vec::new();
     write_json(&mut out, &Json::Number(number));
     out
@@ -361,13 +361,13 @@ impl<'s> Validator<'s> {
             && (value > limit || value.is_nan())
         {
             let why = Why::Most(limit, Of::Value);
-            return self.error(cx, data, why, &[b"should be <= ", &written(limit)]);
+            return self.error(cx, data, why, &[b"should be <= ", &format_number(limit)]);
         }
         if let Some(limit) = number_of(schema, b"minimum")
             && (value < limit || value.is_nan())
         {
             let why = Why::Least(limit, Of::Value);
-            return self.error(cx, data, why, &[b"should be >= ", &written(limit)]);
+            return self.error(cx, data, why, &[b"should be >= ", &format_number(limit)]);
         }
         true
     }
@@ -387,7 +387,7 @@ impl<'s> Validator<'s> {
                 Why::Most(limit, Of::Characters),
                 &[
                     b"should NOT be longer than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" characters",
                 ],
             );
@@ -401,7 +401,7 @@ impl<'s> Validator<'s> {
                 Why::Least(limit, Of::Characters),
                 &[
                     b"should NOT be shorter than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" characters",
                 ],
             );
@@ -438,7 +438,11 @@ impl<'s> Validator<'s> {
                 cx,
                 data,
                 Why::Most(limit, Of::Items),
-                &[b"should NOT have more than ", &written(limit), b" items"],
+                &[
+                    b"should NOT have more than ",
+                    &format_number(limit),
+                    b" items",
+                ],
             );
         }
         if let Some(limit) = number_of(schema, b"minItems")
@@ -448,7 +452,11 @@ impl<'s> Validator<'s> {
                 cx,
                 data,
                 Why::Least(limit, Of::Items),
-                &[b"should NOT have fewer than ", &written(limit), b" items"],
+                &[
+                    b"should NOT have fewer than ",
+                    &format_number(limit),
+                    b" items",
+                ],
             );
         }
         match items_schema {
@@ -461,7 +469,7 @@ impl<'s> Validator<'s> {
                         Why::Most(schemas.len() as f64, Of::Items),
                         &[
                             b"should NOT have more than ",
-                            &written(schemas.len() as f64),
+                            &format_number(schemas.len() as f64),
                             b" items",
                         ],
                     );
@@ -566,7 +574,7 @@ impl<'s> Validator<'s> {
                 Why::Most(limit, Of::Properties),
                 &[
                     b"should NOT have more than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" properties",
                 ],
             );
@@ -580,7 +588,7 @@ impl<'s> Validator<'s> {
                 Why::Least(limit, Of::Properties),
                 &[
                     b"should NOT have fewer than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" properties",
                 ],
             );

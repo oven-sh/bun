@@ -480,7 +480,7 @@ pub struct PlanOptions {
     pub project_is_fallback: bool,
     /// `CreateProgram` of tsgolint: there's no program for a configuration file that has an error, either in itself or
     /// in what the program reports about its options and files (`GetProgramDiagnostics`). No file is checked in it. See
-    /// `Report::refused`.
+    /// `Report::rejected_programs`.
     pub rejects_broken_configurations: bool,
     /// A program's `lib.*.d.ts` files come from the `typescript` installed for it: the first `node_modules/typescript`
     /// from the configuration file's directory upwards, if it has the files that `lib` and `target` require. Otherwise
@@ -732,7 +732,7 @@ impl CommandLineParser<'_> {
     /// `parseOptionValue` for the flag `s`, which precedes `args[i]`. Returns the index of the next argument. Unlike
     /// the original, this also accepts the value after `=`.
     fn parse_option_value(&mut self, args: &[&[u8]], i: usize, s: &[u8]) -> usize {
-        let (flag, written) = match strings::index_of_char_usize(s, b'=') {
+        let (flag, inline_value) = match strings::index_of_char_usize(s, b'=') {
             Some(at) => (&s[..at], Some(&s[at + 1..])),
             None => (s, None),
         };
@@ -745,15 +745,15 @@ impl CommandLineParser<'_> {
         let is_value = |next: &&[u8]| {
             !is_boolean_compiler_option(name) || matches!(*next, b"true" | b"false" | b"null")
         };
-        let next = match written {
+        let next = match inline_value {
             Some(_) => None,
             None => args.get(i).copied().filter(is_value),
         };
-        let is_taken = match compiler_option_from_flag(name, written.or(next)) {
+        let consumes_next = match compiler_option_from_flag(name, inline_value.or(next)) {
             Ok(CompilerOption(name, value)) => {
                 // An empty list means `ParseListTypeOption` saw a flag, which isn't consumed and stays the next
                 // argument.
-                let is_taken = value != Json::Array(Vec::new());
+                let consumes_next = value != Json::Array(Vec::new());
                 if name == b"project" {
                     self.parsed.project = value.as_str().map(<[u8]>::to_vec);
                 } else {
@@ -761,19 +761,19 @@ impl CommandLineParser<'_> {
                     options.retain(|option| option.0 != name);
                     options.push(CompilerOption(name, value));
                 }
-                is_taken
+                consumes_next
             }
             Err(error) => {
                 let is_known = !matches!(error, FlagError::Unknown);
                 self.parsed.rejected.push(RejectedFlag {
                     flag: flag.to_vec(),
-                    value: written.or(next).map(<[u8]>::to_vec),
+                    value: inline_value.or(next).map(<[u8]>::to_vec),
                     error,
                 });
                 is_known
             }
         };
-        i + usize::from(next.is_some() && is_taken)
+        i + usize::from(next.is_some() && consumes_next)
     }
 }
 
@@ -1014,7 +1014,7 @@ impl Incomplete {
 
 /// A program that wasn't created, because its configuration file can't be read or because of
 /// `PlanOptions::rejects_broken_configurations`.
-pub struct Refused {
+pub struct RejectedProgram {
     pub config_path: Vec<u8>,
     /// The errors from reading the configuration file, or else the program's errors about its options and files.
     pub diagnostics: Vec<Diagnostic>,
@@ -1052,7 +1052,7 @@ pub struct Report {
     pub incomplete: Vec<Incomplete>,
     /// `Host::take_unreadable`: the source files that couldn't be read. Each was checked as an empty file.
     pub unreadable: Vec<Vec<u8>>,
-    pub refused: Vec<Refused>,
+    pub rejected_programs: Vec<RejectedProgram>,
     pub without_include: Vec<WithoutInclude>,
     pub globals: Vec<GlobalsOf>,
     /// True if `@types/bun` is installed where a checked project would resolve it.
@@ -1121,7 +1121,7 @@ impl Report {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
         self.unreadable.extend(other.unreadable);
-        self.refused.extend(other.refused);
+        self.rejected_programs.extend(other.rejected_programs);
         self.without_include.extend(other.without_include);
         self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
@@ -1311,10 +1311,10 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counte
         .max_by_key(|&i| counted_offsets[i].0);
     let (from, units) = nearest.map_or((starts[line], 0), |i| counted_offsets[i]);
     let character = units + strings::utf8_lossy_len_utf16(&text[from as usize..offset as usize]);
-    let written = nearest.unwrap_or_else(|| counted.older.get());
-    counted_offsets[written] = (offset, character);
+    let updated_index = nearest.unwrap_or_else(|| counted.older.get());
+    counted_offsets[updated_index] = (offset, character);
     counted.counted_offsets.set(counted_offsets);
-    counted.older.set(1 - written);
+    counted.older.set(1 - updated_index);
     (line as u32, character)
 }
 
@@ -1359,8 +1359,8 @@ pub fn check_provided_then<R>(
         n => n,
     };
     let cwd = host::from_native(request.cwd);
-    let of_every_file = !request.plan_options.project_is_fallback;
-    let named = (request.project.filter(|_| of_every_file))
+    let applies_to_every_file = !request.plan_options.project_is_fallback;
+    let named = (request.project.filter(|_| applies_to_every_file))
         .or_else(|| request.paths.first().map(Vec::as_slice));
     let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
     let mut disk =
@@ -1373,7 +1373,7 @@ pub fn check_provided_then<R>(
         disk.bundled_libs = Some(libs);
     }
     let script_kinds = request.script_kinds.iter().map(|(path, kind)| {
-        let path = disk.as_written(&host::from_argument(&cwd, path));
+        let path = disk.with_on_disk_casing(&host::from_argument(&cwd, path));
         (to_path(&path, disk.is_case_sensitive()).into_owned(), *kind)
     });
     disk.script_kinds = script_kinds.collect();
@@ -1481,8 +1481,8 @@ fn dependencies_not_installed(
             continue;
         };
         // Yarn Plug'n'Play doesn't create a `node_modules`. Before Yarn 3 the file is `.pnp.js`.
-        let is_there = |dir, name: &[u8]| host.is_file(&join(dir, name));
-        if ancestors(from).any(|dir| is_there(dir, b".pnp.cjs") || is_there(dir, b".pnp.js")) {
+        let has_file = |dir, name: &[u8]| host.is_file(&join(dir, name));
+        if ancestors(from).any(|dir| has_file(dir, b".pnp.cjs") || has_file(dir, b".pnp.js")) {
             continue;
         }
         let text = host.read(&manifest);
@@ -1799,12 +1799,12 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             return report;
         }
         // They get run no matter how they were found. See `Request::are_entry_points`.
-        let of_pages = Request {
+        let page_scripts_request = Request {
             paths: &scripts,
             are_entry_points: true,
             ..*request
         };
-        report.merge(check_paths(disk, &of_pages));
+        report.merge(check_paths(disk, &page_scripts_request));
         sort_as_one_project(&mut report);
     }
 }
@@ -1823,7 +1823,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let is_case_sensitive = disk.is_case_sensitive();
     let is_same = |a: &[u8], b: &[u8]| is_same_path(a, b, is_case_sensitive);
     let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
-        .map(|path| disk.as_written(&host::from_argument(&cwd, path)))
+        .map(|path| disk.with_on_disk_casing(&host::from_argument(&cwd, path)))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
     let not_found = (missing.iter()).map(|path| global(6053, &[displayed_path(path)]));
     report.diagnostics.extend(not_found);
@@ -1831,7 +1831,8 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     let project = request.project;
-    let explicit = match project.map(|project| disk.as_written(&host::from_argument(&cwd, project)))
+    let explicit = match project
+        .map(|project| disk.with_on_disk_casing(&host::from_argument(&cwd, project)))
     {
         // `ResolvedProjectPaths`, and `upToDateStatusTypeConfigFileNotFound`.
         Some(path) if request.build => {
@@ -1896,15 +1897,15 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     if paths.is_empty() {
         match project_in(&cwd) {
             Some(config) => {
-                let of = ProjectToCheck {
+                let target = ProjectToCheck {
                     config: Some(&config),
                     named: None,
-                    elsewhere: None,
+                    checked_elsewhere: None,
                     run: None,
-                    place: None,
+                    room_slot: None,
                 };
                 let projects = Guarded::new(projects);
-                return check_project_of(disk, request, &projects, of, report, started);
+                return check_project_of(disk, request, &projects, target, report, started);
             }
             None => {
                 // `tsc` prints its help here. This doesn't guess which nested project is meant, because they're
@@ -2047,7 +2048,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         });
         return report;
     }
-    let is_one = by_project.len() == 1;
+    let is_single_project = by_project.len() == 1;
     let paths_of = |files: &'_ [Vec<u8>]| -> Vec<Vec<u8>> {
         let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
         paths.map(Cow::into_owned).collect()
@@ -2067,7 +2068,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     if max_concurrent > 1 {
         in_order.shared_sort_by_key(|&it| Reverse(by_project[it].2.len()));
     }
-    let run = (!is_one).then(|| {
+    let run = (!is_single_project).then(|| {
         let run = Run::new(&run_session, disk.provided_paths().cloned().collect());
         match request.plan_options.shares_every_file {
             true => run,
@@ -2075,16 +2076,16 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         }
     });
     let projects = Guarded::new(projects);
-    let in_common = || run.as_ref().map_or(0, Run::bytes);
+    let shared_bytes = || run.as_ref().map_or(0, Run::bytes);
     let shares =
         (max_concurrent > 1).then(|| Arc::new(Shares::new(disk.threads(), by_project.len())));
     (*disk.shares.lock()).clone_from(&shares);
     let room = Room {
         bytes: (request.plan_options.memory / 4).max(1 << 30),
-        in_common: &in_common,
+        shared_bytes: &shared_bytes,
         threads: disk.threads(),
         shares: shares.as_deref(),
-        taken: Guarded::new(Taken::default()),
+        usage: Guarded::new(RoomUsage::default()),
         has_changed: bun_threading::Condvar::new(),
     };
     let next = AtomicUsize::new(0);
@@ -2101,18 +2102,18 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             let own: FxHashSet<&[u8]> = (paths_by_project[index].iter())
                 .map(Vec::as_slice)
                 .collect();
-            let elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
-            let place = room.enter(turn, files.len(), all.len());
-            let of = ProjectToCheck {
+            let checked_elsewhere: FxHashSet<&[u8]> = all.difference(&own).copied().collect();
+            let room_slot = room.enter(turn, files.len(), all.len());
+            let target = ProjectToCheck {
                 config: config.as_deref(),
                 named: Some((*extent, files.as_slice())),
-                elsewhere: (!is_one).then_some(&elsewhere),
+                checked_elsewhere: (!is_single_project).then_some(&checked_elsewhere),
                 run: (run.as_ref())
                     .filter(|_| fallback_project.is_none() || *config != fallback_project),
-                place: (max_concurrent > 1).then_some(&place),
+                room_slot: (max_concurrent > 1).then_some(&room_slot),
             };
             let (so_far, began) = (Report::default(), Instant::now());
-            let checked = check_project_of(disk, request, &projects, of, so_far, began);
+            let checked = check_project_of(disk, request, &projects, target, so_far, began);
             *reports[index].lock() = Some(checked);
         }
     };
@@ -2147,14 +2148,16 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         let Some(checked) = checked.get_mut().take() else {
             continue;
         };
-        report.projects_checked += checked.projects_checked.max(usize::from(!is_one));
+        report.projects_checked += checked
+            .projects_checked
+            .max(usize::from(!is_single_project));
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     if request.plan_options.shares_every_file {
         report.shared_parses += run.as_ref().map_or(0, Run::parses);
     }
-    if !is_one {
+    if !is_single_project {
         sort_as_one_project(&mut report);
     }
     report
@@ -2179,11 +2182,11 @@ struct ProjectToCheck<'a, 'u> {
     /// `None`: all of its files.
     named: Option<(Extent, &'a [Vec<u8>])>,
     /// The files that are checked in another project, by `tspath.Path`. This one may import them.
-    elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
+    checked_elsewhere: Option<&'a FxHashSet<&'a [u8]>>,
     /// The request's `Run`, if it has more than one project.
     run: Option<&'a Run<'u>>,
     /// Its slot among the programs that run at the same time.
-    place: Option<&'a RoomSlot<'a>>,
+    room_slot: Option<&'a RoomSlot<'a>>,
 }
 
 /// Limits how many programs of a request run at the same time: as many as there are threads and memory for. A program's
@@ -2194,16 +2197,16 @@ struct Room<'a> {
     /// The memory budget of the process.
     bytes: usize,
     /// The size in bytes of what the programs share, which grows.
-    in_common: &'a (dyn Fn() -> usize + Sync),
+    shared_bytes: &'a (dyn Fn() -> usize + Sync),
     threads: usize,
     /// `None`: the programs run one after the other, with all threads.
     shares: Option<&'a Shares>,
-    taken: Guarded<Taken>,
+    usage: Guarded<RoomUsage>,
     has_changed: bun_threading::Condvar,
 }
 
 #[derive(Default)]
-struct Taken {
+struct RoomUsage {
     bytes: usize,
     programs: usize,
     /// Programs whose files are found and that are continuing.
@@ -2239,26 +2242,26 @@ impl Room<'_> {
     /// True if the programs' estimates may add up to `bytes`. Then the request uses at most half as much again as when
     /// it runs one program after the other, which takes the shared part plus the largest program, and the process uses
     /// at most `self.bytes`. Part of what the estimates cover is already resident, so this errs on the safe side.
-    fn has(&self, taken: &Taken, bytes: usize) -> bool {
-        let in_common = (self.in_common)();
-        let resident = bun_sys::self_process_memory_usage().unwrap_or(in_common);
-        let one_after_the_other = in_common + taken.largest;
-        bytes <= (taken.largest + one_after_the_other / 2).max(self.threads * Room::SMALL)
+    fn has_room_for(&self, usage: &RoomUsage, bytes: usize) -> bool {
+        let shared_bytes = (self.shared_bytes)();
+        let resident = bun_sys::self_process_memory_usage().unwrap_or(shared_bytes);
+        let one_after_the_other = shared_bytes + usage.largest;
+        bytes <= (usage.largest + one_after_the_other / 2).max(self.threads * Room::SMALL)
             && resident + bytes <= self.bytes
     }
 
     /// Waits, for a program that has `threads`. They're lent out in the meantime.
     fn wait(
         &self,
-        taken: &mut bun_threading::guarded::GuardedLock<'_, Taken, bun_threading::Mutex>,
+        usage: &mut bun_threading::guarded::GuardedLock<'_, RoomUsage, bun_threading::Mutex>,
         threads: usize,
     ) {
         if let Some(shares) = self.shares {
             shares.lend(threads);
         }
-        taken.waiting += 1;
-        self.has_changed.wait_guarded(taken);
-        taken.waiting -= 1;
+        usage.waiting += 1;
+        self.has_changed.wait_guarded(usage);
+        usage.waiting -= 1;
         if let Some(shares) = self.shares {
             shares.take_back(threads);
         }
@@ -2271,12 +2274,12 @@ impl Room<'_> {
         if let Some(shares) = self.shares {
             shares.take(turn, threads);
         }
-        let mut taken = self.taken.lock();
+        let mut usage = self.usage.lock();
         loop {
-            let bytes = (taken.ended_bytes / taken.ended.max(1)).max(Room::SMALL);
-            if taken.programs == 0 || self.has(&taken, taken.bytes + bytes) {
-                taken.programs += 1;
-                taken.bytes += bytes;
+            let bytes = (usage.ended_bytes / usage.ended.max(1)).max(Room::SMALL);
+            if usage.programs == 0 || self.has_room_for(&usage, usage.bytes + bytes) {
+                usage.programs += 1;
+                usage.bytes += bytes;
                 return RoomSlot {
                     room: self,
                     bytes: AtomicUsize::new(bytes),
@@ -2286,14 +2289,14 @@ impl Room<'_> {
                     fits_one_thread: files * self.threads <= all,
                 };
             }
-            self.wait(&mut taken, threads);
+            self.wait(&mut usage, threads);
         }
     }
 }
 
 impl RoomSlot<'_> {
-    fn set_estimate(&self, taken: &mut Taken, bytes: usize) {
-        taken.bytes = taken
+    fn set_estimate(&self, usage: &mut RoomUsage, bytes: usize) {
+        usage.bytes = usage
             .bytes
             .saturating_sub(self.bytes.swap(bytes, Ordering::Relaxed))
             + bytes;
@@ -2302,43 +2305,43 @@ impl RoomSlot<'_> {
     /// Call once the program's files are found and its size is `bytes`. Waits until there's room for its expected size,
     /// or until no other program is continuing.
     fn files_found(&self, bytes: usize) {
-        let mut taken = self.room.taken.lock();
+        let mut usage = self.room.usage.lock();
         self.found.store(bytes, Ordering::Relaxed);
-        taken.largest = taken.largest.max(bytes);
-        let expected = bytes + taken.added / taken.ended.max(1);
-        self.set_estimate(&mut taken, expected);
+        usage.largest = usage.largest.max(bytes);
+        let expected = bytes + usage.added / usage.ended.max(1);
+        self.set_estimate(&mut usage, expected);
         self.room.has_changed.notify_all();
-        while taken.continuing_programs > 0 && !self.room.has(&taken, taken.bytes) {
-            self.room.wait(&mut taken, self.threads);
+        while usage.continuing_programs > 0 && !self.room.has_room_for(&usage, usage.bytes) {
+            self.room.wait(&mut usage, self.threads);
         }
-        taken.continuing_programs += 1;
+        usage.continuing_programs += 1;
         self.is_continuing.store(true, Ordering::Relaxed);
     }
 
     /// Records the program's final size, `bytes`.
     fn record_final_size(&self, bytes: usize) {
-        let mut taken = self.room.taken.lock();
+        let mut usage = self.room.usage.lock();
         let found = self.found.load(Ordering::Relaxed);
-        taken.largest = taken.largest.max(bytes);
-        taken.ended += 1;
-        taken.ended_bytes += bytes;
-        taken.added += bytes.saturating_sub(found);
-        self.set_estimate(&mut taken, bytes);
+        usage.largest = usage.largest.max(bytes);
+        usage.ended += 1;
+        usage.ended_bytes += bytes;
+        usage.added += bytes.saturating_sub(found);
+        self.set_estimate(&mut usage, bytes);
     }
 }
 
 impl Drop for RoomSlot<'_> {
     fn drop(&mut self) {
-        let mut taken = self.room.taken.lock();
-        taken.bytes = taken.bytes.saturating_sub(*self.bytes.get_mut());
-        taken.programs -= 1;
+        let mut usage = self.room.usage.lock();
+        usage.bytes = usage.bytes.saturating_sub(*self.bytes.get_mut());
+        usage.programs -= 1;
         if *self.is_continuing.get_mut() {
-            taken.continuing_programs -= 1;
+            usage.continuing_programs -= 1;
         }
-        let is_one_waiting = taken.waiting > 0;
-        drop(taken);
+        let has_waiting_program = usage.waiting > 0;
+        drop(usage);
         // Memory of this program that the allocator retains for reuse is resident too.
-        if is_one_waiting {
+        if has_waiting_program {
             bun_core::Global::mimalloc_cleanup(true);
         }
         self.room.has_changed.notify_all();
@@ -2352,18 +2355,18 @@ fn check_project_of(
     disk: &host::Disk,
     request: &Request,
     projects: &Guarded<Projects>,
-    of: ProjectToCheck<'_, '_>,
+    target: ProjectToCheck<'_, '_>,
     mut report: Report,
     started: Instant,
 ) -> Report {
-    let mut project = match of.config {
+    let mut project = match target.config {
         Some(config) => match projects.lock().take(disk, request, config) {
             Ok(project) => project,
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as diagnostics". For a build it's
             // `upToDateStatusTypeConfigFileNotFound`.
             Err(errors) => {
                 let is_case_sensitive = disk.is_case_sensitive();
-                let files = of.named.map(|it| it.1).unwrap_or_default().iter();
+                let files = target.named.map(|it| it.1).unwrap_or_default().iter();
                 let mut last = None;
                 let diagnostics: Vec<Diagnostic> = (errors.iter())
                     .map(|it| diagnostic_from_config_error(disk, config, it, &mut last))
@@ -2377,7 +2380,7 @@ fn check_project_of(
                     }
                     report.load_time = started.elapsed();
                 }
-                report.refused.push(Refused {
+                report.rejected_programs.push(RejectedProgram {
                     config_path: config.to_vec(),
                     diagnostics,
                     files: files
@@ -2389,12 +2392,12 @@ fn check_project_of(
         },
         None => {
             let cwd = host::from_native(request.cwd);
-            let files = of.named.map(|it| it.1).unwrap_or_default();
+            let files = target.named.map(|it| it.1).unwrap_or_default();
             project_without_config(disk, request, &cwd, files)
         }
     };
     let is_case_sensitive = disk.is_case_sensitive();
-    let named = of.named.map(|(extent, named)| {
+    let named = target.named.map(|(extent, named)| {
         if extent == Extent::Project && !request.plan_options.only_globals {
             // Load the whole project even when only some files are checked. Global declarations and module
             // augmentations from any file affect every other file, so a file must produce the same errors with and
@@ -2438,18 +2441,19 @@ fn check_project_of(
             report,
             started,
             named,
-            of.elsewhere,
-            of.run,
-            of.place,
+            target.checked_elsewhere,
+            target.run,
+            target.room_slot,
         )
     } else {
-        // All of its files were passed, so the whole project is checked, including files that nothing imports.
+        // All target its files were passed, so the whole project is checked, including files that nothing imports.
         let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
             let is_named = |it: &Vec<u8>| is_among(named, &to_path(it, is_case_sensitive));
             *extent == Extent::Graph && project.files.iter().all(is_named)
         };
         let named = named.filter(|it| !is_whole(it)).map(|it| it.1);
-        let is_elsewhere = (of.elsewhere).map(|elsewhere| |path: &[u8]| elsewhere.contains(path));
+        let is_elsewhere = (target.checked_elsewhere)
+            .map(|checked_elsewhere| |path: &[u8]| checked_elsewhere.contains(path));
         check_named_files(
             disk,
             project,
@@ -2459,8 +2463,8 @@ fn check_project_of(
             named,
             (is_elsewhere.as_ref()).map(|it| it as &dyn Fn(&[u8]) -> bool),
             None,
-            of.run,
-            of.place,
+            target.run,
+            target.room_slot,
         )
     }
 }
@@ -2588,8 +2592,8 @@ impl Graph<'_> {
             return Err(None);
         };
         self.index_of.insert(path.clone(), None);
-        let shown = displayed_path(config_name).into_owned();
-        self.circularity_stack.push(shown);
+        let displayed = displayed_path(config_name).into_owned();
+        self.circularity_stack.push(displayed);
         Ok(OpenTask {
             path,
             project,
@@ -2710,12 +2714,12 @@ impl Emitted {
             while directory.len() > 1 && directories.insert(directory.to_vec()) {
                 directory = dirname::<Posix>(directory);
             }
-            let of_all = self.files.insert_ref(path, Guarded::default());
-            of_all.lock().push((project, text));
+            let per_project = self.files.insert_ref(path, Guarded::default());
+            per_project.lock().push((project, text));
         }
         for directory in directories {
-            let of_all = self.directories.insert_ref(directory, Guarded::default());
-            of_all.lock().push(project);
+            let per_project = self.directories.insert_ref(directory, Guarded::default());
+            per_project.lock().push(project);
         }
     }
 }
@@ -2787,8 +2791,8 @@ impl WithOutputs<'_> {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
         self.wait_for(self.expected.files.get(&*path));
-        let of_all = self.emitted.files.get_ref(&*path)?.lock();
-        let seen = of_all.iter().filter(|it| self.sees(it.0));
+        let per_project = self.emitted.files.get_ref(&*path)?.lock();
+        let seen = per_project.iter().filter(|it| self.sees(it.0));
         seen.max_by_key(|it| it.0).cloned()
     }
 
@@ -2796,13 +2800,13 @@ impl WithOutputs<'_> {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(name, self.disk.is_case_sensitive(), &mut buffer[..]);
         self.wait_for(self.expected.directories.get(&*path));
-        let of_all = self.emitted.directories.get_ref(&*path);
-        of_all.is_some_and(|of_all| of_all.lock().iter().any(|&it| self.sees(it)))
+        let per_project = self.emitted.directories.get_ref(&*path);
+        per_project.is_some_and(|per_project| per_project.lock().iter().any(|&it| self.sees(it)))
     }
 
-    fn written(&self, path: &[u8]) -> Option<(usize, Arc<Vec<u8>>)> {
-        let written = self.file(path);
-        written.or_else(|| self.file(&self.resolve_links_in_prefix(path)?))
+    fn emitted_file(&self, path: &[u8]) -> Option<(usize, Arc<Vec<u8>>)> {
+        let found_directly = self.file(path);
+        found_directly.or_else(|| self.file(&self.resolve_links_in_prefix(path)?))
     }
 }
 
@@ -2814,14 +2818,14 @@ impl Host for WithOutputs<'_> {
         self.disk.times()
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        match self.written(path) {
-            Some((_, written)) => Some(Cow::Owned((*written).clone())),
+        match self.emitted_file(path) {
+            Some((_, emitted_text)) => Some(Cow::Owned((*emitted_text).clone())),
             None => self.disk.read(path),
         }
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
-        match self.written(path) {
-            Some((_, written)) => Cow::Owned((*written).clone()),
+        match self.emitted_file(path) {
+            Some((_, emitted_text)) => Cow::Owned((*emitted_text).clone()),
             None => self.disk.read(path).unwrap_or_else(|| {
                 self.unreadable.lock().push(path.to_vec());
                 Cow::default()
@@ -2829,13 +2833,13 @@ impl Host for WithOutputs<'_> {
         }
     }
     fn origin(&self, path: &[u8]) -> usize {
-        (self.written(path)).map_or(0, |(project, _)| self.first_origin + project)
+        (self.emitted_file(path)).map_or(0, |(project, _)| self.first_origin + project)
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
     }
     fn is_file(&self, path: &[u8]) -> bool {
-        self.disk.is_file(path) || self.written(path).is_some()
+        self.disk.is_file(path) || self.emitted_file(path).is_some()
     }
     fn is_dir(&self, path: &[u8]) -> bool {
         self.disk.is_dir(path)
@@ -2953,7 +2957,7 @@ impl Drop for Dropped<'_> {
 /// `root` is reported, like `tsc`, which reads the declaration files that an earlier build wrote. If `root` has no
 /// files of its own, `tsc` checks nothing, so here all projects are reported (`Report::follows_references`).
 /// `named`: see `check_named_files` and `Extent`.
-/// `elsewhere`: see `ProjectToCheck`.
+/// `checked_elsewhere`: see `ProjectToCheck`.
 fn check_with_references(
     host: &host::Disk,
     root: config::Project,
@@ -2961,9 +2965,9 @@ fn check_with_references(
     mut report: Report,
     started: Instant,
     named: Option<(Extent, &[Vec<u8>])>,
-    elsewhere: Option<&FxHashSet<&[u8]>>,
+    checked_elsewhere: Option<&FxHashSet<&[u8]>>,
     run: Option<&Run<'_>>,
-    place: Option<&RoomSlot<'_>>,
+    room_slot: Option<&RoomSlot<'_>>,
 ) -> Report {
     // Declared before any program's session, so it's dropped after them.
     let build_session = Dropped {
@@ -2971,7 +2975,7 @@ fn check_with_references(
         before_the_process_ends: Cell::new(None),
     };
     // True if the process exits after this build, unless a program finds scripts that belong to another tsconfig.
-    let ends_the_process = host.ends_the_process(run.is_some()) && place.is_none();
+    let ends_the_process = host.ends_the_process(run.is_some()) && room_slot.is_none();
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
     let follows_references = !request.build && root.files.is_empty();
@@ -3053,7 +3057,7 @@ fn check_with_references(
         .collect();
     // In that case there's one program, `root`'s, and it reads what's on disk. Otherwise one program reads what another
     // emits, and several run at the same time.
-    let is_one_program = reads_sources && !reports_references;
+    let is_single_program = reads_sources && !reports_references;
     // Nothing waits for output that's never emitted.
     let up_stream: Vec<Vec<usize>> = (projects.iter())
         .map(|p| match reads_sources {
@@ -3187,8 +3191,8 @@ fn check_with_references(
                 let sources = project_files.outputs.entry(output_path).or_default();
                 sources.push(path.clone());
             }
-            let of_all = project_files.sources.entry(path.clone()).or_default();
-            of_all.push(ProjectFile {
+            let per_project = project_files.sources.entry(path.clone()).or_default();
+            per_project.push(ProjectFile {
                 project: index as u32,
                 source: source.clone(),
                 output_dts: output_dts.unwrap_or_default(),
@@ -3277,10 +3281,11 @@ fn check_with_references(
         }
         let own: FxHashSet<&[u8]> = root_paths[index].iter().map(Vec::as_slice).collect();
         let is_owned_elsewhere = |path: &[u8]| {
-            let mut of_all = project_files.sources.get(path).into_iter().flatten();
+            let mut per_project = project_files.sources.get(path).into_iter().flatten();
             !own.contains(path)
-                && (of_all.any(|it| is_referenced.contains(&(it.project as usize)))
-                    || elsewhere.is_some_and(|elsewhere| elsewhere.contains(path)))
+                && (per_project.any(|it| is_referenced.contains(&(it.project as usize)))
+                    || checked_elsewhere
+                        .is_some_and(|checked_elsewhere| checked_elsewhere.contains(path)))
         };
         let is_root = is_same_path(&project.config_path, &root_config_path, is_case_sensitive);
         project.options.is_build = reports_references || !is_root;
@@ -3296,7 +3301,7 @@ fn check_with_references(
             }
             _ => None,
         };
-        let check = |run: Option<&Run<'_>>, place: Option<&RoomSlot<'_>>| {
+        let check = |run: Option<&Run<'_>>, room_slot: Option<&RoomSlot<'_>>| {
             check_named_files(
                 &host,
                 project,
@@ -3307,11 +3312,11 @@ fn check_with_references(
                 Some(&is_owned_elsewhere),
                 Some(&|| !host.awaited.lock().is_empty()),
                 run,
-                place,
+                room_slot,
             )
         };
         let mut checked = match &build_run {
-            _ if is_one_program => check(run, place),
+            _ if is_single_program => check(run, room_slot),
             Some(run) => check(Some(run), None),
             None => check(request_run, None),
         };
@@ -3324,12 +3329,12 @@ fn check_with_references(
         // `HandleNoEmitOnError`
         if !(no_emit_on_error && !checked.diagnostics.is_empty()) && !reads_sources {
             let mut files = Vec::new();
-            for (source, written) in std::mem::take(&mut checked.declaration_files) {
+            for (source, emitted_text) in std::mem::take(&mut checked.declaration_files) {
                 let path = declaration_file_path(index, &source);
                 if let Some(declaration_file_emitted) = request.declaration_file_emitted {
-                    declaration_file_emitted(&path, &written);
+                    declaration_file_emitted(&path, &emitted_text);
                 }
-                files.push((path_of(path), Arc::new(written)));
+                files.push((path_of(path), Arc::new(emitted_text)));
             }
             let no_text = Arc::new(Vec::new());
             for source in &roots[index] {
@@ -3560,14 +3565,17 @@ fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
     sort_and_deduplicate_with(diagnostics, Vec::new());
 }
 
-/// `sort_and_deduplicate`, for `diagnostics` and `of_files` together. Each list in `of_files` has the diagnostics of
-/// one path, at least one, in order.
-fn sort_and_deduplicate_with(diagnostics: &mut Vec<Diagnostic>, of_files: Vec<Vec<Diagnostic>>) {
+/// `sort_and_deduplicate`, for `diagnostics` and `per_file_lists` together. Each list in `per_file_lists` has the
+/// diagnostics of one path, at least one, in order.
+fn sort_and_deduplicate_with(
+    diagnostics: &mut Vec<Diagnostic>,
+    per_file_lists: Vec<Vec<Diagnostic>>,
+) {
     // The path is compared first. So each file's diagnostics are sorted separately, and the files by path. With tens of
     // thousands of diagnostics, most comparisons would otherwise be between two long paths with a common prefix.
     let mut files: FxHashMap<&[u8], usize> = FxHashMap::default();
     let paths = diagnostics.iter().map(|d| &d.path);
-    let paths = paths.chain(of_files.iter().map(|list| &list[0].path));
+    let paths = paths.chain(per_file_lists.iter().map(|list| &list[0].path));
     let file_of = paths.map(|path| {
         let next = files.len();
         *files.entry(typescript_path(path)).or_insert(next)
@@ -3581,7 +3589,7 @@ fn sort_and_deduplicate_with(diagnostics: &mut Vec<Diagnostic>, of_files: Vec<Ve
     for (d, &file) in diagnostics.drain(..).zip(file_of) {
         by_file[file].0.push(d);
     }
-    for (mut list, &file) in of_files.into_iter().zip(file_of_list) {
+    for (mut list, &file) in per_file_lists.into_iter().zip(file_of_list) {
         let (all, is_in_order) = &mut by_file[file];
         match all.is_empty() {
             true => (*all, *is_in_order) = (list, true),
@@ -3593,11 +3601,11 @@ fn sort_and_deduplicate_with(diagnostics: &mut Vec<Diagnostic>, of_files: Vec<Ve
     }
     by_file.shared_sort_by(|a, b| typescript_path(&a.0[0].path).cmp(typescript_path(&b.0[0].path)));
     diagnostics.reserve_exact(by_file.iter().map(|it| it.0.len()).sum());
-    for (mut of_file, is_in_order) in by_file {
+    for (mut file_diagnostics, is_in_order) in by_file {
         if !is_in_order {
-            of_file.shared_sort_by(compare_diagnostics);
+            file_diagnostics.shared_sort_by(compare_diagnostics);
         }
-        diagnostics.append(&mut of_file);
+        diagnostics.append(&mut file_diagnostics);
     }
     // `compactAndMergeRelatedInfos`
     diagnostics.dedup_by(|next, first| {
@@ -3773,7 +3781,7 @@ fn check_named_files(
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
     let last = RefCell::new(None);
-    let of_configuration = |error: &ConfigError| {
+    let config_diagnostic = |error: &ConfigError| {
         diagnostic_from_config_error(host, &config_path, error, &mut last.borrow_mut())
     };
     // `GetDiagnosticsOfAnyProgram`: configuration file parsing errors are reported regardless of any other diagnostics.
@@ -3783,7 +3791,7 @@ fn check_named_files(
             .errors
             .iter()
             .filter(|error| !error.is_about_options)
-            .map(of_configuration),
+            .map(config_diagnostic),
     );
     let always_reported = report.diagnostics.len();
     let is_fallback_project = request.plan_options.project_is_fallback
@@ -3791,22 +3799,22 @@ fn check_named_files(
             let it = host::from_argument(&host::from_native(request.cwd), it);
             is_same_path(&it, &config_path, host.is_case_sensitive())
         });
-    let refuses = request.plan_options.rejects_broken_configurations && !is_fallback_project;
-    let refused = |diagnostics: Vec<Diagnostic>| Refused {
+    let rejects_broken = request.plan_options.rejects_broken_configurations && !is_fallback_project;
+    let rejected_program = |diagnostics: Vec<Diagnostic>| RejectedProgram {
         config_path: config_path.clone(),
         diagnostics,
         files: named.unwrap_or_default().to_vec(),
     };
-    if refuses && always_reported > first_own_diagnostic {
+    if rejects_broken && always_reported > first_own_diagnostic {
         let diagnostics = report.diagnostics.split_off(first_own_diagnostic);
-        report.refused.push(refused(diagnostics));
+        report.rejected_programs.push(rejected_program(diagnostics));
         return report;
     }
     let mut about_options: Vec<Diagnostic> = project
         .errors
         .iter()
         .filter(|error| error.is_about_options)
-        .map(of_configuration)
+        .map(config_diagnostic)
         .collect();
     project.options.lib_dir = match request.libs {
         Libs::Bundled(_) => host::BUNDLED_LIBS.to_vec(),
@@ -3874,8 +3882,8 @@ fn check_named_files(
         && project.written.include.is_none()
         && project.written.files.is_none();
     let included = project.files.len();
-    let written = std::mem::take(&mut project.raw_compiler_options);
-    let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
+    let raw_options = std::mem::take(&mut project.raw_compiler_options);
+    let is_true = |name: &[u8]| raw_options.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
     project.options.keeps_comments = request.retains_everything
         || request.loaded.is_some()
@@ -3890,8 +3898,8 @@ fn check_named_files(
     };
     let session = &dropped.session;
     let files_are_found = |until_it_is_loaded: usize| {
-        if let Some(place) = in_room {
-            place.files_found(session.allocated_bytes() + until_it_is_loaded);
+        if let Some(room_slot) = in_room {
+            room_slot.files_found(session.allocated_bytes() + until_it_is_loaded);
         }
     };
     let files = Files::load(
@@ -3915,12 +3923,14 @@ fn check_named_files(
         report.globals.extend(files.global_names().map(files_of));
         return report;
     }
-    if refuses {
+    if rejects_broken {
         let problems = files.program_problems();
         let problems = ConfigError::from_problems(host, session, &config_path, problems.iter());
-        about_options.extend(problems.iter().map(of_configuration));
+        about_options.extend(problems.iter().map(config_diagnostic));
         if !about_options.is_empty() {
-            report.refused.push(refused(about_options));
+            report
+                .rejected_programs
+                .push(rejected_program(about_options));
             return report;
         }
     }
@@ -3971,7 +3981,7 @@ fn check_named_files(
     report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
     let problems = program.files.program_problems();
     let problems = ConfigError::from_problems(host, session, &config_path, problems.iter());
-    about_options.extend(problems.iter().map(of_configuration));
+    about_options.extend(problems.iter().map(config_diagnostic));
 
     let checking = Instant::now();
     let mut to_check: Vec<FileId> = (0..program.files.modules.len())
@@ -4050,8 +4060,8 @@ fn check_named_files(
     }
     // Program order (`program.files`): an imported file precedes its importers. A file's position in `to_check` is its
     // index.
-    let place = |f: FileId| program.files.rank_of_file(f);
-    to_check.shared_sort_by_key(|&f| place(f));
+    let rank = |f: FileId| program.files.rank_of_file(f);
+    to_check.shared_sort_by_key(|&f| rank(f));
     let size = |f: FileId| program.files.modules[f.idx()].hir.source_len;
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax errors, such a file only has what `Emit` reports, which is called after
@@ -4104,7 +4114,7 @@ fn check_named_files(
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
         let counted = Counted::default();
-        let mut shown: Vec<Diagnostic> = errors
+        let mut rendered: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
                 let related = e
@@ -4119,10 +4129,10 @@ fn check_named_files(
                             message_chain: related.message_chain,
                             ..global(0, &[""; 0])
                         };
-                        let Some((of, start, end)) = related.at else {
+                        let Some((related_file, start, end)) = related.at else {
                             return reported;
                         };
-                        if of == file {
+                        if related_file == file {
                             return located_after(
                                 &counted,
                                 module.file_name(),
@@ -4133,7 +4143,7 @@ fn check_named_files(
                                 reported,
                             );
                         }
-                        if of == bun_sema::program::IN_CONFIGURATION {
+                        if related_file == bun_sema::program::IN_CONFIGURATION {
                             return match host.read(&config_path) {
                                 Some(text) => {
                                     let starts = compute_ecma_line_starts(&text);
@@ -4142,8 +4152,8 @@ fn check_named_files(
                                 None => reported,
                             };
                         }
-                        let other = &program.files.modules[of.idx()];
-                        let text = &text_of(of)[..];
+                        let other = &program.files.modules[related_file.idx()];
+                        let text = &text_of(related_file)[..];
                         located(
                             other.file_name(),
                             text,
@@ -4172,10 +4182,10 @@ fn check_named_files(
             })
             .collect();
         if let Some(progress) = request.progress {
-            progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
+            progress.errors.fetch_add(rendered.len(), Ordering::Relaxed);
         }
-        shown.shared_sort_by(compare_diagnostics);
-        found.lock().push(shown);
+        rendered.shared_sort_by(compare_diagnostics);
+        found.lock().push(rendered);
     };
     // The kind of check that `Request::after_file` follows.
     let wanted = match request.plan_options.skips_file_diagnostics {
@@ -4253,9 +4263,9 @@ fn check_named_files(
             .collect();
         let finish = |i: usize| {
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
-            if let Some(written) = checked.declaration_file.take() {
+            if let Some(emitted_text) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].file_name().to_vec();
-                declaration_files.lock().push((path, written));
+                declaration_files.lock().push((path, emitted_text));
             }
             let declaration = checked.take_declaration_diagnostics();
             show(file, program.finish_file(file, checked), &found);
@@ -4284,7 +4294,7 @@ fn check_named_files(
     let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
     let threads = match in_room {
-        Some(place) if place.fits_one_thread => 1,
+        Some(room_slot) if room_slot.fits_one_thread => 1,
         _ => threads,
     };
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
@@ -4491,11 +4501,12 @@ fn check_named_files(
                     let components = &program.files.components;
                     let component = components.of_file.get(file.idx());
                     let component = component.and_then(|&at| components.all.get(at as usize));
-                    let around = component.map_or(&[][..], |it| it.files).iter();
-                    let around = around.filter_map(|it| index_of_file.get(it).copied());
+                    let same_component = component.map_or(&[][..], |it| it.files).iter();
+                    let same_component =
+                        same_component.filter_map(|it| index_of_file.get(it).copied());
                     checker.set_first_in_order(
                         (*next..index).all(is_done),
-                        around.take_while(|&it| it < index).all(is_done),
+                        same_component.take_while(|&it| it < index).all(is_done),
                     );
                 }
                 let checked = checker.check_file(file);
@@ -4802,11 +4813,11 @@ fn check_named_files(
             check_files(Requested::Declaration, false);
             found.lock().clear();
         }
-        let of_files = std::mem::take(&mut *emit_diagnostics.lock());
-        of_files.into_iter().flatten().collect()
+        let per_file_lists = std::mem::take(&mut *emit_diagnostics.lock());
+        per_file_lists.into_iter().flatten().collect()
     };
     // The per-file lists that `show` built, in addition to `report.diagnostics`.
-    let mut of_files: Vec<Vec<Diagnostic>> = Vec::new();
+    let mut per_file_lists: Vec<Vec<Diagnostic>> = Vec::new();
     'stages: {
         if stops {
             let suspects: Vec<FileId> = (0..program.files.modules.len())
@@ -4862,7 +4873,7 @@ fn check_named_files(
         let emits_first = options.emits_first && !options.no_emit_on_error;
         for type_checked in [!emits_first, emits_first] {
             check_files(wanted, type_checked);
-            of_files.append(&mut found.lock());
+            per_file_lists.append(&mut found.lock());
             // Errors without a file that a checker reports after this point are never collected.
             if type_checked {
                 report.diagnostics.extend(global_errors());
@@ -4874,10 +4885,10 @@ fn check_named_files(
         if !stops
             || emits_despite_errors
             || !(report.diagnostics[always_reported..].iter())
-                .chain(of_files.iter().flatten())
+                .chain(per_file_lists.iter().flatten())
                 .any(is_error)
         {
-            of_files.append(&mut emit_diagnostics.lock());
+            per_file_lists.append(&mut emit_diagnostics.lock());
         }
         // `iterateBaseline`: a caller that writes output for every file also does so for the files that aren't checked.
         if let Some(after_file) = request.after_file
@@ -4915,14 +4926,14 @@ fn check_named_files(
     let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));
     report.diagnostics.extend(cannot_read);
     report.unreadable.extend(unreadable);
-    sort_and_deduplicate_with(&mut report.diagnostics, of_files);
+    sort_and_deduplicate_with(&mut report.diagnostics, per_file_lists);
     report.check_time = checking.elapsed();
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {
         checked(program);
     }
-    if let Some(place) = in_room {
-        place.record_final_size(session.allocated_bytes());
+    if let Some(room_slot) = in_room {
+        room_slot.record_final_size(session.allocated_bytes());
     }
     root.release();
     report

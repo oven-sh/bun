@@ -6,7 +6,7 @@
 //! found in the source text next to a node.
 
 use super::errors_operators::language_version;
-use super::related::Place;
+use super::related::FileSpan;
 use super::spans::line_break_len;
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
@@ -623,7 +623,7 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode` for an initializer. `name` is the position of the name of the
     /// variable it initializes, if that's a plain identifier (`getAssignedName`).
-    fn place_of_initializer(&self, file: FileId, e: ExprId, name: Option<u32>) -> Place {
+    fn place_of_initializer(&self, file: FileId, e: ExprId, name: Option<u32>) -> FileSpan {
         let hir = self.hir(file);
         match (hir[e].kind, name) {
             (ExprKind::Fn(f), Some(name))
@@ -631,7 +631,7 @@ impl Checker<'_, '_> {
                     && hir[f].name.is_none()
                     && !is_parenthesized(hir, e) =>
             {
-                self.place_of_token(file, name)
+                self.span_of_token(file, name)
             }
             _ => {
                 let (start, end) = self.get_error_range_for_node(file, hir.child(e));
@@ -816,35 +816,38 @@ impl Checker<'_, '_> {
         // `ImportAttributes` are stored as an object literal but aren't one.
         if hir.text.is_empty()
             || hir.kind == FileKind::Json
-            || hir.import_attributes.iter().any(|kept| kept.1 == node)
+            || hir
+                .import_attributes
+                .iter()
+                .any(|attributes| attributes.1 == node)
         {
             return false;
         }
         let in_destructuring = self.bound(file).get_assignment_target(hir, node).is_some();
         // If every name is a literal name and all are distinct, there is nothing to report.
-        let mut written: SmallVec<[Atom; 16]> = SmallVec::new();
-        let mut is_all_written = true;
+        let mut literal_names: SmallVec<[Atom; 16]> = SmallVec::new();
+        let mut has_only_literal_names = true;
         // For `#a` and `1n`, the key isn't `name.Text()`.
         let mut has_other_text = false;
         for prop in properties.iter().map(|p| &hir[p]) {
             match prop.key {
                 _ if prop.kind == PropKind::Spread => {}
-                PropKey::Name(name) => written.push(name),
-                PropKey::Computed(_) => is_all_written = false,
+                PropKey::Name(name) => literal_names.push(name),
+                PropKey::Computed(_) => has_only_literal_names = false,
                 PropKey::Private(_) | PropKey::None => has_other_text = true,
             }
         }
         let has_repeated = has_other_text
-            || match written.len() {
-                n @ 0..=8 => (1..n).any(|i| written[..i].contains(&written[i])),
-                _ => !number_repeated(&written).is_empty(),
+            || match literal_names.len() {
+                n @ 0..=8 => (1..n).any(|i| literal_names[..i].contains(&literal_names[i])),
+                _ => !number_repeated(&literal_names).is_empty(),
             };
         // A computed name is evaluated (`getTypeOfExpression`) even if it's the only name.
         let may_repeat =
-            !in_destructuring && (!is_all_written || properties.len() > 1 && has_repeated);
+            !in_destructuring && (!has_only_literal_names || properties.len() > 1 && has_repeated);
         // `lateBindMember`
         let container = self.bound(file).symbol_of_expr(node);
-        if may_repeat && !is_all_written && properties.len() > 1 && container.is_some() {
+        if may_repeat && !has_only_literal_names && properties.len() > 1 && container.is_some() {
             let container = self.files().sym(file, container);
             self.report_conflicts_of_late_bound_members(file, container, false);
         }
@@ -882,7 +885,7 @@ impl Checker<'_, '_> {
             }
             // Outside a class the key of `#a` is `PropKey::None`.
             if hir.text.get(prop.pos as usize) == Some(&b'#') {
-                self.grammar_error_at(self.place_of_token(file, prop.pos), 18016, &[]);
+                self.grammar_error_at(self.span_of_token(file, prop.pos), 18016, &[]);
             }
             // "Modifiers are never allowed on properties except for 'async' on a method
             // declaration"

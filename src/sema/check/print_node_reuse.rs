@@ -52,9 +52,9 @@ impl<'p> Printer<'_, 'p, '_> {
         if let Some((file, func, _)) = self.c.sig_decl(declared_by)
             && self.reuses_nodes()
         {
-            let written = self.c.hir(file)[func].this_ty(self.c.hir(file));
-            if written.is_some() && self.c.type_from_node(file, written) == this {
-                return self.reuse_type_node(file, written);
+            let this_type_node = self.c.hir(file)[func].this_ty(self.c.hir(file));
+            if this_type_node.is_some() && self.c.type_from_node(file, this_type_node) == this {
+                return self.reuse_type_node(file, this_type_node);
             }
         }
         self.type_to_node(this)
@@ -124,7 +124,7 @@ impl<'p> Printer<'_, 'p, '_> {
         let (file, declaration) = self.value_declaration_of_property(prop)?;
         let scope = match self.c.hir(file).data(declaration) {
             NodeData::Member(member) => self.c.enclosing_scope_of_member(file, member),
-            NodeData::Prop(written) => self.c.enclosing_scope_of_property(file, written),
+            NodeData::Prop(literal_prop) => self.c.enclosing_scope_of_property(file, literal_prop),
             NodeData::Param(parameter) => {
                 let pat = self.c.hir(file)[parameter].pat;
                 self.c.enclosing_scope_of_pat(file, pat)
@@ -163,14 +163,17 @@ impl<'p> Printer<'_, 'p, '_> {
                 }
                 _ => None,
             },
-            PropSource::Literal(file, written) => {
+            PropSource::Literal(file, literal_prop) => {
                 // A JSX attribute has no inferred type.
-                let owner = self.c.bound(*file).prop_owner[written.idx()];
+                let owner = self.c.bound(*file).prop_owner[literal_prop.idx()];
                 let is_in_object_literal =
                     owner.is_some() && matches!(self.c.hir(*file)[owner].kind, ExprKind::Object(_));
                 // `prop.ValueDeclaration = member.ValueDeclaration`: the first declaration of the name.
-                let declarations = self.c.bound(*file).declarations_of_literal_member(*written);
-                let first = declarations.first().copied().unwrap_or(*written);
+                let declarations = self
+                    .c
+                    .bound(*file)
+                    .declarations_of_literal_member(*literal_prop);
+                let first = declarations.first().copied().unwrap_or(*literal_prop);
                 is_in_object_literal.then_some((*file, self.c.hir(*file).node(first)))
             }
             _ => None,
@@ -597,8 +600,8 @@ impl<'p> Printer<'_, 'p, '_> {
     /// aren't converted to base 10. Returns `None` if the file's text isn't retained.
     fn text_of_big_int_literal(&self, file: FileId, pos: u32) -> Option<Vec<u8>> {
         let end = self.c.end_of_token_at(file, pos);
-        let written = self.c.hir(file).text.get(pos as usize..end as usize)?;
-        (!written.is_empty()).then(|| crate::json::bigint_token_value(written))
+        let raw_text = self.c.hir(file).text.get(pos as usize..end as usize)?;
+        (!raw_text.is_empty()).then(|| crate::json::bigint_token_value(raw_text))
     }
 
     /// The type parameters and `pseudoParametersToNodeList` of the function `func`.
@@ -1053,13 +1056,13 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         // `getLiteralTextOfNode`: the node builder's clone of a string is printed from its value.
         let text_of = |start: u32, end: u32, value: Option<Atom>| {
-            let written = hir.text.get(start as usize..end as usize);
-            match (written.and_then(|written| written.first()), value) {
+            let raw_text = hir.text.get(start as usize..end as usize);
+            match (raw_text.and_then(|raw_text| raw_text.first()), value) {
                 (Some(&quote @ (b'"' | b'\'')), Some(value)) if !self.is_transformer => {
                     quoted(self.c.atoms().bytes(value), quote, false)
                 }
                 (None, Some(value)) => quoted(self.c.atoms().bytes(value), b'"', false),
-                _ => written.unwrap_or_default().to_vec(),
+                _ => raw_text.unwrap_or_default().to_vec(),
             }
         };
         // `LFPreserveLines`, `LFIndented`: for nodes with positions in the file that is emitted.

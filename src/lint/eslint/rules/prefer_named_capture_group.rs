@@ -1,7 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind};
-use bun_lint::utils::char_source::Written;
+use bun_lint::utils::char_source::LiteralSourceMap;
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant};
 use std::cell::OnceCell;
 
@@ -60,18 +60,18 @@ fn check_regex<'a>(
     if !strings::contains_char(pattern, b'(') {
         return;
     }
-    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()) else {
+    let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default()) else {
         return;
     };
     let same_offsets = OnceCell::new();
     let in_string = OnceCell::new();
     let group_name = OnceCell::new();
     let unnamed_count = OnceCell::new();
-    // The last group's start in `pattern`, in bytes and in UTF-16 units. `written` tracks the byte offset in
+    // The last group's start in `pattern`, in bytes and in UTF-16 units. `source_cursor` tracks the byte offset in
     // `regex_node` after the same number of units. The groups come in the order of their `(`, so handling all of them
     // takes time linear in the texts.
     let (mut start, mut utf16_start) = (0, 0);
-    let mut written = Utf16Cursor::new(regex_node.text());
+    let mut source_cursor = Utf16Cursor::new(regex_node.text());
     for group in ast.capturing_groups() {
         if !matches!(group.kind(), RegexKind::CapturingGroup { name: None, .. }) {
             continue;
@@ -85,7 +85,7 @@ fn check_regex<'a>(
                 let pattern_start = regex_node.span().start + 1;
                 Span::new(pattern_start + group.start(), pattern_start + group.end())
             }
-            true => (in_string.get_or_init(|| Written::new(regex_node)).as_ref())
+            true => (in_string.get_or_init(|| LiteralSourceMap::new(regex_node)).as_ref())
                 .and_then(|it| it.span(utf16_start, utf16_start + regex::utf16_index(group.raw(), group.raw().len()) as u32))
                 .unwrap_or_else(|| regex_node.span()),
             false => node.span(),
@@ -100,7 +100,7 @@ fn check_regex<'a>(
         }
         if *same_offsets.get_or_init(|| has_same_offsets_in_source(pattern, regex_node)) {
             // After the delimiter and the `(`.
-            let after_paren = Span::empty(regex_node.span().start + written.byte_offset(utf16_start + 2) as u32);
+            let after_paren = Span::empty(regex_node.span().start + source_cursor.byte_offset(utf16_start + 2) as u32);
             report
                 .suggest(ADD_GROUP_NAME, |fixer| {
                     fixer.insert_before(after_paren, &group_name.get_or_init(|| temporary_group_name(pattern))[..])

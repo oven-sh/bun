@@ -235,8 +235,8 @@ impl Builder<'_> {
                 .filter(|_| self.config.flavor.is_oxfmt());
             if let Some(len) = first_line {
                 let line_end = start + len as u32;
-                let kept = self.slice(start, line_end).trim_ascii_end().len() as u32;
-                self.source(start, start + kept);
+                let trimmed_len = self.slice(start, line_end).trim_ascii_end().len() as u32;
+                self.source(start, start + trimmed_len);
                 return self.source(line_end, end);
             }
             return self.source(start, end);
@@ -250,7 +250,7 @@ impl Builder<'_> {
         while let Some(line) = lines.next() {
             let line_start = at;
             at += line.len() as u32 + 1;
-            let blanks = (line.len() - line.trim_ascii_start().len()) as u32;
+            let indentation_len = (line.len() - line.trim_ascii_start().len()) as u32;
             let trimmed = line.trim_ascii();
             if std::mem::take(&mut is_first) {
                 self.source(line_start, line_start + line.trim_ascii_end().len() as u32);
@@ -259,8 +259,8 @@ impl Builder<'_> {
             self.line(LineMode::Hard);
             self.token(" ");
             self.source(
-                line_start + blanks,
-                line_start + blanks + trimmed.len() as u32,
+                line_start + indentation_len,
+                line_start + indentation_len + trimmed.len() as u32,
             );
             // In Markdown, two spaces at the end of a line are a line break. A line break inside a text keeps the
             // spaces before it, and the one that follows only indents.
@@ -429,10 +429,10 @@ impl Builder<'_> {
                     .unwrap_or_default();
                 let start = self.storage.text.len();
                 make_string(content, quote.as_byte(), &mut self.storage.text);
-                let written = self.storage.text.get(start..).unwrap_or_default();
+                let escaped = self.storage.text.get(start..).unwrap_or_default();
                 let (len, width) = (
-                    written.len() as u32,
-                    TextWidth::from_text(written, self.config.indent_width),
+                    escaped.len() as u32,
+                    TextWidth::from_text(escaped, self.config.indent_width),
                 );
                 self.push(FormatElement::OwnedText(Text {
                     start: start as u32,

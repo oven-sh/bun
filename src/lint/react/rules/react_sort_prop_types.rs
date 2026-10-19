@@ -332,9 +332,9 @@ impl SortPropTypes {
             let is_added = self.check_types && !sorted_attr_text.ends_with(separator);
             moved.push(Moved { sorted_attr_text, separator: if is_added { separator } else { &[] } });
         }
-        let places: Vec<(&Sortable<'a>, Moved<'a>)> = sortable.iter().zip(moved.into_iter().rev()).collect();
+        let replacements: Vec<(&Sortable<'a>, Moved<'a>)> = sortable.iter().zip(moved.into_iter().rev()).collect();
         let mut source = Source::new(file.text().get(whole.start as usize..).unwrap_or_default());
-        for nodes in places.chunk_by(|a, b| a.0.group == b.0.group) {
+        for nodes in replacements.chunk_by(|a, b| a.0.group == b.0.group) {
             // Split at every boundary in one forward pass first, so each position is only cut once.
             for (attr, _) in nodes {
                 source.move_to(attr.units.start);

@@ -84,7 +84,7 @@ pub enum Oxc {
     /// It's listed before the plugin that sorts classes, which reads its tree.
     Before,
     /// It's listed after that plugin and overrides it, so nothing is sorted in the files that it parses.
-    Behind,
+    After,
 }
 
 /// `sortTailwindcss`, for one file.
@@ -235,11 +235,11 @@ impl Tailwind {
                 .iter()
                 .take_while(|byte| byte.is_ascii_whitespace())
                 .count();
-            let (blanks, after) = after.split_at(len);
+            let (separator, after) = after.split_at(len);
             white_space.push(if collapses_whitespace {
                 &b" "[..]
             } else {
-                blanks
+                separator
             });
             rest = after;
         }
@@ -297,7 +297,7 @@ impl Tailwind {
         // A removed class takes the whitespace before it with it.
         let mut white_space = (white_space.iter().copied().enumerate())
             .filter(|(index, _)| is_removed.get(index + 1) != Some(&true))
-            .map(|(_, blanks)| blanks);
+            .map(|(_, separator)| separator);
         let mut result = Vec::with_capacity(text.len());
         for (&(class, _), _) in ordered.iter().zip(&is_removed).filter(|it| !*it.1) {
             result.extend_from_slice(class);

@@ -110,8 +110,9 @@ fn is_only_collapsible(text: &[u8]) -> bool {
 /// `startsWithLinebreak`
 fn starts_with_linebreak(mut text: &[u8], lines: usize) -> bool {
     for _ in 0..lines {
-        let blanks = (text.iter()).take_while(|it| matches!(it, b'\t' | 0x0C | b'\r' | b' '));
-        match text.get(blanks.count()..) {
+        let inline_whitespace =
+            (text.iter()).take_while(|it| matches!(it, b'\t' | 0x0C | b'\r' | b' '));
+        match text.get(inline_whitespace.count()..) {
             Some([b'\n', rest @ ..]) => text = rest,
             _ => return false,
         }
@@ -122,8 +123,9 @@ fn starts_with_linebreak(mut text: &[u8], lines: usize) -> bool {
 /// `endsWithLinebreak`
 fn ends_with_linebreak(mut text: &[u8], lines: usize) -> bool {
     for _ in 0..lines {
-        let blanks = (text.iter().rev()).take_while(|it| matches!(it, b'\t' | 0x0C | b'\r' | b' '));
-        match &text[..text.len() - blanks.count()] {
+        let inline_whitespace =
+            (text.iter().rev()).take_while(|it| matches!(it, b'\t' | 0x0C | b'\r' | b' '));
+        match &text[..text.len() - inline_whitespace.count()] {
             [rest @ .., b'\n'] => text = rest,
             _ => return false,
         }
@@ -145,8 +147,8 @@ fn print_whitespace<'a>(text: &[u8]) -> Doc<'a> {
     let first = strings::index_of_char_usize(text, b'\n');
     let has_two = first.is_some_and(|first| {
         let rest = &text[first + 1..];
-        let blanks = rest.iter().take_while(|&&it| is_collapsible(it)).count();
-        strings::contains_char(&rest[..blanks], b'\n')
+        let whitespace_len = rest.iter().take_while(|&&it| is_collapsible(it)).count();
+        strings::contains_char(&rest[..whitespace_len], b'\n')
     });
     match (has_two, first) {
         (true, _) => Doc::List(vec![Doc::Hardline, Doc::Hardline]),
@@ -246,7 +248,7 @@ fn print_text_verbatim<'a>(raw: &Cow<'a, [u8]>) -> Doc<'a> {
 /// Normalizes the text of a `class`: spaces and tabs after a word collapse into one space, and those at the end of a
 /// line are removed.
 fn with_collapsed_spaces(raw: &[u8], is_last: bool) -> Vec<u8> {
-    let is_blank = |byte: u8| matches!(byte, b' ' | b'\t');
+    let is_space_or_tab = |byte: u8| matches!(byte, b' ' | b'\t');
     let mut out = Vec::with_capacity(raw.len());
     let mut at = 0;
     while at < raw.len() {
@@ -254,30 +256,38 @@ fn with_collapsed_spaces(raw: &[u8], is_last: bool) -> Vec<u8> {
         out.push(byte);
         at += 1;
         // `([^ \t\n])(([ \t]+$)|([ \t]+(\r?\n))|[ \t]+)`
-        if is_blank(byte) || byte == b'\n' {
+        if is_space_or_tab(byte) || byte == b'\n' {
             continue;
         }
-        let blanks = raw[at..].iter().take_while(|&&it| is_blank(it)).count();
-        if blanks == 0 {
+        let spaces_len = raw[at..]
+            .iter()
+            .take_while(|&&it| is_space_or_tab(it))
+            .count();
+        if spaces_len == 0 {
             continue;
         }
-        match &raw[at + blanks..] {
+        match &raw[at + spaces_len..] {
             [] => out.extend_from_slice(&raw[at..]),
             [b'\n', ..] => out.push(b'\n'),
             [b'\r', b'\n', ..] => out.extend_from_slice(b"\r\n"),
             _ => out.push(b' '),
         }
-        at += blanks
-            + match &raw[at + blanks..] {
+        at += spaces_len
+            + match &raw[at + spaces_len..] {
                 [b'\n', ..] => 1,
                 [b'\r', b'\n', ..] => 2,
                 _ => 0,
             };
     }
     // `/([^ \t\n])[ \t]+$/`
-    let kept = out.len() - out.iter().rev().take_while(|&&it| is_blank(it)).count();
-    if kept < out.len() && kept > 0 && out[kept - 1] != b'\n' {
-        out.truncate(kept);
+    let trimmed_len = out.len()
+        - out
+            .iter()
+            .rev()
+            .take_while(|&&it| is_space_or_tab(it))
+            .count();
+    if trimmed_len < out.len() && trimmed_len > 0 && out[trimmed_len - 1] != b'\n' {
+        out.truncate(trimmed_len);
         if !is_last {
             out.push(b' ');
         }
@@ -318,9 +328,9 @@ enum Owner {
     StyleDirective,
 }
 
-/// A node's position in the tree.
+/// A node's parent in the tree.
 #[derive(Copy, Clone)]
-struct Place {
+struct Parent {
     /// The fragment that contains it.
     fragment: FragmentId,
     /// The element that owns the fragment.
@@ -447,19 +457,19 @@ impl<'a, 'o> Printer<'a, 'o> {
 
     fn trim_text_left(&mut self, id: Id) {
         if let Kind::Text { raw } = &mut self.tree[id].kind {
-            let blanks = raw.iter().take_while(|&&it| is_collapsible(it)).count();
-            *raw = slice(raw, blanks, raw.len());
+            let whitespace_len = raw.iter().take_while(|&&it| is_collapsible(it)).count();
+            *raw = slice(raw, whitespace_len, raw.len());
         }
     }
 
     fn trim_text_right(&mut self, id: Id) {
         if let Kind::Text { raw } = &mut self.tree[id].kind {
-            let blanks = raw
+            let whitespace_len = raw
                 .iter()
                 .rev()
                 .take_while(|&&it| is_collapsible(it))
                 .count();
-            *raw = slice(raw, 0, raw.len() - blanks);
+            *raw = slice(raw, 0, raw.len() - whitespace_len);
         }
     }
 
@@ -686,7 +696,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `canOmitSoftlineBeforeClosingTag`
-    fn can_omit_softline_before_closing_tag(&self, id: Id, place: Place) -> bool {
+    fn can_omit_softline_before_closing_tag(&self, id: Id, parent: Parent) -> bool {
         if !self.bracket_same_line() {
             return false;
         }
@@ -694,8 +704,8 @@ impl<'a, 'o> Printer<'a, 'o> {
         let hugs_next =
             (self.text.get(self.tree[id].end as usize)).is_some_and(|&next| !is_collapsible(next));
         // `isLastChildWithinParentBlockElement`
-        let is_last_in_block = place.element.is_some_and(|it| self.is_block_element(it))
-            && (self.tree.fragment(place.fragment).iter().rev())
+        let is_last_in_block = parent.element.is_some_and(|it| self.is_block_element(it))
+            && (self.tree.fragment(parent.fragment).iter().rev())
                 .find(|&&it| !self.is_empty_text(it))
                 == Some(&id);
         !hugs_next || is_last_in_block
@@ -710,8 +720,8 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `getLeadingComment`
-    fn leading_comment(&self, id: Id, place: Place) -> Option<Id> {
-        let siblings = self.tree.fragment(place.fragment);
+    fn leading_comment(&self, id: Id, parent: Parent) -> Option<Id> {
+        let siblings = self.tree.fragment(parent.fragment);
         let mut start = self.tree[id].start;
         while let Some(at) = self.previous_sibling(siblings, start) {
             let previous = siblings[at];
@@ -760,8 +770,8 @@ impl<'a, 'o> Printer<'a, 'o> {
     /// True if there's a comment between `start` and `end`, a range that holds only parentheses, whitespace and
     /// comments.
     fn has_comment_between(&self, start: u32, end: u32) -> bool {
-        let around = self.text.get(start as usize..end as usize);
-        around.is_some_and(|it| strings::contains_char(it, b'/'))
+        let gap = self.text.get(start as usize..end as usize);
+        gap.is_some_and(|it| strings::contains_char(it, b'/'))
     }
 
     /// True if there's a comment before or after the part of `expression` that the plugin prints: `{a /* b */}`,
@@ -1183,7 +1193,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `embed`'s result for an element, or `None` if `embed` doesn't handle it.
-    fn embed_element(&mut self, id: Id, place: Place) -> Option<Doc<'a>> {
+    fn embed_element(&mut self, id: Id, parent: Parent) -> Option<Doc<'a>> {
         let element = self.element(id)?;
         if element.kind != ElementKind::RegularElement
             || !matches!(element.name, b"script" | b"style" | b"template")
@@ -1206,7 +1216,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             _ => Span::default(),
         };
         let comments: Vec<LeadingComment> = (self
-            .leading_comment(id, place)
+            .leading_comment(id, parent)
             .map(|it| (it, false))
             .into_iter())
         .collect();
@@ -1216,16 +1226,16 @@ impl<'a, 'o> Printer<'a, 'o> {
     // ───────────── print/index.ts ─────────────
 
     /// Prints an ignored node verbatim. Returns `None` if the node isn't ignored.
-    fn print_ignored(&mut self, id: Id, place: Option<Place>) -> Option<Doc<'a>> {
+    fn print_ignored(&mut self, id: Id, parent: Option<Parent>) -> Option<Doc<'a>> {
         let is_ignored =
             self.ignore_next || (self.ignore_range && !self.is_ignore_end_directive(id));
         if !is_ignored || self.is_empty_text(id) {
             return None;
         }
         self.ignore_next = false;
-        Some(match (self.raw(id), place) {
+        Some(match (self.raw(id), parent) {
             (Some(raw), _) if self.pre_depth == 0 => print_text_verbatim(raw),
-            (None, Some(place)) => self.print_element_verbatim(id, place),
+            (None, Some(parent)) => self.print_element_verbatim(id, parent),
             _ => self.print_verbatim(id),
         })
     }
@@ -1239,7 +1249,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     /// Same as `print_verbatim`, for a node in a fragment. An element without an end tag extends to the next tag,
     /// so it includes the whitespace before that tag. That whitespace is trimmed here and printed as a line, unless
     /// it's insignificant at that position.
-    fn print_element_verbatim(&self, id: Id, place: Place) -> Doc<'a> {
+    fn print_element_verbatim(&self, id: Id, parent: Parent) -> Doc<'a> {
         let (start, end) = (self.tree[id].start, self.tree[id].end);
         let source = Span { start, end }.of(self.text);
         let trimmed = source.trim_ascii_end();
@@ -1247,11 +1257,11 @@ impl<'a, 'o> Printer<'a, 'o> {
             return self.print_verbatim(id);
         }
         let printed = verbatim_lines(&Cow::Borrowed(trimmed));
-        let is_in_block = match place.element {
+        let is_in_block = match parent.element {
             Some(element) => self.is_block_element(element),
-            None => place.fragment == self.tree.fragment,
+            None => parent.fragment == self.tree.fragment,
         };
-        let is_last = (self.tree.fragment(place.fragment).iter().rev())
+        let is_last = (self.tree.fragment(parent.fragment).iter().rev())
             .find(|&&it| !self.is_empty_text(it))
             == Some(&id);
         match self.is_block_element(id) || (is_in_block && is_last) {
@@ -1484,7 +1494,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         };
         // The plugin indents it even in `<pre>`.
         if self.pre_depth > 0 {
-            return self.print_pre(Place {
+            return self.print_pre(Parent {
                 fragment,
                 element: None,
             });
@@ -1499,11 +1509,11 @@ impl<'a, 'o> Printer<'a, 'o> {
         let (start_line, end_line) = (line(at_start), line(at_end));
         self.trim_text_left(first);
         self.trim_text_right(last);
-        let place = Place {
+        let parent = Parent {
             fragment,
             element: None,
         };
-        let children = self.print_children(place);
+        let children = self.print_children(parent);
         Doc::List(vec![
             indent(vec![start_line, Doc::Group(Box::new(children))]),
             end_line,
@@ -1537,12 +1547,12 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `printPre`
-    fn print_pre(&mut self, place: Place) -> Doc<'a> {
-        let children = self.tree.fragment(place.fragment).to_vec();
+    fn print_pre(&mut self, parent: Parent) -> Doc<'a> {
+        let children = self.tree.fragment(parent.fragment).to_vec();
         let mut result = Vec::new();
         for child in children {
             if self.raw(child).is_none() {
-                result.push(self.print(child, place));
+                result.push(self.print(child, parent));
                 continue;
             }
             let (start, end) = (
@@ -1561,10 +1571,10 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `printChildren`
-    fn print_children(&mut self, place: Place) -> Doc<'a> {
-        let children = self.tree.fragment(place.fragment).to_vec();
+    fn print_children(&mut self, parent: Parent) -> Doc<'a> {
+        let children = self.tree.fragment(parent.fragment).to_vec();
         if self.pre_depth > 0 {
-            return Doc::List(children.iter().map(|&it| self.print(it, place)).collect());
+            return Doc::List(children.iter().map(|&it| self.print(it, parent)).collect());
         }
         // `prepareChildren`
         let prepared: Vec<Id> = (children.into_iter())
@@ -1618,7 +1628,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     // Formatting that output again removes the space. Here it's removed on the first pass.
                     self.trim_text_left(child);
                 }
-                docs.push(self.print(child, place));
+                docs.push(self.print(child, parent));
             } else if self.is_block_element(child) {
                 // `handleBlockChild`
                 if let Some(previous) = previous
@@ -1629,7 +1639,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 {
                     docs.push(Doc::Softline);
                 }
-                docs.push(self.print(child, place));
+                docs.push(self.print(child, parent));
                 if let Some(next) = next
                     && (self.raw(next).is_none()
                         || ((!self.is_empty_text(next)
@@ -1642,14 +1652,14 @@ impl<'a, 'o> Printer<'a, 'o> {
                 handles_white_space_of_previous_text = false;
             } else if self.is_inline_element(child) {
                 // `handleInlineChild`
-                let printed = self.print(child, place);
+                let printed = self.print(child, parent);
                 docs.push(match handles_white_space_of_previous_text {
                     true => group(vec![Doc::Line, printed]),
                     false => printed,
                 });
                 handles_white_space_of_previous_text = false;
             } else {
-                docs.push(self.print(child, place));
+                docs.push(self.print(child, parent));
                 handles_white_space_of_previous_text = false;
             }
         }
@@ -1660,7 +1670,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// Prints an element that `embed` doesn't handle.
-    fn print_element(&mut self, id: Id, place: Place) -> Doc<'a> {
+    fn print_element(&mut self, id: Id, parent: Parent) -> Doc<'a> {
         let Some(element) = self.element(id).cloned() else {
             return EMPTY;
         };
@@ -1675,17 +1685,17 @@ impl<'a, 'o> Printer<'a, 'o> {
         if kind == ElementKind::RegularElement
             && (self.tree.fragment(element.fragment).iter()).any(would_close_element)
         {
-            return self.print_element_verbatim(id, place);
+            return self.print_element_verbatim(id, parent);
         }
         let is_pre = kind == ElementKind::RegularElement
             && (name.eq_ignore_ascii_case(b"pre") || name.eq_ignore_ascii_case(b"textarea"));
         self.pre_depth += u32::from(is_pre);
-        let printed = self.print_element_inner(id, &element, place);
+        let printed = self.print_element_inner(id, &element, parent);
         self.pre_depth -= u32::from(is_pre);
         printed
     }
 
-    fn print_element_inner(&mut self, id: Id, element: &Element<'a>, place: Place) -> Doc<'a> {
+    fn print_element_inner(&mut self, id: Id, element: &Element<'a>, parent: Parent) -> Doc<'a> {
         let (name, kind) = (element.name, element.kind);
         let bracket_same_line = self.bracket_same_line();
         let is_pre = self.pre_depth > 0;
@@ -1773,7 +1783,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         // This has to be computed before the text is trimmed.
         let has_line_in_it =
             is_inline && first.is_some_and(|it| self.text_starts_with_white_space(it));
-        let inner = Place {
+        let inner = Parent {
             fragment: element.fragment,
             element: Some(id),
         };
@@ -1808,7 +1818,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 group(vec![Doc::Token(">"), body, closing_tag("")]),
             ];
             let omits_softline = (is_empty && !bracket_same_line)
-                || self.can_omit_softline_before_closing_tag(id, place);
+                || self.can_omit_softline_before_closing_tag(id, parent);
             parts.extend([
                 match is_empty {
                     true => group(hugged),
@@ -1857,7 +1867,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             parts.extend([
                 Doc::Token(">"),
                 indent(vec![separator_start, group(vec![body, closing_tag("")])]),
-                match self.can_omit_softline_before_closing_tag(id, place) {
+                match self.can_omit_softline_before_closing_tag(id, parent) {
                     true => EMPTY,
                     false => Doc::Softline,
                 },
@@ -1916,7 +1926,7 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `body()`
-    fn print_body(&mut self, inner: Place, (is_empty, has_line_in_it): (bool, bool)) -> Doc<'a> {
+    fn print_body(&mut self, inner: Parent, (is_empty, has_line_in_it): (bool, bool)) -> Doc<'a> {
         if is_empty {
             // With `bracketSameLine` the plugin has a line here even in `<pre>`, and it breaks together with the
             // start tag.
@@ -1936,11 +1946,11 @@ impl<'a, 'o> Printer<'a, 'o> {
     }
 
     /// `print`, for a node in a fragment.
-    fn print(&mut self, id: Id, place: Place) -> Doc<'a> {
+    fn print(&mut self, id: Id, parent: Parent) -> Doc<'a> {
         if !self.stack.has_room() {
             return EMPTY;
         }
-        if let Some(embedded) = self.embed_element(id, place) {
+        if let Some(embedded) = self.embed_element(id, parent) {
             return embedded;
         }
         if let Some(which) = [self.tree.module, self.tree.instance, self.tree.css]
@@ -1949,7 +1959,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         {
             return self.embed_top_level(id, which);
         }
-        if let Some(ignored) = self.print_ignored(id, Some(place)) {
+        if let Some(ignored) = self.print_ignored(id, Some(parent)) {
             return ignored;
         }
         // `["{..", printJS(..), "}"]`
@@ -1959,7 +1969,7 @@ impl<'a, 'o> Printer<'a, 'o> {
         if let Some(element) = self.element(id) {
             return match element.kind {
                 ElementKind::SvelteOptions => group(vec![self.print_options_tag(id)]),
-                _ => self.print_element(id, place),
+                _ => self.print_element(id, parent),
             };
         }
         match self.tree[id].kind.clone() {
@@ -1968,7 +1978,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 false => self.print_text(&raw),
             },
             Kind::Comment { .. } => {
-                let is_top_level = place.fragment == self.tree.fragment;
+                let is_top_level = parent.fragment == self.tree.fragment;
                 if self.is_ignore_start_directive(id) && is_top_level {
                     self.ignore_range = true;
                 } else if self.is_ignore_end_directive(id) && is_top_level {
@@ -2269,11 +2279,11 @@ impl<'a, 'o> Printer<'a, 'o> {
             return EMPTY;
         }
         self.trim_children(fragment);
-        let place = Place {
+        let parent = Parent {
             fragment,
             element: None,
         };
-        let mut output = vec![self.print_children(place)];
+        let mut output = vec![self.print_children(parent)];
         trim_left(&mut output, Doc::is_fragment_whitespace);
         trim_right(&mut output, Doc::is_fragment_whitespace);
         if output.iter().all(Doc::is_empty) {
@@ -2421,8 +2431,8 @@ impl<'a, 'o> Printer<'a, 'o> {
                 let before = at.checked_sub(1).map(|it| self.tree[children[it]].end);
                 if let Some(from) = before.filter(|&it| it < start) {
                     let (raw, to) = (Cow::Borrowed(&b"\n"[..]), start as usize);
-                    let blank = self.tree.add(Kind::Text { raw }, from as usize, to);
-                    children.insert(at, blank);
+                    let whitespace_node = self.tree.add(Kind::Text { raw }, from as usize, to);
+                    children.insert(at, whitespace_node);
                 }
             }
         }

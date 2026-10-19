@@ -74,8 +74,8 @@ const run = `declare var console: { log(...args: unknown[]): void };\nconsole.lo
 const value = (isCorrect: boolean) => (isCorrect ? "1" : `"1"`);
 const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
 const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;
-const server = (seen: string) =>
-  `/// <reference path="./html.d.ts" />\n${seen}import page from "./index.html";\n${run}export { page };\n`;
+const server = (pathsImport: string) =>
+  `/// <reference path="./html.d.ts" />\n${pathsImport}import page from "./index.html";\n${run}export { page };\n`;
 
 type Command = "bun --check" | "bun check" | "bun build --check" | "bun build --no-bundle --check" | "Bun.build";
 const everyCommand: Command[] = [
@@ -88,8 +88,8 @@ const everyCommand: Command[] = [
 // `bun check` has no `--loader`.
 const withLoader = everyCommand.filter(command => command !== "bun check");
 
-// `wrong`: the file with the type error. `seen`: an import that only resolves with `paths`, and that's erased before
-// the program runs. `isIncluded`: `include` matches the entry point, by its name or through `--loader`.
+// `wrong`: the file with the type error. `pathsImport`: an import that only resolves with `paths`, and that's erased
+// before the program runs. `isIncluded`: `include` matches the entry point, by its name or through `--loader`.
 type Entry = {
   name: string;
   wrong: string;
@@ -97,9 +97,9 @@ type Entry = {
   loader?: [extension: string, loader: string];
   target?: "bun";
   commands: Command[];
-  main: (isCorrect: boolean, seen: string) => string[];
-  stdin?: (isCorrect: boolean, seen: string) => string;
-  files: (isCorrect: boolean, seen: string) => Record<string, string>;
+  main: (isCorrect: boolean, pathsImport: string) => string[];
+  stdin?: (isCorrect: boolean, pathsImport: string) => string;
+  files: (isCorrect: boolean, pathsImport: string) => Record<string, string>;
 };
 const entries: Entry[] = [
   {
@@ -108,8 +108,8 @@ const entries: Entry[] = [
     isIncluded: true,
     commands: everyCommand,
     main: () => ["main.ts"],
-    files: (isCorrect, seen) => ({
-      "main.ts": `${seen}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.ts": `${pathsImport}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
       "imported.ts": `export const n: number = ${value(isCorrect)};\n`,
     }),
   },
@@ -119,8 +119,8 @@ const entries: Entry[] = [
     isIncluded: false,
     commands: ["bun --check"],
     main: () => ["cli"],
-    files: (isCorrect, seen) => ({
-      "cli": `#!/usr/bin/env bun\n${seen}export const n: number = ${value(isCorrect)};\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "cli": `#!/usr/bin/env bun\n${pathsImport}export const n: number = ${value(isCorrect)};\n${run}`,
     }),
   },
   {
@@ -128,7 +128,7 @@ const entries: Entry[] = [
     wrong: "[eval]",
     isIncluded: false,
     commands: ["bun --check"],
-    main: (isCorrect, seen) => ["-e", `${seen}export const n: number = ${value(isCorrect)};\n${run}`],
+    main: (isCorrect, pathsImport) => ["-e", `${pathsImport}export const n: number = ${value(isCorrect)};\n${run}`],
     files: () => ({}),
   },
   {
@@ -137,7 +137,7 @@ const entries: Entry[] = [
     isIncluded: false,
     commands: ["bun --check"],
     main: () => ["-"],
-    stdin: (isCorrect, seen) => `${seen}export const n: number = ${value(isCorrect)};\n${run}`,
+    stdin: (isCorrect, pathsImport) => `${pathsImport}export const n: number = ${value(isCorrect)};\n${run}`,
     files: () => ({}),
   },
   {
@@ -147,8 +147,8 @@ const entries: Entry[] = [
     loader: [".script", "ts"],
     commands: withLoader,
     main: () => ["main.script"],
-    files: (isCorrect, seen) => ({
-      "main.script": `${seen}import { n } from "./imported.script";\nexport const m: number = n;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.script": `${pathsImport}import { n } from "./imported.script";\nexport const m: number = n;\n${run}`,
       "imported.script": `export const n: number = ${value(isCorrect)};\n`,
     }),
   },
@@ -159,8 +159,8 @@ const entries: Entry[] = [
     loader: [".js", "ts"],
     commands: withLoader,
     main: () => ["main.js"],
-    files: (isCorrect, seen) => ({
-      "main.js": `${seen}import { n } from "./imported.js";\nexport const m: number = n;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.js": `${pathsImport}import { n } from "./imported.js";\nexport const m: number = n;\n${run}`,
       "imported.js": `export const n: number = ${value(isCorrect)};\n`,
     }),
   },
@@ -172,8 +172,8 @@ const entries: Entry[] = [
     loader: [extension, "ts"],
     commands: withLoader,
     main: () => [`main${extension}`],
-    files: (isCorrect, seen) => ({
-      [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      [`main${extension}`]: `${pathsImport}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
       [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
     }),
   })),
@@ -184,8 +184,8 @@ const entries: Entry[] = [
     isIncluded: true,
     commands: everyCommand,
     main: () => ["main.ts"],
-    files: (isCorrect, seen) => ({
-      "main.ts": `${seen}import { f } from "./legacy.js";\nexport const n: number = f();\n${run}`,
+    files: (isCorrect, pathsImport) => ({
+      "main.ts": `${pathsImport}import { f } from "./legacy.js";\nexport const n: number = f();\n${run}`,
       "legacy.js": `export function f() {\n  return 1;\n}\n`,
       "legacy.d.ts": `export declare function f(): ${isCorrect ? "number" : "string"};\n`,
     }),
@@ -197,11 +197,11 @@ const entries: Entry[] = [
     target: "bun",
     commands: everyCommand,
     main: () => ["server.ts"],
-    files: (isCorrect, seen) => ({
+    files: (isCorrect, pathsImport) => ({
       "html.d.ts": html,
       "index.html": page("./client.ts"),
-      "client.ts": `${seen}export const n: number = ${value(isCorrect)};\n`,
-      "server.ts": server(seen),
+      "client.ts": `${pathsImport}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(pathsImport),
     }),
   },
   {
@@ -212,12 +212,12 @@ const entries: Entry[] = [
     target: "bun",
     commands: everyCommand,
     main: () => ["server.ts"],
-    files: (isCorrect, seen) => ({
+    files: (isCorrect, pathsImport) => ({
       "html.d.ts": html,
       "index.html": page("./client.js"),
       "client.js": `import "./typed";\n`,
-      "typed.ts": `${seen}export const n: number = ${value(isCorrect)};\n`,
-      "server.ts": server(seen),
+      "typed.ts": `${pathsImport}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(pathsImport),
     }),
   },
 ];
@@ -272,8 +272,8 @@ const cases = kinds
 
 test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => {
   const hasPaths = Object.keys(kind.files).length > 0 && (entry.isIncluded || !kind.isSolution);
-  const seen = hasPaths ? `import type { Seen } from "@/seen";\nexport type Used = Seen;\n` : "";
-  const inApp = Object.entries(entry.files(isCorrect, seen)).map(([name, text]) => [join(kind.app, name), text]);
+  const pathsImport = hasPaths ? `import type { Seen } from "@/seen";\nexport type Used = Seen;\n` : "";
+  const inApp = Object.entries(entry.files(isCorrect, pathsImport)).map(([name, text]) => [join(kind.app, name), text]);
   using dir = tempDir("bun-check", {
     ...kind.files,
     ...Object.fromEntries(inApp),
@@ -281,10 +281,10 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   });
   await using proc = spawn({
     timeout: longLimit,
-    cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, seen))],
+    cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, pathsImport))],
     cwd: join(String(dir), kind.app),
     env,
-    stdin: entry.stdin ? new Blob([entry.stdin(isCorrect, seen)]) : "ignore",
+    stdin: entry.stdin ? new Blob([entry.stdin(isCorrect, pathsImport)]) : "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -293,7 +293,7 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   const printed = command === "bun build --no-bundle --check" ? stderr : stdout + stderr;
   expect({
     codes: [...new Set(printed.match(/\bTS\d+/g))],
-    namesTheFile: printed.includes(entry.wrong),
+    mentionsFile: printed.includes(entry.wrong),
     ran: command === "bun --check" && stdout.includes("it ran"),
     exitCode,
     // Shows why if the exit code isn't the expected one.
@@ -301,7 +301,7 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   }).toEqual({
     output: "",
     codes: isCorrect ? [] : ["TS2322"],
-    namesTheFile: !isCorrect,
+    mentionsFile: !isCorrect,
     ran: isCorrect && command === "bun --check",
     exitCode: isCorrect ? 0 : 1,
   });
@@ -378,14 +378,14 @@ test("doesn't count a byte order mark as a column, wherever the text comes from"
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return stdout + stderr;
   };
-  const place = (printed: string) => /[(:]1[,:](\d+)/.exec(printed)?.[1];
+  const column = (printed: string) => /[(:]1[,:](\d+)/.exec(printed)?.[1];
   const printed = await Promise.all([
     run(["check"]),
     run(["--check", "index.ts"]),
     run(["--check", "-"], "\uFEFF" + text),
     run(["build", "--check", "index.ts", "--outdir", "out"]),
   ]);
-  expect(printed.map(place)).toEqual(["14", "14", "14", "14"]);
+  expect(printed.map(column)).toEqual(["14", "14", "14", "14"]);
   expect(printed.filter(it => it.includes("\uFEFF"))).toEqual([]);
   const line = JSON.stringify([[1, 14, text.trimEnd()]]);
   expect((await run(["build.ts"])).trim().split("\n")).toEqual([line, line, line]);

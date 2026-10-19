@@ -270,7 +270,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.unlisted_intersections.by_type.insert(ty, unlisted);
         Built {
             resolved: combined,
-            kept: None,
+            store_handle: None,
         }
     }
 

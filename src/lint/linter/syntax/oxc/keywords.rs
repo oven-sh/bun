@@ -59,7 +59,7 @@ enum Strict {
 impl<'a> Checks<'a> {
     fn error(&self, at: u32, message: Vec<u8>) -> SyntaxError {
         let rest = self.file.text().get(at as usize..).unwrap_or_default();
-        SyntaxError::of_oxc(Span::new(at, at + token_len(rest) as u32), message)
+        SyntaxError::oxc_error(Span::new(at, at + token_len(rest) as u32), message)
     }
 
     /// Marks the name at `at` as checked.
@@ -211,7 +211,7 @@ impl<'a> Checks<'a> {
             return false;
         }
         self.reported_by_parser.push(at);
-        let error = SyntaxError::of_oxc(Span::new(arrow, arrow + 2), "Unexpected token");
+        let error = SyntaxError::oxc_error(Span::new(arrow, arrow + 2), "Unexpected token");
         self.errors.push(error.stage(Stage::Fatal));
         true
     }
@@ -222,7 +222,8 @@ impl<'a> Checks<'a> {
         let semicolon = |after: u32| {
             let message =
                 "Expected a semicolon or an implicit semicolon after a statement, but found none";
-            SyntaxError::of_oxc(Span::empty(after), message).help("Try inserting a semicolon here")
+            SyntaxError::oxc_error(Span::empty(after), message)
+                .help("Try inserting a semicolon here")
         };
         let unexpected = |at: u32| self.error(at, b"Unexpected token".to_vec());
         match pattern.kind() {
@@ -245,7 +246,7 @@ impl<'a> Checks<'a> {
                     let opening = Span::new(pattern.span().start, pattern.span().start + 1);
                     Some(
                         error
-                            .says("`,` or `]` expected")
+                            .label_text("`,` or `]` expected")
                             .and(opening, "Opened here"),
                     )
                 };
@@ -280,7 +281,7 @@ impl<'a> Checks<'a> {
                 (next, token, _) = self.token_after(next + 1);
             }
             let message = [b"Expected `)` but found `", token, b"`"].concat();
-            (token != b")").then(|| self.error(next, message).says("`)` expected"))
+            (token != b")").then(|| self.error(next, message).label_text("`)` expected"))
         };
         let Some(error) = self.pattern_as_type(pattern).or_else(after_pattern) else {
             self.reported_by_parser.pop();
@@ -350,13 +351,13 @@ impl<'a> Checks<'a> {
     /// or a `;`. `after` is the end of the `let`.
     fn let_statement(&mut self, statement: Stmt<'a>, after: u32) {
         let (next, token, is_on_line) = self.token_after(after);
-        let goes_on = match token {
+        let continues_expression = match token {
             b"=>" | b"++" | b"--" | b"||" | b"&&" | b"??" | b"?" | b"!" | b"..." => false,
             b"in" | b"instanceof" | b"." | b"(" | b";" => true,
             [first, ..] => bun_core::strings::contains_char(b"=+-*/%<>|&^!?", *first),
             [] => false,
         };
-        if goes_on {
+        if continues_expression {
             return;
         }
         // In a single-statement position, which doesn't allow a declaration, `let` is an identifier and the statement
@@ -376,7 +377,7 @@ impl<'a> Checks<'a> {
             true if !is_on_line || matches!(token, b"" | b"}") => return,
             true => {
                 let message = "Expected a semicolon or an implicit semicolon after a statement, but found none";
-                SyntaxError::of_oxc(Span::empty(after), message)
+                SyntaxError::oxc_error(Span::empty(after), message)
                     .help("Try inserting a semicolon here")
             }
             // oxc's lexer treats any escape, even a malformed one, as part of an identifier, and has already reported
@@ -384,7 +385,7 @@ impl<'a> Checks<'a> {
             false if token.starts_with(b"\\") => return,
             false => {
                 let label = Span::new(next, next + token.len() as u32);
-                SyntaxError::of_oxc(label, "Unexpected token")
+                SyntaxError::oxc_error(label, "Unexpected token")
             }
         };
         self.errors.push(error.stage(Stage::Fatal));
@@ -523,7 +524,7 @@ impl<'a> Checks<'a> {
         }
         let mut below = node;
         for above in node.ancestors() {
-            let place = match above {
+            let location = match above {
                 Node::Func(func) if func.kind() == FnKind::StaticBlock => {
                     "static initialization block"
                 }
@@ -540,7 +541,7 @@ impl<'a> Checks<'a> {
                     continue;
                 }
             };
-            let message = format!("'arguments' is not allowed in {place}");
+            let message = format!("'arguments' is not allowed in {location}");
             let help = "Assign the 'arguments' variable to a temporary variable outside";
             let error = self.error(at, message.into_bytes()).help(help);
             return self.errors.push(error);

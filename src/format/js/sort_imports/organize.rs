@@ -216,7 +216,7 @@ fn compare_module_specifiers(a: Option<&[u8]>, b: Option<&[u8]>, comparer: Compa
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Specifier<'a> {
     /// As in the source, except that `a as a` becomes `a`.
-    Written(ImportSpec<'a>),
+    Existing(ImportSpec<'a>),
     /// `default as name`
     Default(Ident<'a>),
 }
@@ -224,7 +224,7 @@ enum Specifier<'a> {
 impl<'a> Specifier<'a> {
     fn key(&self) -> (bool, &'a [u8]) {
         match self {
-            Specifier::Written(it) => (it.is_type_only(), it.local().bytes()),
+            Specifier::Existing(it) => (it.is_type_only(), it.local().bytes()),
             Specifier::Default(name) => (false, name.bytes()),
         }
     }
@@ -251,7 +251,7 @@ impl<'a> NewImport<'a> {
             namespace: import.namespace(),
             named: import
                 .has_named_imports()
-                .then(|| import.named().iter().map(Specifier::Written).collect()),
+                .then(|| import.named().iter().map(Specifier::Existing).collect()),
             braces: import.has_named_imports().then_some((import, true)),
         }
     }
@@ -290,7 +290,7 @@ impl<'a> NewImport<'a> {
                     import.has_named_imports()
                         && named.len() == import.named().len()
                         && named.iter().zip(import.named().iter()).all(|(new, old)| {
-                            *new == Specifier::Written(old)
+                            *new == Specifier::Existing(old)
                                 && !(old.is_renamed()
                                     && !old.imported().is_string()
                                     && old.imported().bytes() == old.local().bytes())
@@ -306,7 +306,7 @@ struct Element {
     span: Option<Span>,
     code: Vec<u8>,
     /// The start of the statement it's from, and its index in that statement.
-    place: (u32, usize),
+    origin: (u32, usize),
 }
 
 /// Where `skipTrivia` stops: `stopAfterLineBreak`, `stopAtComments`.
@@ -366,7 +366,7 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    fn blank_end(&self, at: u32) -> Option<u32> {
+    fn space_or_tab_end(&self, at: u32) -> Option<u32> {
         match self.text.get(at as usize..).unwrap_or_default() {
             [b' ' | b'\t' | 0x0B | 0x0C, ..] => Some(at + 1),
             [0xC2, 0xA0, ..] => Some(at + 2),
@@ -389,7 +389,7 @@ impl<'a> Organizer<'a, '_> {
                 if stops_after_line_break {
                     return at;
                 }
-            } else if let Some(end) = self.blank_end(at) {
+            } else if let Some(end) = self.space_or_tab_end(at) {
                 at = end;
             } else if let Some(comment) = self.comment_at(at).filter(|_| !stops_at_comments) {
                 at = comment.0.end;
@@ -403,7 +403,7 @@ impl<'a> Organizer<'a, '_> {
     fn trailing_comments(&self, mut at: u32) -> Vec<(Span, bool)> {
         let mut found = Vec::new();
         loop {
-            if let Some(end) = self.blank_end(at) {
+            if let Some(end) = self.space_or_tab_end(at) {
                 at = end;
             } else if let Some(comment) = self.comment_at(at) {
                 found.push(comment);
@@ -422,7 +422,7 @@ impl<'a> Organizer<'a, '_> {
         loop {
             if let Some(end) = self.line_break_end(at) {
                 (at, is_collecting) = (end, true);
-            } else if let Some(end) = self.blank_end(at) {
+            } else if let Some(end) = self.space_or_tab_end(at) {
                 at = end;
             } else if let Some(comment) = self.comment_at(at) {
                 if is_collecting {
@@ -631,7 +631,7 @@ impl<'a> Organizer<'a, '_> {
                 .filter(|name| self.is_used(*name, statement));
             if let Some(named) = &mut import.named {
                 let count = named.len();
-                named.retain(|it| matches!(it, Specifier::Written(it) if self.is_used(it.local(), statement)));
+                named.retain(|it| matches!(it, Specifier::Existing(it) if self.is_used(it.local(), statement)));
                 import.braces = import.braces.map(|it| (it.0, named.len() == count));
                 if named.is_empty() && count > 0 {
                     import.named = None;
@@ -702,15 +702,16 @@ impl<'a> Organizer<'a, '_> {
         for (_, group) in by_attributes {
             coalesced.extend(group.iter().find(|it| !it.has_clause()).cloned());
             for is_type_only in [false, true] {
-                let of_kind = || {
+                let same_kind = || {
                     group
                         .iter()
                         .filter(move |it| it.has_clause() && it.is_type_only() == is_type_only)
                 };
-                let defaults: Vec<&NewImport> = of_kind().filter(|it| it.name.is_some()).collect();
+                let defaults: Vec<&NewImport> =
+                    same_kind().filter(|it| it.name.is_some()).collect();
                 let mut namespaces: Vec<&NewImport> =
-                    of_kind().filter(|it| it.namespace.is_some()).collect();
-                let named: Vec<&NewImport> = of_kind().filter(|it| it.named.is_some()).collect();
+                    same_kind().filter(|it| it.namespace.is_some()).collect();
+                let named: Vec<&NewImport> = same_kind().filter(|it| it.named.is_some()).collect();
                 if let (false, [default], [namespace], []) =
                     (is_type_only, &defaults[..], &namespaces[..], &named[..])
                 {
@@ -815,8 +816,10 @@ impl<'a> Organizer<'a, '_> {
         if has_leading_comments {
             for (span, is_block) in self.leading_comments(base.full_start) {
                 out.extend_from_slice(self.file.slice(span));
-                let is_on_its_own_line =
-                    !is_block || self.line_break_end(self.skip_blanks(span.end)).is_some();
+                let is_on_its_own_line = !is_block
+                    || self
+                        .line_break_end(self.skip_spaces_and_tabs(span.end))
+                        .is_some();
                 out.extend_from_slice(if is_on_its_own_line {
                     self.end_of_line
                 } else {
@@ -831,8 +834,8 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    fn skip_blanks(&self, mut at: u32) -> u32 {
-        while let Some(end) = self.blank_end(at) {
+    fn skip_spaces_and_tabs(&self, mut at: u32) -> u32 {
+        while let Some(end) = self.space_or_tab_end(at) {
             at = end;
         }
         at
@@ -869,7 +872,7 @@ impl<'a> Organizer<'a, '_> {
         out.extend_from_slice(self.file.slice(comment.0));
         let ends_line = !comment.1
             || self
-                .line_break_end(self.skip_blanks(comment.0.end))
+                .line_break_end(self.skip_spaces_and_tabs(comment.0.end))
                 .is_some();
         out.extend_from_slice(if ends_line { self.end_of_line } else { b" " });
     }
@@ -917,7 +920,7 @@ impl<'a> Organizer<'a, '_> {
         let starts_on_new_line = prefers_new_lines
             || (elements
                 .first()
-                .filter(|it| it.place.0 == list)
+                .filter(|it| it.origin.0 == list)
                 .and_then(|it| it.span))
             .is_some_and(|span| self.has_line_break_in(self.full_start_of(span.start), span.start));
         out.extend_from_slice(if starts_on_new_line {
@@ -938,7 +941,8 @@ impl<'a> Organizer<'a, '_> {
                 // `getSeparatingLineTerminatorCount`
                 let is_on_new_line = match (previous.span, element.span) {
                     (Some(before), Some(span))
-                        if previous.place == (element.place.0, element.place.1.wrapping_sub(1)) =>
+                        if previous.origin
+                            == (element.origin.0, element.origin.1.wrapping_sub(1)) =>
                     {
                         self.has_line_break_in(before.end, span.start)
                     }
@@ -1023,7 +1027,7 @@ impl<'a> Organizer<'a, '_> {
 
     fn import_code(&self, import: &NewImport<'a>) -> Vec<u8> {
         if self.prints_same_as_source(import) {
-            return self.as_written(&import.base);
+            return self.source_text_of(&import.base);
         }
         let original = import.base.import();
         // The text before and after the braces is copied as is, with its comments.
@@ -1066,9 +1070,9 @@ impl<'a> Organizer<'a, '_> {
                     Specifier::Default(name) => Element {
                         span: None,
                         code: [b"default as ", self.file.slice(name.span())].concat(),
-                        place: (0, 0),
+                        origin: (0, 0),
                     },
-                    Specifier::Written(it) => {
+                    Specifier::Existing(it) => {
                         let is_redundant = it.is_renamed()
                             && !it.imported().is_string()
                             && it.imported().bytes() == it.local().bytes();
@@ -1086,7 +1090,7 @@ impl<'a> Organizer<'a, '_> {
                                 .concat(),
                                 false => self.file.slice(it.span()).to_vec(),
                             },
-                            place: (
+                            origin: (
                                 it.import().stmt().span().start,
                                 it.import()
                                     .named()
@@ -1209,7 +1213,7 @@ impl<'a> Organizer<'a, '_> {
     }
 
     /// `declaration` as in the source, with its `;` where the printer puts it.
-    fn as_written(&self, declaration: &Declaration<'a>) -> Vec<u8> {
+    fn source_text_of(&self, declaration: &Declaration<'a>) -> Vec<u8> {
         match self.before_far_semicolon(declaration) {
             Some(before) => [before, b";"].concat(),
             None => self.file.slice(declaration.span()).to_vec(),
@@ -1279,7 +1283,7 @@ impl<'a> Organizer<'a, '_> {
             .map(|it| Element {
                 span: Some(it.span()),
                 code: self.file.slice(it.span()).to_vec(),
-                place: (
+                origin: (
                     it.export().stmt().span().start,
                     it.export()
                         .items()
@@ -1319,11 +1323,11 @@ impl<'a> Organizer<'a, '_> {
                 group
                     .iter()
                     .find(is_star)
-                    .map(|it| (*it, self.as_written(it))),
+                    .map(|it| (*it, self.source_text_of(it))),
             );
             is_same &= group.iter().filter(is_star).count() <= 1;
             for is_type_only in [false, true] {
-                let of_kind: Vec<&Declaration> = (group.iter())
+                let same_kind: Vec<&Declaration> = (group.iter())
                     .filter(|it| match it.statement.kind() {
                         StmtKind::ExportNamed(export) => export.is_type_only() == is_type_only,
                         StmtKind::ExportStar {
@@ -1334,15 +1338,15 @@ impl<'a> Organizer<'a, '_> {
                         _ => false,
                     })
                     .collect();
-                let Some(&first) = of_kind.first() else {
+                let Some(&first) = same_kind.first() else {
                     continue;
                 };
-                is_same &= of_kind.len() == 1;
+                is_same &= same_kind.len() == 1;
                 let StmtKind::ExportNamed(export) = first.statement.kind() else {
-                    new.push((*first, self.as_written(first)));
+                    new.push((*first, self.source_text_of(first)));
                     continue;
                 };
-                let written: Vec<ExportSpec<'a>> = (of_kind.iter())
+                let source_specs: Vec<ExportSpec<'a>> = (same_kind.iter())
                     .filter_map(|it| {
                         if let StmtKind::ExportNamed(export) = it.statement.kind() {
                             Some(export.items())
@@ -1352,7 +1356,7 @@ impl<'a> Organizer<'a, '_> {
                     })
                     .flat_map(List::iter)
                     .collect();
-                let mut items = written.clone();
+                let mut items = source_specs.clone();
                 stable_sort_by(&mut items, |a, b| {
                     let key = |it: &ExportSpec<'a>| (it.is_type_only(), it.exported().bytes());
                     compare_specifiers(
@@ -1364,14 +1368,14 @@ impl<'a> Organizer<'a, '_> {
                 });
                 let is_sorted = items
                     .iter()
-                    .zip(&written)
+                    .zip(&source_specs)
                     .all(|(a, b)| a.span() == b.span())
                     && !self.has_comment_in(first.span());
                 is_same &= is_sorted;
                 new.push((
                     *first,
-                    if is_sorted && of_kind.len() == 1 {
-                        self.as_written(first)
+                    if is_sorted && same_kind.len() == 1 {
+                        self.source_text_of(first)
                     } else {
                         self.export_code(first, export, &items)
                     },

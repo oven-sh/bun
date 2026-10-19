@@ -21,12 +21,12 @@ pub struct Pattern<'a> {
 
 impl<'a> Pattern<'a> {
     /// The pattern of a regular expression literal, in the mode its flags select.
-    pub fn of_literal(literal: Expr<'a>) -> Option<Pattern<'a>> {
+    pub fn from_literal(literal: Expr<'a>) -> Option<Pattern<'a>> {
         let regex = literal.as_regex()?;
         let (start, pattern) = (literal.span().start + 1, regex.pattern());
         Some(Pattern {
             text: Cow::Borrowed(pattern),
-            mode: Mode::of_flags(regex.flags()),
+            mode: Mode::from_flags(regex.flags()),
             span: Span::new(start, start + pattern.len() as u32),
             units: None,
         })
@@ -154,7 +154,7 @@ fn push_line_continuations(units: &mut Vec<CharInfo>, raw: &[u8], from: u32, to:
 fn mode_of_flags(flags: &[u8]) -> Option<Mode> {
     let is_known = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
     let is_repeated = |(i, flag): (usize, &u8)| strings::contains_char(&flags[..i], *flag);
-    let mode = Mode::of_flags(flags);
+    let mode = Mode::from_flags(flags);
     (flags.iter().all(is_known)
         && !flags.iter().enumerate().any(is_repeated)
         && !(mode.unicode && mode.unicode_sets))
@@ -175,7 +175,7 @@ pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
             }
             match outer {
                 Node::Expr(it) if is_regexp_call(it) => None,
-                _ => Pattern::of_literal(e),
+                _ => Pattern::from_literal(e),
             }
         }
         ExprKind::Call(call) | ExprKind::New(call) if is_regexp_callee(call.callee()) => {
@@ -201,14 +201,14 @@ fn run_on_arguments<'a>(args: List<'a, Expr<'a>>) -> Option<Pattern<'a>> {
         },
         None => None,
     };
-    if let Some(mut pattern) = Pattern::of_literal(get_inner_expression(first)) {
+    if let Some(mut pattern) = Pattern::from_literal(get_inner_expression(first)) {
         // oxlint tries to read a wrapped literal, like `(/a/)` or `/a/ as T`, as a string, which fails.
         if first.tag() != ExprTag::Regex || first.is_parenthesized() {
             return None;
         }
         let own = pattern.mode;
         if let Some(text) = flags.map(Expr::text)
-            && let new = Mode::of_flags(text)
+            && let new = Mode::from_flags(text)
             && (new.unicode, new.unicode_sets) != (own.unicode, own.unicode_sets)
         {
             pattern.mode = mode_of_flags(text.get(1..text.len() - 1)?)?;

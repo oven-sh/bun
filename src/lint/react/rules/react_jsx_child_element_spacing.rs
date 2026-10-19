@@ -37,12 +37,12 @@ impl Rule for JsxChildElementSpacing {
         let (mut last_child, mut child): (Option<JsxChild<'a>>, Option<JsxChild<'a>>) = (None, None);
         for next_child in jsx.children_with_whitespace().map(Some).chain([None]) {
             if let Some(value) = child.and_then(|it| it.text_value(cx.file())) {
-                let around = (last_child.map(inline_element), next_child.map(inline_element));
-                if let (Some(Some((element, name))), None | Some(Some(_))) = around
+                let neighbors = (last_child.map(inline_element), next_child.map(inline_element));
+                if let (Some(Some((element, name))), None | Some(Some(_))) = neighbors
                     && is_text_following_element(&value)
                 {
                     cx.report_at(element.span().end, SPACING_AFTER_PREV).listened_on(e).data("element", name);
-                } else if let (None | Some(Some(_)), Some(Some((element, name)))) = around
+                } else if let (None | Some(Some(_)), Some(Some((element, name)))) = neighbors
                     && is_text_preceding_element(&value)
                 {
                     cx.report_at(element.span().start, SPACING_BEFORE_NEXT).listened_on(e).data("element", name);

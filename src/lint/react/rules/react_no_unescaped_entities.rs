@@ -49,7 +49,7 @@ impl Rule for NoUnescapedEntities {
             char: char.as_bytes().into(),
             alternatives: Some(alternatives.iter().map(|it| it.as_bytes().into()).collect()),
         });
-        let given = |it: &Json| match it.as_str() {
+        let parse_entity = |it: &Json| match it.as_str() {
             Some(char) => Some(Entity { char: char.into(), alternatives: None }),
             None => {
                 let it = Object::of(Some(it));
@@ -59,7 +59,7 @@ impl Rule for NoUnescapedEntities {
         };
         let forbid = options.object(0).get("forbid").and_then(Json::as_array);
         NoUnescapedEntities {
-            forbid: forbid.map(|it| Entities::new(it.iter().filter_map(given).collect())),
+            forbid: forbid.map(|it| Entities::new(it.iter().filter_map(parse_entity).collect())),
             defaults: Entities::new(defaults.collect()),
         }
     }

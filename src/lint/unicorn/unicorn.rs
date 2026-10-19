@@ -219,7 +219,7 @@ pub(crate) fn is_number_0(e: Expr) -> bool {
 }
 
 /// The statement list that contains `statement`.
-pub(crate) fn statements_around(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>>> {
+pub(crate) fn enclosing_statement_list(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>>> {
     match statement.parent() {
         Node::File(file) => Some(file.body()),
         Node::Func(func) => func.body_statements(),

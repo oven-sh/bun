@@ -211,11 +211,11 @@ function eslintRecorder(): Recorder {
     meta: rule => builtinRules.get(rule),
     record(ruleName, item) {
       const given = item.languageOptions?.parser;
-      const named: "espree" | "typescript" | undefined =
+      const explicitParser: "espree" | "typescript" | undefined =
         given === "espree" || given === "typescript" ? given : undefined;
       const wantsJsx = Boolean(item.languageOptions?.parserOptions?.ecmaFeatures?.jsx);
-      if (item.filename || named) {
-        const parser = named ?? (/\.[cm]?tsx?$/.test(item.filename!) ? "typescript" : "espree");
+      if (item.filename || explicitParser) {
+        const parser = explicitParser ?? (/\.[cm]?tsx?$/.test(item.filename!) ? "typescript" : "espree");
         const filename = item.filename ?? `file.${parser === "typescript" ? "ts" : "js"}${wantsJsx ? "x" : ""}`;
         const only = attempt(ruleName, item, parser, filename, parser === "espree" && filename.endsWith(".jsx"));
         if (!only.fatal || item.filename || parser === "espree" || wantsJsx) return only.recorded;

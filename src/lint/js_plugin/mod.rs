@@ -35,7 +35,7 @@ mod tokens;
 pub(crate) mod wire;
 
 pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
-pub use eslint::{Configuration, Linted, Refusal, Text};
+pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};

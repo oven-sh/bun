@@ -147,7 +147,7 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
             while let Some(close_brace_pos) = strings::last_index_of_char(source, b'}') {
                 source = source.get(..close_brace_pos).unwrap_or_default();
                 if file
-                    .comment_around(statement_span.start + close_brace_pos as u32)
+                    .comment_containing(statement_span.start + close_brace_pos as u32)
                     .is_some()
                 {
                     continue;

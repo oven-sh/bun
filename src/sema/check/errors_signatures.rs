@@ -1,28 +1,14 @@
 //! Signatures.
 //!
-//! * Type parameters: 2368 2716 2706 2744 2636 2637, and 2344 (or a more specific error) for a default that doesn't
-//!   satisfy the parameter's constraint.
-//! * Parameter lists: 1098, 1014 1013 1047 1048 1015 1016, 1346 1347, 7060 1200; parameters: 2398 2681 2784.
-//! * Accessors, methods, constructors, properties: 1005 1318, 1221 1222, 1092 1093, 1245 1267, 2676 2808.
+//! * Type parameters: 2716 2636 2637, and 2344 (or a more specific error) for a default that doesn't satisfy the
+//!   parameter's constraint.
 //! * Return types: 2505 1064 1058 1062, 1228 1229 2677 1230 1225.
-//! * `erasableSyntaxOnly`: 1294.
 //!
-//! Mirrors `checkTypeParameter`, `checkTypeParameterDeferred`, `checkTypeParameters`,
-//! `checkTypeParametersNotReferenced`, `checkParameter`, `checkPropertyDeclaration`, `checkSignatureDeclaration`,
-//! `checkAsyncFunctionReturnType`, `checkMethodDeclaration`, `checkAccessorDeclaration`, `checkTypePredicate`,
-//! `getAwaitedTypeNoAliasEx` and `checkAssertion` in TypeScript 7.0.2's checker.go, and
-//! `checkGrammarTypeParameterList`, `checkGrammarParameterList`, `checkGrammarForUseStrictSimpleParameterList`,
-//! `checkGrammarArrowFunction`, `checkGrammarForGenerator`, `checkGrammarAccessor`, `checkGrammarMethod` and
-//! `checkGrammarConstructorTypeParameters` in its grammarchecks.go.
-//!
-//! A file's HIR doesn't store everything these checks need: a body where none is allowed, a `this` parameter, `"use
-//! strict"`, the position of a `?` or a modifier. Those are read from the source text, starting at a position the HIR
-//! does have.
+//! Mirrors `checkTypeParameter`, `checkTypeParameterDeferred`, `checkSignatureDeclaration`,
+//! `checkAsyncFunctionReturnType` and `checkTypePredicate` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
-
-// ───────────────────────────── the grammar of signatures ─────────────────────────────
 
 impl Checker<'_, '_> {
     // ───────────────────────────── type parameters ─────────────────────────────
@@ -299,7 +285,7 @@ impl Checker<'_, '_> {
         self.check_awaited_type(
             ret,
             false,
-            self.place_of_signature_declaration(file, f),
+            self.span_of_signature_declaration(file, f),
             1058,
         );
     }

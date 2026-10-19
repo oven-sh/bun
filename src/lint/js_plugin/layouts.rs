@@ -344,7 +344,7 @@ pub(super) fn write(out: &mut Vec<u8>) {
             }
             let listed = exceptions.get(node_type.name().as_bytes()).copied();
             let middle = fields_in_order(layout, listed, &fields, &hidden, &shown);
-            let around: (&[Property], &[Property]) = match layout {
+            let outer_properties: (&[Property], &[Property]) = match layout {
                 Layout::Espree => (
                     &[
                         TYPE_PROPERTY,
@@ -369,12 +369,13 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     ],
                 ),
             };
-            let properties: Vec<Property> = [around.0, &middle[..], around.1].concat();
+            let properties: Vec<Property> =
+                [outer_properties.0, &middle[..], outer_properties.1].concat();
             let alternate: Vec<Property> = match (layout, node_type) {
                 (Layout::TypeScript, NodeType::TSModuleDeclaration) => {
                     let order = b"kind,body,declare,global,id";
                     let middle = fields_in_order(layout, Some(order), &fields, &hidden, &shown);
-                    [around.0, &middle[..], around.1].concat()
+                    [outer_properties.0, &middle[..], outer_properties.1].concat()
                 }
                 // `convertTypeAnnotation` and `convertTSTypeParametersToTypeParametersDeclaration` compute both.
                 (
@@ -465,7 +466,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
     };
     let is_alternate = |id: u32, node_type: NodeType| {
         let parent = tree.parents[id as usize];
-        let around = type_of(parent);
+        let parent_type = type_of(parent);
         match node_type {
             NodeType::ObjectExpression => is_options(id),
             NodeType::Property => is_options(parent),
@@ -480,7 +481,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
             | NodeType::TSTypeParameterInstantiation
             | NodeType::TSImportType
             | NodeType::TSEmptyBodyFunctionExpression => true,
-            NodeType::FunctionExpression => match around {
+            NodeType::FunctionExpression => match parent_type {
                 Some(NodeType::MethodDefinition | NodeType::TSAbstractMethodDefinition) => true,
                 Some(NodeType::Property) => {
                     is_true(field(parent, Field::Method))
@@ -488,7 +489,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
                 }
                 _ => false,
             },
-            NodeType::Identifier => match around {
+            NodeType::Identifier => match parent_type {
                 Some(NodeType::MethodDefinition | NodeType::TSAbstractMethodDefinition) => {
                     matches!(field(parent, Field::Kind), Value::Str(b"constructor"))
                         && is_in(id, parent, Field::Key)
@@ -516,7 +517,7 @@ pub(super) fn alternates(tree: Tree) -> Vec<u32> {
                 type_of(outer) == Some(NodeType::TSModuleDeclaration)
             }
             // A parameter with a default, or a property of a declaring pattern. Not an array element.
-            NodeType::AssignmentPattern => match around {
+            NodeType::AssignmentPattern => match parent_type {
                 Some(NodeType::Property) => is_binding(id),
                 Some(NodeType::ArrayPattern | NodeType::AssignmentExpression) => false,
                 Some(NodeType::ForInStatement | NodeType::ForOfStatement) => false,

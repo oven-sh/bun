@@ -40,7 +40,7 @@ fn report<'a>(reference: Reference<'a>, at: Span, cx: &mut Cx<'a, NoUseBeforeDef
 
 /// For oxlint the computed key of a type-only member is a type reference: `{ [a]: 1 }` as a type or in an interface,
 /// `declare [a]: 1` and `abstract [a]: 1` in a class.
-fn oxlint_is_in_key_of_type(reference: Reference) -> bool {
+fn oxlint_is_in_type_member_key(reference: Reference) -> bool {
     let Some(mut e) = reference.expr() else {
         return false;
     };
@@ -103,7 +103,7 @@ impl NoUseBeforeDefine {
         if config.ignore_type_references
             && (reference.is_type() && !oxlint_treats_as_value(variable, reference)
                 || reference_contains_type_query(reference)
-                || variable.file().language().is_oxlint && oxlint_is_in_key_of_type(reference))
+                || variable.file().language().is_oxlint && oxlint_is_in_type_member_key(reference))
         {
             return false;
         }

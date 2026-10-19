@@ -3,7 +3,7 @@
 use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
 use super::{ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -572,7 +572,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // parsed in the function's [Await] context."
             let first = self.s.modifiers.len();
             let saved = self.enter_context(outer_await, ctx::AWAIT);
-            let seen = self.modifiers(ModifiersOf::Declaration);
+            let modifier_flags = self.modifiers(ModifiersOf::Declaration);
             self.context = saved;
             let index = (self.s.params.len() - base) as u32;
             for modifier in first..self.s.modifiers.len() {
@@ -582,13 +582,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             // The checker reports the other modifiers from the modifier list. `abstract` and `static` still count as
             // flags of the property (`getDeclarationModifierFlagsFromSymbol`).
-            flags |= seen & PROPERTY_MODIFIERS;
-            if seen.intersects(PROPERTY_MODIFIERS) {
-                flags |= Flags::PARAMETER_PROPERTY | seen & (Flags::ABSTRACT | Flags::STATIC);
+            flags |= modifier_flags & PROPERTY_MODIFIERS;
+            if modifier_flags.intersects(PROPERTY_MODIFIERS) {
+                flags |=
+                    Flags::PARAMETER_PROPERTY | modifier_flags & (Flags::ABSTRACT | Flags::STATIC);
             }
             // In a type, every modifier is kept as a flag.
             if self.has_context(ctx::TYPE) {
-                flags |= seen;
+                flags |= modifier_flags;
             }
             if self.options.is_javascript {
                 self.check_js_parameter_modifiers(first, start.pos);
@@ -614,7 +615,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 if self.recovers() {
                     return self.this_parameter_after_modifiers(base, start, pat, flags);
                 }
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
         } else {
             if self.eat(T::DotDotDot) {
@@ -701,8 +702,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 .modifiers
                 .extend(modifiers.iter().filter(is_decorator));
             let decorators = self.s.modifiers.len() - strays;
-            let of_others = self.s.decorators.len().saturating_sub(decorators);
-            self.s.decorators.truncate(of_others);
+            let others_len = self.s.decorators.len().saturating_sub(decorators);
+            self.s.decorators.truncate(others_len);
             self.s.param_modifiers.pop();
             self.f.modifiers.truncate(list.start as usize);
             flags = Flags::empty();
@@ -778,8 +779,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     if arrow.is_some() {
                         return arrow;
                     }
-                    let place = self.not_arrows.partition_point(|&it| it < at);
-                    self.not_arrows.insert(place, at);
+                    let insert_at = self.not_arrows.partition_point(|&it| it < at);
+                    self.not_arrows.insert(insert_at, at);
                 }
             }
             Tristate::False => {}
@@ -938,11 +939,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         // For oxc, an `async` arrow function's type parameters and return type are parsed in its context, as in
         // `function_rest_with_error_code`.
-        let in_types = match self.options.dialect.oxc && flags.contains(Flags::ASYNC) {
+        let type_context = match self.options.dialect.oxc && flags.contains(Flags::ASYNC) {
             true => (ctx::AWAIT, ctx::TOP_LEVEL),
             false => (0, 0),
         };
-        let saved = self.enter_context(in_types.0, in_types.1);
+        let saved = self.enter_context(type_context.0, type_context.1);
         let type_params = self.type_parameters();
         self.context = saved;
         let ambiguity = match allow_ambiguity {
@@ -950,11 +951,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => Ambiguity::Disallowed,
         };
         // oxc first parses the parameters as an expression, in the context around the arrow function.
-        let around = match self.options.dialect.oxc {
+        let outer_context = match self.options.dialect.oxc {
             true => self.context & (ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL),
             false => 0,
         };
-        let context = signature_context(flags) | around;
+        let context = signature_context(flags) | outer_context;
         let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters_if(context, ambiguity)?;
         let parameters = (odd_parameters, this_param);
@@ -967,7 +968,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             true => {
                 self.next();
-                let saved = self.enter_context(in_types.0, in_types.1);
+                let saved = self.enter_context(type_context.0, type_context.1);
                 let ret = self.type_or_type_predicate();
                 self.context = saved;
                 ret
@@ -988,7 +989,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if last != T::EqualsGreaterThan && !self.recovers() {
             // Before a `{`, TypeScript treats it as an arrow function whose `=>` is missing.
             if last == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
             if allow_ambiguity {
                 self.fail();

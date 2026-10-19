@@ -205,7 +205,7 @@ struct Property<'t> {
 }
 
 impl<'t> Property<'t> {
-    fn of_line(line: &'t [u8]) -> Option<Self> {
+    fn from_line(line: &'t [u8]) -> Option<Self> {
         let after_at = strings::trim_left(line, b" ").strip_prefix(b"@")?;
         let mut name_len = 0;
         while name_len < after_at.len() && strings::js_whitespace_len(&after_at[name_len..]) == 0 {
@@ -272,7 +272,7 @@ impl DocBlock {
         let mut pragmas: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         let mut comments = Vec::new();
         for (index, line) in strings::split(text, b"\n").enumerate() {
-            let Some(property) = Property::of_line(line) else {
+            let Some(property) = Property::from_line(line) else {
                 if index > 0 {
                     comments.push(b'\n');
                 }

@@ -95,7 +95,7 @@ impl Checker<'_, '_> {
             // `GetElementOrPropertyAccessName`, or else the whole left-hand side.
             ExprKind::Assign { target, .. } => match hir[target].kind {
                 ExprKind::Dot { .. } if !is_private_name_at(hir, hir.name_pos(target)) => {
-                    return Some(self.place_of_token(file, hir.name_pos(target)));
+                    return Some(self.span_of_token(file, hir.name_pos(target)));
                 }
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
@@ -564,7 +564,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn text_of_reused_node(
         &mut self,
         file: FileId,
-        what: Written,
+        what: ReusedNode,
         enclosing_declaration: Enclosing,
     ) -> Vec<u8> {
         let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
@@ -574,20 +574,20 @@ impl<'p, 's> Checker<'p, 's> {
             None,
             flags,
             |printer| match what {
-                Written::Type(node) => {
+                ReusedNode::Type(node) => {
                     printer.is_transformer = true;
                     printer.reuse_type_node(file, node).text
                 }
-                Written::TypeParameter(tp) => {
+                ReusedNode::TypeParameter(tp) => {
                     printer.is_transformer = true;
                     (printer.visit_type_parameter_declaration(file, tp)).unwrap_or_default()
                 }
-                Written::BindingName(pat) => {
+                ReusedNode::BindingName(pat) => {
                     printer.is_transformer = true;
                     printer.binding_name_text(file, pat)
                 }
-                Written::PropertyName(name) => printer.property_key_text(file, name),
-                Written::EntityName(e) => printer.entity_name_text(file, e).unwrap_or_default(),
+                ReusedNode::PropertyName(name) => printer.property_key_text(file, name),
+                ReusedNode::EntityName(e) => printer.entity_name_text(file, e).unwrap_or_default(),
             },
         )
     }
@@ -617,7 +617,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 /// See `Checker::text_of_reused_node`.
 #[derive(Copy, Clone)]
-pub(super) enum Written {
+pub(super) enum ReusedNode {
     Type(TypeNodeId),
     TypeParameter(TypeParamId),
     /// `cloneBindingName`
@@ -897,7 +897,7 @@ enum OperatorPrecedence {
 
 impl OperatorPrecedence {
     /// `GetBinaryOperatorPrecedence`, and that of the comma.
-    fn of_binary_operator(op: BinOp) -> OperatorPrecedence {
+    fn for_binary_operator(op: BinOp) -> OperatorPrecedence {
         match op {
             BinOp::Comma => OperatorPrecedence::Comma,
             BinOp::Nullish | BinOp::Or => OperatorPrecedence::LogicalOr,
@@ -919,7 +919,7 @@ impl OperatorPrecedence {
     }
 
     /// The precedence of an access or a call, which is also the one its expression is emitted with.
-    fn of_chain(chain: Chain) -> OperatorPrecedence {
+    fn for_chain(chain: Chain) -> OperatorPrecedence {
         match chain {
             Chain::No => OperatorPrecedence::Member,
             Chain::Start | Chain::Continue => OperatorPrecedence::OptionalChain,
@@ -927,13 +927,13 @@ impl OperatorPrecedence {
     }
 
     /// `GetExpressionPrecedence` of `e` without the parentheses around it.
-    fn of_expression(hir: &hir::File, e: ExprId) -> OperatorPrecedence {
+    fn for_expression(hir: &hir::File, e: ExprId) -> OperatorPrecedence {
         match hir[e].kind {
             ExprKind::Spread(_) => OperatorPrecedence::Spread,
             ExprKind::Yield { .. } => OperatorPrecedence::Yield,
             ExprKind::Assign { .. } => OperatorPrecedence::Assignment,
             ExprKind::Cond { .. } => OperatorPrecedence::Conditional,
-            ExprKind::Binary { op, .. } => OperatorPrecedence::of_binary_operator(op),
+            ExprKind::Binary { op, .. } => OperatorPrecedence::for_binary_operator(op),
             ExprKind::AsConst(operand) if !hir.is_type_assertion(e, operand) => {
                 OperatorPrecedence::Relational
             }
@@ -946,9 +946,9 @@ impl OperatorPrecedence {
             | ExprKind::NonNull(_)
             | ExprKind::AsConst(_) => OperatorPrecedence::Unary,
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
-                OperatorPrecedence::of_chain(chain)
+                OperatorPrecedence::for_chain(chain)
             }
-            ExprKind::Call(call) => OperatorPrecedence::of_chain(hir[call].chain),
+            ExprKind::Call(call) => OperatorPrecedence::for_chain(hir[call].chain),
             ExprKind::New(call) if hir[call].close_pos == u32::MAX => {
                 OperatorPrecedence::LeftHandSide
             }
@@ -964,14 +964,14 @@ impl OperatorPrecedence {
     /// `getBinaryExpressionPrecedence`: the precedences of the operands of `left op right`, plus
     /// what `emitBinaryExpression` does for synthesized operands. The right operand of a `+` or `*`
     /// that the parser creates is never a `+` or `*`, so the rules for that case are skipped.
-    fn of_operands(
+    fn for_operands(
         hir: &hir::File,
         op: BinOp,
         left: ExprId,
         right: ExprId,
     ) -> (OperatorPrecedence, OperatorPrecedence) {
-        let precedence = OperatorPrecedence::of_binary_operator(op);
-        let of_right = match precedence {
+        let precedence = OperatorPrecedence::for_binary_operator(op);
+        let right_precedence = match precedence {
             OperatorPrecedence::LogicalOr => OperatorPrecedence::LogicalAnd,
             OperatorPrecedence::LogicalAnd => OperatorPrecedence::BitwiseOr,
             OperatorPrecedence::Equality => OperatorPrecedence::Relational,
@@ -981,7 +981,7 @@ impl OperatorPrecedence {
             OperatorPrecedence::Multiplicative => OperatorPrecedence::Exponentiation,
             _ => precedence,
         };
-        let of_left = match precedence {
+        let left_precedence = match precedence {
             OperatorPrecedence::Exponentiation => OperatorPrecedence::Update,
             _ => precedence,
         };
@@ -1000,7 +1000,10 @@ impl OperatorPrecedence {
                 otherwise
             }
         };
-        (or_highest(left, of_left), or_highest(right, of_right))
+        (
+            or_highest(left, left_precedence),
+            or_highest(right, right_precedence),
+        )
     }
 }
 
@@ -1046,7 +1049,7 @@ enum Identity {
 impl Identity {
     /// An object literal is one symbol, no matter which type has it: fresh, regular, widened, or
     /// created from one of those.
-    fn of_object_literal(file: FileId, literal: ExprId) -> Identity {
+    fn for_object_literal(file: FileId, literal: ExprId) -> Identity {
         let created_by = ObjectLiteralCheck::ForParent;
         Identity::Origin(Origin::WidenedLiteral(
             file, literal, false, false, created_by, false,
@@ -1100,7 +1103,7 @@ struct PropertyNameSyntax {
 }
 
 /// The position of a property's declaration, as `compareSymbols` needs it.
-enum Place {
+enum DeclarationPosition {
     At((bool, u32, u32)),
     /// The property has no declaration.
     Nowhere,
@@ -1871,7 +1874,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     printer.conditional_type_to_node(ty, file, node)
                 })
             }
-            // Written above.
+            // Handled above.
             _ => Node::simple(b"any"),
         }
     }
@@ -2138,7 +2141,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// the tag), and a missing name still has a token at that position.
     fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
         let text = match self.get_text_of_node(file, name) {
-            written if bun_core::strings::contains_char(written, b'\\') => written.to_vec(),
+            raw_text if bun_core::strings::contains_char(raw_text, b'\\') => raw_text.to_vec(),
             _ => self.property_key_text(file, name),
         };
         let hir = self.c.hir(file);
@@ -2155,11 +2158,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// identifier has its escapes decoded.
     fn property_key_text(&self, file: FileId, name: hir::Node) -> Vec<u8> {
         let hir = self.c.hir(file);
-        let (text, written) = (hir.text(name), self.get_text_of_node(file, name));
-        match (hir.kind(name), written.first()) {
-            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => written.to_vec(),
+        let (text, raw_text) = (hir.text(name), self.get_text_of_node(file, name));
+        match (hir.kind(name), raw_text.first()) {
+            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => raw_text.to_vec(),
             // `.5`. A name that's missing before a `.` isn't written.
-            (_, Some(b'.')) if written.get(1).is_some_and(u8::is_ascii_digit) => written.to_vec(),
+            (_, Some(b'.')) if raw_text.get(1).is_some_and(u8::is_ascii_digit) => raw_text.to_vec(),
             (Kind::ComputedPropertyName, _) => match hir.data(hir.expression(name)) {
                 NodeData::Expr(e) => self.entity_name_text(file, e),
                 _ => None,
@@ -2174,7 +2177,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             _ if text.is_some() && text != known::empty => self.text(text),
             // A name that doesn't declare anything (`getDeclarationName`) is printed as in the
             // source: `#x` outside a class.
-            (_, Some(b'#')) => written.to_vec(),
+            (_, Some(b'#')) => raw_text.to_vec(),
             _ => b"(Missing)".to_vec(),
         }
     }
@@ -2884,14 +2887,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `t.symbol` of a type that's printed as a name, in a form that can be compared: a symbol, or
     /// the node that declares one.
     fn symbol_of_reference(&mut self, ty: TypeId) -> Option<(FileId, u32, u8)> {
-        let of_symbol = |symbol: Sym| (symbol.file, symbol.id.0, 0);
+        let symbol_key = |symbol: Sym| (symbol.file, symbol.id.0, 0);
         match self.c.data(ty) {
-            TypeData::Ref { target, .. } => Some(of_symbol(*target)),
-            TypeData::Union(members) => self.enum_of_members(ty, members).map(of_symbol),
+            TypeData::Ref { target, .. } => Some(symbol_key(*target)),
+            TypeData::Union(members) => self.enum_of_members(ty, members).map(symbol_key),
             TypeData::EnumLit { member, .. } => {
-                self.c.files().parent_of_symbol(*member).map(of_symbol)
+                self.c.files().parent_of_symbol(*member).map(symbol_key)
             }
-            TypeData::Enum { symbol, .. } => Some(of_symbol(*symbol)),
+            TypeData::Enum { symbol, .. } => Some(symbol_key(*symbol)),
             TypeData::StringMapping { kind, .. } => Some((FileId(0), *kind as u32, 6)),
             TypeData::TypeParam(file, parameter, _) => Some((*file, parameter.0, 1)),
             TypeData::Fns { decls, .. } => decls.first().map(|it| (it.0, it.1.0, 2)),
@@ -2906,10 +2909,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Origin::ClassStatic(symbol)
                 | Origin::Function(symbol)
                 | Origin::EnumObject(symbol)
-                | Origin::Module(symbol) => Some(of_symbol(symbol)),
+                | Origin::Module(symbol) => Some(symbol_key(symbol)),
                 Origin::Namespace {
                     originating_import, ..
-                } => Some(of_symbol(originating_import)),
+                } => Some(symbol_key(originating_import)),
                 Origin::GlobalThis => None,
             },
             _ => None,
@@ -3074,13 +3077,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             .into_iter()
             .any(|name| self.c.global_type_of_arity(name, 3) == Some(target));
             // `len(t.AsTypeReference().node.TypeArguments())`
-            let written = self.c.types().deferred(ty).map_or(0, |reference| {
+            let explicit_count = self.c.types().deferred(ty).map_or(0, |reference| {
                 match self.c.hir(reference.file)[reference.node].kind {
                     TypeNodeKind::Ref { args, .. } => args.len(),
                     _ => 0,
                 }
             });
-            let elides = is_iterable && written < count;
+            let elides = is_iterable && explicit_count < count;
             while elides && count > 0 {
                 let Some(default) = self.c.default_of_type_param(all[count - 1]) else {
                     break;
@@ -3449,15 +3452,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         clones: &[TypeId],
     ) -> Node {
         if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter) {
-            let written = self.c.hir(file)[tp].constraint;
-            if written.is_some()
+            let constraint_node = self.c.hir(file)[tp].constraint;
+            if constraint_node.is_some()
                 && !clones
                     .iter()
                     .any(|&clone| self.c.mentions(constraint, clone))
             {
-                let declared = self.c.type_from_node(file, written);
+                let declared = self.c.type_from_node(file, constraint_node);
                 if self.c.instantiate(declared, self.mapper) == constraint {
-                    return self.reuse_type_node(file, written);
+                    return self.reuse_type_node(file, constraint_node);
                 }
             }
         }
@@ -3797,7 +3800,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 match origin {
                     Origin::ObjectLiteral(file, literal, ..)
                     | Origin::WidenedLiteral(file, literal, ..) => {
-                        Identity::of_object_literal(file, literal)
+                        Identity::for_object_literal(file, literal)
                     }
                     _ => Identity::Origin(origin),
                 }
@@ -3826,7 +3829,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                             let symbol = self.c.bound(file).class_symbol[class.idx()];
                             Identity::Origin(Origin::ClassStatic(self.c.files().sym(file, symbol)))
                         }
-                        _ => Identity::of_object_literal(file, e),
+                        _ => Identity::for_object_literal(file, e),
                     },
                     Some((file, pos, _)) => Identity::Declaration(file, pos),
                     // `getInstantiatedTypePart` creates a symbol.
@@ -4296,37 +4299,37 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (self.c.prop_ref(of, name)).map(|found| found.0.clone_in(arena))
     }
 
-    fn place_of_symbol(&self, symbol: Sym) -> Place {
+    fn position_of_symbol(&self, symbol: Sym) -> DeclarationPosition {
         let files = self.c.files();
         let Some((file, decl)) = files.decls_of(symbol).first().copied() else {
-            return Place::Nowhere;
+            return DeclarationPosition::Nowhere;
         };
         let pos = self.c.files().start_of_declaration(file, decl);
-        Place::At(self.c.position_in_program_order(file, pos))
+        DeclarationPosition::At(self.c.position_in_program_order(file, pos))
     }
 
     /// Returns the position of the first declaration of `prop`.
-    fn place_of_property(&mut self, prop: &Prop) -> Place {
+    fn position_of_property(&mut self, prop: &Prop) -> DeclarationPosition {
         let at = |c: &Checker<'p, '_>, file: FileId, pos: u32| {
-            Place::At(c.position_in_program_order(file, pos))
+            DeclarationPosition::At(c.position_in_program_order(file, pos))
         };
         let Some(prop) = first_declared(prop) else {
-            return Place::Nowhere;
+            return DeclarationPosition::Nowhere;
         };
         match &prop.source {
-            PropSource::Literal(file, written) => {
+            PropSource::Literal(file, literal_prop) => {
                 let pos = self
                     .c
-                    .first_declaration_pos_of_literal_property(*file, *written);
+                    .first_declaration_pos_of_literal_property(*file, *literal_prop);
                 at(&*self.c, *file, pos)
             }
             PropSource::Symbol(symbol) => match self.c.files().value_declaration(*symbol) {
                 Some((file, Decl::Expando(first) | Decl::ThisProperty(first))) => {
                     at(&*self.c, file, self.c.hir(file)[first].pos)
                 }
-                _ => self.place_of_symbol(*symbol),
+                _ => self.position_of_symbol(*symbol),
             },
-            _ => Place::Nowhere,
+            _ => DeclarationPosition::Nowhere,
         }
     }
 
@@ -4337,18 +4340,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             Vec::with_capacity(props.len());
         for prop in props {
             let name = self.c.atoms().bytes(prop.name);
-            let place = match &prop.source {
-                PropSource::Literal(file, written) => {
+            let declared_at = match &prop.source {
+                PropSource::Literal(file, literal_prop) => {
                     let pos = self
                         .c
-                        .first_declaration_pos_of_literal_property(*file, *written);
-                    Place::At(self.c.position_in_program_order(*file, pos))
+                        .first_declaration_pos_of_literal_property(*file, *literal_prop);
+                    DeclarationPosition::At(self.c.position_in_program_order(*file, pos))
                 }
-                _ => self.place_of_property(prop),
+                _ => self.position_of_property(prop),
             };
-            keyed.push(match place {
-                Place::At(place) => ((0, place, name), prop),
-                Place::Nowhere => ((1, (false, 0, 0), name), prop),
+            keyed.push(match declared_at {
+                DeclarationPosition::At(sort_position) => ((0, sort_position, name), prop),
+                DeclarationPosition::Nowhere => ((1, (false, 0, 0), name), prop),
             });
         }
         keyed.shared_sort_by(|a, b| a.0.cmp(&b.0));
@@ -4356,19 +4359,19 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         (keyed.into_iter().map(|entry| entry.1.clone_in(arena))).collect()
     }
 
-    /// Returns the syntax of the name in the declaration `written` of an object literal property.
+    /// Returns the syntax of the name in the declaration `literal_prop` of an object literal property.
     fn name_syntax_of_literal_property(
         &mut self,
         file: FileId,
-        written: PropId,
+        literal_prop: PropId,
     ) -> PropertyNameSyntax {
         let hir = self.c.hir(file);
-        let written = &hir[written];
-        let at = written.pos as usize;
+        let literal_prop = &hir[literal_prop];
+        let at = literal_prop.pos as usize;
         let first = hir.text.get(at).copied();
         // In an object literal, every name in brackets gives the property a `nameType`.
         let in_brackets = first == Some(b'[');
-        let is_string = match written.key {
+        let is_string = match literal_prop.key {
             PropKey::Computed(e) => {
                 let key = self.c.type_of_expr(file, e);
                 self.c.is_string_like(key)
@@ -4384,14 +4387,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         PropertyNameSyntax {
             is_string,
             is_single_quoted: first == Some(b'\''),
-            is_computed: in_brackets || matches!(written.key, PropKey::Computed(_)),
+            is_computed: in_brackets || matches!(literal_prop.key, PropKey::Computed(_)),
         }
     }
 
-    /// `getSymbolOfDeclaration(memberDecl).Declarations` for the member `written` of an object
+    /// `getSymbolOfDeclaration(memberDecl).Declarations` for the member `literal_prop` of an object
     /// literal.
-    fn declarations_of_literal_member(&mut self, file: FileId, written: PropId) -> Vec<PropId> {
-        let declarations = (self.c).declarations_of_member(file, Decl::Property(written));
+    fn declarations_of_literal_member(
+        &mut self,
+        file: FileId,
+        literal_prop: PropId,
+    ) -> Vec<PropId> {
+        let declarations = (self.c).declarations_of_member(file, Decl::Property(literal_prop));
         let members = declarations.iter().filter_map(|it| match it.1 {
             Decl::Property(member) => Some(member),
             _ => None,
@@ -4478,8 +4485,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         out.push(self.name_syntax_of_declaration(file, declaration));
                     }
                 }
-                PropSource::Literal(file, written) => {
-                    for declaration in self.declarations_of_literal_member(*file, *written) {
+                PropSource::Literal(file, literal_prop) => {
+                    for declaration in self.declarations_of_literal_member(*file, *literal_prop) {
                         let name = self.name_syntax_of_literal_property(*file, declaration);
                         out.push(name);
                     }
@@ -4510,10 +4517,12 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return cat!(b"[", expression, b"]");
         }
         let name = bytes.to_vec();
-        let mut written = Vec::new();
-        self.property_name_syntaxes(prop, &mut written);
-        let is_string_named = !written.is_empty() && written.iter().all(|w| w.is_string);
-        let quote = if !written.is_empty() && written.iter().all(|w| w.is_single_quoted) {
+        let mut name_syntaxes = Vec::new();
+        self.property_name_syntaxes(prop, &mut name_syntaxes);
+        let is_string_named =
+            !name_syntaxes.is_empty() && name_syntaxes.iter().all(|w| w.is_string);
+        let quote = if !name_syntaxes.is_empty() && name_syntaxes.iter().all(|w| w.is_single_quoted)
+        {
             b'\''
         } else {
             b'"'
@@ -4631,7 +4640,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 // With a `ValueDeclaration`, it's the symbol itself if it has the same type as the source.
                 [source] => {
                     (!*has_value_declaration
-                        || prop.flags.contains(PropFlags::WRITTEN)
+                        || prop.flags.contains(PropFlags::DECLARED_IN_LITERAL)
                         || self.c.type_of_prop(source, MapperId::IDENTITY) == *ty)
                         && self.is_late_bound(source)
                 }
@@ -5114,8 +5123,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             ExprKind::Number(_) | ExprKind::BigInt(_) => self.text_of_number_literal(file, e),
             ExprKind::String(value) => self.cloned_string_literal_text(file, value, hir[e].pos),
             ExprKind::Regex => {
-                let written = hir.text.get(hir[e].pos as usize..hir[e].end as usize)?;
-                written.to_vec()
+                let raw_text = hir.text.get(hir[e].pos as usize..hir[e].end as usize)?;
+                raw_text.to_vec()
             }
             ExprKind::Template { .. } => self.cloned_template_text(file, e)?,
             ExprKind::TaggedTemplate(call) if hir[call].type_args.is_empty() => {
@@ -5125,12 +5134,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                let object = emit(obj, P::of_chain(chain))?;
+                let object = emit(obj, P::for_chain(chain))?;
                 // `mayNeedDotDotForPropertyAccess`. `TokenFlagsWithSpecifier`: `0x`, `0b`, `0o`.
-                let written = hir.text.get(hir[obj].pos as usize..).unwrap_or_default();
+                let raw_text = hir.text.get(hir[obj].pos as usize..).unwrap_or_default();
                 let may_need_dot_dot = matches!(hir[obj].kind, ExprKind::Number(_))
                     && !is_parenthesized(hir, obj)
-                    && !matches!(written, [b'0', b'x' | b'X' | b'b' | b'B' | b'o' | b'O', ..])
+                    && !matches!(
+                        raw_text,
+                        [b'0', b'x' | b'X' | b'b' | b'B' | b'o' | b'O', ..]
+                    )
                     && bun_core::strings::index_of_any(&object, b".eE").is_none();
                 let dot: &[u8] = match chain {
                     Chain::Start => b"?.",
@@ -5140,16 +5152,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 cat!(object, dot, self.text(name))
             }
             ExprKind::Index { obj, index, chain } => {
-                let object = emit(obj, P::of_chain(chain))?;
+                let object = emit(obj, P::for_chain(chain))?;
                 let index = emit(index, P::Comma)?;
                 cat!(object, question_dot(chain), b"[", index, b"]")
             }
             ExprKind::Call(call) if hir[call].type_args.is_empty() => {
                 let call = &hir[call];
                 // `emitCallee`: `isNewExpressionWithoutArguments`
-                let callee = match P::of_expression(hir, call.callee) {
+                let callee = match P::for_expression(hir, call.callee) {
                     P::LeftHandSide => emit(call.callee, P::Parentheses)?,
-                    _ => emit(call.callee, P::of_chain(call.chain))?,
+                    _ => emit(call.callee, P::for_chain(call.chain))?,
                 };
                 cat!(callee, question_dot(call.chain), emit_arguments(call.args)?)
             }
@@ -5190,8 +5202,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 cat!(unary_operator_text(op), space, emit(operand, P::Unary)?)
             }
             ExprKind::Binary { op, left, right } => {
-                let (of_left, of_right) = P::of_operands(hir, op, left, right);
-                let (left, right) = (emit(left, of_left)?, emit(right, of_right)?);
+                let (left_precedence, right_precedence) = P::for_operands(hir, op, left, right);
+                let (left, right) = (emit(left, left_precedence)?, emit(right, right_precedence)?);
                 let space: &[u8] = if op == BinOp::Comma { b"" } else { b" " };
                 let operator = super::errors::operator_text(op, false);
                 cat!(left, space, operator, b" ", right)
@@ -5245,10 +5257,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             ExprKind::NewTarget(name) => cat!(b"new.", self.text(name)),
             _ => return None,
         };
-        let written = parentheses_around(hir, e).len();
-        let parentheses = match written {
-            0 => usize::from(P::of_expression(hir, e) < precedence),
-            _ => written,
+        let source_parentheses = parentheses_around(hir, e).len();
+        let parentheses = match source_parentheses {
+            0 => usize::from(P::for_expression(hir, e) < precedence),
+            _ => source_parentheses,
         };
         Some(cat!(
             b"(".repeat(parentheses),
@@ -5449,10 +5461,11 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 && parameter.default.is_some()
                 && !parameter.flags.contains(Flags::PARAMETER_PROPERTY)
             {
-                let written = self.c.type_from_node(file, parameter.ty);
+                let annotated_type = self.c.type_from_node(file, parameter.ty);
                 // `declaredParameterTypeContainsUndefined`
                 let includes_undefined = parameter.ty.is_some()
-                    && (self.c.is_error_type(written) || self.c.contains_undefined(written));
+                    && (self.c.is_error_type(annotated_type)
+                        || self.c.contains_undefined(annotated_type));
                 if !includes_undefined {
                     ty = self.c.optional(ty);
                 }

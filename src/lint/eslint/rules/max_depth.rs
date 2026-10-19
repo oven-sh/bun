@@ -187,15 +187,15 @@ impl Rule for MaxDepth {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let around = cx
-            .state
-            .ancestors
-            .count(Node::Stmt(stmt), |ancestor| match ancestor {
-                Node::Func(_) => Ancestor::End,
-                Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
-                _ => Ancestor::Passed,
-            });
-        let depth = around + 1;
+        let enclosing_count =
+            cx.state
+                .ancestors
+                .count(Node::Stmt(stmt), |ancestor| match ancestor {
+                    Node::Func(_) => Ancestor::End,
+                    Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
+                    _ => Ancestor::Passed,
+                });
+        let depth = enclosing_count + 1;
         if depth > max {
             let whole = stmt.span();
             // oxlint reports the whole statement.

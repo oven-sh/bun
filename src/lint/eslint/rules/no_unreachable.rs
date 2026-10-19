@@ -284,7 +284,7 @@ fn hint<'a>(range: Span, file: &'a File<'a>) -> Option<String> {
         cause = list.before(cause.span().start)?;
     }
     let line = file.line_of(cause.span().start);
-    let (jump, around) = match cause.tag() {
+    let (jump, construct) = match cause.tag() {
         StmtTag::Return => ("return", ""),
         StmtTag::Throw => ("throw", ""),
         StmtTag::Break => ("break", ""),
@@ -297,9 +297,9 @@ fn hint<'a>(range: Span, file: &'a File<'a>) -> Option<String> {
         StmtTag::Try => ("", "try"),
         _ => ("", "statement"),
     };
-    Some(match around {
+    Some(match construct {
         "" => format!("Nothing runs after the {jump} on line {line}."),
-        _ => format!("Every path through the {around} on line {line} ends in return, throw, break or continue."),
+        _ => format!("Every path through the {construct} on line {line} ends in return, throw, break or continue."),
     })
 }
 

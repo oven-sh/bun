@@ -311,7 +311,7 @@ pub(crate) fn cast_parens<'a>(
 }
 
 /// Attaches the comments of `file`. The result is cached in the file, so it lives as long as the handles.
-pub(crate) fn of_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a FileComments {
+pub(crate) fn for_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a FileComments {
     let comments = file.extension(|| {
         let has_babel_tree = super::context::has_babel_tree(file, options);
         let cast_parens = cast_parens(file, options.flavor, has_babel_tree);

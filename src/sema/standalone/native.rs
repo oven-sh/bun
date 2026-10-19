@@ -51,7 +51,7 @@ mod fake_mimalloc {
         core::ptr::without_provenance_mut(8)
     }
 
-    unsafe fn place(
+    unsafe fn init_block(
         base: *mut c_void,
         from: usize,
         size: usize,
@@ -84,7 +84,7 @@ mod fake_mimalloc {
             return base;
         }
         // SAFETY: `total` bytes were reserved.
-        unsafe { place(base, base.addr(), size, align, true) }
+        unsafe { init_block(base, base.addr(), size, align, true) }
     }
 
     unsafe fn heap_alloc(heap: *mut Heap, size: usize, align: usize, zero: bool) -> *mut c_void {
@@ -115,7 +115,7 @@ mod fake_mimalloc {
             heap.chunks.push(base);
             if is_separate {
                 // SAFETY: `total` bytes were reserved.
-                return unsafe { place(base, base.addr(), size, align, false) };
+                return unsafe { init_block(base, base.addr(), size, align, false) };
             }
             heap.at = base.addr();
             heap.end = base.addr() + chunk;
@@ -132,7 +132,7 @@ mod fake_mimalloc {
                 .unwrap()
         };
         // SAFETY: `total` bytes are left in the chunk.
-        let p = unsafe { place(base, heap.at, size, align, false) };
+        let p = unsafe { init_block(base, heap.at, size, align, false) };
         heap.at = p.addr() + size;
         if zero {
             // SAFETY: `size` bytes at `p` are inside the chunk.

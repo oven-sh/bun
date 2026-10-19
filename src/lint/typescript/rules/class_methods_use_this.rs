@@ -58,7 +58,8 @@ impl Rule for ClassMethodsUseThis {
                 _ => None,
             };
             let head = || ts_utils::get_function_head_loc(func);
-            let place = key.map_or_else(head, |it| utils::oxlint::property_key_span(it, cx.file()));
+            let report_span =
+                key.map_or_else(head, |it| utils::oxlint::property_key_span(it, cx.file()));
             let name = match (
                 cx.language().is_oxlint,
                 key.and_then(utils::oxlint::property_key_name),
@@ -67,7 +68,7 @@ impl Rule for ClassMethodsUseThis {
                 (true, Some(name)) => [&b" `"[..], name, b"`"].concat(),
                 (true, None) => Vec::new(),
             };
-            cx.report(place, MISSING_THIS)
+            cx.report(report_span, MISSING_THIS)
                 .called_with(func.owner())
                 .data("name", name);
         }

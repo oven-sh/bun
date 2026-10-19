@@ -154,9 +154,9 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        let (target, shown, head, level) = match (unrelated, &members[..]) {
-            (Some((bare, shown)), _) => (bare, shown, None, 1),
-            (None, &[(bare, shown)]) => (bare, shown, Some(2417), 0),
+        let (target, display_type, head, level) = match (unrelated, &members[..]) {
+            (Some((bare, display_type)), _) => (bare, display_type, None, 1),
+            (None, &[(bare, display_type)]) => (bare, display_type, Some(2417), 0),
             (None, _) => (self.type_of_properties(static_base), printed, Some(2417), 0),
         };
         let (lines, related) = self.relation_lines_with_related(
@@ -173,12 +173,14 @@ impl Checker<'_, '_> {
             self.add_diagnostic(diagnostic);
             return;
         }
-        // tsgo's type has the symbol of `shown` and is printed like it. `target` has no symbol.
+        // tsgo's type has the symbol of `display_type` and is printed like it. `target` has no symbol.
         let from = self.type_to_string(target);
-        let to = self.type_names_for_error_display(static_type, shown).1;
+        let to = self
+            .type_names_for_error_display(static_type, display_type)
+            .1;
         // `reportRelationError` and `reportUnmatchedProperty` print with `getTypeNamesForErrorDisplay`, whose enclosing
         // declaration is a class expression. The other lines print with `TypeToString`.
-        let plain = self.type_to_string(shown);
+        let plain = self.type_to_string(display_type);
         let mut reasons: Vec<_> = lines
             .into_iter()
             .skip(usize::from(head.is_some()))
@@ -384,8 +386,8 @@ impl Checker<'_, '_> {
                 PropSource::Symbol(sym) => {
                     declarations.extend_from_slice(&self.declarations_of_property(sym));
                 }
-                PropSource::Literal(file, written) => {
-                    declarations.push((file, Decl::Property(written)));
+                PropSource::Literal(file, literal_prop) => {
+                    declarations.push((file, Decl::Property(literal_prop)));
                 }
                 _ => {}
             }
@@ -437,9 +439,9 @@ impl Checker<'_, '_> {
             PropSource::Symbol(sym) => self.flags_of_property(*sym) & SymFlags::CLASS_MEMBER,
             // `checkObjectLiteral`: an accessor is the member's symbol. For any other member it creates a symbol with
             // `SymbolFlagsProperty | member.Flags`.
-            PropSource::Literal(file, written) => {
+            PropSource::Literal(file, literal_prop) => {
                 let bound = self.bound(*file);
-                let member = bound.symbol_of_declaration(Decl::Property(*written));
+                let member = bound.symbol_of_declaration(Decl::Property(*literal_prop));
                 let flags = match member.is_some() {
                     true => bound.symbol(member).flags & SymFlags::CLASS_MEMBER,
                     false => SymFlags::empty(),
@@ -458,13 +460,13 @@ impl Checker<'_, '_> {
                 }
                 let (mut flags, mut is_method) = (SymFlags::empty(), true);
                 for part in parts.iter() {
-                    let of_part = self.kinds_of_prop(part);
-                    let accessors = of_part & SymFlags::ACCESSOR;
+                    let part_kinds = self.kinds_of_prop(part);
+                    let accessors = part_kinds & SymFlags::ACCESSOR;
                     flags = match flags.is_empty() || flags == accessors {
                         true if !accessors.is_empty() => accessors,
                         _ => SymFlags::PROPERTY,
                     };
-                    is_method &= of_part.contains(SymFlags::METHOD);
+                    is_method &= part_kinds.contains(SymFlags::METHOD);
                 }
                 match is_method {
                     true => flags | SymFlags::METHOD,
@@ -764,7 +766,7 @@ impl Checker<'_, '_> {
         let name_pos = self.hir(file)[i].name_pos;
         let bases = self.base_types(sym);
         if is_first {
-            let at = self.place_of_token(file, name_pos);
+            let at = self.span_of_token(file, name_pos);
             if !self.check_inherited_properties_are_identical(sym, ty, &bases, Some(at)) {
                 return;
             }
@@ -813,8 +815,8 @@ impl Checker<'_, '_> {
         if bases.len() < 2 {
             return true;
         }
-        // `resolveDeclaredMembers(t).declaredMembers`: a property it declares itself resolves any conflict. This
-        // doesn't use `members(ty)`, because those must first be requested by a base type `M<t>`, below, which leaves
+        // `resolveDeclaredMembers(t).declaredMembers`: a property it declares itself resolves any conflict. Don't call
+        // `members(ty)` here. In tsgo a base type `M<t>` is the first to request those, in the loop below, which leaves
         // `t` without the members of `M<t>`.
         let own: Vec<Atom> = (self.resolve_declared_members(sym).props.iter())
             .map(|prop| prop.name)
@@ -1030,14 +1032,14 @@ impl Checker<'_, '_> {
                 && (matches!(member.key, PropKey::Computed(_))
                     || text.get(member.name_pos as usize) == Some(&b'['))
             {
-                let place = if text.is_empty() {
-                    self.place_of_token(of, member.name_pos)
+                let declaration_span = if text.is_empty() {
+                    self.span_of_token(of, member.name_pos)
                 } else {
                     let (from, to) = self.error_range_of_member(of, m);
                     (of, from, to)
                 };
                 let name = self.prop_to_string(prop);
-                related = Some(self.declared_here(place, name));
+                related = Some(self.declared_here(declaration_span, name));
             }
             let (start, end) = self.get_error_range_for_node(cx.file, error_node);
             // `symbolToString`: a name only known at run time is printed as its source text.

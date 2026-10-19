@@ -855,8 +855,8 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         lint(files, ["-f", "json", "a.js"]),
         lint(files, ["-f", "stylish", "a.js"]),
       ]);
-      const places = JSON.parse(json.raw)[0].messages.map((it: any) => [it.message, it.line, it.column]);
-      expect(places).toEqual([
+      const positions = JSON.parse(json.raw)[0].messages.map((it: any) => [it.message, it.line, it.column]);
+      expect(positions).toEqual([
         ["loc 1", null, null],
         ["loc 2", null, null],
         ["loc 4", null, 3],
@@ -1042,7 +1042,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
       [false, "fix=null suggestions=0", "fix=null suggestions=0"],
     ])(
       "`postprocess` gets the fixes regardless of the output format: supportsAutofix: %j",
-      async (supportsAutofix, ofPlugin, builtIn) => {
+      async (supportsAutofix, fromPlugin, builtIn) => {
         const files = {
           "eslint.config.mjs": `
             const fixes = {
@@ -1072,7 +1072,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
         const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.x"]);
         expect(stdout).toBe(
           [
-            `<dir>/a.x:1:1: bad ${ofPlugin} [Error/demo/fixes]`,
+            `<dir>/a.x:1:1: bad ${fromPlugin} [Error/demo/fixes]`,
             `<dir>/a.x:1:1: Unexpected var, use let or const instead. ${builtIn} [Error/no-var]`,
             "",
             "2 problems",
@@ -1698,9 +1698,9 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
   test(
     "starts only as many engines as are worth it, with and without types, and they report the same",
     async () => {
-      // With `waits`, an engine stays busy with its first file until another engine has a file too. A thread only
-      // requests a new engine while the others are busy, which otherwise depends on thread scheduling.
-      const run = async (count: number, extension: string, size: number, threads: string, waits = false) => {
+      // With `blockFirstFile`, an engine stays busy with its first file until another engine has a file too. A thread
+      // only requests a new engine while the others are busy, which otherwise depends on thread scheduling.
+      const run = async (count: number, extension: string, size: number, threads: string, blockFirstFile = false) => {
         const files: Record<string, string> = {
           "engines/.keep": "",
           "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
@@ -1719,7 +1719,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
             import { readdirSync, writeFileSync } from "node:fs";
             const engines = new URL("./engines/", import.meta.url);
             // Each engine evaluates the module once.
-            let isFirst = ${waits};
+            let isFirst = ${blockFirstFile};
             export default { rules: { seen: { create: context => ({ Program(node) {
               if (isFirst) {
                 isFirst = false;
@@ -2113,7 +2113,7 @@ export default {
   },
 };
 `;
-      const written = String.raw`
+      const rawText = String.raw`
 2:14 attribute-written matches
 2:14 strings Literal "a &amp; b" raw "\"a &amp; b\"" JSXText "\"a &amp; b\""
 2:38 strings Literal "&apos; &#183; &#xB7;" raw "'&apos; &#183; &#xB7;'" JSXText "'&apos; &#183; &#xB7;'"
@@ -2157,9 +2157,9 @@ export default {
             .filter(it => it.filename === name)
             .map(it => ({ ...it.labels[0].span, rule: it.code, message: it.message })),
         );
-      expect(of("a.tsx")).toBe(sorted(written));
-      expect(of("a.jsx")).toBe(sorted(written));
-      expect(of("crlf.tsx")).toBe(sorted(written.replaceAll("\\n", "\\r\\n")));
+      expect(of("a.tsx")).toBe(sorted(rawText));
+      expect(of("a.jsx")).toBe(sorted(rawText));
+      expect(of("crlf.tsx")).toBe(sorted(rawText.replaceAll("\\n", "\\r\\n")));
 
       const configuration = `
         import shows from "./plugin.mjs";
@@ -2475,12 +2475,12 @@ export default {
         const reported = results.flatMap(it => it.messages.filter(message => message.ruleId === "threads/helpers"));
         return [...new Set(reported.map(it => it.message))];
       };
-      const [few, many, asked] = await Promise.all([
+      const [few, many, forcedOn] = await Promise.all([
         helpers(2),
         helpers(200),
         helpers(200, { BUN_JSC_useConcurrentJIT: "1" }),
       ]);
-      expect([few, many, asked]).toEqual([["1"], ["0"], ["1"]]);
+      expect([few, many, forcedOn]).toEqual([["1"], ["0"], ["1"]]);
     },
     timeout,
   );
@@ -2803,11 +2803,11 @@ export default {
   test(
     "never contacts a registry for a package that a plugin imports or requires",
     async () => {
-      const asked: string[] = [];
+      const requests: string[] = [];
       using registry = Bun.serve({
         port: 0,
         fetch(request) {
-          asked.push(new URL(request.url).pathname);
+          requests.push(new URL(request.url).pathname);
           return new Response("{}", { status: 404 });
         },
       });
@@ -2833,7 +2833,7 @@ export default {
       expect(imported.stdout).toContain("Cannot find package 'is-not-installed-anywhere'");
       expect(required.stdout).toContain("Cannot find module 'is-not-installed-anywhere'");
       expect(awaited.exitCode).toBe(0);
-      expect(asked).toEqual([]);
+      expect(requests).toEqual([]);
     },
     timeout,
   );
@@ -2926,7 +2926,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
     // Each entry has the `loc`, then ESLint 10.12.0's `line`, `column`, `endLine` and `endColumn`, then oxlint 1.87.0's
     // line and column or the error it says the rule threw, then the same fields as for ESLint without a config, if they
     // differ.
-    const places: Record<string, [string, Place, string, Place?]> = {
+    const locCases: Record<string, [string, Place, string, Place?]> = {
       "line-0": ["{ line: 0, column: 0 }", [0, 1], "1:1", [1, 1]],
       "line-0-column-5": ["{ line: 0, column: 5 }", [0, 6], noLine(0), [1, 1]],
       "line-0-column-100": ["{ line: 0, column: 100 }", [0, 101], noLine(0), [1, 1]],
@@ -2987,11 +2987,11 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
         "TypeError: `loc.end` must be an object or null/undefined",
       ],
     };
-    const names = Object.keys(places);
+    const names = Object.keys(locCases);
     const all = names.map(name => `${name}.js`);
     const files = {
       // The rule reports at the `loc` that the file is named after.
-      "plugin.mjs": `const places = { ${names.map(name => `"${name}": ${places[name][0]}`).join(", ")} };
+      "plugin.mjs": `const places = { ${names.map(name => `"${name}": ${locCases[name][0]}`).join(", ")} };
         const nameOf = context => context.filename.replace(/^.*[\\\\/]/, "").replace(".js", "");
         const create = context => ({
           "Program:exit": () => context.report({ message: nameOf(context), loc: places[nameOf(context)] }),
@@ -3010,7 +3010,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
       ...files,
       ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/at": "error" } }),
     };
-    const alone = {
+    const withBunfig = {
       ...files,
       "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\nignorePatterns = ["plugin.mjs"]\n[lint.rules]\n"demo/at" = "error"\n`,
     };
@@ -3034,7 +3034,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
           lint(eslint, ["-f", "stylish", ...some]),
           lint(eslint, ["-f", "unix", ...some]),
         ]);
-        expect(inJson(json.raw)).toEqual(Object.fromEntries(names.map(name => [name, [places[name][1]]])));
+        expect(inJson(json.raw)).toEqual(Object.fromEntries(names.map(name => [name, [locCases[name][1]]])));
         expect(stylish.stdout.split("\n").filter(line => line.includes("error  "))).toEqual([
           "  1  -4  error  column-far-below-0  demo/at",
           "  0:1  error  line-0  demo/at",
@@ -3085,7 +3085,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
           const span = it.labels[0]?.span;
           return [nameOf(it.filename), span ? `${span.line}:${span.column}` : it.message.split("\n")[2]];
         });
-        expect(Object.fromEntries(found)).toEqual(Object.fromEntries(names.map(name => [name, places[name][2]])));
+        expect(Object.fromEntries(found)).toEqual(Object.fromEntries(names.map(name => [name, locCases[name][2]])));
         expect(pretty.stdout).toStartWith(`1 | export const a = 1;
     ^
 error: line-0  demo/at
@@ -3100,9 +3100,12 @@ error: line-0  demo/at
     test(
       "without a config, a `loc` before the first line is moved to the start of the file",
       async () => {
-        const [json, pretty] = await Promise.all([lint(alone, ["-f", "json", ...all]), lint(alone, ["line-0.js"])]);
+        const [json, pretty] = await Promise.all([
+          lint(withBunfig, ["-f", "json", ...all]),
+          lint(withBunfig, ["line-0.js"]),
+        ]);
         expect(inJson(json.raw)).toEqual(
-          Object.fromEntries(names.map(name => [name, [places[name][3] ?? places[name][1]]])),
+          Object.fromEntries(names.map(name => [name, [locCases[name][3] ?? locCases[name][1]]])),
         );
         expect(pretty.stdout).toStartWith(`1 | export const a = 1;
     ^
@@ -3280,7 +3283,7 @@ error: line-0  demo/at
     // ESLint doesn't have any of these formats.
     test.each([
       ["an ESLint config", eslint],
-      ["no config", alone],
+      ["no config", withBunfig],
     ])(
       "the other formats clamp it to a position in the file, with %s",
       async (_, config) => {
@@ -3563,7 +3566,6 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
-  // From then on JavaScriptCore stores every array of the realm in another way.
   // The expected output is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
   test(
     "the global scope has TypeScript's lib globals, however a rule first accesses it",
@@ -4020,6 +4022,7 @@ export default {
     timeout,
   );
 
+  // An indexed accessor on Array.prototype makes JavaScriptCore switch every array in the realm to slow-put storage.
   test(
     "nodes, scopes and code paths are still correct after a plugin defines an indexed accessor on Array.prototype",
     async () => {
@@ -4549,7 +4552,7 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
   // oxlint 1.87 and ESLint 10.12 with @typescript-eslint/parser 8.71.1 both report this.
   test.each(["oxlint", "eslint"])(
     "reference.maybeImplicitGlobal matches typescript-eslint (an object, null or undefined) with an %s config",
-    async whose => {
+    async tool => {
       const rule = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         Program(node) {
           const said = context.sourceCode.scopeManager.scopes.flatMap(scope =>
@@ -4588,14 +4591,14 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       };
       const files = {
         "plugin.mjs": rule,
-        ...configs[whose as keyof typeof configs],
+        ...configs[tool as keyof typeof configs],
         "script.js": `${code}\n`,
         "script.ts": `${code}${types}\n`,
         "module.mts": `${code}${types} export { a };\n`,
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(expected)]);
       const found: [string, string][] =
-        whose === "oxlint"
+        tool === "oxlint"
           ? JSON.parse(raw).diagnostics.map((it: Diagnostic) => [it.filename, it.message])
           : JSON.parse(raw).map((it: { filePath: string; messages: { message: string }[] }) => [
               slashes(it.filePath).split("/").at(-1),
@@ -4610,7 +4613,7 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
   // oxlint 1.87 and ESLint 10.12 with @typescript-eslint/parser 8.71.1 both report this.
   test.each(["oxlint", "eslint"])(
     "in a pattern, the reference to the index of `a[b]!` comes before the object's, as for `a[b]`, with an %s config",
-    async whose => {
+    async tool => {
       const rule = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         "Program:exit"(node) {
           const lines = {};
@@ -4652,12 +4655,12 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       };
       const files = {
         "plugin.mjs": rule,
-        ...configs[whose as keyof typeof configs],
+        ...configs[tool as keyof typeof configs],
         "a.ts": rows.map(it => `${it[0]}\n`).join(""),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
       const message: string =
-        whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
+        tool === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
       expect(message.split("|").map((cell, i) => [rows[i][0], cell])).toEqual(rows);
       expect(exitCode).toBe(1);
     },
@@ -4669,7 +4672,7 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
   // same objects. This is what oxlint 1.87 and ESLint 10.12 report, where all of it is plain data.
   test.each(["oxlint", "eslint"])(
     "lazily created properties are the same from a node:vm context and in hot code, with an %s config",
-    async whose => {
+    async tool => {
       const plugin = String.raw`import vm from "node:vm";
 const keys = ["decorators", "loc", "range"];
 // The same functions for each realm. A loop is as long as it takes the JIT compilers to get to it.
@@ -4767,13 +4770,13 @@ export default { meta: { name: "p" }, rules: { rule } };
       };
       const files = {
         "plugin.mjs": plugin,
-        ...configs[whose as keyof typeof configs],
+        ...configs[tool as keyof typeof configs],
         "a.js": "// c\n" + Array.from({ length: 3002 }, (_, i) => `v${i};\n`).join(""),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
       const message: string =
-        whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
-      expect(message.split("\n")).toEqual(expected[whose as keyof typeof expected]);
+        tool === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
+      expect(message.split("\n")).toEqual(expected[tool as keyof typeof expected]);
       expect(exitCode).toBe(1);
     },
     timeout,

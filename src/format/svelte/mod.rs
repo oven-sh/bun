@@ -82,8 +82,11 @@ impl<'p> Parsers<'p> {
                 // `{(a as b)}`.
                 let word = js.stopped_at.and_then(|it| {
                     let between = text.get(it..error.1 as usize)?;
-                    let blanks = text[it..].len() - text[it..].trim_ascii_start().len();
-                    between.trim_ascii().is_empty().then_some(it + blanks)
+                    let leading_whitespace = text[it..].len() - text[it..].trim_ascii_start().len();
+                    between
+                        .trim_ascii()
+                        .is_empty()
+                        .then_some(it + leading_whitespace)
                 });
                 let typescript_at = (js.typescript_at)
                     .filter(|&it| it == error.1 as usize)
@@ -128,9 +131,9 @@ pub fn format(
         let before = (normalized.len() - trimmed_start(&normalized).len()) as u32;
         SyntaxError(message, before + at).before_normalizing_end_of_line(without_bom)
     };
-    let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
+    let to_format_error = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
     let mut tree = (parsers.tree_of(text))
-        .map_err(|error| error.map_or(FormatError::NestedTooDeeply, refuse))?;
+        .map_err(|error| error.map_or(FormatError::NestedTooDeeply, to_format_error))?;
     // Prettier's `isSourceElement` accepts nothing in a component, as in HTML, so a range leaves the text unchanged.
     // Prettier itself prints the text that the plugin parsed, where `<script ✂prettier:content✂="..">{}</script>`
     // replaces each script.
@@ -148,9 +151,9 @@ pub fn format(
     };
     let svelte = options.svelte;
     let is_typescript = tree.uses_typescript;
-    let how = (parsers.program, is_typescript);
-    let sorted =
-        (options.tailwind.as_deref()).and_then(|it| tailwind::sort(&mut tree, text, it, how));
+    let program_parser = (parsers.program, is_typescript);
+    let sorted = (options.tailwind.as_deref())
+        .and_then(|it| tailwind::sort(&mut tree, text, it, program_parser));
     let text = sorted.as_deref().unwrap_or(text);
     let stack = Stack::for_tree();
     let mut expand =
@@ -169,7 +172,7 @@ pub fn format(
         return Err(FormatError::SyntaxErrorAt(error));
     }
     let (stack, unformatted) = (Stack::new(), Default::default());
-    let how = code::How {
+    let settings = code::CodeSettings {
         options: &host,
         is_typescript,
         indents_script_and_style: svelte.indents_script_and_style,
@@ -184,7 +187,7 @@ pub fn format(
     let root = crate::ir::run::write_with(context, text, &mut scratch.document, |f| {
         let mut writer = Writer::new(f, Some(0), true);
         let mut write = doc::Write {
-            code: &mut |code, out| code::write_code(code, out, &how),
+            code: &mut |code, out| code::write_code(code, out, &settings),
             stack: &stack,
         };
         doc::write(document, &mut writer, &mut write);

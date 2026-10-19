@@ -334,16 +334,16 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     }
 
     // Identifies each expression by its start and kind.
-    let mut around: Vec<(u32, &str, u32, u32)> = parens
+    let mut paren_spans: Vec<(u32, &str, u32, u32)> = parens
         .iter()
         .map(|&(expr, open, end)| match file.exprs.get(expr.idx()) {
             Some(expr) => (expr.pos, expr_kind_name(expr.kind), open, end),
             None => (u32::MAX, NO_SUCH_NODE, open, end),
         })
         .collect();
-    around.sort_unstable();
-    put!(d, 0, "", "parens[{}]:", around.len());
-    for (pos, kind, open, end) in around {
+    paren_spans.sort_unstable();
+    put!(d, 0, "", "parens[{}]:", paren_spans.len());
+    for (pos, kind, open, end) in paren_spans {
         put!(d, 1, "", "{kind} pos={pos} open={open} end={end}");
     }
 

@@ -228,9 +228,9 @@ fn is_create_context_call(expr: Expr, is_oxlint: bool) -> bool {
 impl<'a> State<'a> {
     /// upstream's `isConstruction`. For oxlint only `Some` or `None` matters.
     fn is_construction(&mut self, value: Expr<'a>, element: Expr<'a>, is_oxlint: bool) -> Option<Construction<'a>> {
-        let mut ask = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
+        let mut is_constructed_variable = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
         let (trace, scope) = (Trace { expr: value, usage: None, kind: None }, Node::Expr(element).scope());
-        let Found { trace, variable } = trace.find_construction(Origin::Value, scope, is_oxlint, &mut ask)?;
+        let Found { trace, variable } = trace.find_construction(Origin::Value, scope, is_oxlint, &mut is_constructed_variable)?;
         let end = match variable.filter(|_| !is_oxlint) {
             None => End { kind: "", node: normalize(Node::Expr(trace.expr)) },
             Some(variable) => self.end_of(variable)?,
@@ -241,7 +241,7 @@ impl<'a> State<'a> {
     /// Visits each variable once. Returns `None` where upstream would recurse forever.
     fn end_of(&mut self, mut variable: Symbol<'a>) -> Option<End<'a>> {
         let is_oxlint = false;
-        let mut ask = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
+        let mut is_constructed_variable = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
         let mut path: SmallVec<[Step<'a>; 4]> = SmallVec::new();
         let mut end = loop {
             let mut is_new = false;
@@ -260,7 +260,7 @@ impl<'a> State<'a> {
                 }
                 Some(Definition::Init(init)) => Trace { expr: init, usage: None, kind: None },
             };
-            let Some(found) = init.find_construction(Origin::Init, variable.scope(), is_oxlint, &mut ask) else {
+            let Some(found) = init.find_construction(Origin::Init, variable.scope(), is_oxlint, &mut is_constructed_variable) else {
                 break None;
             };
             path.push(Step { variable, kind: found.trace.kind });

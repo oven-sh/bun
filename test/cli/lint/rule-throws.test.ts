@@ -446,8 +446,8 @@ describe.concurrent("with an oxlint config", () => {
         });
         const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
         const found = inOrder({ stdout }).map(it => it.replace(/boom .*/, "boom"));
-        const left = builtIn.filter(it => !it.includes("no-var"));
-        expect(found.sort()).toEqual(inFile("a.js", [...left, "Error: boom"]).sort());
+        const remaining = builtIn.filter(it => !it.includes("no-var"));
+        expect(found.sort()).toEqual(inFile("a.js", [...remaining, "Error: boom"]).sort());
         expect(await Bun.file(`${dir}/a.js`).text()).toBe(code.replaceAll("var ", "const "));
         expect(exitCode).toBe(1);
       },

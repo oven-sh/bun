@@ -299,7 +299,7 @@ struct PerFile {
     /// The IDs of the identifiers named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
     named_like_jest: OnceCell<Vec<u32>>,
     /// One for the `jest` and `vitest` rules, and one for the `bun:test` rules.
-    seen: [PerRunner; 2],
+    per_runner: [PerRunner; 2],
 }
 
 /// The caches that depend on the runner.
@@ -395,7 +395,7 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
             is_vitest: imports(is_vitest_import_source),
             is_bun: file.mentions_bit(const { mention_bit(BUN_TEST) }) && imports_bun_test(file),
             named_like_jest: OnceCell::new(),
-            seen: Default::default(),
+            per_runner: Default::default(),
         }
     })
 }
@@ -433,8 +433,8 @@ fn imports_bun_test<'a>(file: &'a File<'a>) -> bool {
 }
 
 impl PerFile {
-    fn seen(&self, runner: Runner) -> &PerRunner {
-        &self.seen[usize::from(runner == Runner::Bun)]
+    fn per_runner(&self, runner: Runner) -> &PerRunner {
+        &self.per_runner[usize::from(runner == Runner::Bun)]
     }
 
     fn frameworks(&self, runner: Runner) -> Frameworks {
@@ -488,7 +488,7 @@ pub(crate) struct PossibleJestNode<'a> {
     runner: Runner,
     /// The cached facts, for a node from [`iter_possible_jest_call_node`]. Most rules only care about `expect`, or
     /// don't care about it, so they can skip parsing the other calls.
-    known: Option<&'a PossibleCall>,
+    cached: Option<&'a PossibleCall>,
 }
 
 impl<'a> PossibleJestNode<'a> {
@@ -498,7 +498,7 @@ impl<'a> PossibleJestNode<'a> {
             node,
             original: None,
             runner,
-            known: None,
+            cached: None,
         }
     }
 
@@ -512,15 +512,15 @@ impl<'a> PossibleJestNode<'a> {
             node: Expr::from_raw(file, call.id),
             original: originals.get(call.original as usize).map(|it| &**it),
             runner,
-            known: Some(call),
+            cached: Some(call),
         }
     }
 
     /// Returns [`JestFnKind::from`] for the name that the chain starts with, or `None` if it doesn't start with a name,
     /// in which case it doesn't parse.
     fn kind(&self) -> Option<JestFnKind> {
-        match self.known {
-            Some(known) => Some(known.kind),
+        match self.cached {
+            Some(cached) => Some(cached.kind),
             None => {
                 let local = first_identifier_of_chain(self.node.as_call()?.callee())?;
                 Some(JestFnKind::from(
@@ -533,7 +533,7 @@ impl<'a> PossibleJestNode<'a> {
 
 fn possible_jest_nodes<'a>(file: &'a File<'a>, runner: Runner) -> Option<&'a PossibleJestNodes> {
     per_file(file).map(|it| {
-        (it.seen(runner).possible_jest_nodes)
+        (it.per_runner(runner).possible_jest_nodes)
             .get_or_init(|| collect_possible_jest_call_node(file, it, runner))
     })
 }
@@ -757,7 +757,7 @@ pub(crate) fn tests_by_name<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span
         tests
     };
     per_file(file).map_or(&[][..], |it| {
-        it.seen(runner).tests_by_name.get_or_init(find)
+        it.per_runner(runner).tests_by_name.get_or_init(find)
     })
 }
 
@@ -898,10 +898,10 @@ impl<'a> ParsedExpectFnCall<'a> {
     /// Returns the name and the closing text for a fix that reprints `expect(a)`. oxlint's fixes always print `expect`
     /// and `)`. For Bun it's the name used in the file, and everything after the first argument: the `, "why")` of
     /// `expect(a, "why")`.
-    pub(crate) fn around_first_argument(&self, runner: Runner) -> (&'a [u8], &'a [u8]) {
-        let written = (self.head.parent.filter(|_| runner == Runner::Bun))
+    pub(crate) fn expect_prefix_and_suffix(&self, runner: Runner) -> (&'a [u8], &'a [u8]) {
+        let call_and_argument = (self.head.parent.filter(|_| runner == Runner::Bun))
             .zip(self.expect_arguments.and_then(List::first));
-        match written {
+        match call_and_argument {
             Some((call, first)) => {
                 let rest = Span::new(first.outer_span().end, call.span().end);
                 (self.local, call.file().slice(rest))
@@ -985,10 +985,11 @@ impl<'a> KnownMemberExpressionProperty<'a> {
 
 /// `get_node_chain`, after `resolve_first_ident`: returns the identifier that `callee` starts with, and the members'
 /// names in source order. Returns `None` if it starts with anything else, or if the chain has anything but members,
-/// calls and tagged templates. oxlint skips the `[b]` of `a[b].c`. With `knows_all_names`, that returns `None` too.
+/// calls and tagged templates. oxlint skips the `[b]` of `a[b].c`. With `requires_static_names`, that returns `None`
+/// too.
 fn get_node_chain(
     callee: Expr<'_>,
-    knows_all_names: bool,
+    requires_static_names: bool,
 ) -> Option<(KnownMemberExpressionProperty<'_>, Members<'_>)> {
     use KnownMemberExpressionParentKind::{Call, Member, TaggedTemplate};
     let mut chain = Members::new();
@@ -1033,7 +1034,7 @@ fn get_node_chain(
                         grandparent_kind: parent_kind,
                         span,
                     });
-                } else if knows_all_names {
+                } else if requires_static_names {
                     return None;
                 }
                 (obj, Member)
@@ -1099,13 +1100,13 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         runner,
         ..
     } = possible_jest_node;
-    let known = possible_jest_node
-        .known
+    let cached = possible_jest_node
+        .cached
         .filter(|it| it.id == call_expr.id().0);
     let call_expr = call_expr.as_call()?;
     let callee = call_expr.callee();
     let is_nested_in_chain =
-        || known.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
+        || cached.map_or_else(|| is_in_call_or_member(node), |it| it.is_in_call_or_member);
 
     // `it(..)`, `expect(..)`
     if let Some(local) = callee.as_ident()
@@ -1116,7 +1117,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         if local == b"each" {
             return None;
         }
-        let kind = known.map_or_else(|| JestFnKind::from(name), |it| it.kind);
+        let kind = cached.map_or_else(|| JestFnKind::from(name), |it| it.kind);
         if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
             let head = KnownMemberExpressionProperty {
                 element: MemberExpressionElement::Expression(callee),
@@ -1134,7 +1135,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
             JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
             _ => per_file(file).is_none_or(|it| is_valid_call(it.frameworks(runner), name, &[])),
         };
-        let is_call = match known.and_then(|it| it.without_members) {
+        let is_call = match cached.and_then(|it| it.without_members) {
             Some(is_call) => is_call,
             None => !is_nested_in_chain() && is_valid(),
         };
@@ -1338,11 +1339,11 @@ fn is_valid_jest_call(name: &[u8], members: &[KnownMemberExpressionProperty]) ->
             // oxlint pads a chain with empty names.
             let valid =
                 strings::split(chain.as_bytes(), b".").chain(std::iter::repeat(b"".as_slice()));
-            let written = members
+            let actual = members
                 .iter()
                 .filter_map(KnownMemberExpressionProperty::name)
                 .take(3);
-            written.zip(valid).all(|(written, valid)| written == valid)
+            actual.zip(valid).all(|(actual, valid)| actual == valid)
         })
 }
 
@@ -1487,7 +1488,7 @@ pub(crate) fn is_type_of_jest_fn_call<'a>(
     kinds: &[JestFnKind],
 ) -> bool {
     (possible_jest_node.kind()).is_some_and(|it| kinds.contains(&it))
-        && match possible_jest_node.known.and_then(|it| it.without_members) {
+        && match possible_jest_node.cached.and_then(|it| it.without_members) {
             Some(is_call) => is_call,
             None => parse_jest_fn_call(file, possible_jest_node)
                 .is_some_and(|it| kinds.contains(&it.kind())),
@@ -1502,7 +1503,7 @@ pub(crate) fn parse_general_jest_fn_call<'a>(
     if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
         return None;
     }
-    if let Some(is_call) = possible_jest_node.known.and_then(|it| it.without_members) {
+    if let Some(is_call) = possible_jest_node.cached.and_then(|it| it.without_members) {
         if !is_call {
             return None;
         }
@@ -1696,8 +1697,10 @@ impl<'a> AstKind<'a> {
     pub(crate) fn parent(self) -> AstKind<'a> {
         match self {
             AstKind::Expr(e) if e.is_chain_root() => AstKind::ChainExpression(e),
-            AstKind::Expr(e) | AstKind::ChainExpression(e) => AstKind::around(e, 0),
-            AstKind::ParenthesizedExpression(e, inner) => AstKind::around(e, inner + 1),
+            AstKind::Expr(e) | AstKind::ChainExpression(e) => AstKind::parent_outside_parens(e, 0),
+            AstKind::ParenthesizedExpression(e, inner) => {
+                AstKind::parent_outside_parens(e, inner + 1)
+            }
             AstKind::Stmt(statement) => AstKind::of(statement.parent(), true),
             AstKind::FunctionBody(func) => AstKind::of(Node::Func(func), false),
             AstKind::Function(func) => AstKind::of(func.owner(), false),
@@ -1707,7 +1710,7 @@ impl<'a> AstKind<'a> {
     }
 
     /// Returns the node around `e` and `parens` pairs of parentheses.
-    fn around(e: Expr<'a>, parens: u32) -> AstKind<'a> {
+    fn parent_outside_parens(e: Expr<'a>, parens: u32) -> AstKind<'a> {
         match e.is_parenthesized() && (parens as usize) < e.parens().len() {
             true => AstKind::ParenthesizedExpression(e, parens),
             false => AstKind::of(e.parent(), false),
@@ -1898,13 +1901,13 @@ impl<'a> OxlintOrder<'a> {
     ) -> Option<PossibleJestNode<'a>> {
         // The table only orders different names, so it isn't needed if all the nodes are the same global.
         let global = |it: &PossibleJestNode<'a>| {
-            let known = it.known.filter(|it| it.import_index == u32::MAX)?;
-            Expr::from_raw(file, known.reference).as_ident()
+            let cached = it.cached.filter(|it| it.import_index == u32::MAX)?;
+            Expr::from_raw(file, cached.reference).as_ident()
         };
         let name = global(nodes.first()?);
         if name.is_some() && nodes.iter().all(|it| global(it) == name) {
             let key = |it: &PossibleJestNode<'a>| {
-                let reference = it.known.map(|it| Expr::from_raw(file, it.reference));
+                let reference = it.cached.map(|it| Expr::from_raw(file, it.reference));
                 (reference.map(|it| it.span().start), it.node.span().end)
             };
             return nodes.iter().copied().min_by_key(key);
@@ -1945,7 +1948,7 @@ impl<'a> OxlintOrder<'a> {
             possible_jest_node.node.span().end,
         );
         let reference = possible_jest_node
-            .known
+            .cached
             .map(|it| (Expr::from_raw(file, it.reference), it.import_index));
         match reference {
             Some((reference, u32::MAX)) => (

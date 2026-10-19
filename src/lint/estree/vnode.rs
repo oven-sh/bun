@@ -213,7 +213,7 @@ impl<'a> VNode<'a> {
     }
 
     /// Returns the node for `e`, including every wrapper node that ESTree puts around it. `None` for a hole.
-    pub(super) fn of_expr(e: Expr<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_expr(e: Expr<'a>) -> Option<VNode<'a>> {
         match e.jsx_container_span() {
             Some(_) => Some(VNode::new(e, Part::Container)),
             None => VNode::in_container(e),
@@ -261,7 +261,7 @@ impl<'a> VNode<'a> {
             == Some(Flags::EXPORT)
     }
 
-    pub(super) fn of_stmt(statement: Stmt<'a>) -> VNode<'a> {
+    pub(super) fn from_stmt(statement: Stmt<'a>) -> VNode<'a> {
         match VNode::is_exported_declaration(statement) {
             true => VNode::new(statement, Part::Export),
             false => VNode::main_of_stmt(statement),
@@ -277,15 +277,15 @@ impl<'a> VNode<'a> {
     }
 
     /// Returns the node for a statement in the head of a `for`.
-    pub(super) fn of_for_head(head: Stmt<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_for_head(head: Stmt<'a>) -> Option<VNode<'a>> {
         match head.kind() {
-            StmtKind::Expr(e) => VNode::of_expr(e),
+            StmtKind::Expr(e) => VNode::from_expr(e),
             _ => Some(VNode::new(head, Part::Main)),
         }
     }
 
     #[inline]
-    pub(super) fn of_type(ty: TypeNode<'a>) -> VNode<'a> {
+    pub(super) fn from_type(ty: TypeNode<'a>) -> VNode<'a> {
         VNode::new(ty, Part::Main)
     }
 
@@ -294,7 +294,7 @@ impl<'a> VNode<'a> {
         VNode::new(ty, Part::Annotation)
     }
 
-    pub(super) fn of_pat(pat: Pat<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_pat(pat: Pat<'a>) -> Option<VNode<'a>> {
         (!matches!(pat.kind(), PatKind::Missing)).then(|| VNode::new(pat, Part::Main))
     }
 
@@ -302,7 +302,7 @@ impl<'a> VNode<'a> {
         param.modifiers().iter().any(|it| it.decorator().is_none())
     }
 
-    pub(super) fn of_param(param: Param<'a>) -> VNode<'a> {
+    pub(super) fn from_param(param: Param<'a>) -> VNode<'a> {
         match VNode::has_keywords(param) {
             true => VNode::new(param, Part::Main),
             false => VNode::inner_of_param(param),
@@ -316,7 +316,7 @@ impl<'a> VNode<'a> {
         }
     }
 
-    pub(super) fn of_pat_elem(element: PatElem<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_pat_elem(element: PatElem<'a>) -> Option<VNode<'a>> {
         let pat = element.pat()?;
         Some(match element.is_rest() || element.default().is_some() {
             true => VNode::new(element, Part::Main),
@@ -324,7 +324,7 @@ impl<'a> VNode<'a> {
         })
     }
 
-    pub(super) fn of_tuple_elem(element: TupleElem<'a>) -> VNode<'a> {
+    pub(super) fn from_tuple_elem(element: TupleElem<'a>) -> VNode<'a> {
         match element.is_rest() {
             true => VNode::new(element, Part::Rest),
             false => VNode::in_rest(element),
@@ -338,20 +338,20 @@ impl<'a> VNode<'a> {
         } else if element.is_optional() {
             VNode::new(element, Part::Optional)
         } else {
-            VNode::of_type(element.ty())
+            VNode::from_type(element.ty())
         }
     }
 
     /// Returns the `key` of `owner`.
-    pub(super) fn of_key(owner: impl Into<Node<'a>>, key: Key<'a>) -> Option<VNode<'a>> {
+    pub(super) fn from_key(owner: impl Into<Node<'a>>, key: Key<'a>) -> Option<VNode<'a>> {
         match key.kind() {
-            KeyKind::Computed(e) => VNode::of_expr(e),
+            KeyKind::Computed(e) => VNode::from_expr(e),
             _ => Some(VNode::new(owner, Part::Key)),
         }
     }
 
     /// Returns the node for the whole `A.B.C` in `owner`, which has `len` names.
-    pub(super) fn of_entity_name(
+    pub(super) fn from_entity_name(
         owner: impl Into<Node<'a>>,
         len: usize,
         is_member: bool,

@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, is_global_reference, static_property_name,
 };
-use crate::unicorn::{outermost_wrapper_and_parent, statements_around};
+use crate::unicorn::{outermost_wrapper_and_parent, enclosing_statement_list};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -48,7 +48,7 @@ impl Rule for NoImmediateMutation {
             if statement.tag() != StmtTag::Expr {
                 return false;
             }
-            let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
+            let prev_stmt = enclosing_statement_list(statement).and_then(|it| it.before(statement.span().start));
             prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
         let mutation = match expr.as_call() {

@@ -109,7 +109,7 @@ pub(crate) fn with_lines<'l>(
 /// Returns the first of `lines` that oxlint and oxfmt reject.
 pub(crate) fn rejected_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Option<Box<[u8]>> {
     let rules = IgnoreRules::from_lines(lines, OXC_OPTIONS);
-    rules.refused().first().cloned()
+    rules.rejected().first().cloned()
 }
 
 /// Returns `chain` plus `file`, whose lines are relative to `directory`.
@@ -215,10 +215,10 @@ pub(crate) fn is_root(directory: &[u8]) -> bool {
 }
 
 /// oxc's `all_paths_have_vcs_boundary`. `searched` holds the directories where the run's searches start. An ignored one
-/// isn't searched, so it doesn't count. `named` holds the directories of the files passed as arguments.
+/// isn't searched, so it doesn't count. `argument_directories` holds the directories of the files passed as arguments.
 pub(crate) fn are_all_in_repositories<'p>(
     mut searched: impl Iterator<Item = &'p [u8]>,
-    mut named: impl Iterator<Item = &'p [u8]>,
+    mut argument_directories: impl Iterator<Item = &'p [u8]>,
 ) -> bool {
     let mut known: FxHashSet<&[u8]> = FxHashSet::default();
     let mut is_in_one = |directory: &'p [u8]| {
@@ -231,7 +231,7 @@ pub(crate) fn are_all_in_repositories<'p>(
     let is_skipped = |it: &[u8]| {
         GitIgnores::above_and_in(it, true, is_for_oxc).is_directory_ignored_anywhere(it)
     };
-    searched.all(|it| is_in_one(it) || is_skipped(it)) && named.all(is_in_one)
+    searched.all(|it| is_in_one(it) || is_skipped(it)) && argument_directories.all(is_in_one)
 }
 
 /// `.gitignore` and `info/exclude` for a search like oxlint's and oxfmt's, read the way the `ignore` crate reads them.
@@ -477,7 +477,7 @@ fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) ->
         if let Some(inside) = inside.filter(|it| !it.is_empty()) {
             match ignores.rules.verdict(inside, is_directory) {
                 Verdict::Ignored => return Some(true),
-                Verdict::Kept => return Some(false),
+                Verdict::Unignored => return Some(false),
                 Verdict::Unmentioned => {}
             }
         }

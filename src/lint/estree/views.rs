@@ -346,7 +346,7 @@ pub(super) fn member_decorators<'a>(v: VNode<'a>) -> Option<Nodes<'a>> {
 pub(super) fn member_key<'a>(v: VNode<'a>) -> Option<Option<VNode<'a>>> {
     let member = member(v)?;
     Some(match member.key() {
-        Some(key) => VNode::of_key(member, key),
+        Some(key) => VNode::from_key(member, key),
         None => member.constructor_keyword().map(|_| v.with(Part::Key)),
     })
 }
@@ -422,7 +422,7 @@ pub(super) fn asserted<'a>(v: VNode<'a>) -> Option<Expr<'a>> {
 /// Returns the `T` of `e as T`, `<T>e` or `e satisfies T`.
 pub(super) fn assertion_type<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
     match v.expr()?.kind() {
-        ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(VNode::of_type(ty)),
+        ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(VNode::from_type(ty)),
         ExprKind::AsConst(_) => Some(v.with(Part::ConstType)),
         _ => None,
     }
@@ -460,8 +460,8 @@ pub(super) fn type_arguments<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
 /// Returns the `A.B` of `implements A.B<T>`.
 pub(super) fn heritage_expression<'a>(v: VNode<'a>) -> Option<Option<VNode<'a>>> {
     Some(match v.ty()?.kind() {
-        TypeKind::Ref { name, .. } => VNode::of_entity_name(v.base, name.len(), true),
-        TypeKind::Heritage { expr, .. } => VNode::of_expr(expr),
+        TypeKind::Ref { name, .. } => VNode::from_entity_name(v.base, name.len(), true),
+        TypeKind::Heritage { expr, .. } => VNode::from_expr(expr),
         _ => return None,
     })
 }

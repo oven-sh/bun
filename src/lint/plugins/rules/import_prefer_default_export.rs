@@ -14,7 +14,7 @@ const SINGLE: Message = Message::new("", "Prefer default export on a file with s
 const ANY: Message = Message::new("", "Prefer default export to be present on every file that has export.");
 
 #[derive(Default)]
-pub struct Seen {
+pub struct ExportSummary {
     /// True if there's a default export, an `export *` or a type export.
     is_exempt: bool,
     count: u32,
@@ -22,7 +22,7 @@ pub struct Seen {
     last: Option<Span>,
 }
 
-impl Seen {
+impl ExportSummary {
     /// Listeners run in no particular order. ESLint visits the node that starts later last.
     fn record_named_export(&mut self, node: Span) {
         if self.last.is_none_or(|it| it.start < node.start) {
@@ -31,13 +31,13 @@ impl Seen {
     }
 
     /// oxlint's version, which uses its module record. That only has the top level, with one entry per name.
-    fn from_module_record<'a>(file: &'a File<'a>, target_is_any: bool) -> Seen {
+    fn from_module_record<'a>(file: &'a File<'a>, target_is_any: bool) -> ExportSummary {
         if export_default(file).is_some() {
-            return Seen { is_exempt: true, ..Seen::default() };
+            return ExportSummary { is_exempt: true, ..ExportSummary::default() };
         }
         let record = ModuleRecord::new(file);
         let (indirect, local) = (&record.indirect_export_entries, &record.local_export_entries);
-        Seen {
+        ExportSummary {
             is_exempt: !record.star_export_entries.is_empty() || indirect.iter().chain(local).any(|it| it.is_type),
             count: (indirect.len() + local.len()) as u32,
             last: match indirect.first() {
@@ -96,7 +96,7 @@ impl Rule for PreferDefaultExport {
         ])
         .export_specs()
         .finish();
-    type State<'a> = Seen;
+    type State<'a> = ExportSummary;
 
     fn new(options: &Options) -> Self {
         PreferDefaultExport { target_is_any: options.object(0).str("target") == Some("any") }
@@ -107,8 +107,8 @@ impl Rule for PreferDefaultExport {
         if file.language().is_oxlint { On::new().finish() } else { Self::ON }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen> {
-        Some(Seen::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<ExportSummary> {
+        Some(ExportSummary::default())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -142,9 +142,9 @@ impl Rule for PreferDefaultExport {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         if cx.language().is_oxlint {
-            cx.state = Seen::from_module_record(cx.file(), self.target_is_any);
+            cx.state = ExportSummary::from_module_record(cx.file(), self.target_is_any);
         }
-        let Seen { is_exempt: false, count, last: Some(last) } = cx.state else { return };
+        let ExportSummary { is_exempt: false, count, last: Some(last) } = cx.state else { return };
         if self.target_is_any && count > 0 {
             cx.report(last, ANY);
         } else if !self.target_is_any && count == 1 {

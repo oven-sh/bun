@@ -15,11 +15,11 @@ use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::{FormatError, write};
 use bun_core::strings;
-use bun_lint::linter::{TypesInJavaScript, prettier_refusal};
+use bun_lint::linter::{TypesInJavaScript, prettier_rejection};
 use std::cell::{OnceCell, RefCell};
 use std::cmp::Reverse;
 
-pub(crate) struct How<'o> {
+pub(crate) struct CodeSettings<'o> {
     pub(crate) options: &'o FormatOptions,
     /// `_svelte_ts`
     pub(crate) is_typescript: bool,
@@ -345,7 +345,7 @@ fn syntax_of(is_typescript: bool) -> Syntax {
     }
 }
 
-fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
+fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, settings: &CodeSettings<'_>) {
     let in_html = InHtml {
         root: match js.kind {
             JsKind::Statement => HtmlRoot::SvelteStatement,
@@ -356,9 +356,13 @@ fn write_js(js: &Js<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
         ..InHtml::default()
     };
     let ends_with_line_comment = out.foreign(|f| match js.kind {
-        JsKind::Expression => write_js_expression(f, js, in_html, how.is_typescript),
-        JsKind::Function => write_js_function(f, js, in_html, how.is_typescript).then_some(false),
-        JsKind::Statement => write_js_statement(f, js, in_html, how.is_typescript).then_some(false),
+        JsKind::Expression => write_js_expression(f, js, in_html, settings.is_typescript),
+        JsKind::Function => {
+            write_js_function(f, js, in_html, settings.is_typescript).then_some(false)
+        }
+        JsKind::Statement => {
+            write_js_statement(f, js, in_html, settings.is_typescript).then_some(false)
+        }
     });
     match ends_with_line_comment {
         // The plugin prints whatever follows the code before the comment: `{@const a = b} // c`.
@@ -423,7 +427,7 @@ fn write_printed_text(
 fn error_in_script(content: &[u8], parse: Parse<'_>) -> (Vec<u8>, u32) {
     let mut error = None;
     parse.call(b"dummy.ts", content, false, &mut |file| {
-        error = prettier_refusal(file, TypesInJavaScript::Refused);
+        error = prettier_rejection(file, TypesInJavaScript::Rejected);
     });
     error.map_or_else(
         || message_and_offset(SyntaxError(Message::CannotBeFormatted, 0)),
@@ -440,10 +444,10 @@ fn write_body(
     (content, start): (&[u8], u32),
     parser: Parser,
     out: &mut Writer<'_, '_>,
-    how: &How<'_>,
+    settings: &CodeSettings<'_>,
 ) {
     let attempt = out.start_attempt();
-    if how.indents_script_and_style {
+    if settings.indents_script_and_style {
         out.start_indent();
     }
     out.hardline();
@@ -453,14 +457,14 @@ fn write_body(
             has_babel_tree: syntax == Syntax::BabelTs,
             ..InHtml::default()
         };
-        let (source_type, flavor) = (SourceType::Unknown, how.script_flavor);
+        let (source_type, flavor) = (SourceType::Unknown, settings.script_flavor);
         match out.foreign(|f| js::write_program(f, content, syntax, source_type, in_html, flavor)) {
             true => Ok(true),
-            false => Err(error_in_script(content, how.parse)),
+            false => Err(error_in_script(content, settings.parse)),
         }
     };
     let style_sheet = |parser: crate::css::Parser, out: &mut Writer<'_, '_>| {
-        write_printed_text(out, how.options, |options, printed| {
+        write_printed_text(out, settings.options, |options, printed| {
             crate::css::format(content, parser, options, &mut Default::default(), printed)
         })
         .map_err(message_and_offset)
@@ -468,7 +472,7 @@ fn write_body(
     let written = match parser {
         Parser::TypeScript => program(Syntax::TypeScript, out),
         Parser::BabelTs => program(Syntax::BabelTs, out),
-        Parser::Json => write_printed_text(out, how.options, |options, printed| {
+        Parser::Json => write_printed_text(out, settings.options, |options, printed| {
             let parser = crate::json::Parser::Json;
             crate::json::format(content, parser, options, &mut Default::default(), printed)
         })
@@ -477,7 +481,7 @@ fn write_body(
         Parser::Scss => style_sheet(crate::css::Parser::Scss, out),
         Parser::Less => style_sheet(crate::css::Parser::Less, out),
     };
-    if how.indents_script_and_style {
+    if settings.indents_script_and_style {
         out.end_indent();
     }
     out.hardline();
@@ -485,24 +489,27 @@ fn write_body(
     // ends.
     let is_written = written == Ok(true);
     if let Err((message, at)) = written {
-        how.unformatted.borrow_mut().push((message, start + at));
+        settings
+            .unformatted
+            .borrow_mut()
+            .push((message, start + at));
     }
     if !out.end_attempt(attempt, is_written) {
         let mut write = doc::Write {
             code: &mut |_, _| {},
-            stack: how.stack,
+            stack: settings.stack,
         };
         doc::write(preformatted_body(content), out, &mut write);
     }
 }
 
-pub(crate) fn write_code(code: &Code<'_>, out: &mut Writer<'_, '_>, how: &How<'_>) {
+pub(crate) fn write_code(code: &Code<'_>, out: &mut Writer<'_, '_>, settings: &CodeSettings<'_>) {
     match code {
-        Code::Js(js) => write_js(js, out, how),
+        Code::Js(js) => write_js(js, out, settings),
         Code::Body {
             content,
             parser,
             start,
-        } => write_body((content, *start), *parser, out, how),
+        } => write_body((content, *start), *parser, out, settings),
     }
 }

@@ -62,7 +62,7 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
 }
 
 /// oxlint points at the keyword, which comes right before the name.
-fn place<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
+fn report_span<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
     if !cx.language().is_oxlint {
         return name.span();
     }
@@ -92,7 +92,7 @@ impl Rule for ConsistentTypeDefinitions {
             let StmtKind::Interface(interface) = statement.kind() else {
                 return;
             };
-            let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+            let report = cx.report(report_span(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
             let fix = |fixer: Fixer<'a>| (!is_declared_again(interface)).then(|| fix_interface(fixer, statement, interface));
             match is_within_declare_global(statement) {
                 false => report.fix_where_safe(|| is_only_declaration(interface), fix),
@@ -103,12 +103,12 @@ impl Rule for ConsistentTypeDefinitions {
             // oxlint visits it twice: as the exported declaration and as the interface. The second fix overlaps the
             // first.
             if cx.language().is_oxlint && statement.is_default_export() {
-                cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+                cx.report(report_span(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
             }
         } else if let StmtKind::TypeAlias(alias) = statement.kind()
             && alias.ty().tag() == TypeTag::Object
         {
-            cx.report(place(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
+            cx.report(report_span(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
                 .fix(|fixer| fix_type_alias(fixer, statement, alias));
         }
     }

@@ -210,8 +210,12 @@ impl Props {
             result.ignore_packages = obj.bool_or("ignorePackages", result.ignore_packages);
             result.check_type_imports = obj.bool_or("checkTypeImports", result.check_type_imports);
             if obj.has("pathGroupOverrides") {
-                let read =
-                    |it: Object| (Glob::of_path_group(it), it.str("action") == Some("enforce"));
+                let read = |it: Object| {
+                    (
+                        Glob::for_path_group(it),
+                        it.str("action") == Some("enforce"),
+                    )
+                };
                 let overrides = obj.array("pathGroupOverrides").iter();
                 result.path_group_overrides =
                     overrides.map(|it| read(Object::of(Some(it)))).collect();

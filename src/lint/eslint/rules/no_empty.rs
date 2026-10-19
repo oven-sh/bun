@@ -11,11 +11,11 @@ const SUGGEST_COMMENT: Message =
     Message::new("suggestComment", "Add comment inside empty {{type}} statement.");
 
 impl NoEmpty {
-    /// `braces` is a `{ }` with no statements or cases, so it can only contain whitespace and comments. `place` is where to
-    /// report. `removed` returns what oxlint suggests removing. `is_handler` returns whether it's the block of a `catch`.
+    /// `braces` is a `{ }` with no statements or cases, so it can only contain whitespace and comments. `removed`
+    /// returns what oxlint suggests removing. `is_handler` returns whether it's the block of a `catch`.
     fn check(
         braces: Span,
-        place: Span,
+        report_span: Span,
         kind: &'static str,
         (removed, is_handler): (&dyn Fn() -> Option<Span>, &dyn Fn() -> bool),
         cx: &Cx<'_, Self>,
@@ -25,7 +25,7 @@ impl NoEmpty {
             return;
         }
         let report = cx
-            .report(place, UNEXPECTED)
+            .report(report_span, UNEXPECTED)
             .data("type", kind)
             .hint(match is_handler() {
                 true => "Handle the error, or put a comment in it that says why the error is ignored.",

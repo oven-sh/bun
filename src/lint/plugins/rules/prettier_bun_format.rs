@@ -1,5 +1,5 @@
 use crate::prettier::Settings;
-use bun_lint::formats::Like;
+use bun_lint::formats::FormatterKind;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -25,9 +25,9 @@ impl<const PRETTIER: bool> Rule for Format<PRETTIER> {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         self.0.check(
             if PRETTIER {
-                Like::InstalledPrettier
+                FormatterKind::InstalledPrettier
             } else {
-                Like::BunFormat
+                FormatterKind::BunFormat
             },
             cx,
         );

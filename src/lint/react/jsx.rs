@@ -190,9 +190,9 @@ fn get_jsx_mem_expr_name(member: Expr<'_>) -> Cow<'_, [u8]> {
     }
     parts.push(at.as_ident().map_or(b"this".as_slice(), Name::bytes));
     // Fast path: it's nearly always written without whitespace or comments.
-    let written = member.text();
-    if written.len() + 1 == parts.iter().map(|it| it.len() + 1).sum::<usize>() {
-        return Cow::Borrowed(written);
+    let source_text = member.text();
+    if source_text.len() + 1 == parts.iter().map(|it| it.len() + 1).sum::<usize>() {
+        return Cow::Borrowed(source_text);
     }
     parts.reverse();
     Cow::Owned(parts.join(&b"."[..]))

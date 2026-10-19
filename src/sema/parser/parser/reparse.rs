@@ -348,9 +348,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                     Some(default) => self.reparse_type(default),
                     None => TypeNodeId::NONE,
                 };
-                let written = param.modifiers.iter();
-                let written = written.fold(Flags::empty(), |all, modifier| all | modifier.0);
-                let flags = Flags::REPARSED | written & (Flags::CONST | Flags::IN | Flags::OUT);
+                let modifier_flags = param.modifiers.iter();
+                let modifier_flags =
+                    modifier_flags.fold(Flags::empty(), |all, modifier| all | modifier.0);
+                let flags =
+                    Flags::REPARSED | modifier_flags & (Flags::CONST | Flags::IN | Flags::OUT);
                 let modifiers: SmallVec<[Modifier; 2]> = param
                     .modifiers
                     .iter()
@@ -897,7 +899,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             return;
         }
         // From the last name to the first.
-        let mut written = Vec::new();
+        let mut extends_names = Vec::new();
         let mut at = extends;
         let is_entity_name = loop {
             if self.paren_of(at).is_some() {
@@ -905,11 +907,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             }
             match self.f[at].kind {
                 ExprKind::Ident(name) => {
-                    written.push(name);
+                    extends_names.push(name);
                     break true;
                 }
                 ExprKind::Dot { obj, name, .. } => {
-                    written.push(name);
+                    extends_names.push(name);
                     at = obj;
                 }
                 _ => break false,
@@ -917,8 +919,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         };
         // `HasSamePropertyAccessName`
         let is_same = is_entity_name
-            && written.len() == class_name.name.len()
-            && written
+            && extends_names.len() == class_name.name.len()
+            && extends_names
                 .iter()
                 .rev()
                 .zip(&class_name.name)

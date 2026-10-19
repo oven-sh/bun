@@ -89,14 +89,14 @@ impl Reader {
         for (at, &byte) in text.iter().enumerate() {
             self.add(byte);
             if SPECIAL.has(byte) {
-                self.look_around(text, at);
+                self.adjust_for_special_byte(text, at);
             }
         }
     }
 
     /// Un-counts the bytes that shouldn't count because of the byte at `at`, which is one of `SPECIAL`.
     #[optimize(size)]
-    fn look_around(&mut self, text: &[u8], at: usize) {
+    fn adjust_for_special_byte(&mut self, text: &[u8], at: usize) {
         let (before, rest) = text.split_at_checked(at).unwrap_or_default();
         let previous = before.last().copied().unwrap_or(0);
         match *rest {

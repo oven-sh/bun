@@ -150,29 +150,29 @@ fn split_into_parts(value: &[u8]) -> impl Iterator<Item = Part<'_>> {
 struct Ranges<'a> {
     value: &'a [u8],
     /// The source text after the opening quote.
-    written: &'a [u8],
-    written_start: u32,
-    /// The last offset requested, and the matching offset in `written`.
+    source: &'a [u8],
+    source_start: u32,
+    /// The last offset requested, and the matching offset in `source`.
     value_at: usize,
-    written_at: usize,
+    source_at: usize,
 }
 
 impl<'a> Ranges<'a> {
     fn new(node: Expr<'a>, value: &'a [u8]) -> Ranges<'a> {
-        let written = node.text().get(1..).unwrap_or_default();
-        Ranges { value, written, written_start: node.span().start + 1, value_at: 0, written_at: 0 }
+        let source = node.text().get(1..).unwrap_or_default();
+        Ranges { value, source, source_start: node.span().start + 1, value_at: 0, source_at: 0 }
     }
 
     /// `at`: an offset in the value, not before the last one requested.
     fn offset(&mut self, at: usize) -> u32 {
         let units = strings::wtf8_len_utf16(self.value.get(self.value_at..at).unwrap_or_default());
-        let rest = self.written.get(self.written_at..).unwrap_or_default();
-        self.written_at += strings::wtf8_offset_of_utf16_index(rest, units);
+        let rest = self.source.get(self.source_at..).unwrap_or_default();
+        self.source_at += strings::wtf8_offset_of_utf16_index(rest, units);
         self.value_at = at;
-        self.written_start + self.written_at as u32
+        self.source_start + self.source_at as u32
     }
 
-    fn of(&mut self, part: Part<'_>) -> Span {
+    fn span_of(&mut self, part: Part<'_>) -> Span {
         let start = self.offset(part.start);
         Span::new(start, self.offset(part.start + part.value.len()))
     }
@@ -283,7 +283,7 @@ fn check_literal_value_node<'a>(
         report.data("attributeName", REL).data("reportingValue", reporting_value).suggest_with(
             SUGGEST_REMOVE_INVALID,
             &[("attributeName", REL), ("reportingValue", reporting_value)],
-            |fixer| fixer.remove(ranges.of(single_part)),
+            |fixer| fixer.remove(ranges.span_of(single_part)),
         );
     }
 
@@ -329,7 +329,7 @@ fn check_literal_value_node<'a>(
         cx.report(node, SPACE_DELIMITED).data("attributeName", REL).suggest_with(
             SUGGEST_REMOVE_WHITESPACES,
             &ATTRIBUTE_NAME,
-            |fixer| fixer.replace(ranges.of(whitespace_part), if is_at_a_quote { "" } else { " " }),
+            |fixer| fixer.replace(ranges.span_of(whitespace_part), if is_at_a_quote { "" } else { " " }),
         );
     }
 }

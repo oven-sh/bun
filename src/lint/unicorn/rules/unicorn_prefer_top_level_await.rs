@@ -122,14 +122,14 @@ fn is_handled(e: Expr) -> bool {
     // `await e`, `await e.a.b`, `await (e as T)`
     let mut at = parent;
     loop {
-        let is_passed = match at.tag() {
+        let is_transparent = match at.tag() {
             ExprTag::As | ExprTag::AsConst => !at.is_angle_bracket_assertion(),
             ExprTag::Satisfies => true,
             ExprTag::Dot => !at.is_private_member(),
             tag => return tag == ExprTag::Await,
         };
         match at.parent() {
-            Node::Expr(parent) if is_passed => at = parent,
+            Node::Expr(parent) if is_transparent => at = parent,
             _ => return false,
         }
     }

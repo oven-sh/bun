@@ -97,14 +97,14 @@ impl NoDupeKeys {
             *defined |= defines;
             // oxlint reports at the previous key with that name.
             let first = *previous;
-            let place = if is_oxlint { std::mem::replace(previous, here) } else { here };
+            let report_span = if is_oxlint { std::mem::replace(previous, here) } else { here };
             if !is_duplicate {
                 continue;
             }
             if *is_pattern.get_or_insert_with(|| is_assignment_target(object)) {
                 return;
             }
-            cx.report(place, UNEXPECTED)
+            cx.report(report_span, UNEXPECTED)
                 .data("name", get_static_key_name(key).unwrap_or_default())
                 .hint_with(|| Some(format!("Only the last one counts. The first is on line {}.", cx.line_of(first.start))))
                 .labels_with(|labels| labels.push(here, "and duplicated here"));

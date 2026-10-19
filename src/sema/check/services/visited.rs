@@ -168,8 +168,8 @@ impl Checker<'_, '_> {
             },
             NodeData::Paren(p) => {
                 let e = hir.parens[p.idx()].0;
-                let around = hir.parens[p.idx() + 1..].iter().take_while(|p| p.0 == e);
-                VisitedKind::Parenthesized(e, around.count() as u32)
+                let outer_parens = hir.parens[p.idx() + 1..].iter().take_while(|p| p.0 == e);
+                VisitedKind::Parenthesized(e, outer_parens.count() as u32)
             }
             NodeData::Pat(pat) => match hir.data(parent) {
                 NodeData::Param(p) if hir[bound.param_fn[p.idx()]].this_param == p => {

@@ -105,7 +105,7 @@ impl NoFallthrough {
                 let is_directive = value.starts_with(b"oxlint-") || value.starts_with(b"eslint-");
                 return match (&self.oxlint_pattern, &self.comment_pattern) {
                     (Some(pattern), _) => pattern.test(value) && !is_directive,
-                    (None, of_bun @ CommentPattern::BunDefault) => of_bun.test(value) && !is_directive,
+                    (None, bun_default @ CommentPattern::BunDefault) => bun_default.test(value) && !is_directive,
                     (None, _) => OXLINT_COMMENTS.iter().any(|it| value.eq_ignore_ascii_case(it)),
                 };
             }
@@ -168,11 +168,11 @@ impl NoFallthrough {
                 }
             }
             Some(comment) if !is_fallthrough => {
-                let place = match cx.language().is_oxlint {
+                let report_span = match cx.language().is_oxlint {
                     true => oxlint_span(previous, case, comment.span()),
                     false => comment.span(),
                 };
-                cx.report(place, UNUSED_FALLTHROUGH_COMMENT);
+                cx.report(report_span, UNUSED_FALLTHROUGH_COMMENT);
             }
             _ => {}
         }

@@ -1,6 +1,6 @@
 //! A linter's set of rules, as a type. Everything about the set is known at compile time.
 //!
-//! Every rule has a number: its crate's offset, which is a multiple of 64, plus its place in that crate's
+//! Every rule has a number: its crate's offset, which is a multiple of 64, plus its index in that crate's
 //! [`rules!`](crate::rules). A set of rules is a [`RuleBits`]. [`rules!`](crate::rules) generates one `enum` of a
 //! crate's rules and one of their runs, and [`rule_sets!`](crate::rule_sets) joins those of several crates into a
 //! [`RuleSet`].
@@ -59,7 +59,7 @@ pub trait RuleSet: Starts + Sized + 'static {
     /// For each row of [`On::ROWS`], the rules whose [`Rule::ON`](crate::rule::Rule::ON) selects it.
     const LISTENS: &'static [RuleBits; On::ROWS];
     /// For each of [`On::KINDS`], the rules that select one of its rows.
-    const LISTENS_TO_KINDS: &'static [RuleBits; On::KINDS.len()] = &of_kinds(Self::LISTENS);
+    const LISTENS_TO_KINDS: &'static [RuleBits; On::KINDS.len()] = &listens_to_kinds(Self::LISTENS);
     const PAIRS: &'static Pairs = &Pairs::of(Self::METAS);
 
     /// [`Rule::new`](crate::rule::Rule::new). `None` if no rule has the number.
@@ -121,7 +121,7 @@ impl Pairs {
     }
 }
 
-const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {
+const fn listens_to_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {
     let mut all = [RuleBits::EMPTY; On::KINDS.len()];
     let mut sort = 0;
     while sort < all.len() {
@@ -135,24 +135,25 @@ const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {
     all
 }
 
-/// For [`rules!`](crate::rules): for each row, the rules in `ons` that select it, by place, 64 to a word.
+/// For [`rules!`](crate::rules): for each row, the rules in `ons` that select it, by index, 64 to a word.
 pub const fn listens<const COUNT: usize, const WORDS: usize>(
     ons: &[On; COUNT],
 ) -> [[u64; WORDS]; On::ROWS] {
     let mut rows = [[0; WORDS]; On::ROWS];
-    let mut place = 0;
-    while place < COUNT {
-        let named = ons[place].rows();
+    let mut local_index = 0;
+    while local_index < COUNT {
+        let named = ons[local_index].rows();
         let mut sort = 0;
         while sort < named.len() {
             let (first, mut kinds) = named[sort];
             while kinds != 0 {
-                rows[first + kinds.trailing_zeros() as usize][place / 64] |= 1 << (place % 64);
+                rows[first + kinds.trailing_zeros() as usize][local_index / 64] |=
+                    1 << (local_index % 64);
                 kinds &= kinds - 1;
             }
             sort += 1;
         }
-        place += 1;
+        local_index += 1;
     }
     rows
 }
@@ -184,10 +185,10 @@ pub const fn with_metas<const COUNT: usize>(
     metas: &[&'static Meta; COUNT],
     offset: usize,
 ) -> [Option<&'static Meta>; NUMBERS] {
-    let mut place = 0;
-    while place < COUNT {
-        all[offset + place] = Some(metas[place]);
-        place += 1;
+    let mut local_index = 0;
+    while local_index < COUNT {
+        all[offset + local_index] = Some(metas[local_index]);
+        local_index += 1;
     }
     all
 }
@@ -230,39 +231,39 @@ macro_rules! rules_as_a_set {
         #[allow(non_camel_case_types, clippy::enum_variant_names)]
         #[derive(Copy, Clone)]
         #[repr(u16)]
-        enum Place {
+        enum LocalIndex {
             $($module,)*
         }
 
         impl Rules {
-            pub const COUNT: usize = [$(Place::$module),*].len();
-            /// Indexed by place.
+            pub const COUNT: usize = [$(LocalIndex::$module),*].len();
+            /// Indexed by `local_index`.
             pub const METAS: [&'static $crate::rule::Meta; Rules::COUNT] =
                 [$(&<rules::$module::$rule as $crate::rule::Rule>::META),*];
-            /// `RuleSet::LISTENS`, indexed by place.
+            /// `RuleSet::LISTENS`, indexed by `local_index`.
             pub const LISTENS: [[u64; Rules::COUNT.div_ceil(64)]; $crate::rule::On::ROWS] =
                 $crate::rule_set::listens(&[$(<rules::$module::$rule as $crate::rule::Rule>::ON),*]);
 
             #[inline]
-            pub fn build(place: u16, options: &$crate::options::Options) -> Option<Rules> {
-                $(if place == Place::$module as u16 {
+            pub fn build(local_index: u16, options: &$crate::options::Options) -> Option<Rules> {
+                $(if local_index == LocalIndex::$module as u16 {
                     return Some(Rules::$module($crate::rule_set::boxed(options)));
                 })*
                 None
             }
 
             #[inline]
-            pub fn validate(place: u16, options: &$crate::options::Options) -> Result<(), Vec<u8>> {
-                $(if place == Place::$module as u16 {
+            pub fn validate(local_index: u16, options: &$crate::options::Options) -> Result<(), Vec<u8>> {
+                $(if local_index == LocalIndex::$module as u16 {
                     return <rules::$module::$rule as $crate::rule::Rule>::validate(options);
                 })*
                 Ok(())
             }
 
             #[inline]
-            pub fn place(&self) -> u16 {
+            pub fn local_index(&self) -> u16 {
                 match self {
-                    $(Rules::$module(_) => Place::$module as u16,)*
+                    $(Rules::$module(_) => LocalIndex::$module as u16,)*
                 }
             }
         }
@@ -366,20 +367,20 @@ macro_rules! rule_sets {
 
             #[inline]
             fn build(rule: u16, options: &$crate::options::Options) -> Option<Self> {
-                $(if let Some(place) = (rule as usize).checked_sub(Crate::$name.offset())
-                    && place < $from::Rules::COUNT
+                $(if let Some(local_index) = (rule as usize).checked_sub(Crate::$name.offset())
+                    && local_index < $from::Rules::COUNT
                 {
-                    return $from::Rules::build(place as u16, options).map($rules::$name);
+                    return $from::Rules::build(local_index as u16, options).map($rules::$name);
                 })*
                 None
             }
 
             #[inline]
             fn validate(rule: u16, options: &$crate::options::Options) -> Result<(), Vec<u8>> {
-                $(if let Some(place) = (rule as usize).checked_sub(Crate::$name.offset())
-                    && place < $from::Rules::COUNT
+                $(if let Some(local_index) = (rule as usize).checked_sub(Crate::$name.offset())
+                    && local_index < $from::Rules::COUNT
                 {
-                    return $from::Rules::validate(place as u16, options);
+                    return $from::Rules::validate(local_index as u16, options);
                 })*
                 Ok(())
             }
@@ -387,7 +388,7 @@ macro_rules! rule_sets {
             #[inline]
             fn number(&self) -> u16 {
                 match self {
-                    $($rules::$name(rule) => Crate::$name.offset() as u16 + rule.place(),)*
+                    $($rules::$name(rule) => Crate::$name.offset() as u16 + rule.local_index(),)*
                 }
             }
         }

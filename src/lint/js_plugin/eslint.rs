@@ -80,15 +80,15 @@ pub struct Linted {
 
 /// Why ESLint's `Linter` returned no result.
 #[derive(Clone, Debug)]
-pub enum Refusal {
+pub enum EslintFailure {
     /// The project has no `eslint`.
     NotInstalled,
     Thrown(Vec<u8>),
 }
 
-impl From<Vec<u8>> for Refusal {
-    fn from(message: Vec<u8>) -> Refusal {
-        Refusal::Thrown(message)
+impl From<Vec<u8>> for EslintFailure {
+    fn from(message: Vec<u8>) -> EslintFailure {
+        EslintFailure::Thrown(message)
     }
 }
 
@@ -100,9 +100,9 @@ impl Host<'_> {
         message: &[u8],
         configuration: &Configuration,
         run: &[u8],
-    ) -> Result<Vec<u8>, Refusal> {
-        let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| {
-            self.serve_common(asked, details, out);
+    ) -> Result<Vec<u8>, EslintFailure> {
+        let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| {
+            self.serve_common(request, details, out);
         };
         for _ in 0..2 {
             let returned = vm.call(call::LINT, message, &mut serve)?;
@@ -125,7 +125,7 @@ impl Host<'_> {
             let configured = vm.call(call::CONFIGURE, &parts.concat(), &mut serve)?;
             match configured.split_first() {
                 Some((&result::DONE, _)) => {}
-                Some((&NOT_INSTALLED, _)) => return Err(Refusal::NotInstalled),
+                Some((&NOT_INSTALLED, _)) => return Err(EslintFailure::NotInstalled),
                 Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
                 _ => break,
             }
@@ -142,7 +142,7 @@ impl Host<'_> {
         run: &[u8],
         file: Text,
         find_rule: &FindRule,
-    ) -> Result<Linted, Refusal> {
+    ) -> Result<Linted, EslintFailure> {
         let mut message = Vec::with_capacity(16 + file.path.len() + file.text.len());
         wire::words(
             &mut message,
@@ -166,12 +166,12 @@ impl Host<'_> {
         let [shown, suppressed, deprecated] = &parts[..] else {
             return Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());
         };
-        let mut written = Vec::new();
-        write_json(&mut written, deprecated);
+        let mut deprecated_json = Vec::new();
+        write_json(&mut deprecated_json, deprecated);
         Ok(Linted {
             messages: read_messages(shown, file.text, find_rule).0,
             suppressed: read_messages(suppressed, file.text, find_rule).1,
-            deprecated: written,
+            deprecated: deprecated_json,
         })
     }
 }

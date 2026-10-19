@@ -10,7 +10,7 @@
 use super::explain::Line;
 use super::explain::NOWHERE;
 use super::relate::{REC_BOTH, Relater, Relation, STATE_NONE, Ternary};
-use super::related::Place;
+use super::related::FileSpan;
 use super::*;
 use std::rc::Rc;
 
@@ -207,7 +207,7 @@ pub(super) fn visibility_to_string(flags: Flags) -> &'static [u8] {
 
 /// `createDiagnosticChainFromErrorChain(r.errorChain, r.errorNode, r.relatedInfo)`
 pub(super) struct RelationDiagnostic {
-    pub(super) at: Place,
+    pub(super) at: FileSpan,
     /// The first line, at level 0, is the main message.
     pub(super) lines: Vec<Line>,
     pub(super) related: Vec<Reported>,
@@ -236,7 +236,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
     ) -> bool {
         self.check_type_assignable_to_ex(source, target, error_node, head_message, None)
@@ -247,7 +247,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
@@ -267,7 +267,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
     ) -> bool {
         let relation = Relation::Comparable;
@@ -283,7 +283,7 @@ impl<'p, 's> Checker<'p, 's> {
         source: TypeId,
         target: TypeId,
         relation: Relation,
-        error_node: Option<Place>,
+        error_node: Option<FileSpan>,
         head_message: Option<u32>,
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
@@ -362,7 +362,7 @@ impl<'p, 's> Checker<'p, 's> {
         source: TypeId,
         target: TypeId,
         relation: Relation,
-        error_node: Place,
+        error_node: FileSpan,
         head: Option<u32>,
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
@@ -432,7 +432,7 @@ impl<'p, 's> Checker<'p, 's> {
         source: TypeId,
         target: TypeId,
         relation: Relation,
-        error_node: Place,
+        error_node: FileSpan,
         head: u32,
     ) -> RelationDiagnostic {
         let mut r = Relater::new(relation, self.cycles);
@@ -881,15 +881,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the location `getJsxNamespaceAt` resolves names from for `error_node`: the opening
     /// of the innermost enclosing JSX element, or `Node::FILE` if there is none.
-    fn enclosing_jsx_element(&mut self, error_node: Place) -> Node {
+    fn enclosing_jsx_element(&mut self, error_node: FileSpan) -> Node {
         let (file, start, end) = error_node;
         if end == 0 {
             return Node::FILE;
         }
         let (hir, by_kind) = (self.hir(file), self.exprs_by_kind(file));
         let elements = by_kind.of(ExprTag::Jsx).iter().copied();
-        let around = elements.filter(|&e| hir[e].pos <= start && start < hir[e].end);
-        match around.max_by_key(|&e| hir[e].pos) {
+        let enclosing_elements = elements.filter(|&e| hir[e].pos <= start && start < hir[e].end);
+        match enclosing_elements.max_by_key(|&e| hir[e].pos) {
             Some(element) => self.jsx_opening_like(file, element),
             None => Node::FILE,
         }
@@ -906,8 +906,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         // `cloneTypeParameter`. Results computed for a clone are cached, so each target gets its
         // own clone.
-        let around = self.mapper_from(&[source], &[target]);
-        let copy = self.cloned_type_param(declared.0, declared.1, around);
+        let target_mapper = self.mapper_from(&[source], &[target]);
+        let copy = self.cloned_type_param(declared.0, declared.1, target_mapper);
         let to_copy = self.mapper_from(&[source], &[copy]);
         // A cycle through the clone tells us nothing about the enclosing in-progress resolutions.
         let cycles = (self.cycles, self.cycle_at);
@@ -1100,12 +1100,12 @@ impl<'p, 's> Checker<'p, 's> {
             Some(message) => message,
         };
         let names = [Some(&generalized_source_type[..]), Some(&target_type[..])];
-        let gives_way = !is_conversion_or_interface_implementation_message(message);
+        let is_replaceable_message = !is_conversion_or_interface_implementation_message(message);
         let is_already_reported = match r.get_chain_message(0) {
             Some(2353 | 2561) => true,
             Some(2859 | 4104) => r.chain_args_match(&names),
-            Some(2741) => gives_way && r.chain_args_match(&[None, names[0], names[1]]),
-            Some(2740 | 2739) => gives_way && r.chain_args_match(&names),
+            Some(2741) => is_replaceable_message && r.chain_args_match(&[None, names[0], names[1]]),
+            Some(2740 | 2739) => is_replaceable_message && r.chain_args_match(&names),
             _ => false,
         };
         if !is_already_reported {
@@ -1208,15 +1208,15 @@ impl<'p, 's> Checker<'p, 's> {
             && let TypeData::Ref { target: class, .. } = *self.data(source)
             && self.files().flags(class).contains(SymFlags::CLASS)
         {
-            let written = self.written_name(first.name);
-            let declares_one_itself = sm.shape().props.iter().any(|p| {
-                self.written_name(p.name) == written
+            let private_text = self.written_name(first.name);
+            let declares_same_private_name = sm.shape().props.iter().any(|p| {
+                self.written_name(p.name) == private_text
                     && matches!(p.source, PropSource::Symbol(sym) if members_among(&self.files().decls_of(sym)).iter().any(|&(file, m)| {
                         let bound = self.bound(file);
                         matches!(bound.member_owner[m.idx()], crate::bind::MemberOwner::Class(c) if self.files().sym(file, bound.class_symbol[c.idx()]) == class)
                     }))
             });
-            if declares_one_itself {
+            if declares_same_private_name {
                 let target_name = match *self.data(target) {
                     TypeData::Ref { target: sym, .. } => Arg::Sym(sym),
                     _ => Arg::Type(target),
@@ -1224,7 +1224,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.report_error(
                     r,
                     18015,
-                    &[Arg::Bytes(written), Arg::Sym(class), target_name],
+                    &[Arg::Bytes(private_text), Arg::Sym(class), target_name],
                 );
                 return;
             }
@@ -1234,8 +1234,9 @@ impl<'p, 's> Checker<'p, 's> {
             let name = self.prop_to_string(only);
             let args = [&name, &source_type, &target_type].map(|arg| Arg::Bytes(arg));
             self.report_error(r, 2741, &args);
-            if let Some(place) = self.place_of_first_prop_declaration(only) {
-                r.related_info.push(self.declared_here(place, name));
+            if let Some(declaration_span) = self.span_of_first_prop_declaration(only) {
+                r.related_info
+                    .push(self.declared_here(declaration_span, name));
             }
         } else if self.try_elaborate_array_like_errors(r, source, target, false) {
             let (source_type, target_type) = self.type_names_for_error_display(source, target);

@@ -332,12 +332,12 @@ fn visualize_end_of_line(text: &[u8]) -> Vec<u8> {
     let mut rest = text;
     while let Some(at) = strings::index_of_any(rest, b"\r\n") {
         out.extend_from_slice(&rest[..at]);
-        let (shown, len) = match &rest[at..] {
+        let (marker, len) = match &rest[at..] {
             [b'\r', b'\n', ..] => (&b"<CRLF>\n"[..], 2),
             [b'\r', ..] => (&b"<CR>\n"[..], 1),
             _ => (&b"<LF>\n"[..], 1),
         };
-        out.extend_from_slice(shown);
+        out.extend_from_slice(marker);
         rest = &rest[at + len..];
     }
     out.extend_from_slice(rest);

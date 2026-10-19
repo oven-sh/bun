@@ -364,7 +364,9 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (mut binary_like_expression, inside_parenthesis, operands, is_nested) = match *self {
             Self::Left { parent, .. }
-                if f.is_quiet() && is_one_text(parent.left) && f.is_at_start_of_group() =>
+                if f.is_quiet()
+                    && prints_as_single_text(parent.left)
+                    && f.is_at_start_of_group() =>
             {
                 return write!(f, parent.left);
             }
@@ -685,7 +687,7 @@ fn is_inlined_operand(right: Expr<'_>) -> bool {
 }
 
 /// True if `e` is printed as a single text on one line.
-fn is_one_text(e: Expr<'_>) -> bool {
+fn prints_as_single_text(e: Expr<'_>) -> bool {
     matches!(
         e.tag(),
         ExprTag::Ident

@@ -171,7 +171,7 @@ fn check_members<'a>(
         FixOrSuggest::Fix
     };
     // oxlint points at the index signature.
-    let place = if cx.language().is_oxlint { member.span() } else { at };
+    let report_span = if cx.language().is_oxlint { member.span() } else { at };
     let fix = |fixer: Fixer<'a>| {
         if interface.is_some_and(is_declared_again) {
             return None;
@@ -202,7 +202,7 @@ fn check_members<'a>(
         }
         Some(fixer.replace(at, text))
     };
-    let report = cx.report(place, PREFER_RECORD);
+    let report = cx.report(report_span, PREFER_RECORD);
     match fix_or_suggest {
         FixOrSuggest::Fix => report.fix_where_safe(|| interface.is_none_or(is_only_declaration), fix),
         _ => get_fix_or_suggest(report, fix_or_suggest, PREFER_RECORD_SUGGESTION, fix),

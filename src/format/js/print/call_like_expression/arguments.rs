@@ -35,7 +35,7 @@ impl<'a> FormatArguments<'a> {
     }
 
     /// `e` is the call or `new` expression that `call` belongs to.
-    pub(crate) fn of_call(e: Expr<'a>, call: Call<'a>) -> Self {
+    pub(crate) fn from_call(e: Expr<'a>, call: Call<'a>) -> Self {
         FormatArguments {
             args: call.args(),
             parent: match e.tag() {

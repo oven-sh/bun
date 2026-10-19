@@ -108,7 +108,7 @@ pub(crate) enum Kind {
 impl Kind {
     /// The language that Prettier's parser of that name handles. `None` if Prettier has no such parser, so it's a
     /// plugin's or a mistake.
-    pub(crate) fn of_parser(parser: &[u8]) -> Option<Kind> {
+    pub(crate) fn from_parser(parser: &[u8]) -> Option<Kind> {
         let json = || bun_format::json::Parser::from_name(parser).map(Kind::Json);
         let css = || bun_format::css::Parser::from_name(parser).map(Kind::Css);
         let html = || bun_format::html::Parser::from_name(parser).map(Kind::Html);
@@ -145,7 +145,7 @@ impl Kind {
     /// The kind of the file at `path`. `parser` is Prettier's option of that name, which decides if it's set.
     fn of(path: &[u8], parser: Option<&[u8]>) -> Option<Kind> {
         if let Some(parser) = parser {
-            return Kind::of_parser(parser);
+            return Kind::from_parser(parser);
         }
         // Prettier's `getLanguageByFileName` compares the lowercased name.
         let lowered;
@@ -423,9 +423,9 @@ fn collation_key(path: &[u8]) -> Vec<u8> {
 /// The arguments that start with `!`, read the way Prettier reads them: files they match are excluded from the files
 /// the other arguments select. `bun lint` reads them the same way.
 #[derive(Default)]
-pub(crate) struct Negative(Vec<bun_glob::Pattern>);
+pub(crate) struct Exclusions(Vec<bun_glob::Pattern>);
 
-impl Negative {
+impl Exclusions {
     /// `pattern` is an argument without its `!`.
     pub(crate) fn push(&mut self, pattern: &[u8]) {
         let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
@@ -445,7 +445,7 @@ impl Negative {
 pub(crate) struct Ignored {
     /// `.git`, `node_modules`, ..
     directories: Vec<&'static [u8]>,
-    negative: Negative,
+    exclusions: Exclusions,
     /// `.gitignore`, `.prettierignore`: a file is ignored if any of them ignores it.
     files: Vec<Chain>,
     /// `Some` if every `.gitignore` applies, as in Git. Then none of them is in `files`. Caches the ones already read,
@@ -524,11 +524,11 @@ impl Ignored {
             }
         }
         let all = &options.ignore_pattern;
-        let (of_bunfig, of_flags) =
+        let (bunfig_lines, flag_lines) =
             all.split_at(options.bunfig_ignore_pattern_count.min(all.len()));
         for (start, lines) in [
-            (&options.bunfig_base_directory(cwd)[..], of_bunfig),
-            (cwd, of_flags),
+            (&options.bunfig_base_directory(cwd)[..], bunfig_lines),
+            (cwd, flag_lines),
         ] {
             if !lines.is_empty() {
                 let lines = lines.join(&b"\n"[..]);
@@ -537,7 +537,7 @@ impl Ignored {
         }
         Ok(Ignored {
             directories,
-            negative: Negative::default(),
+            exclusions: Exclusions::default(),
             files,
             git_ignores: follows_git.then(Guarded::default),
             cwd: cwd.to_vec(),
@@ -559,7 +559,7 @@ impl Ignored {
     }
 
     fn is_negated(&self, path: &[u8]) -> bool {
-        self.negative.matches(&self.cwd, path)
+        self.exclusions.matches(&self.cwd, path)
     }
 
     /// True for entries that `fast-glob` never visits.
@@ -666,9 +666,9 @@ fn search(
                     return;
                 }
             };
-            let of_config = configs.config_ignores(&scope);
+            let ignore_patterns = configs.config_ignores(&scope);
             let starts_over = !directory.is_first
-                && !std::ptr::eq(configs.config_ignores(&directory.above), of_config);
+                && !std::ptr::eq(configs.config_ignores(&directory.above), ignore_patterns);
             let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
             let mut git = directory.git.clone();
             if reads_gitignore && !directory.is_first {
@@ -696,7 +696,7 @@ fn search(
                     continue;
                 }
                 let is_ignored_by_configuration = is_ignored_by_configuration
-                    || gitignore::is_ignored(of_config, &path, entry.is_directory);
+                    || gitignore::is_ignored(ignore_patterns, &path, entry.is_directory);
                 if entry.is_directory {
                     if enters(&relative) {
                         directories.push(Directory {
@@ -754,8 +754,8 @@ pub(crate) fn expand(
     let mut expanded = Vec::new();
     // Each entry keeps the argument as written, which is how Prettier echoes it.
     let mut entries: Vec<(Entry, Vec<u8>, &[u8])> = Vec::new();
-    for written in patterns {
-        let pattern = paths::from_native(written);
+    for raw_argument in patterns {
+        let pattern = paths::from_native(raw_argument);
         let path = paths::resolve(&cwd, &pattern);
         if ignored.is_in_ignored_directory(&path) {
             continue;
@@ -766,7 +766,7 @@ pub(crate) fn expand(
                     expanded.push(Expanded::Error(
                         [
                             b"Explicitly specified pattern \"",
-                            &written[..],
+                            &raw_argument[..],
                             b"\" is a symbolic link.",
                         ]
                         .concat(),
@@ -775,25 +775,25 @@ pub(crate) fn expand(
             }
             Some((fs::LinkKind::File, size, linked)) => {
                 configs.name(paths::dirname(&path));
-                entries.push((Entry::File(path, size, linked), pattern, &written[..]))
+                entries.push((Entry::File(path, size, linked), pattern, &raw_argument[..]))
             }
             Some((fs::LinkKind::Directory, ..)) => {
                 configs.name(&path);
-                entries.push((Entry::Directory(path), pattern, &written[..]))
+                entries.push((Entry::Directory(path), pattern, &raw_argument[..]))
             }
             None => match pattern.strip_prefix(b"!") {
-                Some(negative) => ignored.negative.push(negative),
-                None => entries.push((Entry::Pattern, pattern, &written[..])),
+                Some(excluded_pattern) => ignored.exclusions.push(excluded_pattern),
+                None => entries.push((Entry::Pattern, pattern, &raw_argument[..])),
             },
         }
     }
     let ignored = &*ignored;
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut is_anything_ignored = false;
-    for (entry, input, written) in entries {
+    for (entry, input, raw_argument) in entries {
         // The prefix of the paths that `fast-glob` returns, which they're sorted by.
-        let mut written_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
-        let (mut found, nothing): (Vec<Target>, &[u8]) = match entry {
+        let mut pattern_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
+        let (mut found, empty_message): (Vec<Target>, &[u8]) = match entry {
             Entry::File(path, size, linked) => {
                 // An ignored file's configuration isn't even read.
                 if ignored.ignores_file(&path, &None) {
@@ -825,7 +825,7 @@ pub(crate) fn expand(
                 let git = ignored.git_ignores_in(&path);
                 let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, git)?;
                 found.iter_mut().for_each(|it| it.ignores_unknown = true);
-                written_base = (paths::relative(&cwd, &path), path);
+                pattern_base = (paths::relative(&cwd, &path), path);
                 (found, b"No supported files were found in the directory")
             }
             Entry::Pattern => {
@@ -835,16 +835,16 @@ pub(crate) fn expand(
                 let parent = bun_glob::scan::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {
-                    written_base = (parent, base.clone());
+                    pattern_base = (parent, base.clone());
                 }
                 // `fast-glob` matches paths spelled with the pattern's own base: an absolute pattern's results are
                 // absolute, and what `../**` finds in the working directory starts with `../` plus that directory's
                 // name.
                 let is_absolute =
-                    paths::is_absolute(pattern) || paths::is_external(&written_base.0);
+                    paths::is_absolute(pattern) || paths::is_external(&pattern_base.0);
                 let absolute = |relative: &[u8]| {
                     let from_base = paths::relative(&base, &paths::resolve(&cwd, relative));
-                    paths::join(&written_base.0, &from_base)
+                    paths::join(&pattern_base.0, &from_base)
                 };
                 let found = match fs::kind(&base) {
                     Some(fs::Kind::Directory) if ignored.ignores_directory(&base) => {
@@ -878,14 +878,16 @@ pub(crate) fn expand(
                 is_anything_ignored = true;
             } else if error_on_unmatched_pattern {
                 expanded.push(Expanded::Error(
-                    [nothing, b": \"", written, b"\"."].concat(),
+                    [empty_message, b": \"", raw_argument, b"\"."].concat(),
                 ));
             }
             continue;
         }
-        let key = |target: &Target| match &written_base.0[..] {
-            b"" => paths::relative(&written_base.1, &target.path),
-            written => paths::join(written, &paths::relative(&written_base.1, &target.path)),
+        let key = |target: &Target| match &pattern_base.0[..] {
+            b"" => paths::relative(&pattern_base.1, &target.path),
+            base_prefix => {
+                paths::join(base_prefix, &paths::relative(&pattern_base.1, &target.path))
+            }
         };
         index_sort::sort_slice_by_cached_key(&mut found[..], |target| collation_key(&key(target)));
         for target in found {
@@ -930,7 +932,7 @@ pub(crate) fn expand_as_oxfmt(
         // Something that exists isn't a pattern, whatever it looks like.
         match strings::index_of_any(normalized, b"*?[{").is_some() && !bun_sys::exists(&path) {
             true => match glob_error(normalized) {
-                Some(refusal) => return Err(Fatal(refusal)),
+                Some(pattern_error) => return Err(Fatal(pattern_error)),
                 None => globs.push(oxc_glob(normalized)),
             },
             false => targets.push(path),

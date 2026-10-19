@@ -160,12 +160,12 @@ if (flags.has("alone")) {
   const rows: (string | number)[][] = [];
   for (const rule of RULE_NAMES) {
     writeFileSync(one, JSON.stringify(configOf([rule])));
-    const alone = byFile(run(one, files, threads).report);
+    const isolated = byFile(run(one, files, threads).report);
     let diagnostics = 0;
     let different = 0;
     for (const path of files) {
       const expected = (together.get(path) ?? []).filter(diagnostic => diagnostic.rule === rule);
-      const actual = (alone.get(path) ?? []).filter(isRule);
+      const actual = (isolated.get(path) ?? []).filter(isRule);
       diagnostics += expected.length;
       if (JSON.stringify(expected) !== JSON.stringify(actual)) different++;
     }

@@ -51,7 +51,7 @@ impl<'a> Writer<'a> {
     }
 
     #[optimize(size)]
-    fn as_written(&mut self, node: Node) {
+    fn write_verbatim(&mut self, node: Node) {
         let text = self.source.get(node.start as usize..node.end as usize);
         self.field(b'W', text.unwrap_or_default());
     }
@@ -84,9 +84,9 @@ impl<'a> Writer<'a> {
             rest = rest[len..].trim_ascii_start();
         }
         let mut words = &mut words[..];
-        let has_blank = |end: Option<&u8>| end.is_some_and(u8::is_ascii_whitespace);
+        let is_whitespace = |end: Option<&u8>| end.is_some_and(u8::is_ascii_whitespace);
         if touches_start {
-            match (has_blank(text.first()), std::mem::take(&mut words)) {
+            match (is_whitespace(text.first()), std::mem::take(&mut words)) {
                 (false, [first, rest @ ..]) => {
                     self.field(b'F', first);
                     words = rest;
@@ -98,7 +98,7 @@ impl<'a> Writer<'a> {
             }
         }
         let mut last = None;
-        if touches_end && !has_blank(text.last()) {
+        if touches_end && !is_whitespace(text.last()) {
             if let [rest @ .., word] = std::mem::take(&mut words) {
                 (last, words) = (Some(*word), rest);
             }
@@ -188,13 +188,13 @@ impl<'a> Writer<'a> {
     #[optimize(size)]
     fn child(&mut self, node: Node) {
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::Element { .. } => self.element(node),
             Kind::BlockStatement { .. } => self.block(node, false),
             Kind::Mustache { .. } => self.mustache(node),
             Kind::MustacheComment { value } => self.mustache_comment(node, value),
             Kind::Comment { value } => self.field(b'c', self.text(value)),
-            Kind::Doctype => self.as_written(node),
+            Kind::Doctype => self.write_verbatim(node),
             _ => {}
         }
     }
@@ -252,7 +252,7 @@ impl<'a> Writer<'a> {
     fn attribute(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::Attr { name, value } => {
                 let name = self.text(name);
                 self.field(b'@', name);
@@ -344,12 +344,12 @@ impl<'a> Writer<'a> {
         }
         let (body, block_params) = self.body_of(program);
         let (inverse_body, _) = self.body_of(inverse);
-        let mut counted = inverse_body
+        let mut significant = inverse_body
             .iter()
             .filter(|id| self.pre_depth > 0 || !self.is_white_space(std::slice::from_ref(*id)));
-        let only = match (counted.next(), counted.next()) {
+        let only = match (significant.next(), significant.next()) {
             (Some(only), None) => Some(self.tree.node(*only))
-                .filter(|it| matches!(it.kind, Kind::BlockStatement { .. }) && !it.is_as_written),
+                .filter(|it| matches!(it.kind, Kind::BlockStatement { .. }) && !it.is_verbatim),
             _ => None,
         };
         let mut strip = strip & !ast::CHAINED;
@@ -377,7 +377,7 @@ impl<'a> Writer<'a> {
     #[optimize(size)]
     fn mustache(&mut self, node: Node) {
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::Mustache {
                 call,
                 is_trusting,
@@ -417,7 +417,7 @@ impl<'a> Writer<'a> {
     fn expression(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
-            _ if node.is_as_written => self.as_written(node),
+            _ if node.is_verbatim => self.write_verbatim(node),
             Kind::SubExpression { .. } if !self.stack.has_room() => {}
             Kind::SubExpression { call } => {
                 self.out.push(b'(');

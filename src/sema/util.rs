@@ -180,7 +180,7 @@ impl PositionSet {
 /// A list that is either borrowed from permanent storage or was built for the caller.
 #[derive(Clone, Debug)]
 pub enum List<'p, T> {
-    Kept(&'p [T]),
+    Permanent(&'p [T]),
     Own(Vec<T>),
     One(T),
 }
@@ -190,7 +190,7 @@ impl<T> std::ops::Deref for List<'_, T> {
     #[inline]
     fn deref(&self) -> &[T] {
         match self {
-            List::Kept(kept) => kept,
+            List::Permanent(borrowed) => borrowed,
             List::Own(own) => own,
             List::One(one) => std::slice::from_ref(one),
         }
@@ -201,7 +201,7 @@ impl<T: Clone> List<'_, T> {
     #[inline]
     pub fn into_vec(self) -> Vec<T> {
         match self {
-            List::Kept(kept) => kept.to_vec(),
+            List::Permanent(borrowed) => borrowed.to_vec(),
             List::Own(own) => own,
             List::One(one) => vec![one],
         }
@@ -211,7 +211,7 @@ impl<T: Clone> List<'_, T> {
 impl<T> Default for List<'_, T> {
     #[inline]
     fn default() -> Self {
-        List::Kept(&[])
+        List::Permanent(&[])
     }
 }
 
@@ -226,7 +226,7 @@ impl<T: Clone> From<List<'_, T>> for Box<[T]> {
     #[inline]
     fn from(list: List<'_, T>) -> Self {
         match list {
-            List::Kept(kept) => kept.into(),
+            List::Permanent(borrowed) => borrowed.into(),
             List::Own(own) => own.into(),
             List::One(one) => Box::new([one]),
         }

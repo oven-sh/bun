@@ -124,8 +124,8 @@ impl Checker<'_, '_> {
         if !self.files().options.import_helpers || self.emit_helpers_has_every_helper(file) {
             return;
         }
-        let (checked, elsewhere) = self.emit_helpers_checked_out_of_order(file);
-        self.check_external_emit_helpers_of_later_files(file, &elsewhere);
+        let (checked, in_later_files) = self.emit_helpers_checked_out_of_order(file);
+        self.check_external_emit_helpers_of_later_files(file, &in_later_files);
         if self.emit_helpers_is_effective_external_module(file) {
             let mut requests = self.emit_helpers_requests(file, &checked);
             requests.shared_sort_by_key(|request| request.order);
@@ -149,9 +149,9 @@ impl Checker<'_, '_> {
     fn check_external_emit_helpers_of_later_files(
         &mut self,
         visited: FileId,
-        elsewhere: &[(FileId, ExprId)],
+        in_later_files: &[(FileId, ExprId)],
     ) {
-        let mut later: Vec<FileId> = elsewhere.iter().map(|it| it.0).collect();
+        let mut later: Vec<FileId> = in_later_files.iter().map(|it| it.0).collect();
         later.shared_sort_unstable();
         later.dedup();
         for file in later {
@@ -161,13 +161,13 @@ impl Checker<'_, '_> {
                 continue;
             }
             // Sorted in the order of the checks.
-            let place = |request: &Request| {
-                let mut checks = elsewhere.iter();
+            let check_index = |request: &Request| {
+                let mut checks = in_later_files.iter();
                 checks.position(|&it| it == (file, request.expression))
             };
             let requests = self.emit_helpers_requests(file, &[]).into_iter();
             let mut requests: Vec<(usize, Request)> = requests
-                .filter_map(|request| Some((place(&request)?, request)))
+                .filter_map(|request| Some((check_index(&request)?, request)))
                 .collect();
             requests.shared_sort_by_key(|it| (it.0, it.1.order));
             let from = self.reported.len();
@@ -452,12 +452,12 @@ impl Checker<'_, '_> {
         deferred: &mut u32,
     ) -> Option<Parent> {
         let hir = self.hir(file);
-        let (around, inside) = Self::emit_helpers_source_element(hir, hir.node(t));
+        let (source_element, inside) = Self::emit_helpers_source_element(hir, hir.node(t));
         let Parent::FnBody(f) = inside else {
             return Some(inside);
         };
         // `checkSignatureDeclaration` checks the type parameters and the return type.
-        let below = hir.find_ancestor(hir.node(t), |n| hir.parent(n) == around);
+        let below = hir.find_ancestor(hir.node(t), |n| hir.parent(n) == source_element);
         let is_head = matches!(hir.data(below), NodeData::Type(_) | NodeData::TypeParam(_));
         self.emit_helpers_out_of_fn(file, f, is_head, deferred)
     }
@@ -495,15 +495,15 @@ impl Checker<'_, '_> {
             };
             let f = FnId(i as u32);
             let mut deferred = 0;
-            let Some(place) = self
+            let Some(outer_deferrals) = self
                 .emit_helpers_out_of_fn(file, f, true, &mut deferred)
-                .and_then(|around| self.emit_helpers_span(file, around))
+                .and_then(|fn_parent| self.emit_helpers_span(file, fn_parent))
             else {
                 continue;
             };
             let (start, end) = self.error_range_of_fn(file, f);
             requests.push(Request {
-                order: (place + deferred, start, 0),
+                order: (outer_deferrals + deferred, start, 0),
                 start,
                 end,
                 helpers,
@@ -545,10 +545,10 @@ impl Checker<'_, '_> {
             ResolutionMode::None => files.options.module == ModuleKind::CommonJs,
         };
         for (i, stmt) in hir.stmts.iter().enumerate() {
-            let (s, around) = (StmtId(i as u32), bound.parent_of_stmt(StmtId(i as u32)));
+            let (s, statement_parent) = (StmtId(i as u32), bound.parent_of_stmt(StmtId(i as u32)));
             // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`: elsewhere a module can only
             // be referenced in an ambient context.
-            let is_module_element = is_commonjs && around == Parent::File;
+            let is_module_element = is_commonjs && statement_parent == Parent::File;
             let mut ask = |deferred: u32, (start, end): (u32, u32), helpers: u32| {
                 requests.push(Request {
                     order: (deferred, stmt.start, 0),
@@ -630,9 +630,9 @@ impl Checker<'_, '_> {
                 StmtKind::ForOf { is_await: true, .. } if target < ScriptTarget::ES2018 => {
                     // `getContainingFunctionOrClassStaticBlock`, `GetFunctionFlags`
                     if self
-                        .enclosing_fn(file, around)
+                        .enclosing_fn(file, statement_parent)
                         .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
-                        && let Some(deferred) = self.emit_helpers_span(file, around)
+                        && let Some(deferred) = self.emit_helpers_span(file, statement_parent)
                     {
                         ask(
                             deferred,
@@ -689,10 +689,10 @@ impl Checker<'_, '_> {
         if hir.import_attributes.is_empty() {
             return true;
         }
-        let written = hir[s].start..self.end_of_stmt(file, s);
+        let statement_range = hir[s].start..self.end_of_stmt(file, s);
         hir.import_attributes
             .iter()
-            .filter(|attributes| written.contains(&attributes.0))
+            .filter(|attributes| statement_range.contains(&attributes.0))
             .all(|&(_, attributes)| match hir[attributes].kind {
                 ExprKind::Object(props) => props.iter().all(|p| {
                     let value = hir[p].value;
@@ -811,8 +811,8 @@ impl Checker<'_, '_> {
 
     /// The span from the `@` of the decorator whose expression is `e` to its end.
     fn emit_helpers_range_of_decorator(&self, file: FileId, e: ExprId) -> (u32, u32) {
-        let written = self.decorator_position(file, e);
-        (written.at_sign, written.end)
+        let decorator_span = self.decorator_position(file, e);
+        (decorator_span.at_sign, decorator_span.end)
     }
 
     /// `checkDecorators`, `markDecoratorAliasReferenced`
@@ -1006,14 +1006,14 @@ impl Checker<'_, '_> {
                 .map(|d| d.1)
         };
         // `willTransformStaticElementsOfDecoratedClass`
-        let of_class = if options.experimental_decorators {
+        let class_decorator = if options.experimental_decorators {
             None
         } else {
             decorator_of(DecoratorOwner::Class(class))
         };
         for m in hir[class].members.iter() {
             let member = hir[m];
-            if let Some(first) = of_class
+            if let Some(first) = class_decorator
                 && self.class_element_or_class_element_parameter_is_decorated(file, m, class)
             {
                 return Some(self.emit_helpers_range_of_decorator(file, first));
@@ -1041,7 +1041,7 @@ impl Checker<'_, '_> {
         &mut self,
         file: FileId,
     ) -> (Vec<(FileId, ExprId, (u32, u32))>, Vec<(FileId, ExprId)>) {
-        let (mut early, mut elsewhere) = (Vec::new(), Vec::new());
+        let (mut early, mut in_later_files) = (Vec::new(), Vec::new());
         self.follow_check(file, true, &mut |c, of, e, current| {
             let hir = c.hir(of);
             let is_requesting = match hir[e].kind {
@@ -1053,7 +1053,7 @@ impl Checker<'_, '_> {
                 _ => false,
             };
             if is_requesting && of != file {
-                elsewhere.push((of, e));
+                in_later_files.push((of, e));
             } else if is_requesting
                 && let Some(order) = c.emit_helpers_order_of_early_check(file, e, current)
                 && !early.iter().any(|it: &(FileId, ExprId, _)| it.1 == e)
@@ -1062,7 +1062,7 @@ impl Checker<'_, '_> {
             }
             false
         });
-        (early, elsewhere)
+        (early, in_later_files)
     }
 
     /// Returns `Request::order` for `e` when something requests its type while `c.currentNode`, as set by
@@ -1107,15 +1107,15 @@ impl Checker<'_, '_> {
             ),
             _ => false,
         };
-        let around = hir.find_ancestor(node, is_source_element);
-        let inside = match hir.data(around) {
+        let source_element = hir.find_ancestor(node, is_source_element);
+        let inside = match hir.data(source_element) {
             NodeData::Stmt(s) => Parent::Stmt(s),
             NodeData::VarDecl(d) => Parent::VarInit(d),
             NodeData::Param(p) => Parent::ParamDefault(p),
             NodeData::PatProp(p) => Parent::PatPropDefault(p),
             NodeData::PatElem(p) => Parent::PatElemDefault(p),
             NodeData::Member(m) => Parent::MemberInit(m),
-            NodeData::Prop(_) => Parent::FnBody(hir.function_of(around)),
+            NodeData::Prop(_) => Parent::FnBody(hir.function_of(source_element)),
             NodeData::Expr(x) => match hir[x].kind {
                 ExprKind::Fn(f) => Parent::FnBody(f),
                 ExprKind::Class(class) => match hir[class].members.iter().next() {
@@ -1126,7 +1126,7 @@ impl Checker<'_, '_> {
             },
             _ => Parent::File,
         };
-        (around, inside)
+        (source_element, inside)
     }
 
     /// `checkClassExpressionExternalHelpers`

@@ -143,9 +143,9 @@ impl ButtonHasType {
         };
         let is_oxlint = cx.language().is_oxlint;
         // oxlint's AST has a node for parentheses.
-        let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
+        let is_plain = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
         let arguments = call.args();
-        if !arguments.first().filter(is_seen).and_then(Expr::as_string).is_some_and(|it| it.is("button")) {
+        if !arguments.first().filter(is_plain).and_then(Expr::as_string).is_some_and(|it| it.is("button")) {
             return;
         }
         // oxlint accepts any `createElement` except `document.createElement`.
@@ -156,7 +156,7 @@ impl ButtonHasType {
         if !is_creation {
             return;
         }
-        let Some((object, ExprKind::Object(properties))) = arguments.get(1).filter(is_seen).map(|it| (it, it.kind()))
+        let Some((object, ExprKind::Object(properties))) = arguments.get(1).filter(is_plain).map(|it| (it, it.kind()))
         else {
             report_missing(e, e.span(), cx);
             return;

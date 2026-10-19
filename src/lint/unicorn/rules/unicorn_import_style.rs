@@ -52,9 +52,9 @@ impl Rule for ImportStyle {
                         ("default", DEFAULT_STYLE),
                         ("unassigned", UNASSIGNED),
                     ];
-                    Some(all.into_iter().fold((0, 0), |(said, allowed), (key, style)| match value.bool(key) {
-                        Some(is_allowed) => (said | style, if is_allowed { allowed | style } else { allowed }),
-                        None => (said, allowed),
+                    Some(all.into_iter().fold((0, 0), |(mentioned, allowed), (key, style)| match value.bool(key) {
+                        Some(is_allowed) => (mentioned | style, if is_allowed { allowed | style } else { allowed }),
+                        None => (mentioned, allowed),
                     }))
                 }
                 _ => return None,
@@ -196,8 +196,8 @@ impl ImportStyle {
         };
         let allowed_styles = match self.styles.iter().rev().find(|it| *it.module_name == *module_name) {
             Some(style_override) => {
-                let (said, allowed) = style_override.styles?;
-                (base.unwrap_or(0) & !said) | allowed
+                let (mentioned, allowed) = style_override.styles?;
+                (base.unwrap_or(0) & !mentioned) | allowed
             }
             None => base?,
         };

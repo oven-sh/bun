@@ -34,14 +34,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let mut flags = ObjectFlags::empty();
         match *self.c.data(ty) {
             TypeData::Ref { target, .. } => {
-                let of_target = self.c.files().flags(target);
+                let target_flags = self.c.files().flags(target);
                 if self.c.has_this_type(target) {
                     flags |= ObjectFlags::REFERENCE;
                 }
                 if self.c.declared_type(target) == ty {
-                    if of_target.contains(SymFlags::CLASS) {
+                    if target_flags.contains(SymFlags::CLASS) {
                         flags |= ObjectFlags::CLASS;
-                    } else if of_target.contains(SymFlags::INTERFACE) {
+                    } else if target_flags.contains(SymFlags::INTERFACE) {
                         flags |= ObjectFlags::INTERFACE;
                     }
                 }

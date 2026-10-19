@@ -39,7 +39,7 @@ pub(crate) struct Context<'c, 'm> {
     /// `--staged`, `--changed`
     pub(crate) only: Option<&'c git::Files<'c>>,
     /// The working directory's config, if it's an oxlint config.
-    pub(crate) of_oxlint: Option<&'c Loaded>,
+    pub(crate) oxlint_config: Option<&'c Loaded>,
     /// `--type-check`: also report the type checker's errors.
     pub(crate) checks_types: bool,
     /// True if [`FileResult::text`] is read.
@@ -191,13 +191,15 @@ impl Context<'_, '_> {
             // the report.
             rule_filter: match self.options.quiet
                 && self.options.max_warnings == -1
-                && self.of_oxlint.is_none()
+                && self.oxlint_config.is_none()
             {
                 true => Some(&only_errors),
                 false => None,
             },
             js_plugins: Some(self.js_plugins),
-            respects_eslint_comments: self.of_oxlint.is_none_or(|it| it.respects_eslint_comments),
+            respects_eslint_comments: self
+                .oxlint_config
+                .is_none_or(|it| it.respects_eslint_comments),
             ..LintOptions::default()
         }
     }
@@ -209,8 +211,8 @@ impl Context<'_, '_> {
     /// True if fixes are applied to the file at `path`. A partly staged file won't be written, so its problems are
     /// reported unfixed.
     pub(crate) fn fixes_file(&self, path: &[u8]) -> bool {
-        let is_written = self.options.fix;
-        self.fixes() && !(is_written && self.only.is_some_and(|it| it.is_partly_staged(path)))
+        let writes_files = self.options.fix;
+        self.fixes() && !(writes_files && self.only.is_some_and(|it| it.is_partly_staged(path)))
     }
 
     /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind they allow is treated as a fix.
@@ -243,7 +245,7 @@ impl Context<'_, '_> {
 
     /// True if warnings are fixed even with `--quiet`, which only hides them from oxlint's report.
     fn fixes_warnings(&self) -> bool {
-        self.of_oxlint.is_some() && self.fixes()
+        self.oxlint_config.is_some() && self.fixes()
     }
 
     /// ESLint's `fix` option as built by `getFixerForFixTypes`.
@@ -365,9 +367,9 @@ impl Context<'_, '_> {
         if was_made || !has_help || linted.config.dialect.is_some() {
             return Vec::new();
         }
-        let is_asked_about = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
+        let is_requested = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
         let how = How {
-            rules: Which::WithHelp(&is_asked_about),
+            rules: Which::WithHelp(&is_requested),
             ..How::default()
         };
         self.verify_as(&path, text, &linted.config, &how).messages
@@ -387,8 +389,8 @@ impl Context<'_, '_> {
         };
         // oxc's parser accepts a name that's declared twice, and oxlint writes `const a = 1; const a = 2;` for two
         // `var`s.
-        let is_refused = |it: &LintMessage| is_parse_error(it) && !is_redeclaration(it);
-        !result.messages.iter().any(is_refused)
+        let is_rejected = |it: &LintMessage| is_parse_error(it) && !is_redeclaration(it);
+        !result.messages.iter().any(is_rejected)
     }
 
     /// Records that the fixes of `rules` would have left the file at `path` with a syntax error.
@@ -526,7 +528,7 @@ impl Context<'_, '_> {
         }
         let (had_types, was_fixed, fixes) = (result.had_types, result.is_fixed, result.fixes);
         let fixed_text = result.fixed_text.take();
-        let shown = std::mem::take(&mut result.path);
+        let display_path = std::mem::take(&mut result.path);
         // The other files' exports are known now, so all the rules can run on the fixed text. Its types are gone.
         let mut fixable = linted.messages.iter().filter(|it| it.fix.is_some());
         let is_fixed_now = self.fixes_file(&path) && !had_types;
@@ -537,9 +539,9 @@ impl Context<'_, '_> {
                     None => self.verify_pass(&path, text, &config, is_fixed),
                 };
                 let text = (text, was_fixed);
-                self.verify_text_by(shown, &path, text, &config, &|_| (), &mut verify)
+                self.verify_text_by(display_path, &path, text, &config, &|_| (), &mut verify)
             }
-            false => self.result(shown, linted, text, was_fixed, &config),
+            false => self.result(display_path, linted, text, was_fixed, &config),
         };
         result.fixed_text = result.fixed_text.take().or(fixed_text);
         result.fixes += fixes;
@@ -800,7 +802,7 @@ impl Context<'_, '_> {
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
         if config.may_hand_back() && text.len() < bun_lint::js_plugin::HEAVY {
-            (self.js_plugins).has_shown(text.len() as u64, result.handed_back.is_some());
+            (self.js_plugins).report_realm_need(text.len() as u64, result.handed_back.is_some());
         }
         if let Some(reason) = result.handed_back {
             let mut all = self.handed_back.lock();
@@ -860,9 +862,13 @@ impl Context<'_, '_> {
                 }
                 let number = format!(" (os error {})", error.errno);
                 let printed = [error.msg().unwrap_or(b"unknown error"), number.as_bytes()].concat();
-                let shown = paths::to_native(target.path.clone());
-                let is_named = target.loaded.flavor != Flavor::Oxlint;
-                return Ok(Some(FileResult::unopened(shown, &printed, is_named)));
+                let display_path = paths::to_native(target.path.clone());
+                let belongs_to_file = target.loaded.flavor != Flavor::Oxlint;
+                return Ok(Some(FileResult::unopened(
+                    display_path,
+                    &printed,
+                    belongs_to_file,
+                )));
             }
             Err(error) => {
                 return Err(Fatal(
@@ -877,10 +883,10 @@ impl Context<'_, '_> {
             }
         };
         self.timing.add(&self.timing.read, started);
-        let shown = paths::to_native(target.path.clone());
+        let display_path = paths::to_native(target.path.clone());
         if let Some(framework) = target.framework() {
             return Ok(Some(self.verify_text_by(
-                shown,
+                display_path,
                 &target.path,
                 (text, false),
                 config,
@@ -892,7 +898,7 @@ impl Context<'_, '_> {
         if target.route() != Route::Native || config.language.parser == Parser::Other {
             return Ok(self.verify_processed_text(
                 &target.loaded,
-                shown,
+                display_path,
                 &target.path,
                 text,
                 config,
@@ -900,7 +906,7 @@ impl Context<'_, '_> {
             ));
         }
         Ok(Some(self.verify_text(
-            shown,
+            display_path,
             &target.path,
             text,
             config,

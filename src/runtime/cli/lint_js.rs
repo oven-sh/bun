@@ -45,7 +45,7 @@ pub(crate) struct LintVm {
     /// Set while `handle` runs.
     call: Cell<Option<NonNull<Call<'static, 'static>>>>,
     /// The answers to [`Bun__Lint__ask`] during this call.
-    kept: RefCell<KeptAnswers>,
+    answers: RefCell<KeptAnswers>,
 }
 
 /// Answers that native code has spans into. Each is written once, and its bytes don't move until the call is over:
@@ -65,9 +65,9 @@ struct CallGuard<'v>(&'v LintVm, &'v JSGlobalObject);
 impl Drop for CallGuard<'_> {
     fn drop(&mut self) {
         self.0.call.set(None);
-        let kept = core::mem::take(&mut *self.0.kept.borrow_mut());
+        let answers = core::mem::take(&mut *self.0.answers.borrow_mut());
         // The program does this itself, unless it was cut short.
-        if kept.has_lent_span {
+        if answers.has_lent_span {
             Bun__Lint__endFile(self.1);
         }
     }
@@ -126,14 +126,14 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
     // SAFETY: it points to the stack of `ThreadVm::call`, which is below this frame and clears the pointer before it
     // returns. `serve` runs no JavaScript, so this is the only reference.
     let call = unsafe { call.as_mut() };
-    state.kept.borrow_mut().has_lent_span = true;
+    state.answers.borrow_mut().has_lent_span = true;
     if kind == 0 {
         return Some(LintSpan::of(call.content));
     }
     if details.is_empty() {
-        let kept = state.kept.borrow();
-        let known = kept.plain.iter().find(|it| it.0 == kind);
-        if let Some(known) = known.and_then(|it| kept.all.get(it.1)) {
+        let answers = state.answers.borrow();
+        let known = answers.plain.iter().find(|it| it.0 == kind);
+        if let Some(known) = known.and_then(|it| answers.all.get(it.1)) {
             return Some(LintSpan::of(known));
         }
     }
@@ -142,12 +142,12 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
     // The allocator aligns every block to at least 8 bytes, which native code relies on to read numbers in place.
     debug_assert!(answer.is_empty() || answer.as_ptr().addr().is_multiple_of(8));
     let span = LintSpan::of(&answer);
-    let mut kept = state.kept.borrow_mut();
+    let mut answers = state.answers.borrow_mut();
     if details.is_empty() {
-        let at = kept.all.len();
-        kept.plain.push((kind, at));
+        let at = answers.all.len();
+        answers.plain.push((kind, at));
     }
-    kept.all.push(answer);
+    answers.all.push(answer);
     Some(span)
 }
 
@@ -210,7 +210,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
             Ok(LintVm {
                 handle: Strong::create(handle, global),
                 call: Cell::new(None),
-                kept: RefCell::default(),
+                answers: RefCell::default(),
             })
         }
         Err(error) => Err(message_of(global, global.take_exception(error))),
@@ -474,14 +474,14 @@ struct Vms {
 #[derive(Default)]
 struct Memory {
     /// RSS of the process before the first VM started.
-    before: usize,
+    rss_before: usize,
     /// How much RSS had grown since then at the last measurement. That covers the VMs, the workers their plugins start,
-    /// and everything outside the JS heaps. `most` is its peak, and `most_for_one` the peak per VM that had loaded its
-    /// plugins.
-    taken: usize,
-    most: usize,
-    most_for_one: usize,
-    /// `taken` and the bytes still to lint when `growth_per_byte` was last computed. `growth_per_byte` is how many
+    /// and everything outside the JS heaps. `peak_growth` is its peak, and `peak_per_vm` the peak per VM that had
+    /// loaded its plugins.
+    rss_growth: usize,
+    peak_growth: usize,
+    peak_per_vm: usize,
+    /// `rss_growth` and the bytes still to lint when `growth_per_byte` was last computed. `growth_per_byte` is how many
     /// bytes RSS grew per linted byte.
     last_sample: (usize, u64),
     growth_per_byte: Option<f64>,
@@ -493,24 +493,25 @@ struct Memory {
 impl Memory {
     /// Call this before the first VM starts. `left` is [`Demand::left`].
     fn begin(&mut self, left: u64) {
-        self.before = bun_sys::self_process_memory_usage().unwrap_or(0);
+        self.rss_before = bun_sys::self_process_memory_usage().unwrap_or(0);
         self.last_sample = (0, left);
     }
 
     /// `left` is [`Demand::left`].
     fn measure(&mut self, left: u64, loaded: usize) {
         let now = bun_sys::self_process_memory_usage().unwrap_or(0);
-        self.taken = now.saturating_sub(self.before);
-        self.most = self.most.max(self.taken);
+        self.rss_growth = now.saturating_sub(self.rss_before);
+        self.peak_growth = self.peak_growth.max(self.rss_growth);
         // Only after 1/32 of the remaining bytes. A smaller sample is too noisy.
-        let (taken, left_then) = self.last_sample;
+        let (growth_then, left_then) = self.last_sample;
         let done = left_then.saturating_sub(left);
         if done > 0 && done >= left_then / 32 {
-            self.growth_per_byte = Some(self.taken.saturating_sub(taken) as f64 / done as f64);
-            self.last_sample = (self.taken, left);
+            self.growth_per_byte =
+                Some(self.rss_growth.saturating_sub(growth_then) as f64 / done as f64);
+            self.last_sample = (self.rss_growth, left);
         }
-        if let Some(for_one) = self.taken.checked_div(loaded) {
-            self.most_for_one = self.most_for_one.max(for_one);
+        if let Some(for_one) = self.rss_growth.checked_div(loaded) {
+            self.peak_per_vm = self.peak_per_vm.max(for_one);
         }
     }
 
@@ -518,7 +519,7 @@ impl Memory {
     fn note_load(&mut self, left: u64, loaded: usize) {
         self.measure(left, loaded);
         if self.growth_per_byte.is_none() {
-            self.last_sample = (self.taken, left);
+            self.last_sample = (self.rss_growth, left);
         }
     }
 
@@ -528,7 +529,7 @@ impl Memory {
         self.files_done = self.files_done.wrapping_add(1);
         if self.files_done.is_multiple_of(16)
             || self.growth_per_byte.is_none()
-            || self.taken >= planned
+            || self.rss_growth >= planned
         {
             self.measure(demand.left(), loaded);
         }
@@ -537,7 +538,7 @@ impl Memory {
     /// True if a VM should be freed. That throws away everything it has loaded and compiled, so only at 1.5 times what
     /// was `planned`. And not within 16 files of the last time, because freed memory takes a while to show.
     fn is_too_much(&self, planned: usize) -> bool {
-        self.taken > planned / 2 * 3 && self.files_done.wrapping_sub(self.freed_at) >= 16
+        self.rss_growth > planned / 2 * 3 && self.files_done.wrapping_sub(self.freed_at) >= 16
     }
 
     /// True if one more VM fits into what was `planned`. Assumes that the loaded VMs keep growing per byte as they have
@@ -545,12 +546,12 @@ impl Memory {
     fn has_room_for_another(&self, planned: usize, left: u64, vms: Vms) -> bool {
         let one = match self.growth_per_byte {
             Some(growth_per_byte) if vms.loaded > 0 => {
-                (self.taken as f64 + growth_per_byte * left as f64) / vms.loaded as f64
+                (self.rss_growth as f64 + growth_per_byte * left as f64) / vms.loaded as f64
             }
             // The size right after loading is a poor predictor of the final size.
             _ => NOT_LOADED_YET as f64,
         };
-        let all = one.max(self.most_for_one as f64) * (vms.count + 1) as f64;
+        let all = one.max(self.peak_per_vm as f64) * (vms.count + 1) as f64;
         vms.count == 0 || all <= planned as f64
     }
 }
@@ -669,7 +670,7 @@ impl CrewState {
     }
 
     /// How many VMs are busy with heavy files. They don't count towards how many VMs the other files are worth.
-    fn kept(&self) -> usize {
+    fn heavy_vms(&self) -> usize {
         usize::from(self.shared.is_some() && !self.is_done_with_heavy)
     }
 }
@@ -737,7 +738,7 @@ impl Crew {
             let planned = crew.start.memory();
             if !is_needed
                 || !(state.memory).has_room_for_another(planned, crew.demand.left(), vms)
-                || !crew.demand.is_worth_another(vms.count, state.kept())
+                || !crew.demand.is_worth_another(vms.count, state.heavy_vms())
             {
                 return Ok(());
             }
@@ -889,7 +890,7 @@ impl Crew {
         // Never the first member, which has the heavy files, and never the last one besides it.
         if at != 0
             && state.memory.is_too_much(planned)
-            && vms.count - state.kept() > 1
+            && vms.count - state.heavy_vms() > 1
             && !state.all.iter().any(|it| it.is_freed && !it.is_gone)
         {
             state.memory.freed_at = state.memory.files_done;
@@ -1023,19 +1024,22 @@ impl Engine for Engines {
 
     fn sizes(&self) -> (usize, usize) {
         let state = self.0.state.lock();
-        (state.memory.most, state.all.len() - state.vms().count)
+        (
+            state.memory.peak_growth,
+            state.all.len() - state.vms().count,
+        )
     }
 
-    fn may_come(&self, size: u64) {
-        self.0.demand.may_come(size);
+    fn may_need_realm(&self, size: u64) {
+        self.0.demand.may_need_realm(size);
     }
 
-    fn comes(&self, size: u64) {
-        self.0.demand.comes(size);
+    fn needs_realm(&self, size: u64) {
+        self.0.demand.needs_realm(size);
     }
 
-    fn has_shown(&self, size: u64, has_come: bool) {
-        self.0.demand.has_shown(size, has_come);
+    fn report_realm_need(&self, size: u64, needed_realm: bool) {
+        self.0.demand.report_realm_need(size, needed_realm);
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

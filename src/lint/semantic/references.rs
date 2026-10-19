@@ -73,7 +73,7 @@ pub(crate) struct References {
     marks: Vec<u32>,
     /// For each identifier expression, the index in `Variables::list` of the value that the name
     /// resolves to at that position.
-    of_expr: Vec<u32>,
+    expr_variables: Vec<u32>,
     /// Indices into `all`, scope by scope, in `in_creation_order` order, and the start of each scope's
     /// references. Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
@@ -221,10 +221,10 @@ impl Visible<'_> {
 
     /// `Variables::resolve` for a reference at `pos`, which must be the current position.
     #[inline(always)]
-    fn resolve(&self, name: Atom, pos: u32, wants: u8) -> u32 {
+    fn resolve(&self, name: Atom, pos: u32, wanted_flags: u8) -> u32 {
         let mut index = self.innermost[self.variables.slot_of(name)];
         while let Some(it) = self.variables.list.get(index as usize) {
-            if it.flags & wants != 0
+            if it.flags & wanted_flags != 0
                 && !(pos < it.body_start
                     && (it.first_pos >= it.body_start || Variables::is_implicit(it)))
                 && (self.suspended == 0 || !self.is_suspended[it.scope as usize])
@@ -245,8 +245,8 @@ struct Resolver<'t> {
     unvisited: &'t [(u32, u32)],
     cursor: Cursor<'t>,
     all: Vec<RawReference>,
-    /// `References::of_expr`
-    of_expr: Vec<u32>,
+    /// `References::expr_variables`
+    expr_variables: Vec<u32>,
     /// The number of references that resolve to each variable, at the variable's index plus one.
     /// The last entry counts the unresolved ones. The highest bits are `HAS_READ`, `HAS_WRITE`,
     /// `HAS_MODIFYING_WRITE`.
@@ -288,7 +288,7 @@ impl<'t> Resolver<'t> {
             },
             cursor: tree.cursor(),
             all: Vec::with_capacity(capacity),
-            of_expr: vec![NONE; file.hir.exprs.len()],
+            expr_variables: vec![NONE; file.hir.exprs.len()],
             counts: vec![0; variables.list.len() + 2],
             moved: Vec::new(),
             last_moved_to: 0,
@@ -308,7 +308,7 @@ impl<'t> Resolver<'t> {
     /// For an identifier expression that isn't a reference.
     fn add_name(&mut self, id: ExprId, pos: u32, name: Atom) {
         self.go_to(pos);
-        if let Some(slot) = self.of_expr.get_mut(id.idx()) {
+        if let Some(slot) = self.expr_variables.get_mut(id.idx()) {
             *slot = self.visible.resolve(name, pos, VALUE);
         }
     }
@@ -340,7 +340,7 @@ impl<'t> Resolver<'t> {
         let variable = self.visible.resolve(name, pos, VALUE);
         let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
         *count = (*count + 1) | HAS_READ;
-        if let Some(slot) = self.of_expr.get_mut(id.idx()) {
+        if let Some(slot) = self.expr_variables.get_mut(id.idx()) {
             *slot = variable;
         }
         self.all.push(RawReference {
@@ -417,21 +417,21 @@ impl<'t> Resolver<'t> {
             self.last_moved_to = self.last_moved_to.max(it.from);
         }
         it.from = self.go_to(it.pos);
-        let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
+        let wanted_flags = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
             + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
         it.variable = match it.site {
             ReferenceSite::Declaration(index) => {
                 it.from = self.variables.list[index as usize].scope;
                 self.variables
-                    .resolve(self.visible.tree, it.from, it.name, it.pos, wants)
+                    .resolve(self.visible.tree, it.from, it.name, it.pos, wanted_flags)
                     .unwrap_or(NONE)
             }
-            _ => self.visible.resolve(it.name, it.pos, wants),
+            _ => self.visible.resolve(it.name, it.pos, wanted_flags),
         };
         if let ReferenceSite::Expr(e) = it.site
-            && let Some(slot) = self.of_expr.get_mut(e.idx())
+            && let Some(slot) = self.expr_variables.get_mut(e.idx())
         {
-            *slot = if wants == VALUE {
+            *slot = if wanted_flags == VALUE {
                 it.variable
             } else {
                 self.visible.resolve(it.name, it.pos, VALUE)
@@ -772,9 +772,9 @@ impl<'f> Collector<'f, '_> {
                     UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
                 ),
                 Some(kind) if can_be_part_of_target(kind) => match bound.parent_of_expr(parent) {
-                    Parent::Expr(around) => hir
+                    Parent::Expr(grandparent) => hir
                         .exprs
-                        .get(around.idx())
+                        .get(grandparent.idx())
                         .is_some_and(|it| !can_be_part_of_target(it.kind)),
                     Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
                     _ => true,
@@ -796,8 +796,8 @@ impl<'f> Collector<'f, '_> {
                     .copied()
                     .unwrap_or(ExprId::NONE);
                 match bound.parent_of_expr(owner) {
-                    Parent::Expr(around) => matches!(
-                        hir.exprs.get(around.idx()).map(|it| it.kind),
+                    Parent::Expr(owner_parent) => matches!(
+                        hir.exprs.get(owner_parent.idx()).map(|it| it.kind),
                         Some(ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Jsx(_))
                     ),
                     Parent::Stmt(s) => matches!(
@@ -1105,7 +1105,7 @@ impl<'f> Collector<'f, '_> {
                         .copied()
                         .unwrap_or(hir::FnId::NONE);
                     let scope = tree
-                        .of_fn
+                        .scope_of_fn
                         .get(function.idx())
                         .and_then(|&it| tree.scopes.get(it as usize));
                     if scope.is_none_or(|it| it.kind != ScopeKind::Function) {
@@ -1444,14 +1444,16 @@ fn group_by(
         Key::Variable(unresolved) => (it.variable as usize).min(unresolved),
         Key::Scope => it.from as usize,
     };
-    let mut place = |i: u32, it: &RawReference| {
+    let mut push_to_group = |i: u32, it: &RawReference| {
         let slot = &mut next[key(it)];
         indices[*slot as usize] = i;
         *slot += 1;
     };
     match order.is_empty() {
-        true => (0..).zip(all).for_each(|(i, it)| place(i, it)),
-        false => order.iter().for_each(|&i| place(i, &all[i as usize])),
+        true => (0..).zip(all).for_each(|(i, it)| push_to_group(i, it)),
+        false => order
+            .iter()
+            .for_each(|&i| push_to_group(i, &all[i as usize])),
     }
     (indices, counts)
 }
@@ -1492,7 +1494,7 @@ impl References {
         }
         let Resolver {
             all,
-            of_expr,
+            expr_variables,
             mut counts,
             mut moved,
             is_visiting_order,
@@ -1525,7 +1527,7 @@ impl References {
             by_variable,
             variable_starts,
             marks,
-            of_expr,
+            expr_variables,
             by_scope: OnceCell::new(),
             by_scope_in_some_order: OnceCell::new(),
             scope_count: tree.scopes.len(),
@@ -1555,8 +1557,11 @@ impl References {
 
     /// The index in `Variables::list` of the value that the identifier `e` resolves to.
     #[inline]
-    pub(crate) fn of_expr(&self, e: ExprId) -> Option<u32> {
-        self.of_expr.get(e.idx()).copied().filter(|it| *it != NONE)
+    pub(crate) fn variable_of_expr(&self, e: ExprId) -> Option<u32> {
+        self.expr_variables
+            .get(e.idx())
+            .copied()
+            .filter(|it| *it != NONE)
     }
 
     /// Indices into `all`, with each destructuring pattern's names before everything else in it.

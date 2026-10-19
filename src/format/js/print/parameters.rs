@@ -215,7 +215,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         return match has_decorators {
             true => write!(
                 f,
-                group(&format_args!(FormatDecorators::of_param(param), content))
+                group(&format_args!(FormatDecorators::from_param(param), content))
             ),
             false => write!(f, content),
         };
@@ -296,13 +296,13 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
     } else if parameter_decorators_get_their_own_group(f) {
         write!(
             f,
-            [group(&FormatDecorators::of_param(param)), group(&content)]
+            [group(&FormatDecorators::from_param(param)), group(&content)]
         );
     } else {
         write!(
             f,
             group(&format_args!(
-                FormatDecorators::of_param(param),
+                FormatDecorators::from_param(param),
                 group(&content)
             ))
         );

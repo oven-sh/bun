@@ -2,7 +2,7 @@
 //! goes through the parser without recovery, which rejects it at the first error. A rejected text
 //! is parsed again by the parser that recovers from errors the way TypeScript's does.
 
-use crate::{Options, Part, Refusal, Scratch};
+use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::hir::{
@@ -55,12 +55,12 @@ fn return_scratch(scratch: Box<Scratch>) {
 #[derive(Default)]
 pub struct Counts {
     pub parsed: AtomicU64,
-    pub refused: [AtomicU64; Refusal::COUNT],
+    pub refused: [AtomicU64; Rejection::COUNT],
 }
 
 pub static COUNTS: Counts = Counts {
     parsed: AtomicU64::new(0),
-    refused: [const { AtomicU64::new(0) }; Refusal::COUNT],
+    refused: [const { AtomicU64::new(0) }; Rejection::COUNT],
 };
 
 /// `Options::reads_jsdoc`
@@ -92,7 +92,11 @@ fn is_json(path: &[u8], script_kind: Option<ScriptKind>) -> bool {
 
 /// Position of the error in a text that both parsers rejected. The parser without recovery rejected it for `why` at
 /// `at`, after the token that ends at `after`. The recovering parser gave up at `recovery_pos`.
-fn refusal_position(text: &[u8], (why, at, after): (Refusal, u32, u32), recovery_pos: u32) -> u32 {
+fn refusal_position(
+    text: &[u8],
+    (why, at, after): (Rejection, u32, u32),
+    recovery_pos: u32,
+) -> u32 {
     match why {
         // The invalid token starts after the whitespace that follows the last token.
         _ if why.is_scanner_error() => {
@@ -101,7 +105,7 @@ fn refusal_position(text: &[u8], (why, at, after): (Refusal, u32, u32), recovery
             after + rest.iter().take_while(is_blank).count() as u32
         }
         // A construct that TypeScript only reports is noticed after all of it is read, so `at` is too late.
-        Refusal::Reported => recovery_pos,
+        Rejection::Reported => recovery_pos,
         _ => at,
     }
 }
@@ -178,11 +182,11 @@ fn parse_file(
     }
     // `a <!--b`, which every other parser reads as `a < !--b`.
     if is_module {
-        let refused = match is_module_by_name {
+        let html_comment_pos = match is_module_by_name {
             true => html_opens.first_on_its_line,
             false => html_opens.first,
         };
-        if let Some(at) = refused {
+        if let Some(at) = html_comment_pos {
             let error = Diagnostic::new(DiagnosticKind::Parse, (at, at + 4), 1109, &[]);
             *file = FileBuilder {
                 kind: FileKind::Tsx,
@@ -258,7 +262,7 @@ fn parse_file_as(
         let first = once(options, scratch).map_err(|it| (it.why, it.at, it.after))?;
         if rejects_top_level_await && first.has_top_level_await {
             scratch.recycle(first.file);
-            return Err((Refusal::Reported, 0, 0));
+            return Err((Rejection::Reported, 0, 0));
         }
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
         // context at its top level.
@@ -281,25 +285,30 @@ fn parse_file_as(
             .map_err(|it| (it.why, it.at, it.after))
     };
     let is_flow = dialect.flow && is_js;
-    let parsed = attempt(options, scratch).or_else(|refused| {
-        COUNTS.refused[refused.0 as usize].fetch_add(1, Relaxed);
+    let parsed = attempt(options, scratch).or_else(|rejection| {
+        COUNTS.refused[rejection.0 as usize].fetch_add(1, Relaxed);
         // No parser recovers from an error in Flow.
         if is_flow {
-            return Err(refused);
+            return Err(rejection);
         }
         let recovers = true;
         let general = Options {
             recovers,
             ..options
         };
-        let file = attempt(general, scratch)
-            .map_err(|given_up| (refused.0, refusal_position(text, refused, given_up.1), 0))?;
+        let file = attempt(general, scratch).map_err(|recovery_rejection| {
+            (
+                rejection.0,
+                refusal_position(text, rejection, recovery_rejection.1),
+                0,
+            )
+        })?;
         // TypeScript's parser accepts `var;`, `class {}` and `catch (a = 1)` and leaves them to its
         // checker. acorn and Babel reject them, and only the parser without recovery knows that.
-        let is_an_error = matches!(refused.0, Refusal::Syntax | Refusal::Reported);
+        let is_an_error = matches!(rejection.0, Rejection::Syntax | Rejection::Reported);
         if is_ecmascript && is_an_error && file.diagnostics.is_empty() {
             scratch.recycle(file);
-            return Err(refused);
+            return Err(rejection);
         }
         Ok(file)
     });
@@ -307,9 +316,9 @@ fn parse_file_as(
         Ok(file) => file,
         // Nothing looks at the file any further. Its first error is the only thing reported.
         Err((why, at, _)) => {
-            let is_too_deep = why == Refusal::TooDeep;
+            let is_too_deep = why == Rejection::TooDeep;
             let is_first_in_text = dialect == Dialect::default();
-            let error = match scratch.error_before_refusal(is_first_in_text, text.len()) {
+            let error = match scratch.error_before_rejection(is_first_in_text, text.len()) {
                 Some(error) => error.clone(),
                 None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
             };
@@ -548,10 +557,10 @@ pub struct PartError {
 }
 
 impl PartError {
-    fn of(refused: &crate::Refused, at: u32) -> PartError {
+    fn of(rejection: &crate::Rejected, at: u32) -> PartError {
         PartError {
             at,
-            is_too_deep: refused.why == Refusal::TooDeep,
+            is_too_deep: rejection.why == Rejection::TooDeep,
         }
     }
 }
@@ -601,13 +610,13 @@ impl<'t> Parts<'t> {
         };
         // Find where the part ends.
         let whole = options(part.from, part.until);
-        let found = crate::parse_with_own_atoms(text, whole, scratch).or_else(|refused| {
-            if !refused.why.is_scanner_error() {
-                return Err(PartError::of(&refused, refused.at));
+        let found = crate::parse_with_own_atoms(text, whole, scratch).or_else(|rejection| {
+            if !rejection.why.is_scanner_error() {
+                return Err(PartError::of(&rejection, rejection.at));
             }
             // What follows a part doesn't have to be a valid token. If it isn't, end the text before it.
-            crate::parse_with_own_atoms(text, options(part.from, refused.after), scratch)
-                .map_err(|again| PartError::of(&again, refused.after))
+            crate::parse_with_own_atoms(text, options(part.from, rejection.after), scratch)
+                .map_err(|again| PartError::of(&again, rejection.after))
         })?;
         let until = found.end.1;
         scratch.recycle(found.file);
@@ -617,7 +626,7 @@ impl<'t> Parts<'t> {
         let parsed = crate::parse_with_own_atoms(code, options(0, code.len() as u32), scratch);
         core::mem::swap(&mut scratch.stops, &mut self.part_stops);
         let mut parsed =
-            parsed.map_err(|refused| PartError::of(&refused, part.from + refused.at))?;
+            parsed.map_err(|rejection| PartError::of(&rejection, part.from + rejection.at))?;
         let result = then(
             Summary::InPlace(&mut parsed.file),
             &scratch.atoms(code),

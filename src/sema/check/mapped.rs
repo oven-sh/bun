@@ -1,7 +1,7 @@
 //! Types computed from other types: `keyof`, `T[K]`, conditional, mapped and template literal types.
 
 use super::alias::NewAlias;
-use super::related::Place;
+use super::related::FileSpan;
 use super::shape::MemberCount;
 use super::shortcuts::task_fact;
 use super::*;
@@ -24,7 +24,7 @@ pub(super) enum AccessNode {
     /// `declaration.Name()` of an element of an array binding pattern.
     BindingName(FileId, PatId),
     /// The name of a property in an assignment pattern, or an element of one (`createSyntheticExpression`).
-    Name(Place),
+    Name(FileSpan),
     Other,
 }
 
@@ -434,7 +434,7 @@ impl<'p, 's> Checker<'p, 's> {
             if matches!(self.mapped_modifiers_source(file, node), Some((_, true))) {
                 return (self.intern(TypeData::Keyof(ty)), true);
             }
-            List::Kept(self.parts(constraint))
+            List::Permanent(self.parts(constraint))
         } else {
             self.mapped_key_types(file, node, mapper, constraint).0
         };
@@ -675,9 +675,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => return self.key_type_of_name(prop.name),
             },
-            PropSource::Literal(file, written) => {
-                let written = &self.hir(*file)[*written];
-                (*file, (written.key, written.name_kind))
+            PropSource::Literal(file, literal_prop) => {
+                let literal_prop = &self.hir(*file)[*literal_prop];
+                (*file, (literal_prop.key, literal_prop.name_kind))
             }
             PropSource::Type(_)
                 if self.is_tuple(owner) && text.first().is_some_and(|c| c.is_ascii_digit()) =>
@@ -723,8 +723,8 @@ impl<'p, 's> Checker<'p, 's> {
                 matches!(self.files().value_declaration(*sym), Some((file, Decl::Member(m)))
                     if matches!(self.hir(file)[m].key, PropKey::Computed(_)))
             }
-            PropSource::Literal(file, written) => {
-                matches!(self.hir(*file)[*written].key, PropKey::Computed(_))
+            PropSource::Literal(file, literal_prop) => {
+                matches!(self.hir(*file)[*literal_prop].key, PropKey::Computed(_))
             }
             PropSource::Mapped(..)
             | PropSource::Intersected(..)
@@ -800,17 +800,17 @@ impl<'p, 's> Checker<'p, 's> {
         let member = |prop: &Prop| match prop.source {
             PropSource::Symbol(sym) => (self.files().value_declaration(sym))
                 .filter(|declaration| matches!(declaration.1, Decl::Member(_))),
-            PropSource::Literal(file, written) => Some((file, Decl::Property(written))),
+            PropSource::Literal(file, literal_prop) => Some((file, Decl::Property(literal_prop))),
             _ => None,
         };
-        let of_first = member(first);
-        let is_by_declaration = match of_first {
+        let first_declaration = member(first);
+        let is_by_declaration = match first_declaration {
             Some((file, Decl::Member(m))) => matches!(self.hir(file)[m].key, PropKey::Name(_)),
             Some((file, Decl::Property(p))) => matches!(self.hir(file)[p].key, PropKey::Name(_)),
             _ => false,
         };
         let is_declared_elsewhere =
-            |other: &Prop| member(other).is_some_and(|it| Some(it) != of_first);
+            |other: &Prop| member(other).is_some_and(|it| Some(it) != first_declaration);
         if is_by_declaration
             && matches!(self.data(key), TypeData::NumberLit { .. })
             && props[1..].iter().any(is_declared_elsewhere)
@@ -1090,7 +1090,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getIndexNodeForAccessExpression`, as an error position.
-    fn place_of_index_node(&self, access_node: AccessNode) -> Option<Place> {
+    fn span_of_index_node(&self, access_node: AccessNode) -> Option<FileSpan> {
         match access_node {
             AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
                 ExprKind::Index { index, .. } => Some(self.span_of_parenthesized_expr(file, index)),
@@ -1119,7 +1119,7 @@ impl<'p, 's> Checker<'p, 's> {
             AccessNode::BindingName(file, pat) => {
                 Some((file, self.hir(file)[pat].pos, self.end_of_pat(file, pat)))
             }
-            AccessNode::Name(place) => Some(place),
+            AccessNode::Name(span) => Some(span),
             AccessNode::None | AccessNode::Other => None,
         }
     }
@@ -1138,7 +1138,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if matches!(self.hir(file)[p].kind, ExprKind::Unary { op: UnOp::Delete, .. })))
         {
             self.error_at(
-                self.place_inside_parentheses(file, e),
+                self.span_inside_parentheses(file, e),
                 2542,
                 &[Arg::Type(object)],
             );
@@ -1183,7 +1183,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Some((file, e)) = access_expression
                     && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
                     && self.is_assignment_to_readonly_entity(file, e, obj, prop)
-                    && let Some(index_node) = self.place_of_index_node(access_node)
+                    && let Some(index_node) = self.span_of_index_node(access_node)
                 {
                     self.error_at(index_node, 2540, &[Arg::Prop(prop)]);
                     return None;
@@ -1212,7 +1212,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && !access_flags.contains(AccessFlags::ALLOW_MISSING)
                     && self.every_type(object, ends)
                 {
-                    let index_node = self.place_of_index_node(access_node);
+                    let index_node = self.span_of_index_node(access_node);
                     if let TypeData::Tuple { flags, .. } = self.data(object) {
                         if at < 0.0 {
                             if let Some(index_node) = index_node {
@@ -1286,7 +1286,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if let Some((file, e)) = access_expression
                         && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
                     {
-                        let at = self.place_inside_parentheses(file, e);
+                        let at = self.span_inside_parentheses(file, e);
                         // `originalObjectType`
                         let original_object = self.type_of_expr(file, obj);
                         let original_object = self.non_null_type(original_object);
@@ -1311,7 +1311,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if info.key == TypeId::STRING
                     && !self.is_assignable(index, TypeId::STRING)
                     && !self.is_assignable(index, TypeId::NUMBER)
-                    && let Some(index_node) = self.place_of_index_node(access_node)
+                    && let Some(index_node) = self.span_of_index_node(access_node)
                 {
                     self.error_at(index_node, 2538, &[Arg::Type(index)]);
                 } else {
@@ -1342,7 +1342,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && self.flags(index) & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
                         && let Some(name) = name
                     {
-                        let at = self.place_inside_parentheses(file, e);
+                        let at = self.span_inside_parentheses(file, e);
                         let printed = self.apparent_type_of_intersection(object);
                         self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                         return Some(TypeId::UNDEFINED);
@@ -1366,7 +1366,7 @@ impl<'p, 's> Checker<'p, 's> {
                     )
                     && self.is_block_scoped_global(name)
                 {
-                    let at = self.place_inside_parentheses(file, e);
+                    let at = self.span_inside_parentheses(file, e);
                     let printed = self.apparent_type_of_intersection(object);
                     self.error_at(at, 2339, &[Arg::Atom(name), Arg::Type(printed)]);
                 } else if no_implicit_any
@@ -1385,7 +1385,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_js_literal_type(object) {
             return Some(TypeId::ANY);
         }
-        if let Some(index_node) = self.place_of_index_node(access_node) {
+        if let Some(index_node) = self.span_of_index_node(access_node) {
             let is_bigint_literal = match access_node {
                 AccessNode::ElementAccess(file, e) => {
                     matches!(self.hir(file)[e].kind, ExprKind::Index { index, .. }
@@ -1614,7 +1614,7 @@ impl<'p, 's> Checker<'p, 's> {
             let value = self.reduced(value);
             if value.is_never() || self.is_union(value) {
                 let distributed_over = mapper;
-                let of_member = |c: &mut Self, part: TypeId| {
+                let map_member = |c: &mut Self, part: TypeId| {
                     let one = c.prepend_type_mapping(check_declared, part, distributed_over);
                     if for_constraint {
                         // The type arguments of the union that is distributed over.
@@ -1638,7 +1638,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let for_constraint = MapperId::IDENTITY;
                     c.resolve_conditional(file, node, one, distributed_over, for_constraint, None)
                 };
-                return self.map_type_with_alias(value, of_member, alias);
+                return self.map_type_with_alias(value, map_member, alias);
             }
         }
         let for_constraint = if for_constraint {
@@ -1999,7 +1999,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `computeBaseConstraint` of the conditional type `this`.
     pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> Option<TypeId> {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
-        // `conditionalConstraintDepth`. The second test fires before `enter` would refuse a query for lack of stack.
+        // `conditionalConstraintDepth`. The second test fires before `enter` would reject a query for lack of stack.
         if self.conditional_constraint_depth >= 100 || self.is_most_of_stack_in_use() {
             self.bailed_out();
             return None;
@@ -2298,16 +2298,16 @@ impl<'p, 's> Checker<'p, 's> {
             return 0;
         }
         // `instantiateTypeAlias(t.alias, m)` is the same key whether or not it's passed in.
-        let of_node = self.alias_of_node_under(file, node, mapper);
-        let of_node =
-            (of_node.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+        let node_alias = self.alias_of_node_under(file, node, mapper);
+        let node_alias =
+            (node_alias.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
         let new_alias = match alias {
             NewAlias::Given(alias, type_arguments) => Some((alias, type_arguments)),
-            NewAlias::OfNode => of_node,
+            NewAlias::OfNode => node_alias,
         };
         let innermost = with_type_arguments.find(|it| match &it.alias {
             Some((alias, type_arguments)) => Some((*alias, &type_arguments[..])) == new_alias,
-            None => of_node == new_alias,
+            None => node_alias == new_alias,
         });
         innermost.map_or(0, |it| it.nesting.saturating_add(1))
     }
@@ -2328,8 +2328,8 @@ impl<'p, 's> Checker<'p, 's> {
         let NewAlias::Given(alias, type_arguments) = alias else {
             return None;
         };
-        let of_node = self.alias_of_node_under(file, node, mapper);
-        if of_node.is_some_and(|it| it.0 == alias && it.1 == type_arguments) {
+        let node_alias = self.alias_of_node_under(file, node, mapper);
+        if node_alias.is_some_and(|it| it.0 == alias && it.1 == type_arguments) {
             return None;
         }
         let flags = vec![ElemFlags::REQUIRED; type_arguments.len()];
@@ -2408,7 +2408,7 @@ impl<'p, 's> Checker<'p, 's> {
         let value = self.reduced(value);
         let given = self.alias_of_instantiation_key(file, node, mapper, alias);
         // `instantiateTypeAlias(t.alias, m)`
-        let of_node = match alias {
+        let node_alias = match alias {
             NewAlias::OfNode if self.is_union(value) => {
                 self.alias_of_node_under(file, node, mapper)
             }
@@ -2417,7 +2417,7 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = match alias {
             NewAlias::Given(alias, type_arguments) => Some((alias, type_arguments)),
             NewAlias::OfNode => {
-                (of_node.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]))
+                (node_alias.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]))
             }
         };
         let result = self.map_type_with_alias(
@@ -2595,20 +2595,20 @@ impl<'p, 's> Checker<'p, 's> {
                     let key = self.string_literal(name, false);
                     template(self, one, key, f.contains(ElemFlags::OPTIONAL))
                 } else if f.contains(ElemFlags::VARIADIC) {
-                    let of_element = self.prepend_type_mapping(source, elems[i], mapper);
+                    let element_mapper = self.prepend_type_mapping(source, elems[i], mapper);
                     // If the tuple that `m` maps `T` to contains `...T`, the element is that tuple
                     // again, and the same instantiation restarts until `instantiationDepth == 100`.
-                    if of_element == mapper {
+                    if element_mapper == mapper {
                         return self.excessively_deep();
                     }
                     let declared = self.type_from_node(file, node);
-                    self.instantiate(declared, of_element)
+                    self.instantiate(declared, element_mapper)
                 } else {
                     let list = self.array_of(elems[i]);
-                    let of_list = self.prepend_type_mapping(source, list, mapper);
+                    let list_mapper = self.prepend_type_mapping(source, list, mapper);
                     // `getElementTypeOfArrayType` of `instantiateMappedArrayType`'s result. The
                     // error type isn't an array.
-                    match template(self, of_list, TypeId::NUMBER, true) {
+                    match template(self, list_mapper, TypeId::NUMBER, true) {
                         element if self.is_error_type(element) => TypeId::UNKNOWN,
                         element => element,
                     }
@@ -2919,7 +2919,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // Only `T` is inspected. `never`, `unknown` and the like have nothing to iterate over,
             // no matter what `keyof` yields for them.
-            _ if over_keyof => List::Kept(&[]),
+            _ if over_keyof => List::Permanent(&[]),
             // For any other constraint, `lower_bound_of_key_type` returns the type itself.
             _ if self.is_generic(constraint)
                 || (self.parts(constraint).iter()).any(|&key| self.is_intersection(key)) =>
@@ -2935,7 +2935,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns what `forEachType` visits: a union's members, or the type itself for anything else, including `never`.
     fn each_type(&self, ty: TypeId) -> List<'p, TypeId> {
         match self.is_union(ty) {
-            true => List::Kept(self.parts(ty)),
+            true => List::Permanent(self.parts(ty)),
             false => List::One(ty),
         }
     }
@@ -3202,7 +3202,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } else {
                     self.property_name_of_type(name_ty)
                 };
-                let place = match name {
+                let existing_index = match name {
                     Some(name) if shape.props.len() < 16 => {
                         shape.props.iter().position(|p| p.name == name)
                     }
@@ -3216,7 +3216,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None => None,
                 };
                 match name {
-                    Some(name) => match place {
+                    Some(name) => match existing_index {
                         // One property for all the keys that map to its name. Its `keyType` is
                         // their union. The first key determines the modifiers.
                         Some(i) => {

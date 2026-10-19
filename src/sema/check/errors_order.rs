@@ -104,13 +104,13 @@ impl Checker<'_, '_> {
             return 0;
         }
         // A `for` statement's head is inside that statement.
-        if let Parent::Stmt(around) = bound.parent_of_stmt(statement)
+        if let Parent::Stmt(outer_statement) = bound.parent_of_stmt(statement)
             && matches!(
-                hir[around].kind,
+                hir[outer_statement].kind,
                 StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
             )
         {
-            statement = around;
+            statement = outer_statement;
         }
         hir[statement].loc.end + 1
     }

@@ -1187,8 +1187,8 @@ impl<'a> Rules<'_, 'a, '_> {
             }
             child = parent;
         };
-        let whole = child.as_expression()?;
-        if gets_parentheses.is_some_and(|it| keeps_comment_in_parentheses(whole, it)) {
+        let whole_expression = child.as_expression()?;
+        if gets_parentheses.is_some_and(|it| keeps_comment_in_parentheses(whole_expression, it)) {
             return None;
         }
         Some(Attachment::trailing(Owner::Node(terminated_node)))
@@ -1774,7 +1774,7 @@ impl<'a> Rules<'_, 'a, '_> {
             Some(last_byte) => elements.after(last_byte),
             None => elements.first(),
         };
-        let is_beside_hole = std::iter::successors(first, |it| elements.after(it.span().start))
+        let is_next_to_hole = std::iter::successors(first, |it| elements.after(it.span().start))
             .take_while(|it| it.span().start <= comment.next_token_start())
             .filter(|it| it.is_missing())
             .any(|hole| {
@@ -1783,7 +1783,7 @@ impl<'a> Rules<'_, 'a, '_> {
                     || (comma == comment.next_token_start()
                         && self.context.text_position != EndOfLine)
             });
-        is_beside_hole.then(|| match self.following_node {
+        is_next_to_hole.then(|| match self.following_node {
             Some(following_node) => Attachment::leading(following_node),
             None => Attachment::dangling(Owner::Node(N::ArrayExpression(array))),
         })

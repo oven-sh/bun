@@ -169,14 +169,14 @@ pub(crate) struct Node {
     pub(crate) end: u32,
     /// `kind` doesn't capture everything in the template from `start` to `end`, because the parsers dropped or changed
     /// something. So that text is printed verbatim, as with `prettier-ignore`.
-    pub(crate) is_as_written: bool,
+    pub(crate) is_verbatim: bool,
 }
 
 const NO_NODE: Node = Node {
     kind: Kind::Nothing,
     start: 0,
     end: 0,
-    is_as_written: false,
+    is_verbatim: false,
 };
 
 pub(crate) struct Tree {
@@ -218,7 +218,7 @@ impl Tree {
             kind,
             start: start as u32,
             end: end as u32,
-            is_as_written: false,
+            is_verbatim: false,
         });
         (self.nodes.len() - 1) as NodeId
     }
@@ -227,10 +227,10 @@ impl Tree {
         self.nodes.get(id as usize).copied().unwrap_or(NO_NODE)
     }
 
-    /// See [`Node::is_as_written`].
-    pub(crate) fn keep_as_written(&mut self, id: NodeId) {
+    /// See [`Node::is_verbatim`].
+    pub(crate) fn keep_verbatim(&mut self, id: NodeId) {
         if let Some(node) = self.nodes.get_mut(id as usize) {
-            node.is_as_written = true;
+            node.is_verbatim = true;
         }
     }
 

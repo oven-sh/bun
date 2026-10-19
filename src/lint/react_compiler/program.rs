@@ -69,7 +69,7 @@ fn has_body_directive(func: Func<'_>, flavor: Flavor, directives: &[&str]) -> bo
     leading.any(|(expression, value)| match flavor {
         Flavor::Oxlint => value.is_any(directives),
         Flavor::Eslint => match expression.text() {
-            [_, written @ .., _] => directives.iter().any(|it| it.as_bytes() == written),
+            [_, raw_text @ .., _] => directives.iter().any(|it| it.as_bytes() == raw_text),
             _ => false,
         },
     })

@@ -130,14 +130,14 @@ fn get_identifier(mut e: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
 }
 
 /// `isArrowIIFE`: returns the call whose callee is the arrow function `func`.
-fn call_around_arrow(func: Func<'_>) -> Option<Expr<'_>> {
+fn arrow_iife_call(func: Func<'_>) -> Option<Expr<'_>> {
     if !func.is_arrow() {
         return None;
     }
-    call_around(func)
+    iife_call(func)
 }
 
-fn call_around(func: Func<'_>) -> Option<Expr<'_>> {
+fn iife_call(func: Func<'_>) -> Option<Expr<'_>> {
     func.owner()
         .as_expr()?
         .parent()
@@ -190,7 +190,7 @@ fn is_written_before<'a>(
             return false;
         }
         let function = get_upper_function(it, memo);
-        let function = match function.and_then(call_around_arrow) {
+        let function = match function.and_then(arrow_iife_call) {
             Some(call) => get_upper_function(call, memo),
             None => function,
         };
@@ -251,7 +251,7 @@ fn is_in_field_initializer<'a>(
         None => true,
         // For oxlint it can also be a function expression.
         Some(function) if function.is_arrow() || function.file().language().is_oxlint => {
-            call_around(function)
+            iife_call(function)
                 .is_some_and(|call| field.init() == Some(call) && !call.is_chain_root())
         }
         Some(_) => false,
@@ -339,7 +339,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
             let info = infos.entry(class).or_default();
 
             let function = get_upper_function(e, &mut memo);
-            let constructor = match function.and_then(call_around_arrow) {
+            let constructor = match function.and_then(arrow_iife_call) {
                 Some(call) => get_upper_function(call, &mut memo),
                 None => function,
             };

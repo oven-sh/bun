@@ -34,18 +34,18 @@ const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
 struct Lookaround {
-    is_behind: bool,
+    is_lookbehind: bool,
     is_negative: bool,
 }
 
 fn as_lookaround(node: regex::Node<'_>) -> Option<Lookaround> {
     match node.kind() {
         RegexKind::Assertion(Assertion::Lookahead { negate, .. }) => Some(Lookaround {
-            is_behind: false,
+            is_lookbehind: false,
             is_negative: negate,
         }),
         RegexKind::Assertion(Assertion::Lookbehind { negate, .. }) => Some(Lookaround {
-            is_behind: true,
+            is_lookbehind: true,
             is_negative: negate,
         }),
         _ => None,
@@ -75,7 +75,7 @@ fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Messa
         return Some(DISJUNCTIVE);
     }
     let lowest_common_lookaround = std::iter::once(common).chain(common.ancestors()).find_map(as_lookaround);
-    let is_matching_backward = lowest_common_lookaround.is_some_and(|it| it.is_behind);
+    let is_matching_backward = lowest_common_lookaround.is_some_and(|it| it.is_lookbehind);
     if !is_matching_backward && bref.end() <= group.start() {
         return Some(FORWARD);
     }
@@ -99,7 +99,7 @@ fn may_have_backreference(pattern: &[u8]) -> bool {
 
 /// `node` is the regular expression: a literal, or a call to `RegExp`.
 fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoUselessBackreference>) {
-    check_pattern(pattern, Mode::of_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
+    check_pattern(pattern, Mode::from_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
 }
 
 /// `report_span` returns the span to report for a backreference. `display_text` returns the text that the message shows

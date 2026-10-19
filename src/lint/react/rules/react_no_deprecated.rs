@@ -34,30 +34,30 @@ const CREATE_ROOT: &str = "https://reactjs.org/link/switch-to-createroot";
 
 /// In upstream's order. If two entries have the same key, the later one wins.
 static ALL_DEPRECATED: [Deprecated; 31] = [
-    Deprecated::of_pragma("renderComponent", (0, 12, 0), ".render"),
-    Deprecated::of_pragma("renderComponentToString", (0, 12, 0), ".renderToString"),
-    Deprecated::of_pragma("renderComponentToStaticMarkup", (0, 12, 0), ".renderToStaticMarkup"),
-    Deprecated::of_pragma("isValidComponent", (0, 12, 0), ".isValidElement"),
-    Deprecated::of_pragma("PropTypes.component", (0, 12, 0), ".PropTypes.element"),
-    Deprecated::of_pragma("PropTypes.renderable", (0, 12, 0), ".PropTypes.node"),
-    Deprecated::of_pragma("isValidClass", (0, 12, 0), ""),
+    Deprecated::pragma_member("renderComponent", (0, 12, 0), ".render"),
+    Deprecated::pragma_member("renderComponentToString", (0, 12, 0), ".renderToString"),
+    Deprecated::pragma_member("renderComponentToStaticMarkup", (0, 12, 0), ".renderToStaticMarkup"),
+    Deprecated::pragma_member("isValidComponent", (0, 12, 0), ".isValidElement"),
+    Deprecated::pragma_member("PropTypes.component", (0, 12, 0), ".PropTypes.element"),
+    Deprecated::pragma_member("PropTypes.renderable", (0, 12, 0), ".PropTypes.node"),
+    Deprecated::pragma_member("isValidClass", (0, 12, 0), ""),
     Deprecated::new("this", "transferPropsTo", (0, 12, 0), "spread operator ({...})", ""),
-    Deprecated::of_pragma("addons.classSet", (0, 13, 0), "the npm module classnames"),
-    Deprecated::of_pragma("addons.cloneWithProps", (0, 13, 0), ".cloneElement"),
-    Deprecated::of_pragma("render", (0, 14, 0), "ReactDOM.render"),
-    Deprecated::of_pragma("unmountComponentAtNode", (0, 14, 0), "ReactDOM.unmountComponentAtNode"),
-    Deprecated::of_pragma("findDOMNode", (0, 14, 0), "ReactDOM.findDOMNode"),
-    Deprecated::of_pragma("renderToString", (0, 14, 0), "ReactDOMServer.renderToString"),
-    Deprecated::of_pragma("renderToStaticMarkup", (0, 14, 0), "ReactDOMServer.renderToStaticMarkup"),
-    Deprecated::of_pragma("addons.LinkedStateMixin", (15, 0, 0), ""),
+    Deprecated::pragma_member("addons.classSet", (0, 13, 0), "the npm module classnames"),
+    Deprecated::pragma_member("addons.cloneWithProps", (0, 13, 0), ".cloneElement"),
+    Deprecated::pragma_member("render", (0, 14, 0), "ReactDOM.render"),
+    Deprecated::pragma_member("unmountComponentAtNode", (0, 14, 0), "ReactDOM.unmountComponentAtNode"),
+    Deprecated::pragma_member("findDOMNode", (0, 14, 0), "ReactDOM.findDOMNode"),
+    Deprecated::pragma_member("renderToString", (0, 14, 0), "ReactDOMServer.renderToString"),
+    Deprecated::pragma_member("renderToStaticMarkup", (0, 14, 0), "ReactDOMServer.renderToStaticMarkup"),
+    Deprecated::pragma_member("addons.LinkedStateMixin", (15, 0, 0), ""),
     Deprecated::new("ReactPerf", "printDOM", (15, 0, 0), "ReactPerf.printOperations", ""),
     Deprecated::new("Perf", "printDOM", (15, 0, 0), "Perf.printOperations", ""),
     Deprecated::new("ReactPerf", "getMeasurementsSummaryMap", (15, 0, 0), "ReactPerf.getWasted", ""),
     Deprecated::new("Perf", "getMeasurementsSummaryMap", (15, 0, 0), "Perf.getWasted", ""),
-    Deprecated::of_pragma("createClass", (15, 5, 0), "the npm module create-react-class"),
-    Deprecated::of_pragma("addons.TestUtils", (15, 5, 0), "ReactDOM.TestUtils"),
-    Deprecated::of_pragma("PropTypes", (15, 5, 0), "the npm module prop-types"),
-    Deprecated::of_pragma("DOM", (15, 6, 0), "the npm module react-dom-factories"),
+    Deprecated::pragma_member("createClass", (15, 5, 0), "the npm module create-react-class"),
+    Deprecated::pragma_member("addons.TestUtils", (15, 5, 0), "ReactDOM.TestUtils"),
+    Deprecated::pragma_member("PropTypes", (15, 5, 0), "the npm module prop-types"),
+    Deprecated::pragma_member("DOM", (15, 6, 0), "the npm module react-dom-factories"),
     Deprecated::new(
         "",
         "componentWillMount",
@@ -320,16 +320,16 @@ impl Deprecated {
         Deprecated { object: Some(object), property, version, new_method, refs, bit }
     }
 
-    const fn of_pragma(property: &'static str, version: Version, new_method: &'static str) -> Deprecated {
+    const fn pragma_member(property: &'static str, version: Version, new_method: &'static str) -> Deprecated {
         Deprecated { object: None, ..Deprecated::new("", property, version, new_method, "") }
     }
 
     /// `deprecated[method]`
     fn get(pragma: &[u8], object: &[u8], property: &[u8]) -> Option<&'static Deprecated> {
-        let is_it = |it: &&Deprecated| {
+        let has_key = |it: &&Deprecated| {
             it.property.as_bytes() == property && it.object.map_or(pragma, str::as_bytes) == object
         };
-        ALL_DEPRECATED.iter().rfind(is_it)
+        ALL_DEPRECATED.iter().rfind(has_key)
     }
 }
 

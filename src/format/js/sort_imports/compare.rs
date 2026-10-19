@@ -106,11 +106,11 @@ fn decimal_literal_len<T: Unit>(text: &[T]) -> usize {
 
 /// `parseFloat(text)`. `None` is `NaN`.
 fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
-    let blank = text
+    let leading_whitespace = text
         .iter()
         .take_while(|unit| bun_core::strings::is_js_whitespace(unit.code()))
         .count();
-    let text = &text[blank..];
+    let text = &text[leading_whitespace..];
     let sign = usize::from(
         text.first()
             .is_some_and(|unit| matches!(unit.code(), 0x2B | 0x2D)),

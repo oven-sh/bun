@@ -52,7 +52,7 @@ impl Rule for PropTypes {
         let mut components = Components::new(file).with(declared(&self.custom_validators)).with(used(file));
         components.finish();
         let nothing = DeclaredPropTypes::default();
-        let mut around = AncestorMemo::default();
+        let mut enclosing_memo = AncestorMemo::default();
         let list = components.list();
         let is_certain = |node| components.get(node).is_some_and(|it| components.component(it).confidence >= 2);
         for id in list {
@@ -71,7 +71,7 @@ impl Rule for PropTypes {
                 let declared_prop_types =
                     components.get(node).and_then(|it| components.component(it).declared_prop_types.as_ref());
                 declaring.push(declared_prop_types.unwrap_or(&nothing));
-                certain = around.find_with(node, estree_parent, |_, parent| is_certain(parent).then_some(parent));
+                certain = enclosing_memo.find_with(node, estree_parent, |_, parent| is_certain(parent).then_some(parent));
             }
             self.report_undeclared_prop_types(used_prop_types, &declaring, cx);
         }

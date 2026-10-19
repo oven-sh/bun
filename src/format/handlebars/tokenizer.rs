@@ -3,13 +3,13 @@
 //! `codemod` mode, which leaves entities as written.
 //!
 //! The states are the tokenizer's, and they accept everything it accepts. Text that it drops isn't lost: the node it's
-//! dropped from is marked (`Node::is_as_written`), or else the whole template is (`Tree::has_lost_text`).
+//! dropped from is marked (`Node::is_verbatim`), or else the whole template is (`Tree::has_lost_text`).
 
 use super::Error;
 use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal};
+use crate::syntax_error::{Message, Rejection};
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -135,7 +135,7 @@ struct Tag {
     start: usize,
     is_self_closing: bool,
     /// Something in it gets dropped.
-    is_as_written: bool,
+    is_verbatim: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -160,7 +160,7 @@ struct Frame {
 
 struct Builder<'a> {
     source: &'a [u8],
-    refusal: &'a Refusal,
+    rejection: &'a Rejection,
     statements: &'a [Statement],
     tree: &'a mut Tree,
 
@@ -186,7 +186,7 @@ struct Builder<'a> {
     start: usize,
     comment: Text,
     /// Something in the comment gets dropped.
-    is_comment_as_written: bool,
+    is_comment_verbatim: bool,
     /// The offsets of the dashes that may end the comment.
     dashes: [usize; 2],
 
@@ -231,8 +231,8 @@ impl Builder<'_> {
             self.start,
             self.index,
         );
-        if std::mem::take(&mut self.is_comment_as_written) {
-            self.tree.keep_as_written(comment);
+        if std::mem::take(&mut self.is_comment_verbatim) {
+            self.tree.keep_verbatim(comment);
         }
         self.children.push(comment);
     }
@@ -253,7 +253,7 @@ impl Builder<'_> {
             name: Text::EMPTY,
             start: self.tag_open,
             is_self_closing: false,
-            is_as_written: false,
+            is_verbatim: false,
         };
         self.is_tag_name_buffer_empty = false;
         self.tag_parts.iter_mut().for_each(Vec::clear);
@@ -294,7 +294,7 @@ impl Builder<'_> {
 
     #[cold]
     fn error_at(&self, message: Message, at: usize) -> Error {
-        Error::Syntax(self.refusal.note(message, at as u32))
+        Error::Syntax(self.rejection.note(message, at as u32))
     }
 
     fn finish_tag(&mut self) -> Result<(), Error> {
@@ -320,8 +320,8 @@ impl Builder<'_> {
             is_self_closing: self.tag.is_self_closing,
         };
         let element = self.tree.add(kind, self.tag.start, self.index);
-        if self.tag.is_as_written {
-            self.tree.keep_as_written(element);
+        if self.tag.is_verbatim {
+            self.tree.keep_verbatim(element);
         }
         self.stack.push(Frame {
             element,
@@ -353,10 +353,10 @@ impl Builder<'_> {
         }
         let list = self.take_children(frame.base);
         let end = self.index as u32;
-        let is_as_written = self.tag.is_as_written;
+        let is_verbatim = self.tag.is_verbatim;
         if let Some(node) = self.tree.nodes.get_mut(frame.element as usize) {
             node.end = end;
-            node.is_as_written |= is_as_written;
+            node.is_verbatim |= is_verbatim;
             if let Kind::Element { children, .. } = &mut node.kind {
                 *children = list;
             }
@@ -763,7 +763,7 @@ impl Builder<'_> {
                     self.state = State::BeforeData;
                 } else {
                     // The tokenizer drops this character, which is one UTF-16 code unit.
-                    self.is_comment_as_written = true;
+                    self.is_comment_verbatim = true;
                     self.append_to_comment(self.dashes[0], self.dashes[0] + 1);
                     if character >= 0xF0 {
                         self.index = (self.index + 4).min(self.end);
@@ -1016,14 +1016,14 @@ impl Builder<'_> {
                 | State::CommentStartDash
                 | State::Comment
                 | State::CommentEndDash
-                | State::CommentEnd => self.is_comment_as_written = true,
+                | State::CommentEnd => self.is_comment_verbatim = true,
                 State::TagName
                 | State::EndTagName
                 | State::BeforeAttributeName
                 | State::AttributeName
                 | State::AfterAttributeName
                 | State::AfterAttributeValueQuoted
-                | State::SelfClosingStartTag => self.tag.is_as_written = true,
+                | State::SelfClosingStartTag => self.tag.is_verbatim = true,
                 state if state.is_in_doctype() => {}
                 _ => self.tree.has_lost_text = true,
             }
@@ -1067,7 +1067,7 @@ impl Builder<'_> {
         };
         // An `ElementModifierStatement` stores neither the third brace nor the tilde.
         if is_trusting || strip != 0 {
-            self.tree.keep_as_written(mustache);
+            self.tree.keep_verbatim(mustache);
         }
         if self.tag.is_end
             || !matches!(
@@ -1113,7 +1113,7 @@ impl Builder<'_> {
             | State::CommentStartDash
             | State::CommentEndDash
             | State::CommentEnd => {
-                self.is_comment_as_written = true;
+                self.is_comment_verbatim = true;
                 self.state = State::Comment;
             }
             _ => {
@@ -1156,15 +1156,15 @@ impl Builder<'_> {
             StatementKind::Mustache {
                 node,
                 is_valid,
-                is_as_written,
+                is_verbatim,
             } => {
                 if !is_valid {
                     return Err(
                         self.error_at(Message::UnsupportedMustache, statement.start as usize)
                     );
                 }
-                if is_as_written {
-                    self.tree.keep_as_written(node);
+                if is_verbatim {
+                    self.tree.keep_verbatim(node);
                 }
                 self.mustache(node)?;
             }
@@ -1174,7 +1174,7 @@ impl Builder<'_> {
                 has_second,
                 is_inverted,
                 is_valid,
-                is_as_written,
+                is_verbatim,
                 block_params,
             } => {
                 if !matches!(self.state, State::Data | State::BeforeData) || !is_valid {
@@ -1195,7 +1195,7 @@ impl Builder<'_> {
                 };
                 if let Some(block) = self.tree.nodes.get_mut(node as usize) {
                     (block.start, block.end) = (start as u32, end as u32);
-                    block.is_as_written = is_as_written;
+                    block.is_verbatim = is_verbatim;
                     if let Kind::BlockStatement {
                         program, inverse, ..
                     } = &mut block.kind
@@ -1256,11 +1256,11 @@ pub(crate) fn build(
     statements: &[Statement],
     front_matter: Option<NodeId>,
     tree: &mut Tree,
-    refusal: &Refusal,
+    rejection: &Rejection,
 ) -> Result<NodeId, Error> {
     let mut builder = Builder {
         source,
-        refusal,
+        rejection,
         statements,
         tree,
         state: State::BeforeData,
@@ -1277,7 +1277,7 @@ pub(crate) fn build(
         attribute_parts: Vec::new(),
         start: 0,
         comment: Text::EMPTY,
-        is_comment_as_written: false,
+        is_comment_verbatim: false,
         dashes: [0; 2],
         stack: Vec::new(),
         children: Vec::new(),

@@ -23,8 +23,9 @@
 //! All in TypeScript 7.0.2's checker.go, flow.go, grammarchecks.go, binder.go and parser/references.go. Only
 //! `check_import_attributes` requests types.
 //!
-//! A file's HIR stores neither modifiers nor keywords. They're read from the source text, starting at a position the
-//! HIR does have. A declaration file has no text, so checks that depend on the text are skipped.
+//! A few things the HIR doesn't store are read from the source text, starting at a position the HIR does have: whether
+//! a name or an attribute value is a string literal, and where the first token of a file or a block starts. The default
+//! library has no text, so checks that depend on the text are skipped for it.
 
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
@@ -143,7 +144,7 @@ impl Checker<'_, '_> {
                 && (statement_of_alias_declaration(hir, decl)
                     .is_none_or(|s| is_in_appropriate_context(self.bound(file), s))
                     || self.modules_alias_is_used(&cx, sym))
-                && let Some(at) = self.place_of_alias_declaration(Sym { file, ..sym }, decl)
+                && let Some(at) = self.span_of_alias_declaration(Sym { file, ..sym }, decl)
             {
                 if self.files().alias_links(sym).ran_out_of_stack {
                     self.ran_out_of_stack.set(true);
@@ -229,24 +230,31 @@ impl Checker<'_, '_> {
     }
 
     /// Checks the statements of the file or of a module's body.
-    fn modules_statements(&mut self, cx: &Cx<'_>, list: IdList<StmtId>, around: StatementParent) {
+    fn modules_statements(
+        &mut self,
+        cx: &Cx<'_>,
+        list: IdList<StmtId>,
+        container: StatementParent,
+    ) {
         for s in self.hir(cx.file).ids(list) {
-            self.modules_statement(cx, s, around);
+            self.modules_statement(cx, s, container);
         }
     }
 
-    /// Checks the statement `s`, whose parent is `around`.
-    fn modules_statement(&mut self, cx: &Cx<'_>, s: StmtId, around: StatementParent) {
+    /// Checks the statement `s`, whose parent is `container`.
+    fn modules_statement(&mut self, cx: &Cx<'_>, s: StmtId, container: StatementParent) {
         match self.hir(cx.file)[s].kind {
-            StmtKind::Module(m) => self.modules_declaration(cx, s, m, around),
-            StmtKind::Import(i) => self.modules_import(cx, s, i, around),
-            StmtKind::ImportEquals(i) => self.modules_import_equals(cx, s, i, around),
-            StmtKind::ExportNamed(x) => self.modules_export_named(cx, s, x, around),
-            StmtKind::ExportStar { .. } => self.modules_export_star(cx, s, around),
-            StmtKind::ExportDefault(e) => self.modules_export_assignment(cx, s, e, false, around),
-            StmtKind::ExportAssign(e) => self.modules_export_assignment(cx, s, e, true, around),
+            StmtKind::Module(m) => self.modules_declaration(cx, s, m, container),
+            StmtKind::Import(i) => self.modules_import(cx, s, i, container),
+            StmtKind::ImportEquals(i) => self.modules_import_equals(cx, s, i, container),
+            StmtKind::ExportNamed(x) => self.modules_export_named(cx, s, x, container),
+            StmtKind::ExportStar { .. } => self.modules_export_star(cx, s, container),
+            StmtKind::ExportDefault(e) => {
+                self.modules_export_assignment(cx, s, e, false, container)
+            }
+            StmtKind::ExportAssign(e) => self.modules_export_assignment(cx, s, e, true, container),
             StmtKind::ExportAsNamespace(_) => {
-                self.modules_namespace_export_declaration(cx, s, around)
+                self.modules_namespace_export_declaration(cx, s, container)
             }
             _ => {}
         }
@@ -258,14 +266,14 @@ impl Checker<'_, '_> {
         &mut self,
         cx: &Cx<'_>,
         s: StmtId,
-        around: StatementParent,
+        container: StatementParent,
     ) {
         let hir = self.hir(cx.file);
         let node = (cx.file, hir[s].start, self.end_of_stmt(cx.file, s));
         if !hir.stmt_modifiers(s).is_empty() {
             self.error_at(node, 1184, &[]);
         }
-        let code = if around.module.is_some() || !around.is_appropriate_context {
+        let code = if container.module.is_some() || !container.is_appropriate_context {
             1316
         } else if !cx.is_module {
             1314
@@ -277,25 +285,25 @@ impl Checker<'_, '_> {
         self.error_at(node, code, &[]);
     }
 
-    /// `checkGrammarModuleElementContext` for the statement `s`, whose parent is `around`.
+    /// `checkGrammarModuleElementContext` for the statement `s`, whose parent is `container`.
     fn check_grammar_module_element_context(
         &mut self,
         cx: &Cx<'_>,
         s: StmtId,
-        around: StatementParent,
+        container: StatementParent,
         code: u32,
     ) -> bool {
-        if !around.is_appropriate_context && cx.grammar && !cx.text.is_empty() {
+        if !container.is_appropriate_context && cx.grammar && !cx.text.is_empty() {
             self.error_at((cx.file, self.hir(cx.file)[s].start, 0), code, &[]);
         }
-        !around.is_appropriate_context
+        !container.is_appropriate_context
     }
 
-    /// `node.Flags&NodeFlagsAmbient` of the statement `s`, whose parent is `around`. Whatever follows `declare` is
+    /// `node.Flags&NodeFlagsAmbient` of the statement `s`, whose parent is `container`. Whatever follows `declare` is
     /// parsed in an ambient context.
-    fn modules_is_ambient(&self, cx: &Cx<'_>, s: StmtId, around: StatementParent) -> bool {
+    fn modules_is_ambient(&self, cx: &Cx<'_>, s: StmtId, container: StatementParent) -> bool {
         let hir = self.hir(cx.file);
-        around.is_ambient
+        container.is_ambient
             || hir
                 .find_modifier(hir.stmt_modifiers(s), Flags::AMBIENT)
                 .is_some()
@@ -309,7 +317,7 @@ impl Checker<'_, '_> {
         cx: &Cx<'_>,
         s: StmtId,
         m: ModuleId,
-        around: StatementParent,
+        container: StatementParent,
     ) {
         if self.is_stack_low() {
             return;
@@ -320,14 +328,14 @@ impl Checker<'_, '_> {
         let start = hir[s].start;
         let is_global = module.name == ModuleName::Global;
         let is_ambient_module = !matches!(module.name, ModuleName::Ident(_));
-        let is_ambient = around.is_ambient || module.flags.contains(Flags::AMBIENT);
+        let is_ambient = container.is_ambient || module.flags.contains(Flags::AMBIENT);
         // `IsSourceFile(node.Parent)`
-        let is_at_top = around.module.is_none() && around.is_appropriate_context;
+        let is_at_top = container.module.is_none() && container.is_appropriate_context;
         // `IsModuleAugmentationExternal`
         let adds_to_another = if is_at_top {
             cx.is_module
         } else {
-            around.is_ambient_module && around.is_top_level && !cx.is_module
+            container.is_ambient_module && container.is_top_level && !cx.is_module
         };
         let is_augmentation = is_ambient_module && adds_to_another;
         let inner = StatementParent {
@@ -362,7 +370,7 @@ impl Checker<'_, '_> {
             self.error_at((cx.file, name_pos, 0), 2670, &[]);
         }
         let context_error = if is_ambient_module { 1234 } else { 1235 };
-        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+        if self.check_grammar_module_element_context(cx, s, container, context_error) {
             return;
         }
         // `!c.checkGrammarModifiers(node)`
@@ -403,7 +411,7 @@ impl Checker<'_, '_> {
         }
         if is_augmentation {
             if let ModuleName::String(name) = module.name {
-                self.modules_merge_augmentation(cx, m, name, around);
+                self.modules_merge_augmentation(cx, m, name, container);
             }
             // An augmentation that wasn't merged into anything isn't visited. It would only produce cascading errors.
             let symbol = self.bound(cx.file).module_symbol[m.idx()];
@@ -443,13 +451,13 @@ impl Checker<'_, '_> {
     }
 
     /// The errors `mergeModuleAugmentation` reports for the declaration `m`, which augments the module named `name`.
-    /// `Files::merge` has merged it, and `check_refused_merges` reports what `mergeSymbol` does.
+    /// `Files::merge` has merged it, and `check_rejected_merges` reports what `mergeSymbol` does.
     fn modules_merge_augmentation(
         &mut self,
         cx: &Cx<'_>,
         m: ModuleId,
         name: Atom,
-        around: StatementParent,
+        container: StatementParent,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let symbol = bound.module_symbol[m.idx()];
@@ -463,7 +471,7 @@ impl Checker<'_, '_> {
         let start = hir[m].name_pos;
         // `resolveExternalModuleNameWorker(moduleName, moduleName, moduleNotFoundError, false, true)`. Names in an
         // ambient context aren't reported.
-        let written = SpecifierUse {
+        let specifier_use = SpecifierUse {
             spec: name,
             pos: start,
             kind: SpecifierKind::Import,
@@ -472,10 +480,10 @@ impl Checker<'_, '_> {
         let site = SpecifierSite {
             is_ambient: true,
             is_for_augmentation: true,
-            is_not_validated: around.is_ambient,
+            is_not_validated: container.is_ambient,
             ..Default::default()
         };
-        self.resolve_external_module(cx.file, written, site);
+        self.resolve_external_module(cx.file, specifier_use, site);
         let own = Sym {
             file: cx.file,
             id: symbol,
@@ -498,19 +506,19 @@ impl Checker<'_, '_> {
         s: StmtId,
         spec: Atom,
         is_export: bool,
-        around: StatementParent,
+        container: StatementParent,
     ) -> bool {
         // The specifier is missing or isn't a string literal. The parser has reported 1141.
         if spec.is_none() {
             return false;
         }
         let start = self.hir(cx.file)[s].start;
-        let written = cx.specifier(start, spec);
-        if around.module.is_some() {
-            if !around.is_ambient_module {
-                if let Some(written) = written {
+        let specifier_use = cx.specifier(start, spec);
+        if container.module.is_some() {
+            if !container.is_ambient_module {
+                if let Some(specifier_use) = specifier_use {
                     self.error_at(
-                        (cx.file, written.pos, 0),
+                        (cx.file, specifier_use.pos, 0),
                         if is_export { 1194 } else { 1147 },
                         &[],
                     );
@@ -518,7 +526,7 @@ impl Checker<'_, '_> {
                 return false;
             }
             // `isTopLevelInExternalModuleAugmentation`: there the statement has already been reported as misplaced.
-            if !around.is_augmentation && is_relative(self.atoms().bytes(spec)) {
+            if !container.is_augmentation && is_relative(self.atoms().bytes(spec)) {
                 self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 2439, &[]);
                 return false;
             }
@@ -526,7 +534,7 @@ impl Checker<'_, '_> {
         // Its attribute values must be strings.
         let hir = self.hir(cx.file);
         let mut are_strings = true;
-        if written.is_some()
+        if specifier_use.is_some()
             && let Some((.., attributes)) = self.modules_get_import_attributes(cx.file, hir[s].loc)
         {
             for value in attributes.iter().map(|attribute| hir[attribute].value) {
@@ -556,21 +564,21 @@ impl Checker<'_, '_> {
         cx: &Cx<'_>,
         s: StmtId,
         spec: Atom,
-        around: StatementParent,
+        container: StatementParent,
     ) -> bool {
-        let written = cx.specifier(self.hir(cx.file)[s].start, spec);
-        written.is_none_or(|written| {
-            !self.resolve_external_module_name(cx.file, s, written, around.is_ambient)
+        let specifier_use = cx.specifier(self.hir(cx.file)[s].start, spec);
+        specifier_use.is_none_or(|specifier_use| {
+            !self.resolve_external_module_name(cx.file, s, specifier_use, container.is_ambient)
         })
     }
 
     /// `resolveExternalModuleName(node, node.ModuleSpecifier())` for the statement `s` of `file`, whose module
-    /// specifier is `written`. Returns true if the module is found.
+    /// specifier is `specifier_use`. Returns true if the module is found.
     fn resolve_external_module_name(
         &mut self,
         file: FileId,
         s: StmtId,
-        written: SpecifierUse,
+        specifier_use: SpecifierUse,
         is_ambient: bool,
     ) -> bool {
         let hir = self.hir(file);
@@ -579,7 +587,7 @@ impl Checker<'_, '_> {
             ..Default::default()
         };
         let type_only = match hir[s].kind {
-            StmtKind::Import(_) if written.kind == SpecifierKind::SideEffect => true,
+            StmtKind::Import(_) if specifier_use.kind == SpecifierKind::SideEffect => true,
             StmtKind::Import(x) => {
                 let import = &hir[x];
                 // With braces the module is requested from the declaration itself, which has no `type` keyword.
@@ -604,7 +612,7 @@ impl Checker<'_, '_> {
             _ => return false,
         };
         site.is_emittable = !type_only;
-        self.resolve_external_module(file, written, site)
+        self.resolve_external_module(file, specifier_use, site)
     }
 
     /// The errors `resolveAlias(sym)` reports, for a caller other than the check of the declaration:
@@ -697,8 +705,13 @@ impl Checker<'_, '_> {
             self.get_symbol_of_part_of_right_hand_side_of_import_equals(file, i, names);
             self.aliases_import_alias_of_type_only(file, i, names);
         } else if spec.is_some()
-            && let Some(&written) = uses.min_by_key(|u| u.pos)
-            && self.resolve_external_module_name(file, s, written, hir.is_ambient(hir.node(s)))
+            && let Some(&specifier_use) = uses.min_by_key(|u| u.pos)
+            && self.resolve_external_module_name(
+                file,
+                s,
+                specifier_use,
+                hir.is_ambient(hir.node(s)),
+            )
         {
             self.check_target_of_alias_declaration(file, sym, decl);
         }
@@ -740,7 +753,7 @@ impl Checker<'_, '_> {
         // `PropertyNameOrName`
         let location = match hir.property_name(hir.node(s)) {
             Node::NONE => hir.name(hir.node(s)),
-            written => written,
+            explicit_name => explicit_name,
         };
         let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let resolved = files.resolve_name(file, scope, name, all);
@@ -804,12 +817,12 @@ impl Checker<'_, '_> {
                 continue;
             }
             let s = StmtId(i as u32);
-            let around = StatementParent {
+            let container = StatementParent {
                 is_appropriate_context: false,
                 is_ambient: hir.is_ambient(hir.parent(hir.node(s))),
                 ..top
             };
-            self.modules_statement(cx, s, around);
+            self.modules_statement(cx, s, container);
         }
     }
 
@@ -877,27 +890,27 @@ impl Checker<'_, '_> {
     }
 
     /// True if a file that's checked no later than this one has `import { name } from` or `export { name } from` the
-    /// file or the ambient module `around`, with `is_requested(name)`. `checkAliasSymbol` resolves such an alias all
+    /// file or the ambient module `container`, with `is_requested(name)`. `checkAliasSymbol` resolves such an alias all
     /// the way, through the aliases that the module exports, and reports what that finds, in whichever file.
     fn modules_is_imported_by_name(
         &self,
         cx: &Cx<'_>,
-        around: StatementParent,
+        container: StatementParent,
         is_requested: &dyn Fn(Atom) -> bool,
     ) -> bool {
-        let is_module = if around.module.is_none() {
+        let is_module = if container.module.is_none() {
             cx.is_module
         } else {
-            around.is_ambient_module && !around.is_augmentation
+            container.is_ambient_module && !container.is_augmentation
         };
         if !is_module {
             return false;
         }
         let files = self.files();
-        let module = if around.module.is_none() {
+        let module = if container.module.is_none() {
             self.bound(cx.file).file_symbol
         } else {
-            self.bound(cx.file).module_symbol[around.module.idx()]
+            self.bound(cx.file).module_symbol[container.module.idx()]
         };
         let module = Some(files.sym(cx.file, module));
         let until = files.rank_of_file(cx.file) as usize;
@@ -925,19 +938,19 @@ impl Checker<'_, '_> {
     }
 
     /// `checkImportDeclaration`
-    fn modules_import(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportId, around: StatementParent) {
+    fn modules_import(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportId, container: StatementParent) {
         let (hir, files) = (self.hir(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].start);
         let context_error = if cx.is_js { 1473 } else { 1232 };
-        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+        if self.check_grammar_module_element_context(cx, s, container, context_error) {
             self.modules_resolve_aliases_of_import_if_used(cx, i);
             return;
         }
-        if self.modules_is_in_valid_position(cx, s, import.spec, false, around)
+        if self.modules_is_in_valid_position(cx, s, import.spec, false, container)
             && !self.check_grammar_import_clause(cx, i)
         {
-            let is_ambient = self.modules_is_ambient(cx, s, around);
-            let is_missing = self.modules_module_is_missing(cx, s, import.spec, around);
+            let is_ambient = self.modules_is_ambient(cx, s, container);
+            let is_missing = self.modules_module_is_missing(cx, s, import.spec, container);
             self.check_import_binding(cx, Decl::ImportDefault(i), import.default, is_ambient);
             self.check_import_binding(cx, Decl::ImportNamespace(i), import.namespace, is_ambient);
             // The names in braces are checked once the module is resolved.
@@ -951,8 +964,8 @@ impl Checker<'_, '_> {
             // 1543: `isOnlyImportableAsDefault`, `hasTypeJsonImportAttribute`
             if !import.type_only
                 && (ModuleKind::Node18..=ModuleKind::NodeNext).contains(&files.options.module)
-                && let Some(written) = cx.specifier(pos, import.spec)
-                && written.kind != SpecifierKind::SideEffect
+                && let Some(specifier_use) = cx.specifier(pos, import.spec)
+                && specifier_use.kind != SpecifierKind::SideEffect
                 && let Some(module) = self.resolve_external_module_name_ignoring_errors(
                     cx.file,
                     import.spec,
@@ -971,7 +984,7 @@ impl Checker<'_, '_> {
                     })
             {
                 self.error_at(
-                    (cx.file, written.pos, 0),
+                    (cx.file, specifier_use.pos, 0),
                     1543,
                     &[Arg::Bytes(files.options.module.name())],
                 );
@@ -1080,12 +1093,12 @@ impl Checker<'_, '_> {
         cx: &Cx<'_>,
         s: StmtId,
         i: ImportEqualsId,
-        around: StatementParent,
+        container: StatementParent,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let (import, decl) = (hir[i], Decl::ImportEquals(i));
         let context_error = if cx.is_js { 1473 } else { 1232 };
-        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+        if self.check_grammar_module_element_context(cx, s, container, context_error) {
             self.modules_resolve_alias_if_used(cx, decl);
             if let Some(&symbol) = cx.aliases.get(&decl)
                 && files.resolve_alias(symbol).is_none()
@@ -1094,12 +1107,12 @@ impl Checker<'_, '_> {
             }
             return;
         }
-        let is_ambient = around.is_ambient || import.flags.contains(Flags::AMBIENT);
+        let is_ambient = container.is_ambient || import.flags.contains(Flags::AMBIENT);
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
-                if self.modules_is_in_valid_position(cx, s, spec, false, around) {
+                if self.modules_is_in_valid_position(cx, s, spec, false, container) {
                     self.check_import_binding(cx, decl, import.name, is_ambient);
-                    self.modules_module_is_missing(cx, s, spec, around);
+                    self.modules_module_is_missing(cx, s, spec, container);
                     if (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&files.options.module)
                         && !import.flags.contains(Flags::TYPE_ONLY)
                         && !is_ambient
@@ -1109,7 +1122,7 @@ impl Checker<'_, '_> {
                 } else if import.flags.contains(Flags::EXPORT)
                     && self.modules_follows_a_dot_somewhere(cx, import.name)
                 {
-                    self.modules_module_is_missing(cx, s, spec, around);
+                    self.modules_module_is_missing(cx, s, spec, container);
                 } else {
                     self.modules_resolve_alias_if_used(cx, decl);
                 }
@@ -1283,28 +1296,28 @@ impl Checker<'_, '_> {
         cx: &Cx<'_>,
         s: StmtId,
         x: ExportId,
-        around: StatementParent,
+        container: StatementParent,
     ) {
         let hir = self.hir(cx.file);
         let export = hir[x];
         let context_error = if cx.is_js { 1474 } else { 1233 };
-        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+        if self.check_grammar_module_element_context(cx, s, container, context_error) {
             for item in export.items.iter() {
                 self.modules_resolve_alias_if_used(cx, Decl::ExportSpec(item));
             }
             return;
         }
         if !export.has_module_specifier
-            || self.modules_is_in_valid_position(cx, s, export.spec, true, around)
+            || self.modules_is_in_valid_position(cx, s, export.spec, true, container)
         {
-            let is_ambient = self.modules_is_ambient(cx, s, around);
+            let is_ambient = self.modules_is_ambient(cx, s, container);
             let is_missing = if !export.has_module_specifier {
                 false
             } else if export.items.is_empty() {
                 // Without a name to resolve, nothing requests the module.
                 true
             } else {
-                self.modules_module_is_missing(cx, s, export.spec, around)
+                self.modules_module_is_missing(cx, s, export.spec, container)
             };
             // `checkExportSpecifier`: `checkModuleExportName` for both names. Without `from`, a string before `as` is a
             // 1003.
@@ -1322,20 +1335,23 @@ impl Checker<'_, '_> {
                 }
             }
             let is_in_ambient_namespace = !export.has_module_specifier && is_ambient;
-            if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
+            if container.module.is_some()
+                && !container.is_ambient_module
+                && !is_in_ambient_namespace
+            {
                 let start = hir[s].start;
                 self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 1194, &[]);
             }
         // `resolveExternalModuleNameWorker` doesn't report anything for a specifier that isn't a string.
         } else if export.spec.is_some() {
             let mut items = export.items.iter();
-            let may_be_used = around.module.is_some()
+            let may_be_used = container.module.is_some()
                 && items.any(|s| self.modules_follows_a_dot_somewhere(cx, hir[s].exported))
-                || self.modules_is_imported_by_name(cx, around, &|name| {
+                || self.modules_is_imported_by_name(cx, container, &|name| {
                     export.items.iter().any(|s| hir[s].exported == name)
                 });
             if may_be_used {
-                self.modules_module_is_missing(cx, s, export.spec, around);
+                self.modules_module_is_missing(cx, s, export.spec, container);
             }
             for item in export.items.iter().filter(|_| !may_be_used) {
                 self.modules_resolve_alias_if_used(cx, Decl::ExportSpec(item));
@@ -1392,7 +1408,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkExportDeclaration` for `export * from` and `export * as alias from`
-    fn modules_export_star(&mut self, cx: &Cx<'_>, s: StmtId, around: StatementParent) {
+    fn modules_export_star(&mut self, cx: &Cx<'_>, s: StmtId, container: StatementParent) {
         let files = self.files();
         let statement = self.hir(cx.file)[s];
         let pos = statement.start;
@@ -1414,24 +1430,24 @@ impl Checker<'_, '_> {
             && bound.export_stars.iter().any(is_of_file)
             && (files.export(files.file_symbol(cx.file), known::export_equals)).is_none();
         let context_error = if cx.is_js { 1474 } else { 1233 };
-        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+        if self.check_grammar_module_element_context(cx, s, container, context_error) {
             if is_resolved_for_file {
-                self.modules_module_is_missing(cx, s, spec, around);
+                self.modules_module_is_missing(cx, s, spec, container);
             }
             self.modules_resolve_alias_if_used(cx, Decl::ExportStarAs(s));
             return;
         }
-        if self.modules_is_in_valid_position(cx, s, spec, true, around) {
-            if !self.modules_module_is_missing(cx, s, spec, around)
+        if self.modules_is_in_valid_position(cx, s, spec, true, container) {
+            if !self.modules_module_is_missing(cx, s, spec, container)
                 && let Some(module) = files.module_of_specifier(cx.file, spec)
             {
                 // `hasExportAssignmentSymbol`
                 if files.export(module, known::export_equals).is_some() {
-                    if let Some(written) = cx.specifier(pos, spec) {
-                        self.error_at((cx.file, written.pos, 0), 2498, &[Arg::Sym(module)]);
+                    if let Some(specifier_use) = cx.specifier(pos, spec) {
+                        self.error_at((cx.file, specifier_use.pos, 0), 2498, &[Arg::Sym(module)]);
                     }
                 } else {
-                    let is_ambient = self.modules_is_ambient(cx, s, around);
+                    let is_ambient = self.modules_is_ambient(cx, s, container);
                     self.check_alias_symbol(
                         cx.file,
                         &cx.aliases,
@@ -1451,14 +1467,14 @@ impl Checker<'_, '_> {
         // `resolveExternalModuleNameWorker` doesn't report anything for a specifier that isn't a string.
         } else if spec.is_some() {
             let may_be_used = is_resolved_for_file
-                || around.module.is_some()
+                || container.module.is_some()
                     && alias.is_some()
                     && self.modules_follows_a_dot_somewhere(cx, alias)
-                || self.modules_is_imported_by_name(cx, around, &|name| {
+                || self.modules_is_imported_by_name(cx, container, &|name| {
                     alias.is_none() || name == alias
                 });
             if may_be_used {
-                self.modules_module_is_missing(cx, s, spec, around);
+                self.modules_module_is_missing(cx, s, spec, container);
             } else {
                 self.modules_resolve_alias_if_used(cx, Decl::ExportStarAs(s));
             }
@@ -1473,20 +1489,20 @@ impl Checker<'_, '_> {
         s: StmtId,
         e: ExprId,
         is_export_equals: bool,
-        around: StatementParent,
+        container: StatementParent,
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let start = hir[s].start;
         let context_error = if is_export_equals { 1231 } else { 1258 };
-        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+        if self.check_grammar_module_element_context(cx, s, container, context_error) {
             return;
         }
-        if around.module.is_some() && !around.is_ambient_module {
+        if container.module.is_some() && !container.is_ambient_module {
             let code = if is_export_equals { 1063 } else { 1319 };
             self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), code, &[]);
             return;
         }
-        let is_ambient = self.modules_is_ambient(cx, s, around);
+        let is_ambient = self.modules_is_ambient(cx, s, container);
         if is_ambient && cx.grammar && e.is_some() && !is_entity_name_expression(hir, e) {
             self.error_at(self.span_of_parenthesized_expr(cx.file, e), 2714, &[]);
         }
@@ -1544,10 +1560,10 @@ impl Checker<'_, '_> {
         }
         let own = files.flags(sym);
         if !own.intersects(SymFlags::VALUE) {
-            let elsewhere = files.symbol_flags_ex(sym, false, true);
+            let non_local_flags = files.symbol_flags_ex(sym, false, true);
             if own.contains(SymFlags::ALIAS)
-                && elsewhere.intersects(SymFlags::TYPE)
-                && !elsewhere.intersects(SymFlags::VALUE)
+                && non_local_flags.intersects(SymFlags::TYPE)
+                && !non_local_flags.intersects(SymFlags::VALUE)
                 && type_only != Some(cx.file)
             {
                 report(self, 1291, 1292);
@@ -1570,7 +1586,7 @@ impl Checker<'_, '_> {
         within: TextRange,
     ) -> Option<(u32, ExprId, Span<PropId>)> {
         let hir = self.hir(file);
-        let is_within = |kept: &&(u32, ExprId)| (within.pos..within.end).contains(&kept.0);
+        let is_within = |entry: &&(u32, ExprId)| (within.pos..within.end).contains(&entry.0);
         let &(keyword, object) = hir.import_attributes.iter().find(is_within)?;
         match hir[object].kind {
             ExprKind::Object(attributes) => Some((keyword, object, attributes)),
@@ -1673,12 +1689,12 @@ impl Checker<'_, '_> {
     /// `getResolutionModeOverride`: true if `attributes`, located at `node`, specify the resolution mode.
     fn get_resolution_mode_override(
         &mut self,
-        node: super::related::Place,
+        node: super::related::FileSpan,
         attributes: Span<PropId>,
         report_errors: bool,
     ) -> bool {
         let (file, hir) = (node.0, self.hir(node.0));
-        let report = |c: &mut Self, at: super::related::Place, code: u32| {
+        let report = |c: &mut Self, at: super::related::FileSpan, code: u32| {
             if report_errors {
                 c.error_at(at, code, &[]);
             }
@@ -1701,18 +1717,18 @@ impl Checker<'_, '_> {
             || report(self, (file, self.start_of(file, only.value), 0), 1453)
     }
 
-    /// `HasResolutionModeOverride` for the declaration or the import type whose module specifier is `written`. Its
-    /// attributes, if any, come after that specifier and before the next one.
+    /// `HasResolutionModeOverride` for the declaration or the import type whose module specifier is `specifier_use`.
+    /// Its attributes, if any, come after that specifier and before the next one.
     pub(super) fn has_resolution_mode_override(
         &mut self,
         file: FileId,
-        written: SpecifierUse,
+        specifier_use: SpecifierUse,
     ) -> bool {
         let later = self.hir(file).specifier_uses.iter().map(|u| u.pos);
         let within = TextRange {
-            pos: written.pos,
+            pos: specifier_use.pos,
             end: later
-                .filter(|&pos| pos > written.pos)
+                .filter(|&pos| pos > specifier_use.pos)
                 .min()
                 .unwrap_or(u32::MAX),
         };

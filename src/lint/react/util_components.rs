@@ -86,12 +86,12 @@ enum Parent<'a> {
 
 impl<'a> Parent<'a> {
     /// The expression that `node` appears as in the source.
-    fn written(node: Node<'a>) -> Option<Expr<'a>> {
-        node.as_written().as_expr()
+    fn as_expression(node: Node<'a>) -> Option<Expr<'a>> {
+        node.owner_or_self().as_expr()
     }
 
     fn of(node: Node<'a>) -> Parent<'a> {
-        let Some(e) = Parent::written(node) else {
+        let Some(e) = Parent::as_expression(node) else {
             return Parent::Other;
         };
         // The parent is a `ChainExpression` or a `JSXExpressionContainer`.
@@ -233,7 +233,7 @@ fn name_of_detected_component(node: Node<'_>) -> Option<Name<'_>> {
 /// function, one bit per question.
 #[derive(Copy, Clone, Default)]
 struct Returning {
-    asked: u8,
+    computed: u8,
     answers: u8,
 }
 
@@ -488,8 +488,8 @@ impl<'a> Components<'a> {
             Moment::Exit(node) => instructions.exit(node, self),
             Moment::ProgramExit => instructions.program_exit(self),
         }
-        if let Some(place) = self.stages.get_mut(stage) {
-            *place = Some(instructions);
+        if let Some(stage_slot) = self.stages.get_mut(stage) {
+            *stage_slot = Some(instructions);
         }
     }
 
@@ -575,13 +575,13 @@ impl<'a> Components<'a> {
         };
         let bit = 1 << question;
         let known = self.returning.borrow().get(func).copied();
-        if let Some(known) = known.filter(|it| it.asked & bit != 0) {
+        if let Some(known) = known.filter(|it| it.computed & bit != 0) {
             return known.answers & bit != 0;
         }
         let answer = ask(node);
         let mut returning = self.returning.borrow_mut();
         let known = returning.get_or_insert_with(func, Returning::default);
-        known.asked |= bit;
+        known.computed |= bit;
         known.answers |= u8::from(answer) << question;
         answer
     }
@@ -694,7 +694,7 @@ impl<'a> Components<'a> {
                 | Parent::ExportDefaultDeclaration
                 | Parent::ArrowFunctionExpression(_) => return true,
                 Parent::SequenceExpression(sequence)
-                    if Some(last_sequence_expression(sequence)) == Parent::written(node) =>
+                    if Some(last_sequence_expression(sequence)) == Parent::as_expression(node) =>
                 {
                     node = Node::Expr(sequence);
                 }
@@ -758,7 +758,7 @@ impl<'a> Components<'a> {
             return is_first_letter_capitalized(name).then_some(node);
         }
 
-        let function_around = match parent {
+        let enclosing_function = match parent {
             // case: any = () => () => null
             // case: { any: () => () => null }
             Parent::ArrowFunctionExpression(arrow) => Some(arrow),
@@ -773,7 +773,7 @@ impl<'a> Components<'a> {
             }
             _ => None,
         };
-        if let Some(name) = function_around.and_then(|it| Parent::of(Node::Func(it)).name())
+        if let Some(name) = enclosing_function.and_then(|it| Parent::of(Node::Func(it)).name())
             && self.is_returning_jsx_or_null(node, any)
         {
             return is_first_letter_capitalized(name).then_some(node);

@@ -80,16 +80,16 @@ impl Rule for NoUselessLengthCheck {
         // oxlint checks the operands of `a && b && c` once for each `&&` above them, so two neighbors are reported once
         // for every `&&` that contains both.
         let mut pending: SmallVec<[(Expr<'a>, u32); 8]> = SmallVec::new();
-        let (mut at, mut depth, mut around_both) = (root, 0, 0);
+        let (mut at, mut depth, mut enclosing_both) = (root, 0, 0);
         let mut previous = None;
         // The `&&` expressions around the current operand, outermost first. oxlint's rule is called with each.
-        let mut around: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
+        let mut enclosing: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
         loop {
             while let ExprKind::Binary { op, left, right } = at.kind()
                 && op == operator
             {
-                around.truncate(depth as usize);
-                around.push(at);
+                enclosing.truncate(depth as usize);
+                enclosing.push(at);
                 depth += 1;
                 pending.push((right, depth));
                 at = left;
@@ -100,7 +100,7 @@ impl Rule for NoUselessLengthCheck {
                 (previous, current)
                 && array == called
             {
-                for called_with in around.iter().take(around_both as usize) {
+                for called_with in enclosing.iter().take(enclosing_both as usize) {
                     let report = cx
                         .report(span, USELESS_LENGTH_CHECK)
                         .called_with(*called_with);
@@ -117,7 +117,7 @@ impl Rule for NoUselessLengthCheck {
                 return;
             };
             (at, depth) = next;
-            around_both = depth;
+            enclosing_both = depth;
         }
     }
 }

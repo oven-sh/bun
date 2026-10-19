@@ -197,9 +197,9 @@ impl Rule for PreferArrayFlatMap {
             return;
         }
         // `.flat(1.5)` is the same as `.flat(1)`.
-        let is_one =
+        let is_depth_one =
             |it: Expr| !it.is_parenthesized() && matches!(it.kind(), ExprKind::Number(depth) if depth.floor() == 1.0);
-        if !flat_call.args().first().is_none_or(is_one) {
+        if !flat_call.args().first().is_none_or(is_depth_one) {
             return;
         }
         cx.report(e, PREFER_ARRAY_FLAT_MAP).fix(|fixer| {

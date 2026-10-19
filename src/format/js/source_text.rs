@@ -59,12 +59,12 @@ impl<'a> SourceText<'a> {
         let mut rest = self.text_for(&span);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
             rest = &rest[at..];
-            let stands_for = match js_line_break_len(rest) {
+            let equivalent_byte = match js_line_break_len(rest) {
                 0 => b' ',
                 _ => b'\n',
             };
             let len = js_whitespace_len(rest);
-            if (len < 2 && rest[0] != 0x0B) || !predicate(stands_for) {
+            if (len < 2 && rest[0] != 0x0B) || !predicate(equivalent_byte) {
                 return false;
             }
             rest = &rest[len..];

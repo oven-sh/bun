@@ -89,7 +89,7 @@ fn method_label_span(callee: Expr, array_method_name: &str) -> Option<Span> {
 pub struct State<'a> {
     /// The outermost `&&`, `||`, `??` or `?:` that an expression is an operand of, or the expression itself, plus that
     /// node's parent.
-    around_choices: AncestorMemo<'a, (Node<'a>, Node<'a>)>,
+    outermost_logical: AncestorMemo<'a, (Node<'a>, Node<'a>)>,
     /// ESLint's `getUpperFunction`.
     functions: AncestorMemo<'a, Func<'a>>,
 }
@@ -105,7 +105,7 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
     };
     loop {
         // `foo.every(nativeFoo || function foo() { .. })`
-        let (outermost, parent) = state.around_choices.find(Node::Expr(current), |child, parent| {
+        let (outermost, parent) = state.outermost_logical.find(Node::Expr(current), |child, parent| {
             let is_choice = matches!(parent, Node::Expr(parent) if parent.tag() == ExprTag::Cond
                 || matches!(parent.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish)));
             (!is_choice).then_some((child, parent))
@@ -223,12 +223,12 @@ impl ArrayCallbackReturn {
         };
         let can_run_past_the_last = message.id != EXPECTED_INSIDE.id;
         let start = func.estree_span().start;
-        let place = match can_run_past_the_last {
+        let report_span = match can_run_past_the_last {
             true if func.is_arrow() => func.arrow_span(),
             true => func.params_span().map(|params| Span::new(start, params.start)),
             false => func.body_span(),
         };
-        if let Some(place) = place {
+        if let Some(report_span) = report_span {
             // The end of oxlint's `help`.
             let value_requirement = match self.allow_implicit {
                 true => "",
@@ -240,7 +240,7 @@ impl ArrayCallbackReturn {
                 }
                 false => "",
             };
-            Self::report(cx, place, message, func, method)
+            Self::report(cx, report_span, message, func, method)
                 .data("value_requirement", value_requirement)
                 .labels_with(|it| {
                     it.note = note.into();
@@ -271,8 +271,8 @@ impl ArrayCallbackReturn {
             if is_allowed(argument) {
                 continue;
             }
-            let place = oxlint_span.unwrap_or_else(|| statement.span());
-            let mut report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach")
+            let report_span = oxlint_span.unwrap_or_else(|| statement.span());
+            let mut report = Self::report(cx, report_span, EXPECTED_NO_RETURN_VALUE, func, "forEach")
                 .labels_with(|labels| label(labels, argument));
             if self.allow_void && oxlint_span.is_some() {
                 report = report.help(EXPECTED_VOID);

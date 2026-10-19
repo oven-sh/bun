@@ -283,7 +283,7 @@ impl NoMisleadingCharacterClass {
         if !may_be_misleading(pattern) {
             return;
         }
-        let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default())
+        let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default())
         else {
             return;
         };
@@ -435,11 +435,11 @@ impl Rule for NoMisleadingCharacterClass {
                     .then(|| fixer.insert_before(Span::empty(flags_node.span().end - 1), "u"))
             };
             // oxlint finds the characters in the source text under an `as`.
-            let written = match file.language().is_oxlint {
+            let source_node = match file.language().is_oxlint {
                 true => pattern_node.skip_type_wrappers(),
                 false => pattern_node,
             };
-            self.verify(written, &pattern, &flags, unicode_fixer, cx);
+            self.verify(source_node, &pattern, &flags, unicode_fixer, cx);
         }
 
         for e in std::mem::take(&mut cx.state) {

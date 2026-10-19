@@ -156,7 +156,7 @@ pub(super) fn number(json: Option<&Json>) -> Option<u32> {
 }
 
 /// The work of [`Host::for_each`].
-struct Each<'e> {
+struct IndexedWork<'e> {
     /// The heavy files, then the others.
     lists: [Vec<usize>; 2],
     /// How many of each have been taken.
@@ -164,7 +164,7 @@ struct Each<'e> {
     work: &'e (dyn Fn(usize) + Sync),
 }
 
-impl Each<'_> {
+impl IndexedWork<'_> {
     fn has_remaining(&self, list: usize) -> bool {
         self.next[list].load(Ordering::Relaxed) < self.lists[list].len()
     }
@@ -175,7 +175,7 @@ impl Each<'_> {
     }
 }
 
-impl Work for Each<'_> {
+impl Work for IndexedWork<'_> {
     fn has_heavy(&self) -> bool {
         self.has_remaining(0)
     }
@@ -195,7 +195,7 @@ impl Work for Each<'_> {
 
 /// The arguments of [`Host::run_on_block`] other than the file.
 #[derive(Copy, Clone)]
-struct How<'h> {
+struct RunOptions<'h> {
     settings: &'h FileSettings,
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
@@ -236,8 +236,8 @@ impl<'e> Host<'e> {
     }
 
     /// Answers the requests that a realm can make during any kind of call. Returns `false` for any other request.
-    pub(super) fn serve_common(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
-        match asked {
+    pub(super) fn serve_common(&self, request: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
+        match request {
             ask::START => {
                 self.state.lock().loading.realms += 1;
                 schema::write_start(&self.cwd, self.measures, out);
@@ -269,19 +269,19 @@ impl<'e> Host<'e> {
         self.engine.expect(files, size, most);
     }
 
-    /// [`Engine::may_come`]
-    pub fn may_come(&self, size: u64) {
-        self.engine.may_come(size);
+    /// [`Engine::may_need_realm`]
+    pub fn may_need_realm(&self, size: u64) {
+        self.engine.may_need_realm(size);
     }
 
-    /// [`Engine::comes`]
-    pub fn comes(&self, size: u64) {
-        self.engine.comes(size);
+    /// [`Engine::needs_realm`]
+    pub fn needs_realm(&self, size: u64) {
+        self.engine.needs_realm(size);
     }
 
-    /// [`Engine::has_shown`]
-    pub fn has_shown(&self, size: u64, has_come: bool) {
-        self.engine.has_shown(size, has_come);
+    /// [`Engine::report_realm_need`]
+    pub fn report_realm_need(&self, size: u64, needed_realm: bool) {
+        self.engine.report_realm_need(size, needed_realm);
     }
 
     /// [`Engine::work_off`]
@@ -303,14 +303,14 @@ impl<'e> Host<'e> {
         work: &(dyn Fn(usize) + Sync),
     ) {
         let (heavy, light) = (0..count).partition(|&it| is_heavy(it));
-        let each = Each {
+        let indexed_work = IndexedWork {
             lists: [heavy, light],
             next: Default::default(),
             work,
         };
         // Without a realm, each file fails with a message that explains why.
-        if self.engine.work_off(&each, &mut || ()).is_err() {
-            each.finish_here();
+        if self.engine.work_off(&indexed_work, &mut || ()).is_err() {
+            indexed_work.finish_here();
         }
     }
 
@@ -395,18 +395,18 @@ impl<'e> Host<'e> {
     /// describes the plugin's contents, nothing is loaded yet.
     pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
         let entries = location.as_object().unwrap_or_default().iter();
-        let place = entries.filter(|it| it.0 != b"described").cloned().collect();
-        let mut written = b"[".to_vec();
-        write_json(&mut written, &Json::Object(place));
-        written.extend_from_slice(b",null,");
-        json_stringify(prefix, &mut written);
-        written.push(b']');
+        let location_entries = entries.filter(|it| it.0 != b"described").cloned().collect();
+        let mut location_json = b"[".to_vec();
+        write_json(&mut location_json, &Json::Object(location_entries));
+        location_json.extend_from_slice(b",null,");
+        json_stringify(prefix, &mut location_json);
+        location_json.push(b']');
         let described = location.get(b"described").and_then(Json::as_str);
         match described.and_then(crate::json::parse) {
             Some(described) => {
-                Ok(self.register(written, &described, location.get(b"config").is_some()))
+                Ok(self.register(location_json, &described, location.get(b"config").is_some()))
             }
-            None => self.load_from(written),
+            None => self.load_from(location_json),
         }
     }
 
@@ -421,8 +421,12 @@ impl<'e> Host<'e> {
         if let Some(known) = state.plugins.iter().find(|it| it.location == location) {
             return Arc::clone(&known.plugin);
         }
-        let place = (state.plugins.len() as u32, state.rules);
-        let plugin = Arc::new(plugin_from_description(described, place, needs_config_file));
+        let numbering = (state.plugins.len() as u32, state.rules);
+        let plugin = Arc::new(plugin_from_description(
+            described,
+            numbering,
+            needs_config_file,
+        ));
         let first_rule = state.rules;
         state.rules += plugin.rules.len() as u32;
         state.plugins.push(Loaded {
@@ -452,24 +456,27 @@ impl<'e> Host<'e> {
         Ok(self.register(location, &described, false))
     }
 
-    /// Makes `vm` load the plugin at `location`. `place` is its index among the plugins and the number of its first
+    /// Makes `vm` load the plugin at `location`. `numbering` is its index among the plugins and the number of its first
     /// rule, once it has them. Returns the plugin's description.
     fn load_in(
         &self,
         vm: &mut dyn Vm,
         location: &[u8],
-        place: Option<(usize, u32)>,
+        numbering: Option<(usize, u32)>,
     ) -> Result<Vec<u8>, Vec<u8>> {
-        let place = place.map_or_else(
+        let numbering_json = numbering.map_or_else(
             || "null,null".to_owned(),
             |(position, first_rule)| format!("{position},{first_rule}"),
         );
-        self.ask_to_load(vm, &[b"[", location, b",", place.as_bytes(), b"]"].concat())
+        self.ask_to_load(
+            vm,
+            &[b"[", location, b",", numbering_json.as_bytes(), b"]"].concat(),
+        )
     }
 
     fn ask_to_load(&self, vm: &mut dyn Vm, message: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
-        let returned = vm.call(call::LOAD, message, &mut |asked, details, out| {
-            self.serve_common(asked, details, out);
+        let returned = vm.call(call::LOAD, message, &mut |request, details, out| {
+            self.serve_common(request, details, out);
         })?;
         match returned.split_first() {
             Some((&result::DONE, described)) => Ok(described.to_vec()),
@@ -550,7 +557,7 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
         parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
-        let how = How {
+        let run_options = RunOptions {
             settings,
             enabled,
             wants_fixes,
@@ -559,10 +566,12 @@ impl<'e> Host<'e> {
         let size = file.text().len();
         let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
         if self.engine.thread_has_realm() {
-            (self.engine).with_vm_here(size, &mut |vm| outcome = self.run_in(vm, file, &how))?;
+            (self.engine).with_vm_here(size, &mut |vm| {
+                outcome = self.run_in(vm, file, &run_options)
+            })?;
         } else if let Some(parse_again) = parse_again {
             self.engine.with_vm(size, &mut |vm| {
-                parse_again(&mut |file| outcome = self.run_in(vm, file, &how));
+                parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
             })?;
         }
         let (reports, used) = outcome?;
@@ -575,14 +584,14 @@ impl<'e> Host<'e> {
         &self,
         vm: &mut dyn Vm,
         file: &'a File<'a>,
-        how: &How,
+        run_options: &RunOptions,
     ) -> Result<(Vec<Report>, Vec<u32>), Failure> {
-        let How {
+        let RunOptions {
             settings,
             enabled,
             wants_fixes,
             physical_path_len,
-        } = *how;
+        } = *run_options;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
         let has_bom = text.starts_with(b"\xEF\xBB\xBF");
@@ -620,8 +629,8 @@ impl<'e> Host<'e> {
         // The result of `code_path::estree::analyze` for the file.
         let mut code_paths: Option<Vec<u32>> = None;
         let reported = RefCell::new(Vec::new());
-        let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
-            _ if self.serve_common(asked, details, out) => {}
+        let mut serve = |request: u32, details: &[u8], out: &mut Vec<u8>| match request {
+            _ if self.serve_common(request, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
             ask::CONFIGURED => {
                 let position = std::str::from_utf8(details)
@@ -838,9 +847,9 @@ fn plugin_from_description(
             }),
             needs_config_file: needs_config_file && it.get(b"at").is_none(),
             location: it.get(b"at").map(|at| {
-                let mut written = Vec::new();
-                write_json(&mut written, at);
-                written.into()
+                let mut rule_location_json = Vec::new();
+                write_json(&mut rule_location_json, at);
+                rule_location_json.into()
             }),
             plugin: position,
             index: first + i as u32,

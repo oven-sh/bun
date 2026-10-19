@@ -584,14 +584,14 @@ impl<'d> Printer<'d> {
                         self.buffers.indentions.push(next);
                     }
                     Tag::StartConditionalContent(Condition {
-                        mode: wanted,
+                        mode: required_mode,
                         group_id,
                     }) => {
                         let group_mode = match group_id {
                             None => self.mode,
                             Some(id) => self.group_mode(*id).ok_or(PrintError::InvalidDocument)?,
                         };
-                        if group_mode != *wanted {
+                        if group_mode != *required_mode {
                             skip_conditional_content(&mut self.elements)?;
                         }
                     }
@@ -1146,8 +1146,8 @@ impl<'d> Printer<'d> {
     /// The byte order mark doesn't count as text on the first line, because Prettier strips it before formatting.
     #[inline(never)]
     fn has_text_without_width(&self) -> bool {
-        let written = self.out.since(self.start);
-        !matches!(written.last(), None | Some(b'\n' | b'\r')) && written != b"\xEF\xBB\xBF"
+        let printed = self.out.since(self.start);
+        !matches!(printed.last(), None | Some(b'\n' | b'\r')) && printed != b"\xEF\xBB\xBF"
     }
 }
 

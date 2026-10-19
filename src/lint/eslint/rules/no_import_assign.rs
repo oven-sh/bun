@@ -87,7 +87,7 @@ fn get_write_node(reference: Reference) -> Span {
 }
 
 /// oxlint reports at the name, or at the member that's written to.
-fn oxlint_place(reference: Reference) -> Span {
+fn oxlint_report_span(reference: Reference) -> Span {
     let id = reference.expr().filter(|_| !reference.is_write());
     match id.map(Expr::parent) {
         Some(Node::Expr(parent)) if ast_utils::member_object(parent) == id => parent.span(),
@@ -161,7 +161,7 @@ fn check<'a>(variable: Symbol<'a>, cx: &mut Cx<'a, NoImportAssign>) {
         } else {
             continue;
         };
-        let place = if is_oxlint { oxlint_place(reference) } else { get_write_node(reference) };
-        cx.report(place, message).data("name", reference.name());
+        let report_span = if is_oxlint { oxlint_report_span(reference) } else { get_write_node(reference) };
+        cx.report(report_span, message).data("name", reference.name());
     }
 }

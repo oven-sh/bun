@@ -40,7 +40,7 @@ pub struct State<'a> {
     stable_known_value_cache: FxHashMap<usize, bool>,
     function_without_captured_value_cache: FxHashMap<usize, bool>,
     /// Caches the innermost enclosing function, or call whose callee is an identifier.
-    call_or_function_around: AncestorMemo<'a, Node<'a>>,
+    enclosing_call_or_function: AncestorMemo<'a, Node<'a>>,
     oxlint: RefCell<oxlint::exhaustive_deps::Memo<'a>>,
 }
 
@@ -163,8 +163,8 @@ struct OptionalChains<'a> {
 }
 
 impl<'a> OptionalChains<'a> {
-    fn member(&mut self, of: u32, name: &'a [u8]) -> u32 {
-        *self.paths.entry((of, name)).or_insert_with(|| {
+    fn member(&mut self, parent_path: u32, name: &'a [u8]) -> u32 {
+        *self.paths.entry((parent_path, name)).or_insert_with(|| {
             self.is_optional.push(None);
             self.is_optional.len() as u32
         })
@@ -366,7 +366,7 @@ struct DepTree<'k> {
 }
 
 impl<'k> DepTree<'k> {
-    fn get_or_create_node_by_path(&mut self, path: &'k [u8], mut on_the_way: impl FnMut(&mut DepTreeNode)) -> usize {
+    fn get_or_create_node_by_path(&mut self, path: &'k [u8], mut visit_node: impl FnMut(&mut DepTreeNode)) -> usize {
         let mut at = 0;
         for key in strings::split(path, b".") {
             at = *self.child.entry((at, key)).or_insert_with(|| {
@@ -375,7 +375,7 @@ impl<'k> DepTree<'k> {
                 self.nodes[at].children.push((key, child));
                 child
             });
-            on_the_way(&mut self.nodes[at]);
+            visit_node(&mut self.nodes[at]);
         }
         at
     }
@@ -1382,18 +1382,18 @@ where
             // learned from one hook call to the next, so the cache only stores where the calls to identifiers are.
             let mut at = Node::Expr(id);
             let found = loop {
-                let around = state.call_or_function_around.find(at, |_, it| is_call_of_name_or_function(it).then_some(it));
-                let Some(around) = around.filter(|it| *it != component) else {
+                let enclosing = state.enclosing_call_or_function.find(at, |_, it| is_call_of_name_or_function(it).then_some(it));
+                let Some(enclosing) = enclosing.filter(|it| *it != component) else {
                     break None;
                 };
-                if let Some(ExprKind::Call(call)) = around.as_expr().map(Expr::kind)
+                if let Some(ExprKind::Call(call)) = enclosing.as_expr().map(Expr::kind)
                     && let Some(setter) = call.callee().as_ident()
                     && let Some(&state_variable) = state.set_state_call_sites.get(&call.callee().span().start)
                     && !matches!(state_variable, StateVariable::Missing)
                 {
                     break Some((setter, state_variable));
                 }
-                at = around;
+                at = enclosing;
             };
             if let Some((setter, state_variable)) = found {
                 let setter = setter.bytes();

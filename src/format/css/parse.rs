@@ -7,7 +7,7 @@ use super::postcss::{self, Kind, NodeId, Range, Tree};
 use super::selector_parser::{SelectorId, Selectors};
 use super::value_parser::{ValueId, Values};
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal, Refused};
+use crate::syntax_error::{Message, Rejected, Rejection};
 use crate::text;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -102,7 +102,7 @@ pub(crate) struct Context<'a> {
     pub(crate) syntax: Syntax,
     pub(crate) is_oxfmt: bool,
     /// Why a node couldn't be converted.
-    pub(crate) refusal: Refusal,
+    pub(crate) rejection: Rejection,
     pub(crate) stack: Stack,
     /// Caches whether a custom property set's contents [can be converted](Context::can_be_converted), keyed by the
     /// set's start offset. Otherwise a set nested in `n` others would be converted once for each of them.
@@ -296,25 +296,26 @@ impl<'a> Context<'a> {
         postcss::text_of_range(range, self.text, self.extra)
     }
 
-    /// Returns the text of `range` as written in the original file, trimmed. The copy of a Less file that gets parsed
+    /// Returns the text of `range` as it is in the original file, trimmed. The copy of a Less file that gets parsed
     /// has a space instead of every `*`, `"` and `'` between a `//` and the end of its line, whether or not the `//`
     /// starts a comment. `range` excludes those spaces at either end of a value, so it's widened over them first.
-    pub(crate) fn written(&self, range: Range) -> &'a [u8] {
+    pub(crate) fn original_text_of(&self, range: Range) -> &'a [u8] {
         let before = self.text.get(..range.start as usize).unwrap_or_default();
-        let blanks = before.iter().rev().take_while(|it| **it == b' ').count();
-        self.written_from(Range::new(range.start - blanks as u32, range.end))
+        let spaces_before = before.iter().rev().take_while(|it| **it == b' ').count();
+        self.original_text_from(Range::new(range.start - spaces_before as u32, range.end))
     }
 
-    /// Like [`written`](Self::written), but only widens the end of `range`. Use it when `range` already starts at the
-    /// right byte, like a `//` comment's range.
-    fn written_from(&self, range: Range) -> &'a [u8] {
+    /// Like [`original_text_of`](Self::written), but only widens the end of `range`. Use it when `range` already starts
+    /// at the right byte, like a `//` comment's range.
+    fn original_text_from(&self, range: Range) -> &'a [u8] {
         let text_after = self.text.get(range.end as usize..);
         let Some(text_after) = text_after.filter(|_| !self.is_original_text) else {
             return strings::trim_js_whitespace(self.of(range));
         };
-        let blanks = text_after.iter().take_while(|it| **it == b' ').count();
-        let written = (self.original_text).get(range.start as usize..range.end as usize + blanks);
-        strings::trim_js_whitespace(written.unwrap_or_default())
+        let spaces_after = text_after.iter().take_while(|it| **it == b' ').count();
+        let original =
+            (self.original_text).get(range.start as usize..range.end as usize + spaces_after);
+        strings::trim_js_whitespace(original.unwrap_or_default())
     }
 
     fn concat(&self, ranges: &[Range]) -> Cow<'a, [u8]> {
@@ -336,7 +337,7 @@ impl<'a> Context<'a> {
         Cow::Borrowed(self.of(all))
     }
 
-    /// Splits `text` at the `//` comment it ends with. Returns the text before the comment, and the comment as written
+    /// Splits `text` at the `//` comment it ends with. Returns the text before the comment, and the comment as it is
     /// in the original file. `start` is the offset of `text` in the file. `text_after` is everything between `text` and
     /// the `{` or the `;`. Returns `None` unless `text_after` has a line break.
     fn split_line_comment(
@@ -352,7 +353,8 @@ impl<'a> Context<'a> {
             return None;
         }
         let at = line_comment_at_end(text)?;
-        let comment = self.written_from(Range::new(start + at as u32, start + text.len() as u32));
+        let comment =
+            self.original_text_from(Range::new(start + at as u32, start + text.len() as u32));
         let head = &text[..at];
         comment
             .starts_with(b"//")
@@ -384,13 +386,13 @@ impl<'a> Context<'a> {
         raw: &postcss::Node,
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
-    ) -> Result<bool, Refused> {
+    ) -> Result<bool, Rejected> {
         let parse = |text: Cow<'a, [u8]>, root_offset: u32, parsed: &mut Parsed| {
             let Parsed { selectors, values } = parsed;
             values
                 .parse(&text, self.syntax, root_offset, selectors, &self.stack)
                 .map(Value::Parsed)
-                .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
+                .map_err(|_| self.rejection.note(Message::UnreadableAtRule, raw.start))
         };
         // `node.params`
         let clean_params: Cow<'a, [u8]> = match &raw.clean_params {
@@ -542,7 +544,7 @@ impl<'a> Context<'a> {
         tree: &Tree,
         id: NodeId,
         parsed: &mut Parsed,
-    ) -> Result<CssNode<'a>, Refused> {
+    ) -> Result<CssNode<'a>, Rejected> {
         parsed.selectors.clear();
         parsed.values.clear();
         let raw = &tree.nodes[id as usize];
@@ -598,7 +600,7 @@ impl<'a> Context<'a> {
                 if bun_core::strings::trim_js_whitespace(&node.raw_selector).is_empty()
                     || (node.raw_selector.starts_with(b"@") && node.raw_selector.ends_with(b":"))
                 {
-                    return Err(self.refusal.note(Message::RuleWithoutSelector, raw.start));
+                    return Err(self.rejection.note(Message::RuleWithoutSelector, raw.start));
                 }
                 {
                     let clean = raw
@@ -644,7 +646,7 @@ impl<'a> Context<'a> {
         raw: &postcss::Node,
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
-    ) -> Result<(), Refused> {
+    ) -> Result<(), Rejected> {
         let value = self.of(raw.value);
         // `getValueRootOffset`
         let root_offset = raw.start + node.prop.len() as u32 + node.between.len() as u32;
@@ -657,7 +659,7 @@ impl<'a> Context<'a> {
                 strings::trim_js_whitespace_start(rest).first(),
                 Some(b'"' | b'\'')
             ) {
-                node.value = Value::Text(Cow::Borrowed(self.written(raw.value)));
+                node.value = Value::Text(Cow::Borrowed(self.original_text_of(raw.value)));
                 return Ok(());
             }
             let mut rules = None;
@@ -683,7 +685,7 @@ impl<'a> Context<'a> {
                 Some(rules) => Value::Rule(rules),
                 // Prettier reads `raws.value.raw`, which only exists if the value has comments.
                 None if raw.clean_value.is_none() => {
-                    return Err(self.refusal.note(Message::UnreadableValue, root_offset));
+                    return Err(self.rejection.note(Message::UnreadableValue, root_offset));
                 }
                 None => Value::Parsed(parsed.values.unknown(value, root_offset)),
             };
@@ -738,16 +740,16 @@ impl<'a> Context<'a> {
                     &mut parsed.selectors,
                     &self.stack,
                 )
-                .map_err(|_| self.refusal.note(Message::UnreadableValue, root_offset))?;
+                .map_err(|_| self.rejection.note(Message::UnreadableValue, root_offset))?;
             // Prettier treats every `//` as the start of a comment: `--a: https://b` becomes `--a: https: ; //b`.
-            let is_as_written = is_custom_property
+            let is_verbatim = is_custom_property
                 && strings::contains(value, b"//")
                 && next_line_comment(value, 0).is_some()
                 && !self.has_line_comment(value);
             let end = raw.value.start + value.len() as u32;
-            node.value = match is_as_written {
+            node.value = match is_verbatim {
                 true => Value::Text(Cow::Borrowed(
-                    self.written(Range::new(raw.value.start, end)),
+                    self.original_text_of(Range::new(raw.value.start, end)),
                 )),
                 false => Value::Parsed(root),
             };
@@ -782,7 +784,7 @@ impl<'a> Context<'a> {
         raw: &postcss::Node,
         node: &mut CssNode<'a>,
         parsed: &mut Parsed,
-    ) -> Result<(), Refused> {
+    ) -> Result<(), Rejected> {
         let has_text =
             |range: Range| !bun_core::strings::trim_js_whitespace(self.of(range)).is_empty();
         let params = trim(&self.concat(&[
@@ -814,7 +816,7 @@ impl<'a> Context<'a> {
         let value = |text: &[u8], values: &mut Values, selectors: &mut Selectors| {
             values
                 .parse(text, self.syntax, root_offset, selectors, &self.stack)
-                .map_err(|_| self.refusal.note(Message::UnreadableAtRule, raw.start))
+                .map_err(|_| self.rejection.note(Message::UnreadableAtRule, raw.start))
         };
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
@@ -823,7 +825,7 @@ impl<'a> Context<'a> {
                 Some(clean) => Cow::Owned(clean.to_vec()),
                 None => Cow::Borrowed(self.of(raw.params)),
             };
-            let unreadable = || self.refusal.note(Message::UnreadableAtRule, raw.start);
+            let unreadable = || self.rejection.note(Message::UnreadableAtRule, raw.start);
             let start = text::index_of_from(&clean, b":--", 0).ok_or_else(unreadable)?;
             let name_len = clean[start..]
                 .iter()

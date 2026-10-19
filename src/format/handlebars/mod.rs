@@ -23,14 +23,14 @@ use crate::css::doc::{self, Elements};
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
 use crate::stack::Stack;
-use crate::syntax_error::{Message, Refusal, Refused};
+use crate::syntax_error::{Message, Rejected, Rejection};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
 #[derive(Copy, Clone, Debug)]
 enum Error {
-    Syntax(Refused),
+    Syntax(Rejected),
     NestedTooDeeply,
 }
 
@@ -59,7 +59,7 @@ fn parse(
     content: &[u8],
     front_matter_end: usize,
     scratch: &mut Scratch,
-    refusal: &Refusal,
+    rejection: &Rejection,
 ) -> Result<ast::NodeId, Error> {
     let Scratch {
         tokens,
@@ -72,13 +72,13 @@ fn parse(
     tree.clear();
     // Offsets are stored in 31 bits.
     if content.len() > i32::MAX as usize {
-        return Err(Error::Syntax(refusal.note(Message::TooLarge, 0)));
+        return Err(Error::Syntax(rejection.note(Message::TooLarge, 0)));
     }
-    lexer::lex(content, tokens, refusal)?;
-    parser::parse(content, tokens, tree, statements, refusal)?;
+    lexer::lex(content, tokens, rejection)?;
+    parser::parse(content, tokens, tree, statements, rejection)?;
     let front_matter =
         (front_matter_end > 0).then(|| tree.add(ast::Kind::FrontMatter, 0, front_matter_end));
-    tokenizer::build(content, statements, front_matter, tree, refusal)
+    tokenizer::build(content, statements, front_matter, tree, rejection)
 }
 
 /// Returns `text`, which has no `\r`, with its front matter replaced with spaces so that all offsets stay valid, and
@@ -104,14 +104,14 @@ pub fn has_same_meaning(
     options: &FormatOptions,
 ) -> Result<bool, FormatError> {
     let mut scratch = Scratch::default();
-    let written = [before, after].map(|text| {
+    let serialized = [before, after].map(|text| {
         let text = bun_core::strings::crlf_as_lf(text.strip_prefix(BOM).unwrap_or(text));
         let (content, front_matter_end) = without_front_matter(&text);
         let template = parse(
             &content,
             front_matter_end,
             &mut scratch,
-            &Refusal::default(),
+            &Rejection::default(),
         )
         .ok()?;
         if scratch.tree.has_lost_text {
@@ -134,7 +134,7 @@ pub fn has_same_meaning(
         writer.template(template);
         Some((writer.out, writer.stack.ran_out()))
     });
-    let [Some(before), Some(after)] = written else {
+    let [Some(before), Some(after)] = serialized else {
         return Ok(false);
     };
     if before.1 || after.1 {
@@ -169,10 +169,10 @@ pub fn format(
         return Ok(());
     }
     let (content, front_matter_end) = without_front_matter(text);
-    let refusal = Refusal::default();
+    let rejection = Rejection::default();
     let template =
-        parse(&content, front_matter_end, scratch, &refusal).map_err(|error| match error {
-            Error::Syntax(_) => FormatError::SyntaxErrorAt(refusal.reason())
+        parse(&content, front_matter_end, scratch, &rejection).map_err(|error| match error {
+            Error::Syntax(_) => FormatError::SyntaxErrorAt(rejection.reason())
                 .before_normalizing_end_of_line(&original[first..]),
             Error::NestedTooDeeply => FormatError::NestedTooDeeply,
         })?;

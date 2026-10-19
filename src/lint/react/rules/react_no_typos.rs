@@ -151,10 +151,10 @@ impl Rule for NoTypos {
         for member in class.members() {
             let node = Node::Member(member);
             let finding = match member.kind() {
-                MemberKind::Property => Finding::of_property_casing(node, member.init(), cx)
+                MemberKind::Property => Finding::from_property_casing(node, member.init(), cx)
                     .filter(|_| member.is_static() && ast_utils::is_property_definition(member)),
                 MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                    Finding::of_lifecycle_method_casing(Property::Member(member))
+                    Finding::from_lifecycle_method_casing(Property::Member(member))
                         .filter(|_| !member.flags().contains(Flags::ABSTRACT))
                 }
                 _ => None,
@@ -181,7 +181,7 @@ fn member_expression<'a>(node: Expr<'a>, parent: Expr<'a>, right: Expr<'a>, cx: 
     if !matches!(node.tag(), ExprTag::Dot | ExprTag::Index) {
         return;
     }
-    let Some(finding) = Finding::of_property_casing(Node::Expr(node), Some(right), cx) else {
+    let Some(finding) = Finding::from_property_casing(Node::Expr(node), Some(right), cx) else {
         return;
     };
     // An optional chain is wrapped in a `ChainExpression`. A default value is inside an `AssignmentPattern`.
@@ -210,8 +210,8 @@ fn object_expression<'a>(node: Expr<'a>, cx: &Cx<'a, NoTypos>) {
         return;
     }
     for property in properties.iter().filter(|it| it.kind() != PropKind::Spread) {
-        let casing = Finding::of_property_casing(Node::Prop(property), property.value(), cx);
-        for finding in casing.into_iter().chain(Finding::of_lifecycle_method_casing(Property::Prop(property))) {
+        let casing = Finding::from_property_casing(Node::Prop(property), property.value(), cx);
+        for finding in casing.into_iter().chain(Finding::from_lifecycle_method_casing(Property::Prop(property))) {
             finding.report(TYPO_PROP_DECLARATION, cx);
         }
     }
@@ -258,7 +258,7 @@ fn imports_of<'a>(file: &'a File<'a>) -> SmallVec<[Imported<'a>; 2]> {
 
 impl<'a> Finding<'a> {
     /// upstream's `reportErrorIfPropertyCasingTypo`, for a `Member`, a `Prop`, a `Dot` or an `Index`.
-    fn of_property_casing(
+    fn from_property_casing(
         property: Node<'a>,
         property_value: Option<Expr<'a>>,
         cx: &Cx<'a, NoTypos>,
@@ -279,7 +279,7 @@ impl<'a> Finding<'a> {
 
     /// upstream's `reportErrorIfLifecycleMethodCasingTypo`. Upstream throws on a numeric key. Here it just doesn't
     /// match any method.
-    fn of_lifecycle_method_casing(property: Property<'a>) -> Option<Finding<'a>> {
+    fn from_lifecycle_method_casing(property: Property<'a>) -> Option<Finding<'a>> {
         let node = property.node();
         let node_key_name = get_property_name(node).map(Cow::Borrowed).or_else(|| get_key_value(node))?;
         let method = *INSTANCE.iter().chain(&STATIC).find(|it| node_key_name.eq_ignore_ascii_case(it.as_bytes()))?;

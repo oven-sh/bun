@@ -519,7 +519,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfSymbol(getSymbolOfDeclaration(node))`, or `None` if `node` doesn't declare anything.
     pub(super) fn iso_type_of_declared(&mut self, file: FileId, node: Node) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let of_pattern = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_)).then_some(pat);
+        let identifier_pattern =
+            |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_)).then_some(pat);
         let pat = match hir.data(node) {
             NodeData::Expr(e) => {
                 return match hir[e].kind {
@@ -552,13 +553,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 return Some(self.type_of_symbol(self.files().sym(file, symbol)));
             }
-            NodeData::VarDecl(d) => of_pattern(hir[d].pat)?,
+            NodeData::VarDecl(d) => identifier_pattern(hir[d].pat)?,
             NodeData::Param(p) if self.is_this_parameter(file, p) => {
                 return Some(self.type_of_this_parameter(file, bound.param_fn[p.idx()]));
             }
             NodeData::Param(p) => return Some(self.type_of_param(file, p)),
-            NodeData::PatProp(p) => of_pattern(hir[p].value)?,
-            NodeData::PatElem(p) => of_pattern(hir[p].pat)?,
+            NodeData::PatProp(p) => identifier_pattern(hir[p].value)?,
+            NodeData::PatElem(p) => identifier_pattern(hir[p].pat)?,
             _ => return None,
         };
         // Every declaration of a `var` has the type of `symbol.ValueDeclaration`.
@@ -1078,12 +1079,14 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             getter
         };
-        let mut written = annotation(Some(func));
-        if written.is_none() {
-            written = annotation(other);
+        let mut annotation_node = annotation(Some(func));
+        if annotation_node.is_none() {
+            annotation_node = annotation(other);
         }
-        if written.is_some() && !matches!(hir[written].kind, TypeNodeKind::Predicate { .. }) {
-            return Pseudo::Direct(written);
+        if annotation_node.is_some()
+            && !matches!(hir[annotation_node].kind, TypeNodeKind::Predicate { .. })
+        {
+            return Pseudo::Direct(annotation_node);
         }
         let Some(getter) = getter else {
             return Pseudo::NoResult(hir.node(func));
@@ -1139,7 +1142,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_value {
             return Pseudo::NoResult(node);
         }
-        let of_signature = Pseudo::Inferred {
+        let inferred_return = Pseudo::Inferred {
             of: node,
             errors: Vec::new(),
             is_signature_return: true,
@@ -1147,7 +1150,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut candidate = ExprId::NONE;
         match f.body {
             FnBody::None => {}
-            _ if f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) => return of_signature,
+            _ if f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) => return inferred_return,
             FnBody::Expr(body) => candidate = body,
             FnBody::Block(_) => {
                 for s in bound.ids(bound.fns[func.idx()].returns) {
@@ -1163,7 +1166,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if candidate.is_none() {
-            return of_signature;
+            return inferred_return;
         }
         if !self.iso_is_contextually_typed(file, hir.node(candidate)) {
             return self.iso_pseudo_of_expr(file, candidate);
@@ -1172,7 +1175,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::As { ty, .. } if !is_parenthesized(self.hir(file), candidate) => {
                 Pseudo::Direct(ty)
             }
-            _ => of_signature,
+            _ => inferred_return,
         }
     }
 
@@ -1226,7 +1229,7 @@ impl<'p, 's> Checker<'p, 's> {
         // "Fast path: no initializer means we never need parameter position info."
         if param.default.is_none() {
             return match param.ty.some() {
-                Some(written) => Pseudo::Direct(written),
+                Some(annotated) => Pseudo::Direct(annotated),
                 None => Pseudo::NoResult(hir.node(p)),
             };
         }
@@ -1235,11 +1238,11 @@ impl<'p, 's> Checker<'p, 's> {
         let has_required_after =
             (p.0 - params.start) as usize + 1 < Self::iso_last_required(hir, params);
         if param.ty.is_some() {
-            let written = Pseudo::Direct(param.ty);
+            let annotated = Pseudo::Direct(param.ty);
             return if is_strict && has_required_after {
-                Self::iso_add_undefined(hir, written)
+                Self::iso_add_undefined(hir, annotated)
             } else {
-                written
+                annotated
             };
         }
         if !matches!(hir[param.pat].kind, PatKind::Ident(_))
@@ -1334,18 +1337,18 @@ impl<'p, 's> Checker<'p, 's> {
             },
             // `typeFromExpandoProperty`
             NodeData::Expr(e) => {
-                let written = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
-                if written.is_some() {
-                    Pseudo::Direct(written)
+                let jsdoc_type_node = hir.jsdoc_type(JsDocTypeOwner::Assign(e));
+                if jsdoc_type_node.is_some() {
+                    Pseudo::Direct(jsdoc_type_node)
                 } else {
                     Pseudo::NoResult(node)
                 }
             }
             // `typeFromPropertyAssignment`
             NodeData::Prop(p) => {
-                let written = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
-                if written.is_some() {
-                    return Pseudo::Direct(written);
+                let jsdoc_type_node = hir.jsdoc_type(JsDocTypeOwner::Prop(p));
+                if jsdoc_type_node.is_some() {
+                    return Pseudo::Direct(jsdoc_type_node);
                 }
                 if hir[p].kind != PropKind::Init || hir[p].value.is_none() {
                     return Pseudo::NoResult(node);
@@ -1887,8 +1890,8 @@ impl<'p, 's> Checker<'p, 's> {
                     self.iso_is_equivalent(tx, ty, prop_type, silent)
                 }
                 PseudoElementKind::Setter { param, .. } => {
-                    let written = self.write_type_of_prop(target, mapper);
-                    self.iso_is_equivalent(tx, &param.ty, written, silent)
+                    let write_type = self.write_type_of_prop(target, mapper);
+                    self.iso_is_equivalent(tx, &param.ty, write_type, silent)
                 }
             };
             if !is_same {
@@ -1901,14 +1904,14 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// `pseudoParametersEquivalentToParameters`. `elsewhere` is the node where a count mismatch is reported.
+    /// `pseudoParametersEquivalentToParameters`. `mismatch_node` is the node where a count mismatch is reported.
     fn iso_are_params_equivalent(
         &mut self,
         tx: &mut Emit,
         params: &[PseudoParam],
         sig: SigId,
         reports: bool,
-        elsewhere: Node,
+        mismatch_node: Node,
     ) -> bool {
         let mut params = params;
         if let Some((this, _)) = self.sig_this_parameter(sig) {
@@ -1917,7 +1920,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .filter(|(first, _)| self.is_this_parameter(tx.file, first.param))
             else {
                 if reports {
-                    tx.inference_fallbacks.push(elsewhere);
+                    tx.inference_fallbacks.push(mismatch_node);
                 }
                 return false;
             };
@@ -1937,7 +1940,7 @@ impl<'p, 's> Checker<'p, 's> {
         let targets = self.sig_params(sig);
         if targets.len() != params.len() {
             if reports {
-                tx.inference_fallbacks.push(elsewhere);
+                tx.inference_fallbacks.push(mismatch_node);
             }
             return false;
         }
@@ -1993,8 +1996,8 @@ impl<'p, 's> Checker<'p, 's> {
                 if ty.is_none() {
                     return false;
                 }
-                let written = self.type_from_node(file, ty);
-                written == narrowed || self.is_identical(written, narrowed)
+                let predicate_type = self.type_from_node(file, ty);
+                predicate_type == narrowed || self.is_identical(predicate_type, narrowed)
             }
             None => ty.is_none(),
         }

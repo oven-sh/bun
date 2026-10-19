@@ -44,7 +44,7 @@ const SPACE_NEEDED_AFTER: Message = Message::new("spaceNeededAfter", "A space is
 const SPACE_NEEDED_BEFORE: Message = Message::new("spaceNeededBefore", "A space is required before '{{token}}'");
 
 impl Spacing {
-    fn of(value: Option<&str>) -> Option<Spacing> {
+    fn from_option(value: Option<&str>) -> Option<Spacing> {
         match value? {
             "always" => Some(Spacing::Always),
             "never" => Some(Spacing::Never),
@@ -107,7 +107,7 @@ impl Config {
         let is_object_literal = match second_byte {
             Some(b'{') => true,
             // The comment `/*{*/` has the same `value` as the brace.
-            Some(b'/' | b'<') => file.comment_around(second).is_some_and(|it| it.value() == b"{"),
+            Some(b'/' | b'<') => file.comment_containing(second).is_some_and(|it| it.value() == b"{"),
             _ => false,
         };
         let spacing = if is_object_literal { self.object_literal_spaces } else { self.when };
@@ -168,7 +168,7 @@ impl Rule for JsxCurlySpacing {
             Some(when) => (Some(when), options.object(1)),
             None => (options.object(0).str("when"), options.object(0)),
         };
-        let object_literals = |config: Object<'_>| Spacing::of(config.object("spacing").str("objectLiterals"));
+        let object_literals = |config: Object<'_>| Spacing::from_option(config.object("spacing").str("objectLiterals"));
         // `normalizeConfig` of the value at `key`, with `normalizeConfig(originalConfig)` as its defaults.
         let config_of = |key: &str, default: bool| {
             let config_or_boolean = original_config.get(key);
@@ -176,7 +176,7 @@ impl Rule for JsxCurlySpacing {
                 return None;
             }
             let config = Object::of(config_or_boolean);
-            let when = Spacing::of(config.str("when").or(when)).unwrap_or(Spacing::Never);
+            let when = Spacing::from_option(config.str("when").or(when)).unwrap_or(Spacing::Never);
             let allow_multiline = config.bool("allowMultiline").or_else(|| original_config.bool("allowMultiline"));
             let object_literal_spaces = object_literals(config).or_else(|| object_literals(original_config));
             Some(Config {

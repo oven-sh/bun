@@ -866,7 +866,7 @@ export const Mapped = ({ items }) => items.map(item => <li>{item}</li>);
     };
     const rule = "react/jsx-key";
     const { native, eslint } = await inBothModes(files, [rule]);
-    const at = (places: string[]) => places.map(place => `a.jsx:${place} error ${rule}`);
+    const at = (positions: string[]) => positions.map(position => `a.jsx:${position} error ${rule}`);
     const rendered = ["7:33", "7:45", "8:46", "10:11", "10:23", "12:29", "13:56"];
     expect(native).toEqual(at(rendered));
     expect(eslint).toEqual(at(["2:18", "2:31", "5:23", "5:33", "6:46", "6:69", ...rendered]));
@@ -910,7 +910,7 @@ export const HALF = 9007199254740993.5;
     };
     const rule = "no-loss-of-precision";
     const { native, eslint } = await inBothModes(files, [rule]);
-    const at = (places: string[]) => places.map(place => `${name}:${place} error ${rule}`);
+    const at = (positions: string[]) => positions.map(position => `${name}:${position} error ${rule}`);
     const integers = ["3:19", "4:20", "5:20", "6:21", "7:21", "8:21"];
     expect(native).toEqual(at(integers));
     expect(eslint).toEqual(at(["1:19", "2:20", ...integers]));
@@ -940,10 +940,10 @@ export const HALF = 9007199254740993.5;
     };
     const { native, eslint } = await inBothModes(files, ["no-undef"]);
     expect(native).toEqual(["a.js:3:57 error no-undef"]);
-    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`));
+    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(position => `a.js:${position} error no-undef`));
     const strict = { "bunfig.toml": `[lint.rules]\n"no-undef" = ["error", { typeof = true }]\n` };
     expect((await inBothModes({ ...files, ...strict }, ["no-undef"])).native).toEqual(
-      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`),
+      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(position => `a.js:${position} error no-undef`),
     );
   });
 
@@ -1659,14 +1659,14 @@ export function useThing(a, on) {
       "src/App.jsx": component,
       "src/deep/App.jsx": component,
     };
-    const [searched, named, piped, printed] = await Promise.all([
+    const [searched, explicit, piped, printed] = await Promise.all([
       lint(files, []),
       lint(files, ["src/App.jsx", "src/deep/App.jsx"]),
       lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
       lint(files, ["--print-config", "src/App.jsx"]),
     ]);
     expect(searched.reports).toEqual([...found("src/App.jsx"), ...found("src/deep/App.jsx")]);
-    expect(named.reports).toEqual(searched.reports);
+    expect(explicit.reports).toEqual(searched.reports);
     expect(piped.reports).toEqual(found("src/Other.jsx"));
     expect(printed.json.rules["react-hooks/rules-of-hooks"]).toEqual([2]);
   });
@@ -1677,18 +1677,18 @@ export function useThing(a, on) {
       "server/package.json": `{ "dependencies": {} }`,
       "server/App.jsx": component,
     };
-    const [searched, named] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
+    const [searched, explicit] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
     expect(searched.reports).toEqual([]);
-    expect(named.reports).toEqual([]);
+    expect(explicit.reports).toEqual([]);
   });
 
   test("they also run on files passed by name and on stdin", async () => {
     const files = { "package.json": dependingOn("dependencies"), "src/App.jsx": component };
-    const [named, piped] = await Promise.all([
+    const [explicit, piped] = await Promise.all([
       lint(files, ["src/App.jsx"]),
       lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
     ]);
-    expect(named.reports).toEqual(found("src/App.jsx"));
+    expect(explicit.reports).toEqual(found("src/App.jsx"));
     expect(piped.reports).toEqual(found("src/Other.jsx"));
   });
 
@@ -1742,16 +1742,16 @@ export function useThing(a, on) {
       lint(files, ["--print-config", "App.jsx"]),
       lint(files, ["--print-config", "mail/App.jsx"]),
     ]);
-    const ofReact = (printed: { rules: object }) =>
+    const reactRules = (printed: { rules: object }) =>
       Object.fromEntries(Object.entries(printed.rules).filter(([name]) => name.startsWith("react")));
-    expect(ofReact(withReact.json)).toEqual({
+    expect(reactRules(withReact.json)).toEqual({
       "react-hooks/rules-of-hooks": [2],
       "react-hooks/exhaustive-deps": [1],
       "react/jsx-key": [2, { checkArraysOutsideJSX: false }],
       "react/jsx-uses-react": [2],
     });
     // `react/jsx-uses-react` reports nothing. It's also for Preact's `h`, so it doesn't depend on React.
-    expect(ofReact(without.json)).toEqual({
+    expect(reactRules(without.json)).toEqual({
       "react/jsx-key": [0, { checkArraysOutsideJSX: false }],
       "react/jsx-uses-react": [2],
     });
@@ -1759,9 +1759,9 @@ export function useThing(a, on) {
 
   test("they stay off with an ESLint or oxlint config", async () => {
     const files = { "package.json": dependingOn("dependencies"), "App.jsx": component };
-    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+    const eslintConfig = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
     const [eslint, oxlint] = await Promise.all([
-      lint({ ...files, "eslint.config.js": ofEslint }, ["App.jsx"]),
+      lint({ ...files, "eslint.config.js": eslintConfig }, ["App.jsx"]),
       lint({ ...files, ".oxlintrc.json": "{}" }, ["App.jsx"]),
     ]);
     expect(eslint.json).toEqual([expect.objectContaining({ messages: [] })]);
@@ -1813,9 +1813,9 @@ module.exports = os.platform();
     };
     const expected = ["early.js", "legacy/esm/early.js", "src/early.js"].map(it => `${it}:3:3 ${returnOutside}`);
     const names = Object.keys(files).filter(it => it.endsWith(".js"));
-    const [all, named] = await Promise.all([lint(files, []), lint(files, names)]);
+    const [all, explicit] = await Promise.all([lint(files, []), lint(files, names)]);
     expect(all.problems.sort()).toEqual(expected);
-    expect(named.problems.sort()).toEqual(expected);
+    expect(explicit.problems.sort()).toEqual(expected);
   });
 
   test.each([
@@ -1826,11 +1826,11 @@ module.exports = os.platform();
     ["a top-level for await", "for await (const a of []) console.log(a);"],
   ])("%s makes a file a module", async (_, code) => {
     const files = { "a.js": `${code}\nreturn;\n`, "b.js": "" };
-    const [alone, inCommonJs] = await Promise.all([
+    const [withoutPackageJson, inCommonJs] = await Promise.all([
       lint(files, ["a.js"]),
       lint({ ...files, "package.json": `{ "type": "commonjs" }` }, ["a.js"]),
     ]);
-    expect(alone.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+    expect(withoutPackageJson.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
     expect(inCommonJs.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
   });
 

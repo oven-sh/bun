@@ -236,7 +236,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         while let Some(comment) = comments
             .partition_point(|comment| (comment.pos as usize) < pos)
             .checked_sub(1)
-            .and_then(|around| comments.get(around))
+            .and_then(|preceding_index| comments.get(preceding_index))
             && pos < comment.end as usize
         {
             pos = skip_trivia_back(text, comment.pos as usize);

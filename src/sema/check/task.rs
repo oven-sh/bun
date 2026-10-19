@@ -56,7 +56,7 @@ pub struct Open;
 /// One per `Checker`.
 pub struct Task<'s> {
     /// The round, and an index that's unique within the round. `None` until `begin`.
-    place: Option<(u32, u32)>,
+    round_and_index: Option<(u32, u32)>,
     /// The file the task is visiting.
     pub file: Option<FileId>,
     /// Files the task has visited with no end-of-file commit yet, so their results aren't final.
@@ -116,7 +116,7 @@ impl<'s> Task<'s> {
     /// `arena` belongs to the calling thread, which runs the task. `types` holds the published records.
     pub(super) fn new_in(arena: &'s Arena, types: &TypeStore<'s>) -> Task<'s> {
         Task {
-            place: None,
+            round_and_index: None,
             file: None,
             uncommitted_files: Vec::new(),
             diagnostics: Vec::new(),
@@ -153,18 +153,18 @@ impl<'s> Task<'s> {
             "a record was created before `begin`, so its id would dangle"
         );
         self.drop_everything();
-        self.place = Some((round, index));
+        self.round_and_index = Some((round, index));
     }
 
     /// True once `begin` has been called.
     #[inline]
     pub fn is_planned(&self) -> bool {
-        self.place.is_some()
+        self.round_and_index.is_some()
     }
 
     /// Returns a number that's unique to this task.
     pub(super) fn number(&self) -> u64 {
-        (self.place).map_or(u64::MAX, |(round, index)| {
+        (self.round_and_index).map_or(u64::MAX, |(round, index)| {
             u64::from(round) << 32 | u64::from(index)
         })
     }
@@ -306,7 +306,7 @@ impl<'s> Task<'s> {
             }
             self.stop_writing_immediately();
         } else {
-            self.discard_until_recheck("a ring that an earlier file may enter");
+            self.discard_until_recheck("a cycle that an earlier file may enter");
         }
     }
 
@@ -442,7 +442,7 @@ impl<'s> Task<'s> {
     /// lists every field, so adding a field without resetting it here is a compile error.
     fn drop_everything(&mut self) {
         let Task {
-            place,
+            round_and_index,
             file,
             uncommitted_files,
             diagnostics,
@@ -469,7 +469,7 @@ impl<'s> Task<'s> {
             buffer,
             file_local,
         } = self;
-        (*place, *file, *view) = (None, None, None);
+        (*round_and_index, *file, *view) = (None, None, None);
         uncommitted_files.clear();
         diagnostics.clear();
         (*closed_a_cycle, *is_trusted) = (false, false);

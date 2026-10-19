@@ -352,8 +352,8 @@ pub(crate) struct ComponentList<'a> {
     by_id: FxHashMap<Span, ComponentId>,
     /// Cache for `set`: the component enclosing a node. It's reset when a node that could be on a
     /// cached path becomes a component or stops being one.
-    around: AncestorMemo<'a, ComponentId>,
-    /// The highest start of any node looked up in `around`.
+    enclosing_cache: AncestorMemo<'a, ComponentId>,
+    /// The highest start of any node looked up in `enclosing_cache`.
     max_queried_start: u32,
 }
 
@@ -392,7 +392,7 @@ impl<'a> ComponentList<'a> {
         if (before >= 1) != (after >= 1)
             && At::span_and_depth(node).0.start <= self.max_queried_start
         {
-            self.around = AncestorMemo::default();
+            self.enclosing_cache = AncestorMemo::default();
             self.max_queried_start = 0;
         }
         id
@@ -421,7 +421,7 @@ impl<'a> ComponentList<'a> {
         let (list, by_id) = (&self.list, &self.by_id);
         let id = ComponentList::get_in(list, by_id, node).or_else(|| {
             self.max_queried_start = self.max_queried_start.max(At::span_and_depth(node).0.start);
-            self.around
+            self.enclosing_cache
                 .find_with(normalize(node), estree_parent, |_, parent| {
                     ComponentList::get_in(list, by_id, parent)
                 })
@@ -437,17 +437,18 @@ impl<'a> ComponentList<'a> {
     pub(crate) fn list(&mut self) -> Vec<ComponentId> {
         let mut used_prop_types: FxHashMap<ComponentId, (Vec<UsedPropType<'a>>, Equivalents<'a>)> =
             FxHashMap::default();
-        let mut around: AncestorMemo<'a, Option<ComponentId>> = AncestorMemo::default();
+        let mut enclosing_memo: AncestorMemo<'a, Option<ComponentId>> = AncestorMemo::default();
 
         // Find props used in components for which we are not confident
         for uncertain in self.list.iter().filter(|it| it.confidence < 2) {
-            let component = around.find_with(uncertain.node, estree_parent, |child, parent| {
-                // Stop moving up if we reach a decorator
-                if is_in_decorator(child, parent) {
-                    return Some(None);
-                }
-                self.get(parent).map(Some)
-            });
+            let component =
+                enclosing_memo.find_with(uncertain.node, estree_parent, |child, parent| {
+                    // Stop moving up if we reach a decorator
+                    if is_in_decorator(child, parent) {
+                        return Some(None);
+                    }
+                    self.get(parent).map(Some)
+                });
             let Some(Some(component)) = component else {
                 continue;
             };

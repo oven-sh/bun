@@ -41,7 +41,7 @@ pub(super) struct Accessor<'a> {
 }
 
 impl<'a> Accessor<'a> {
-    pub(super) fn of_prop(prop: Prop<'a>) -> Option<Self> {
+    pub(super) fn from_prop(prop: Prop<'a>) -> Option<Self> {
         let is_getter = match prop.kind() {
             PropKind::Getter => true,
             PropKind::Setter => false,
@@ -54,7 +54,7 @@ impl<'a> Accessor<'a> {
         })
     }
 
-    pub(super) fn of_member(member: Member<'a>) -> Option<Self> {
+    pub(super) fn from_member(member: Member<'a>) -> Option<Self> {
         let is_getter = match member.kind() {
             MemberKind::Getter => true,
             MemberKind::Setter => false,
@@ -131,24 +131,24 @@ impl AccessorPairs {
         };
         // If a static name has several getters or setters, oxlint only looks at the last one.
         let is_oxlint = cx.language().is_oxlint;
-        let keeps_the_last = is_oxlint && accessor.key.name().is_some();
-        if accessors.iter().any(is_paired) || keeps_the_last && accessors.iter().skip(i + 1).any(is_same) {
+        let uses_last_only = is_oxlint && accessor.key.name().is_some();
+        if accessors.iter().any(is_paired) || uses_last_only && accessors.iter().skip(i + 1).any(is_same) {
             return;
         }
         let message = if accessor.is_getter { missing_setter } else { missing_getter };
         // oxlint reports at the key.
-        let place = match is_oxlint {
+        let report_span = match is_oxlint {
             true => utils::oxlint::property_key_span(accessor.key, cx.file()),
             false => ast_utils::get_function_head_loc(accessor.func),
         };
-        cx.report(place, message)
+        cx.report(report_span, message)
             .data("name", ast_utils::get_function_name_with_kind(accessor.func));
     }
 
     fn check_type<'a>(&self, func: Func<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         self.check(
             func,
-            &mut members.iter().filter_map(Accessor::of_member),
+            &mut members.iter().filter_map(Accessor::from_member),
             MISSING_GETTER_IN_TYPE,
             MISSING_SETTER_IN_TYPE,
             cx,
@@ -219,11 +219,11 @@ impl Rule for AccessorPairs {
         };
         if ast_utils::is_property_descriptor(e) && (!is_oxlint || is_plain_descriptor(e)) {
             // oxlint reports at the `set`.
-            let place = match key_of_setter.filter(|_| is_oxlint) {
+            let report_span = match key_of_setter.filter(|_| is_oxlint) {
                 Some(key) => key.inner_span(cx.file()),
                 None => e.span(),
             };
-            cx.report(place, message);
+            cx.report(report_span, message);
         }
     }
 
@@ -251,7 +251,7 @@ impl AccessorPairs {
                 {
                     self.check(
                         func,
-                        &mut props.iter().filter_map(Accessor::of_prop),
+                        &mut props.iter().filter_map(Accessor::from_prop),
                         MISSING_GETTER_IN_OBJECT_LITERAL,
                         MISSING_SETTER_IN_OBJECT_LITERAL,
                         cx,
@@ -268,7 +268,7 @@ impl AccessorPairs {
                     });
                     self.check(
                         func,
-                        &mut methods.filter_map(Accessor::of_member),
+                        &mut methods.filter_map(Accessor::from_member),
                         MISSING_GETTER_IN_CLASS,
                         MISSING_SETTER_IN_CLASS,
                         cx,

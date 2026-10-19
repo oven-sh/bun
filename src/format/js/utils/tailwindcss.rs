@@ -25,7 +25,7 @@ pub(crate) struct TailwindContext {
     /// The text after that `}` starts with whitespace.
     has_whitespace_after: bool,
     /// Which ends of the current template can lose their whitespace, given the `+`s around it.
-    around_template: Collapse,
+    outer_collapse: Collapse,
     /// It's in a call of another function. Strings there aren't sorted.
     pub(crate) is_disabled: bool,
     /// See [`Tailwind::follows_plugin`].
@@ -77,7 +77,7 @@ impl TailwindContext {
             is_in_template_expression: false,
             has_whitespace_before: true,
             has_whitespace_after: true,
-            around_template: Collapse::ALL,
+            outer_collapse: Collapse::ALL,
             is_disabled: false,
             follows_plugin: false,
             sorts_template: true,
@@ -85,7 +85,7 @@ impl TailwindContext {
     }
 
     /// For a whole file where the plugin's rules apply.
-    pub(crate) fn of_plugin(tailwind: &Tailwind) -> Self {
+    pub(crate) fn for_plugin(tailwind: &Tailwind) -> Self {
         TailwindContext {
             follows_plugin: true,
             sorts_template: false,
@@ -99,7 +99,7 @@ impl TailwindContext {
             return self.in_template_at(e.span(), e.ast_parent(), f);
         }
         TailwindContext {
-            around_template: collapse_in_concatenation(e.span(), e.ast_parent()),
+            outer_collapse: collapse_in_concatenation(e.span(), e.ast_parent()),
             ..self
         }
     }
@@ -111,10 +111,10 @@ impl TailwindContext {
         parent: AstNodes<'a>,
         f: &Formatter<'a>,
     ) -> Self {
-        let around = collapse_by_plugin(span, parent, f);
+        let plugin_collapse = collapse_by_plugin(span, parent, f);
         TailwindContext {
-            sorts_template: around.is_some(),
-            around_template: around.unwrap_or(Collapse::ALL),
+            sorts_template: plugin_collapse.is_some(),
+            outer_collapse: plugin_collapse.unwrap_or(Collapse::ALL),
             ..self
         }
     }
@@ -125,7 +125,7 @@ impl TailwindContext {
             is_in_template_expression: true,
             has_whitespace_before: ends_with_white_space(before),
             has_whitespace_after: starts_with_white_space(following),
-            around_template: Collapse::ALL,
+            outer_collapse: Collapse::ALL,
             is_disabled: false,
             sorts_template: !self.follows_plugin,
             ..self
@@ -245,16 +245,16 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
 /// attribute value or a function argument that takes classes, and the template tagged by such a function.
 fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -> Option<Collapse> {
     let tailwind = f.options().tailwind.as_deref()?;
-    if tailwind.oxc == Oxc::Behind && is_parsed_by_oxc(tailwind, f) {
+    if tailwind.oxc == Oxc::After && is_parsed_by_oxc(tailwind, f) {
         return None;
     }
     let is_in = |span: Span| span.start <= leaf.start && leaf.end <= span.end;
     // Each `+` and each template around it, innermost first.
-    let mut around: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
+    let mut enclosing: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
     let (mut is_sorted, mut inner) = (false, None);
     for ancestor in parent.ancestors() {
         match ancestor {
-            AstNodes::BinaryExpression(e) | AstNodes::TemplateLiteral(e) => around.push(e),
+            AstNodes::BinaryExpression(e) | AstNodes::TemplateLiteral(e) => enclosing.push(e),
             AstNodes::TaggedTemplateExpression(e) if inner.is_none() => {
                 is_sorted = matches!(e.kind(), ExprKind::TaggedTemplate(call) if is_class_function(call.callee(), tailwind, f));
             }
@@ -290,8 +290,8 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
         true => Texts::Sorted,
         false => Texts::Unseen,
     };
-    around.reverse();
-    Some(collapse_among(&around, leaf, tailwind, (true, texts)))
+    enclosing.reverse();
+    Some(collapse_among(&enclosing, leaf, tailwind, (true, texts)))
 }
 
 /// How much of a template's texts the plugin sees when it decides about the expressions between them.
@@ -299,16 +299,16 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
 pub(crate) enum Texts {
     /// Nothing: TypeScript's tree doesn't have the positions it looks up, and in Vue it doesn't look.
     Unseen,
-    AsWritten,
+    Unsorted,
     /// It has already sorted them.
     Sorted,
 }
 
-/// Which ends of the string or template at `leaf` can lose their whitespace. `around` is each `+` and each template
+/// Which ends of the string or template at `leaf` can lose their whitespace. `enclosing` is each `+` and each template
 /// around it, outermost first. With `every_plus` all the `+`s count, as in the plugin's `canCollapseWhitespaceIn`.
 /// Otherwise only the innermost does.
 pub(crate) fn collapse_among(
-    around: &[Expr<'_>],
+    enclosing: &[Expr<'_>],
     leaf: Span,
     tailwind: &Tailwind,
     (every_plus, texts): (bool, Texts),
@@ -319,7 +319,7 @@ pub(crate) fn collapse_among(
     if tailwind.preserves_whitespace {
         return collapse;
     }
-    for e in around {
+    for e in enclosing {
         let template = match e.kind() {
             ExprKind::Binary {
                 op: BinOp::Add,
@@ -345,13 +345,13 @@ pub(crate) fn collapse_among(
             Texts::Unseen => count,
             _ => index + usize::from(!touches_brace),
         };
-        let of_template = collapse;
+        let template_collapse = collapse;
         for i in seen..count {
             let raw = template.raw(i);
             let text = match texts {
                 Texts::Sorted => tailwind.sorted_between(
                     raw,
-                    ends_in_template(raw, (i == 0, i + 1 == count), of_template),
+                    ends_in_template(raw, (i == 0, i + 1 == count), template_collapse),
                 ),
                 _ => Cow::Borrowed(raw),
             };
@@ -372,18 +372,18 @@ pub(crate) fn collapse_among(
     collapse.and(free.start, free.end)
 }
 
-/// The arguments that the plugin's `sortTemplateLiteral` passes to `sortClasses` for `text`. `around` is which of the
-/// template's ends can lose their whitespace.
+/// The arguments that the plugin's `sortTemplateLiteral` passes to `sortClasses` for `text`. `template_ends` is which
+/// of the template's ends can lose their whitespace.
 pub(crate) fn ends_in_template(
     text: &[u8],
     (is_first, is_last): (bool, bool),
-    around: Collapse,
+    template_ends: Collapse,
 ) -> Ends {
     Ends {
         ignores_first: !is_first && !starts_with_white_space(text),
         ignores_last: !is_last && !ends_with_white_space(text),
-        collapses_start: around.start && is_first,
-        collapses_end: around.end && is_last,
+        collapses_start: template_ends.start && is_first,
+        collapses_end: template_ends.end && is_last,
     }
 }
 
@@ -445,10 +445,10 @@ pub(crate) fn sorted_string_literal<'a>(
     let mut printed = Vec::with_capacity(normalized.len());
     printed.push(*quote);
     let trimmed = content.trim_ascii();
-    if let Some(around) = by_plugin {
+    if let Some(plugin_collapse) = by_plugin {
         let ends = Ends {
-            collapses_start: around.start,
-            collapses_end: around.end,
+            collapses_start: plugin_collapse.start,
+            collapses_end: plugin_collapse.end,
             ..Ends::FREE
         };
         printed.extend_from_slice(&tailwind.sorted_between(content, ends));
@@ -504,7 +504,7 @@ pub(crate) fn sorted_template_text(
     tailwind: &Tailwind,
 ) -> Option<Vec<u8>> {
     if context.follows_plugin {
-        let ends = ends_in_template(text, (is_first, is_last), context.around_template);
+        let ends = ends_in_template(text, (is_first, is_last), context.outer_collapse);
         return (context.sorts_template).then(|| tailwind.sorted_between(text, ends).into_owned());
     }
     let (prefix, sortable, suffix) = split_template_text(text, is_first, is_last);
@@ -517,7 +517,7 @@ pub(crate) fn sorted_template_text(
         printed.extend(sortable.first().map(|_| b' '));
     } else {
         // Only the template's ends have something other than its own `${}` next to them.
-        let (inner, outer) = (context.collapse(), context.around_template);
+        let (inner, outer) = (context.collapse(), context.outer_collapse);
         let is_at_an_end = is_first || is_last;
         let keeps_start = is_at_an_end && !(inner.start && outer.start);
         let keeps_end = is_at_an_end && !(inner.end && outer.end);

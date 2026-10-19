@@ -57,7 +57,7 @@ pub enum RequestKind {
     Static,
     /// `import("m")`
     Dynamic,
-    /// Anything else that a rule wants resolved and read, like `require("m")`. The module doesn't count as imported.
+    /// Anything else that a rule needs resolved and read, like `require("m")`. The module doesn't count as imported.
     Other,
 }
 
@@ -75,7 +75,7 @@ pub struct Request<'a> {
     /// With [`Flavor::Oxlint`]: true if a statement with this specifier re-exports names, as in `export { a } from
     /// "m"`, `export * as a from "m"`, or `import { a } from "m"` together with `export { a }`. If `"m"` is the module
     /// itself, that doesn't count as a self-import.
-    pub may_be_itself: bool,
+    pub may_reexport_itself: bool,
 }
 
 /// A [`Request`] whose module has been resolved.
@@ -183,7 +183,7 @@ pub struct ResolveBy {
 #[derive(Copy, Clone)]
 pub struct Reader {
     /// Returns true if a file with this text should be parsed at all.
-    pub wants: fn(&[u8]) -> bool,
+    pub should_parse: fn(&[u8]) -> bool,
     pub read: for<'a> fn(&'a File<'a>) -> Box<dyn Any + Send + Sync>,
 }
 
@@ -263,8 +263,8 @@ pub trait Modules: Sync {
 
     /// The result of `reader.read` on the file at `path`, which is read like [`Modules::read`] and parsed according to
     /// `language`. It's computed on first use and cached by the path and the parts of `language` that affect parsing.
-    /// Every caller must pass the same `reader`. `None` if the file can't be read, `reader.wants` returns false, or the
-    /// code is nested too deeply. Can be called at any time.
+    /// Every caller must pass the same `reader`. `None` if the file can't be read, `reader.should_parse` returns false,
+    /// or the code is nested too deeply. Can be called at any time.
     fn facts(
         &self,
         path: &[u8],
@@ -316,7 +316,7 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
                 line: source.span().start,
                 kind: RequestKind::Dynamic,
                 is_only_importing_types: false,
-                may_be_itself: false,
+                may_reexport_itself: false,
             });
         }
     }
@@ -369,7 +369,7 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types,
-                may_be_itself: false,
+                may_reexport_itself: false,
             });
         }
     }
@@ -457,7 +457,7 @@ fn add_oxlint_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types: false,
-                may_be_itself: false,
+                may_reexport_itself: false,
             });
         }
     }
@@ -466,7 +466,7 @@ fn add_oxlint_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request
             let mut same = names.iter().filter(|it| it.0 == specifier);
             request.is_only_importing_types =
                 same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
-            request.may_be_itself = same.any(|it| it.3);
+            request.may_reexport_itself = same.any(|it| it.3);
         }
         return;
     }
@@ -480,7 +480,7 @@ fn add_oxlint_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request
         let (has_names, has_values, exports_names) =
             by_specifier.get(specifier).copied().unwrap_or_default();
         request.is_only_importing_types = has_names && !has_values;
-        request.may_be_itself = exports_names;
+        request.may_reexport_itself = exports_names;
     }
 }
 

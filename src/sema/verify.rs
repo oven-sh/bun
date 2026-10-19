@@ -149,7 +149,7 @@ pub(crate) fn parse_isolated_entity_name(text: &[u8]) -> Option<Vec<Cow<'_, [u8]
 
 /// Where in the configuration file an options diagnostic is reported.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub enum Place {
+pub enum ConfigLocation {
     /// `NewCompilerDiagnostic`
     #[default]
     Nowhere,
@@ -187,13 +187,13 @@ pub struct Problem {
     /// `AddMessageChain`: the chained messages below it, each as indentation level, code and message
     /// arguments.
     pub chain: Vec<(u32, u32, Vec<Vec<u8>>)>,
-    pub at: Place,
+    pub at: ConfigLocation,
     /// `RelatedInformation`: the file, which can be `IN_CONFIGURATION`, the span, and the code of a
     /// message without arguments.
     pub related: Vec<(crate::program::FileId, u32, u32, u32)>,
 }
 
-/// Returns what `Problem::span_in` finds for `Place::TopElement(name, spec)`, for every `spec` in
+/// Returns what `Problem::span_in` finds for `ConfigLocation::TopElement(name, spec)`, for every `spec` in
 /// one pass. `files` can have thousands of entries that each need a lookup.
 pub fn spans_of_top_elements(
     file: &TsConfigSourceFile,
@@ -214,7 +214,7 @@ pub fn spans_of_top_elements(
 }
 
 impl Problem {
-    pub fn new(code: u32, args: &[&[u8]], at: Place) -> Problem {
+    pub fn new(code: u32, args: &[&[u8]], at: ConfigLocation) -> Problem {
         Problem {
             code,
             args: args.iter().map(|&a| a.to_vec()).collect(),
@@ -233,19 +233,19 @@ impl Problem {
 
     /// Returns its span in the configuration file, or `None` if it has no location there.
     pub fn span_in(&self, file: &TsConfigSourceFile) -> Option<(u32, u32)> {
-        if self.at == Place::Nowhere {
+        if self.at == ConfigLocation::Nowhere {
             return None;
         }
         let root = file.object_literal_expression()?;
         let value_of =
             |object, name: &[u8]| Some(file.initializer(file.property(object, name, None)?));
-        if let Place::Reference(index) = self.at {
+        if let ConfigLocation::Reference(index) = self.at {
             let list = value_of(root, b"references")?;
             return file.elements(list).nth(index).map(|e| file.span(e));
         }
-        if let Place::Top(name) | Place::TopElement(name, _) = &self.at {
+        if let ConfigLocation::Top(name) | ConfigLocation::TopElement(name, _) = &self.at {
             let list = value_of(root, name)?;
-            let Place::TopElement(_, specified) = &self.at else {
+            let ConfigLocation::TopElement(_, specified) = &self.at else {
                 return Some(file.span(list));
             };
             let is_match =
@@ -253,30 +253,35 @@ impl Problem {
             return file.elements(list).find(is_match).map(|e| file.span(e));
         }
         let options = file.property(root, b"compilerOptions", None)?;
-        let written = file.initializer(options);
-        if let Place::Element(name, specified) = &self.at {
+        let options_object = file.initializer(options);
+        if let ConfigLocation::Element(name, specified) = &self.at {
             let is_match =
                 |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
-            let mut elements = file.elements(value_of(written, name)?);
+            let mut elements = file.elements(value_of(options_object, name)?);
             return elements.find(is_match).map(|e| file.span(e));
         }
-        let in_paths = |key: &[u8], key2| file.property(value_of(written, b"paths")?, key, key2);
+        let in_paths =
+            |key: &[u8], key2| file.property(value_of(options_object, b"paths")?, key, key2);
         // `createOptionDiagnosticInObjectLiteralSyntax` always passes a second key.
         let empty_key2 = Some(&b""[..]);
         let name_span = |p| file.name_span(p);
         let value_span = |p| file.span(file.initializer(p));
         let found = match &self.at {
-            Place::Nowhere
-            | Place::CompilerOptions
-            | Place::Top(_)
-            | Place::TopElement(..)
-            | Place::Reference(_)
-            | Place::Element(..) => None,
-            Place::Key(name, other) => file.property(written, name, Some(*other)).map(name_span),
-            Place::Value(name) => file.property(written, name, empty_key2).map(value_span),
-            Place::PathsKey(key) => in_paths(key, empty_key2).map(name_span),
-            Place::PathsValue(key) => in_paths(key, empty_key2).map(value_span),
-            Place::PathsElement(key, index) => in_paths(key, None)
+            ConfigLocation::Nowhere
+            | ConfigLocation::CompilerOptions
+            | ConfigLocation::Top(_)
+            | ConfigLocation::TopElement(..)
+            | ConfigLocation::Reference(_)
+            | ConfigLocation::Element(..) => None,
+            ConfigLocation::Key(name, other) => file
+                .property(options_object, name, Some(*other))
+                .map(name_span),
+            ConfigLocation::Value(name) => file
+                .property(options_object, name, empty_key2)
+                .map(value_span),
+            ConfigLocation::PathsKey(key) => in_paths(key, empty_key2).map(name_span),
+            ConfigLocation::PathsValue(key) => in_paths(key, empty_key2).map(value_span),
+            ConfigLocation::PathsElement(key, index) => in_paths(key, None)
                 .and_then(|p| file.elements(file.initializer(p)).nth(*index))
                 .map(|e| file.span(e)),
         };
@@ -321,7 +326,7 @@ pub fn verify_project_references<'a>(
             continue;
         }
         let mut report = |code, args: &[&[u8]]| {
-            let problem = Problem::new(code, args, Place::Reference(index));
+            let problem = Problem::new(code, args, ConfigLocation::Reference(index));
             out.push((parent.config_path.as_slice(), problem));
         };
         let reference = displayed_path(reference);
@@ -390,14 +395,14 @@ pub fn verify_compiler_options(
     ) {
         let mut args = vec![one, other];
         args.extend_from_slice(more);
-        out.push(Problem::new(code, &args, Place::Key(one, other)));
+        out.push(Problem::new(code, &args, ConfigLocation::Key(one, other)));
     }
     // `createRemovedOptionDiagnostic`
     fn removed(out: &mut Vec<Problem>, name: &'static [u8], value: &[u8], use_instead: &[u8]) {
         let problem = if value.is_empty() {
-            Problem::new(5102, &[name], Place::Key(name, b""))
+            Problem::new(5102, &[name], ConfigLocation::Key(name, b""))
         } else {
-            Problem::new(5108, &[name, value], Place::Value(name))
+            Problem::new(5108, &[name, value], ConfigLocation::Value(name))
         };
         out.push(if use_instead.is_empty() {
             problem
@@ -498,7 +503,7 @@ pub fn verify_compiler_options(
         }
     }
     if !specified(b"tsBuildInfoFile") && is_true(b"incremental") && config_path.is_empty() {
-        out.push(Problem::new(5074, &[], Place::CompilerOptions));
+        out.push(Problem::new(5074, &[], ConfigLocation::CompilerOptions));
     }
     if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
         for (pattern, value) in paths {
@@ -506,14 +511,14 @@ pub fn verify_compiler_options(
                 out.push(Problem::new(
                     5061,
                     &[pattern],
-                    Place::PathsKey(pattern.clone()),
+                    ConfigLocation::PathsKey(pattern.clone()),
                 ));
             }
             let Some(items) = parsed_list(value) else {
                 out.push(Problem::new(
                     5063,
                     &[pattern],
-                    Place::PathsValue(pattern.clone()),
+                    ConfigLocation::PathsValue(pattern.clone()),
                 ));
                 continue;
             };
@@ -523,11 +528,11 @@ pub fn verify_compiler_options(
                 out.push(Problem::new(
                     5066,
                     &[pattern],
-                    Place::PathsValue(pattern.clone()),
+                    ConfigLocation::PathsValue(pattern.clone()),
                 ));
             }
             for (index, substitution) in substitutions.into_iter().enumerate() {
-                let at = || Place::PathsElement(pattern.clone(), index);
+                let at = || ConfigLocation::PathsElement(pattern.clone(), index);
                 if !has_at_most_one_asterisk(substitution) {
                     out.push(Problem::new(5062, &[substitution, pattern], at()));
                 }
@@ -629,14 +634,14 @@ pub fn verify_compiler_options(
             out.push(Problem::new(
                 5067,
                 &[text(b"jsxFactory")],
-                Place::Value(b"jsxFactory"),
+                ConfigLocation::Value(b"jsxFactory"),
             ));
         }
     } else if specified(b"reactNamespace") && !is_identifier_text(text(b"reactNamespace")) {
         out.push(Problem::new(
             5059,
             &[text(b"reactNamespace")],
-            Place::Value(b"reactNamespace"),
+            ConfigLocation::Value(b"reactNamespace"),
         ));
     }
     if specified(b"jsxFragmentFactory") {
@@ -650,7 +655,7 @@ pub fn verify_compiler_options(
             out.push(Problem::new(
                 18035,
                 &[text(b"jsxFragmentFactory")],
-                Place::Value(b"jsxFragmentFactory"),
+                ConfigLocation::Value(b"jsxFragmentFactory"),
             ));
         }
     }
@@ -668,7 +673,7 @@ pub fn verify_compiler_options(
         out.push(Problem::new(
             5096,
             &[],
-            Place::Value(b"allowImportingTsExtensions"),
+            ConfigLocation::Value(b"allowImportingTsExtensions"),
         ));
     }
     // `GetModuleResolutionKind`: `classic` and `node10` are treated as unspecified.
@@ -689,7 +694,7 @@ pub fn verify_compiler_options(
         out.push(Problem::new(
             5095,
             &[b"bundler".as_slice()],
-            Place::Value(b"moduleResolution"),
+            ConfigLocation::Value(b"moduleResolution"),
         ));
     }
     let resolves_like_node = resolution != ModuleResolutionKind::Bundler;
@@ -703,13 +708,13 @@ pub fn verify_compiler_options(
         out.push(Problem::new(
             5109,
             &[expected, module.name()],
-            Place::Value(b"moduleResolution"),
+            ConfigLocation::Value(b"moduleResolution"),
         ));
     } else if resolves_like_node && !module.is_node() {
         out.push(Problem::new(
             5110,
             &[resolution.name(), resolution.name()],
-            Place::Value(b"module"),
+            ConfigLocation::Value(b"module"),
         ));
     }
     out

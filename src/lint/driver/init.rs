@@ -56,9 +56,9 @@ impl Section {
                 true => format!("{} in ", self.key_in_package),
                 false => String::new(),
             };
-            let shown = paths::relative(cwd, other);
+            let display_path = paths::relative(cwd, other);
             let end = b". bunfig.toml is not needed.";
-            return Ok([b"Using ", key.as_bytes(), &shown, end].concat());
+            return Ok([b"Using ", key.as_bytes(), &display_path, end].concat());
         }
         if let Some(above) = above {
             let end = format!(" already has a [{}] section", self.name);
@@ -83,8 +83,8 @@ impl Section {
         };
         let has_section = |file: &bun_ast::Expr| file.get(self.name.as_bytes()).is_some();
         let has_section = with_parsed(Notation::Toml, &text, has_section).map_err(|error| {
-            let place = format!("\n  at bunfig.toml:{}:{}", error.line, error.column);
-            cannot("read", &[&error.message[..], place.as_bytes()].concat())
+            let location = format!("\n  at bunfig.toml:{}:{}", error.line, error.column);
+            cannot("read", &[&error.message[..], location.as_bytes()].concat())
         })?;
         if has_section {
             return Ok(format!("bunfig.toml already has a [{}] section", self.name).into_bytes());
@@ -94,18 +94,18 @@ impl Section {
             _ => b"\n",
         };
         // Leave one empty line between the existing content and the new section.
-        let written = text.trim_ascii_end().len();
-        let wanted: usize = if written == 0 { 0 } else { 2 };
+        let content_len = text.trim_ascii_end().len();
+        let wanted: usize = if content_len == 0 { 0 } else { 2 };
         let is_in_a_line = !text.is_empty() && !text.ends_with(b"\n");
         let breaks = wanted
-            .saturating_sub(strings::count_char(&text[written..], b'\n'))
+            .saturating_sub(strings::count_char(&text[content_len..], b'\n'))
             .max(usize::from(is_in_a_line));
         let mut added = [line_break.repeat(breaks), self.text(line_break)].concat();
         if bom == Some(BOM::Utf16Le) {
             added = added.iter().flat_map(|it| [*it, 0]).collect();
         }
         fs::write_atomically(
-            &fs::Written::default(),
+            &fs::WrittenFiles::default(),
             cwd,
             &path,
             &[before, added].concat(),

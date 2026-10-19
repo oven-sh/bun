@@ -20,7 +20,7 @@ pub struct JsxCurlyBracePresence {
     children: Mode,
     prop_element_values: Mode,
     /// True if the option is a single string that sets both `props` and `children`.
-    is_one_word: bool,
+    is_single_string: bool,
 }
 
 const UNNECESSARY_CURLY: Message = Message::new("unnecessaryCurly", "Curly braces are unnecessary here.");
@@ -50,14 +50,14 @@ impl Rule for JsxCurlyBracePresence {
         };
         if let Some(all) = options.str(0) {
             let all = mode(Some(all), Mode::Ignore);
-            return JsxCurlyBracePresence { props: all, children: all, prop_element_values: all, is_one_word: true };
+            return JsxCurlyBracePresence { props: all, children: all, prop_element_values: all, is_single_string: true };
         }
         let options = options.object(0);
         JsxCurlyBracePresence {
             props: mode(options.str("props"), Mode::Never),
             children: mode(options.str("children"), Mode::Never),
             prop_element_values: mode(options.str("propElementValues"), Mode::Ignore),
-            is_one_word: false,
+            is_single_string: false,
         }
     }
 
@@ -73,7 +73,7 @@ impl Rule for JsxCurlyBracePresence {
 impl JsxCurlyBracePresence {
     /// For oxlint the single string also applies to elements that are attribute values.
     fn prop_element_values(&self, is_oxlint: bool) -> Mode {
-        if self.is_one_word && !is_oxlint { Mode::Ignore } else { self.prop_element_values }
+        if self.is_single_string && !is_oxlint { Mode::Ignore } else { self.prop_element_values }
     }
 
     fn check<'a>(&self, e: Expr<'a>, cx: &Cx<'a, Self>) {
@@ -92,9 +92,9 @@ impl JsxCurlyBracePresence {
                 AttributeValue::Fragment(_) if !is_oxlint => {}
                 AttributeValue::Element(element) | AttributeValue::Fragment(element) => {
                     // With "never" oxlint doesn't report it.
-                    let left_alone = if is_oxlint { Mode::Never } else { Mode::Ignore };
-                    let wanted = self.prop_element_values(is_oxlint);
-                    if wanted != Mode::Ignore && wanted != left_alone {
+                    let unreported_mode = if is_oxlint { Mode::Never } else { Mode::Ignore };
+                    let configured_mode = self.prop_element_values(is_oxlint);
+                    if configured_mode != Mode::Ignore && configured_mode != unreported_mode {
                         cx.report(element, necessary)
                             .by_selector()
                             .fix(|fixer| [fixer.insert_before(element, "{"), fixer.insert_after(element, "}")]);
@@ -123,7 +123,7 @@ impl JsxCurlyBracePresence {
         }
         // oxlint searches for the containers next to `{a}` among the children of the element's parent, where `{a}`
         // never is. It only searches the element's own children if the element is an expression statement.
-        let sees_adjacent = !is_oxlint
+        let checks_adjacent = !is_oxlint
             || !e.is_parenthesized() && matches!(e.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr);
         let is_container = |child: &JsxChild| {
             matches!(child, JsxChild::Expr(e) if e.jsx_container_span().is_some() && e.tag() != ExprTag::Spread)
@@ -131,7 +131,7 @@ impl JsxCurlyBracePresence {
         let mut children = jsx.children_with_whitespace().peekable();
         let mut follows_container = false;
         while let Some(child) = children.next() {
-            let has_adjacent = sees_adjacent && (follows_container || children.peek().is_some_and(is_container));
+            let has_adjacent = checks_adjacent && (follows_container || children.peek().is_some_and(is_container));
             follows_container = is_container(&child);
             match child {
                 JsxChild::Expr(inner) if follows_container => {
@@ -182,9 +182,9 @@ impl JsxCurlyBracePresence {
                 None
             }
             ExprKind::String(value) if allowed == Mode::Never => {
-                let written = cx.slice(inner.span().shrink(1, 1));
+                let raw_text = cx.slice(inner.span().shrink(1, 1));
                 if has_adjacent
-                    || is_allowed_string_like_in_container(written, StringLike::Literal, parent_is_attribute, cx.file())
+                    || is_allowed_string_like_in_container(raw_text, StringLike::Literal, parent_is_attribute, cx.file())
                 {
                     return;
                 }
@@ -195,13 +195,13 @@ impl JsxCurlyBracePresence {
                     return;
                 };
                 // oxlint checks the cooked value.
-                let seen = if is_oxlint { string } else { template.raw(0) };
+                let checked_text = if is_oxlint { string } else { template.raw(0) };
                 if has_adjacent
-                    || is_allowed_string_like_in_container(seen, StringLike::Template, parent_is_attribute, cx.file())
+                    || is_allowed_string_like_in_container(checked_text, StringLike::Template, parent_is_attribute, cx.file())
                 {
                     return;
                 }
-                Some(if parent_is_attribute { seen } else { string })
+                Some(if parent_is_attribute { checked_text } else { string })
             }
             _ => return,
         };

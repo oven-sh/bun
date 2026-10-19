@@ -164,11 +164,11 @@ impl Reported {
 
     /// Placeholder left in `Task::diagnostics` for a diagnostic that a commit took out while a file was being checked.
     /// The list can't shrink, because `check_file` remembers indexes into it.
-    fn taken() -> Reported {
+    fn placeholder() -> Reported {
         Reported::bare(NOWHERE, 0)
     }
 
-    fn is_taken(&self) -> bool {
+    fn is_placeholder(&self) -> bool {
         self.code == 0
     }
 
@@ -547,7 +547,7 @@ impl Checker<'_, '_> {
     /// - An entry under a record is shared no matter which task stores it, so its errors go with it.
     /// - tsc's check of a file resolves every alias the file declares. Here that happens on demand, so the first task
     ///   to resolve the alias reports.
-    fn is_left_to_an_earlier_file(&self, owner: Option<Query>, file: FileId) -> bool {
+    fn defers_to_earlier_file(&self, owner: Option<Query>, file: FileId) -> bool {
         let is_late = |visited: FileId| !self.is_checked_no_later_than(visited, file);
         self.task.file.is_some_and(is_late)
             && match owner {
@@ -720,8 +720,8 @@ impl Checker<'_, '_> {
     /// Takes the diagnostics reported from index `from` on, for a caller that stores or rewrites
     /// them. `addDeferredDiagnostic` callbacks stay.
     pub(super) fn take_reported_from(&mut self, from: usize) -> Vec<Reported> {
-        let taken = self.reported.split_off(from).into_iter();
-        let (callbacks, reported): (Vec<_>, Vec<_>) = taken.partition(|d| d.deferred.is_some());
+        let drained = self.reported.split_off(from).into_iter();
+        let (callbacks, reported): (Vec<_>, Vec<_>) = drained.partition(|d| d.deferred.is_some());
         self.reported.extend(callbacks);
         reported
     }
@@ -784,7 +784,7 @@ impl Checker<'_, '_> {
             && is_circularity_error(diagnostic.code)
             && diagnostic.file != NOWHERE.0
             && self.reports_semantic_errors(diagnostic.file)
-            && self.is_left_to_an_earlier_file(owner, diagnostic.file)
+            && self.defers_to_earlier_file(owner, diagnostic.file)
         {
             let members = std::iter::once(crate::util::fx_hash(&q));
             self.task.close_cycle(|| false, members);
@@ -838,7 +838,7 @@ impl Checker<'_, '_> {
         diagnostic.by_emit |= self.is_emitting;
         if diagnostic.file != NOWHERE.0
             && !diagnostic.by_emit
-            && self.is_left_to_an_earlier_file(owner, diagnostic.file)
+            && self.defers_to_earlier_file(owner, diagnostic.file)
         {
             // Not every error goes through `add_diagnostic`.
             return self.note_error_in(diagnostic.file);
@@ -958,33 +958,34 @@ impl Checker<'_, '_> {
         let while_writing_immediately = self.task.logged_while_writing_immediately();
         let logged = &mut self.task.diagnostics;
         // See `withhold_until_the_file_ends`.
-        let in_doubt = &self.task.uncommitted_files;
+        let uncommitted = &self.task.uncommitted_files;
         let is_withheld = |q: Query| {
-            !matches!(q, Query::Cond(..)) && q.syntax().is_some_and(|file| in_doubt.contains(&file))
+            !matches!(q, Query::Cond(..))
+                && q.syntax().is_some_and(|file| uncommitted.contains(&file))
         };
-        let waits = |it: &(Option<Query>, Reported)| {
+        let must_wait = |it: &(Option<Query>, Reported)| {
             it.1.deferred.is_some() || it.0.is_some_and(is_withheld)
         };
-        if !is_between_files && logged.iter().any(waits) {
+        if !is_between_files && logged.iter().any(must_wait) {
             return None;
         }
-        let mut taken: Vec<(usize, (Option<Query>, Reported))> = Vec::new();
+        let mut to_publish: Vec<(usize, (Option<Query>, Reported))> = Vec::new();
         for (at, it) in logged.iter_mut().enumerate() {
             if is_between_files
                 || it
                     .0
                     .is_some_and(|q| is_same_in_every_task(q) && !is_withheld(q))
             {
-                taken.push((at, std::mem::replace(it, (None, Reported::taken()))));
+                to_publish.push((at, std::mem::replace(it, (None, Reported::placeholder()))));
             }
         }
         if is_between_files {
             logged.clear();
         }
         let mut directives = Default::default();
-        let [mut of_entries_written_immediately, mut others] = [Vec::new(), Vec::new()];
-        for (at, (owner, diagnostic)) in taken {
-            if diagnostic.is_taken() {
+        let [mut for_visible_entries, mut others] = [Vec::new(), Vec::new()];
+        for (at, (owner, diagnostic)) in to_publish {
+            if diagnostic.is_placeholder() {
                 continue;
             }
             let Some(diagnostic) = self.settled(diagnostic, &mut directives) else {
@@ -992,10 +993,10 @@ impl Checker<'_, '_> {
             };
             let owner = owner.filter(|&q| is_same_in_every_task(q));
             match at < while_writing_immediately && owner.is_some_and(|q| !is_task_independent(q)) {
-                true => of_entries_written_immediately.push((owner, diagnostic)),
+                true => for_visible_entries.push((owner, diagnostic)),
                 false => others.push((owner, diagnostic)),
             }
         }
-        Some([of_entries_written_immediately, others])
+        Some([for_visible_entries, others])
     }
 }

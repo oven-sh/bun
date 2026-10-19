@@ -108,7 +108,7 @@ fn id_of(scope: Scope, top: u32) -> u32 {
 }
 
 /// `ScopeFlags::is_var`
-fn holds_vars(scope: Scope) -> bool {
+fn is_var_scope(scope: Scope) -> bool {
     matches!(
         scope.kind(),
         ScopeKind::Global
@@ -125,7 +125,7 @@ fn is_instantiated<'a>(module: Module<'a>) -> bool {
         return true;
     }
     let body = module.body();
-    let of_statement = |it: Stmt<'a>| match it.kind() {
+    let instantiates = |it: Stmt<'a>| match it.kind() {
         StmtKind::Interface(_) | StmtKind::TypeAlias(_) => false,
         StmtKind::ImportEquals(_) => it.is_exported(),
         StmtKind::Module(inner) => is_instantiated(inner),
@@ -139,9 +139,9 @@ fn is_instantiated<'a>(module: Module<'a>) -> bool {
         // Each exported name is looked up among the namespace's own statements.
         StmtKind::ExportNamed(export) if !export.has_from() => export.items().iter().any(|item| {
             let target = body.iter().find(|&it| declares(it, item.local().name()));
-            target.is_none_or(of_statement)
+            target.is_none_or(instantiates)
         }),
-        _ => of_statement(it),
+        _ => instantiates(it),
     })
 }
 
@@ -206,7 +206,7 @@ impl<'a> Binder<'a> {
             if ids.last() != Some(&id) {
                 ids.push(id);
             }
-            if holds_vars(it) {
+            if is_var_scope(it) {
                 break;
             }
         }
@@ -291,7 +291,7 @@ impl<'a> Binder<'a> {
             return;
         }
         // Annex B.3.2.1: in sloppy mode, a plain function in a block is also a variable of the enclosing function.
-        if is_plain && !holds_vars(scope) && !is_strict {
+        if is_plain && !is_var_scope(scope) && !is_strict {
             let target = self
                 .up_to_function(scope)
                 .last()
@@ -497,9 +497,9 @@ fn may_clash(symbol: Symbol, is_typescript: bool) -> bool {
 fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     let mut names = FxHashSet::default();
     let is_typescript = !file.is_javascript();
-    let twice = file.symbols_declared_twice();
+    let declared_twice = file.symbols_declared_twice();
     names.extend(
-        twice
+        declared_twice
             .filter(|&it| may_clash(it, is_typescript))
             .map(|it| it.name()),
     );
@@ -734,7 +734,7 @@ fn undeclared_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             let help = closest(local.bytes(), names).map_or(Cow::Borrowed(""), |it| {
                 Cow::Owned(format!("Did you mean '{}'?", bstr::BStr::new(it)))
             });
-            let error = SyntaxError::of_oxc(local.span(), message).help(help);
+            let error = SyntaxError::oxc_error(local.span(), message).help(help);
             errors.push(error.noticed_at(u32::MAX));
         }
     }
@@ -825,8 +825,8 @@ pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             continue;
         };
         let message = format!("Duplicated export '{}'", bstr::BStr::new(name)).into_bytes();
-        let error = SyntaxError::of_oxc(before, message)
-            .says(Cow::Borrowed("Export has already been declared here"))
+        let error = SyntaxError::oxc_error(before, message)
+            .label_text(Cow::Borrowed("Export has already been declared here"))
             .and(after, Cow::Borrowed("It cannot be redeclared here"));
         errors.push(error.stage(Stage::Parser).noticed_at(u32::MAX));
     }
@@ -835,7 +835,7 @@ pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         && !others.is_empty()
     {
         let message = b"A module cannot have multiple default exports.".to_vec();
-        let mut error = SyntaxError::of_oxc(*first, message).code(2528);
+        let mut error = SyntaxError::oxc_error(*first, message).code(2528);
         for &other in others {
             error = error.and(other, Cow::Borrowed(""));
         }

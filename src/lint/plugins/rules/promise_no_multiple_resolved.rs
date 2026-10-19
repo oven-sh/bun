@@ -495,10 +495,10 @@ impl<'a> Blocks<'a> {
             if let Some(slot) = blocks.is_in_try_block.get_mut(block).filter(|_| walk.in_try_block.contains(*segment)) {
                 *slot = true;
             }
-            if let (Some(of_segment), Some(of_block)) = (found.remove(&segment.id()), blocks.found.get_mut(block)) {
-                of_block.resolved.extend(of_segment.resolved);
-                let last = [of_block.last_throwable_expr_span, of_segment.last_throwable_expr_span];
-                of_block.last_throwable_expr_span = last.into_iter().flatten().max_by_key(|it| it.start);
+            if let (Some(segment_found), Some(block_found)) = (found.remove(&segment.id()), blocks.found.get_mut(block)) {
+                block_found.resolved.extend(segment_found.resolved);
+                let last = [block_found.last_throwable_expr_span, segment_found.last_throwable_expr_span];
+                block_found.last_throwable_expr_span = last.into_iter().flatten().max_by_key(|it| it.start);
             }
         }
         for found in &mut blocks.found {

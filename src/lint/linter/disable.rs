@@ -4,7 +4,7 @@
 use super::message::{LintMessage, NotNumbers, RuleId, Suppression};
 use crate::ast::File;
 use crate::context::Severity;
-use crate::fix::{Around, Fix};
+use crate::fix::{Fix, Removal};
 use crate::span::Span;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
@@ -154,15 +154,17 @@ impl Input<'_, '_> {
     /// space at the end of a line, and `bun fmt --check` fails on both. With no config file, a comment that ends its
     /// line is removed along with the spaces around it, and with the line break too if nothing else is on the line.
     fn removal_of(&self, comment: Span) -> Fix {
-        let around = Around::of(self.file.text(), comment);
-        if !self.file.language().has_no_foreign_config || around.line_break.is_none() {
+        let surroundings = Removal::of(self.file.text(), comment);
+        if !self.file.language().has_no_foreign_config || surroundings.line_break.is_none() {
             return Fix {
                 span: comment,
                 text: b" ".to_vec(),
             };
         }
         Fix {
-            span: around.whole_lines().unwrap_or(around.with_spaces),
+            span: surroundings
+                .whole_lines()
+                .unwrap_or(surroundings.with_spaces),
             text: Vec::new(),
         }
     }
@@ -324,9 +326,9 @@ impl Input<'_, '_> {
         let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
-            let place = (message.line as i32, message.column as i32);
+            let message_position = (message.line as i32, message.column as i32);
             while let Some(switch) = switches.get(next)
-                && (switch.line as i32, switch.column as i32) <= place
+                && (switch.line as i32, switch.column as i32) <= message_position
             {
                 match (switch.disables, self.rule(switch)) {
                     (true, None) => active_for_all.push(next as u32),

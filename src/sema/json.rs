@@ -235,18 +235,18 @@ impl Json {
         if !has_repeats {
             return Json::Object(entries);
         }
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
-        let mut kept: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
+        let mut index_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut deduped: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
         for (key, value) in entries {
-            match places.entry(key) {
-                Entry::Occupied(place) => kept[*place.get()].1 = value,
-                Entry::Vacant(place) => {
-                    kept.push((place.key().clone(), value));
-                    place.insert(kept.len() - 1);
+            match index_by_key.entry(key) {
+                Entry::Occupied(map_entry) => deduped[*map_entry.get()].1 = value,
+                Entry::Vacant(map_entry) => {
+                    deduped.push((map_entry.key().clone(), value));
+                    map_entry.insert(deduped.len() - 1);
                 }
             }
         }
-        Json::Object(kept)
+        Json::Object(deduped)
     }
 
     /// If a key is repeated the last entry wins, as with `JSON.parse`.
@@ -440,9 +440,9 @@ fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
     let mut decimal = vec![0u8];
     for &digit in digits {
         let mut carry = char::from(digit).to_digit(radix).unwrap_or(0);
-        for place in &mut decimal {
-            let value = u32::from(*place) * radix + carry;
-            *place = (value % 10) as u8;
+        for decimal_digit in &mut decimal {
+            let value = u32::from(*decimal_digit) * radix + carry;
+            *decimal_digit = (value % 10) as u8;
             carry = value / 10;
         }
         while carry > 0 {
@@ -450,7 +450,11 @@ fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
             carry /= 10;
         }
     }
-    decimal.iter().rev().map(|place| place + b'0').collect()
+    decimal
+        .iter()
+        .rev()
+        .map(|decimal_digit| decimal_digit + b'0')
+        .collect()
 }
 
 /// `tokenValue` of the bigint literal `text`: `scanHexDigits`, `scanBigIntSuffix`.
@@ -526,13 +530,13 @@ impl<'s> TsConfigSourceFile<'s> {
             return Some(self.atoms.bytes(name));
         }
         // A private identifier or a bigint literal doesn't declare anything, so the key doesn't have its text.
-        let written = hir
+        let source_text = hir
             .text
             .get(prop.pos as usize..Spans::of(hir).prop_name(p))?;
         let token_value = if is_private_name_at(hir, prop.pos) {
-            private_identifier_token_value(written)
+            private_identifier_token_value(source_text)
         } else if is_bigint_literal_at(hir, prop.pos) {
-            bigint_token_value(written)
+            bigint_token_value(source_text)
         } else {
             return None;
         };
@@ -571,17 +575,17 @@ impl<'s> TsConfigSourceFile<'s> {
         let mut assignments = props.iter().filter(|&p| self.hir[p].kind == PropKind::Init);
         if props.len() > 32 {
             let mut first_with_name = self.first_with_name.borrow_mut();
-            let of_object = first_with_name.entry(object).or_insert_with(|| {
-                let mut of_object = FxHashMap::default();
+            let by_name = first_with_name.entry(object).or_insert_with(|| {
+                let mut by_name = FxHashMap::default();
                 for p in assignments {
                     if let Some(prop_name) = self.try_get_text_of_property_name(p) {
-                        of_object.entry(prop_name.into()).or_insert(p);
+                        by_name.entry(prop_name.into()).or_insert(p);
                     }
                 }
-                of_object
+                by_name
             });
             let keys = [Some(key), key2].into_iter().flatten();
-            return (keys.filter_map(|key| of_object.get(key).copied())).min_by_key(|p| p.idx());
+            return (keys.filter_map(|key| by_name.get(key).copied())).min_by_key(|p| p.idx());
         }
         assignments.find(|&p| {
             let prop_name = self.try_get_text_of_property_name(p);

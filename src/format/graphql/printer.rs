@@ -241,18 +241,18 @@ impl<'t> Builder<'t, '_, '_> {
         {
             return self.f.write_text(text, width);
         }
-        let mut written = Vec::with_capacity(text.len() + 16);
+        let mut normalized = Vec::with_capacity(text.len() + 16);
         for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
             if index > 0 {
-                written.extend_from_slice(line_ending);
+                normalized.extend_from_slice(line_ending);
             }
             let line = line.strip_suffix(b"\r").unwrap_or(line);
             match needs_escapes {
-                true => Self::escape_for_template(line, &mut written),
-                false => written.extend_from_slice(line),
+                true => Self::escape_for_template(line, &mut normalized),
+                false => normalized.extend_from_slice(line),
             }
         }
-        self.f.write_text(&written, width);
+        self.f.write_text(&normalized, width);
     }
 
     // ───────────────────────────── nodes ─────────────────────────────

@@ -80,7 +80,7 @@ struct Member<'a> {
 
 impl<'a> Member<'a> {
     /// Returns `None` for the uses that upstream's `usesNamespaceAsObject` looks for.
-    fn around(reference: Reference<'a>) -> Option<Member<'a>> {
+    fn from_reference(reference: Reference<'a>) -> Option<Member<'a>> {
         if let Some(identifier) = reference.expr() {
             let Node::Expr(parent) = identifier.parent() else {
                 return None;
@@ -133,7 +133,7 @@ fn members_of_namespaces_before<'a>(declaration: Stmt<'a>, scope: Scope<'a>) -> 
         StmtKind::Import(import) => scope.get_name(import.namespace()?.name()),
         _ => None,
     });
-    namespaces.flat_map(Symbol::references).filter_map(Member::around).map(|it| it.property).collect()
+    namespaces.flat_map(Symbol::references).filter_map(Member::from_reference).map(|it| it.property).collect()
 }
 
 /// One name of upstream's `generateLocalNames`. `has`: `nameConflicts[name].has(..)`
@@ -165,7 +165,7 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
     if namespace_variable.declarations().next().and_then(Declaration::name_span) != Some(local.span()) {
         return None;
     }
-    let members: Vec<Member<'a>> = namespace_variable.references().map(Member::around).collect::<Option<_>>()?;
+    let members: Vec<Member<'a>> = namespace_variable.references().map(Member::from_reference).collect::<Option<_>>()?;
 
     // `importNameConflicts`. Instead of the names, this stores the scopes that declare them: the member's scope and its
     // `scope.upper`.

@@ -1,7 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint_eslint::rules::init_declarations::{
-    Config, Finding, declared_namespace_around, has_declare,
+    Config, Finding, enclosing_declared_namespace, has_declare,
 };
 
 /// Require or disallow initialization in variable declarations.
@@ -48,7 +48,7 @@ impl InitDeclarations {
         let config = &self.config;
         if decl.flags().contains(Flags::AMBIENT)
             && (has_declare(found.declaration)
-                || !config.is_never && declared_namespace_around(found.declaration).is_some())
+                || !config.is_never && enclosing_declared_namespace(found.declaration).is_some())
         {
             return;
         }

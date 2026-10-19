@@ -897,15 +897,15 @@ impl<'a> Formatter<'a> {
     /// spaces, content that's only printed when a group breaks is removed, and a `BestFitting` is replaced by its
     /// flattest variant.
     pub(crate) fn write_without_soft_lines(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let written = self.capture(content);
-        self.remove_soft_lines(written, &mut Vec::new(), Variants::Flattest);
+        let captured = self.capture(content);
+        self.remove_soft_lines(captured, &mut Vec::new(), Variants::Flattest);
     }
 
     /// Prettier's `removeLines`. Same, but the printer still chooses among the variants and falls back to the most
     /// expanded one if none fits.
     pub(crate) fn write_with_lines_removed(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let written = self.capture(content);
-        self.remove_soft_lines(written, &mut Vec::new(), Variants::All);
+        let captured = self.capture(content);
+        self.remove_soft_lines(captured, &mut Vec::new(), Variants::All);
     }
 
     /// Writes the elements at `range` without their soft line breaks.

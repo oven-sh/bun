@@ -129,7 +129,7 @@ fn is_valid_value_for_aria_prop_type(aria_prop_type: AriaPropType, value: Attrib
 
 /// Returns the value lowercased. `boolean_as_string`: `{true}` becomes `true`, and so does `{!0}`.
 fn parse_aria_prop_value_as_string(value: AttributeValue<'_>, boolean_as_string: bool) -> Option<Cow<'_, [u8]>> {
-    let of_boolean = |value: bool| Cow::Borrowed(if value { b"true".as_slice() } else { b"false".as_slice() });
+    let boolean_text = |value: bool| Cow::Borrowed(if value { b"true".as_slice() } else { b"false".as_slice() });
     let e = match value {
         AttributeValue::StringLiteral(literal) => return Some(text::to_lower_case(literal.value)),
         _ => value.as_expression().filter(|it| !it.is_parenthesized())?,
@@ -137,9 +137,9 @@ fn parse_aria_prop_value_as_string(value: AttributeValue<'_>, boolean_as_string:
     match e.kind() {
         ExprKind::String(value) => Some(text::to_lower_case(value.bytes())),
         ExprKind::Template(template) => Some(text::to_lower_case(template.as_static()?.bytes())),
-        ExprKind::True if boolean_as_string => Some(of_boolean(true)),
-        ExprKind::False if boolean_as_string => Some(of_boolean(false)),
-        ExprKind::Unary { op: UnOp::Not, operand } if boolean_as_string => Some(of_boolean(!to_boolean(operand)?)),
+        ExprKind::True if boolean_as_string => Some(boolean_text(true)),
+        ExprKind::False if boolean_as_string => Some(boolean_text(false)),
+        ExprKind::Unary { op: UnOp::Not, operand } if boolean_as_string => Some(boolean_text(!to_boolean(operand)?)),
         _ => None,
     }
 }

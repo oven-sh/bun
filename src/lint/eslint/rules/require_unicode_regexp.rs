@@ -219,8 +219,8 @@ impl Rule for RequireUnicodeRegexp {
                     return Some(fixer.insert_after(penultimate_token, argument));
                 };
                 let text = flags_node.text();
-                // A `u` can be part of an escape such as `g`, or come from a substitution.
-                let is_literally_written = match flags_node.kind() {
+                // A `u` in the text can be part of an escape such as `\u0067`, and a flag can come from a substitution.
+                let is_plain_text = match flags_node.kind() {
                     ExprKind::String(_) => !strings::contains_char(text, b'\\'),
                     ExprKind::Template(template) => {
                         template.exprs().is_empty() && !strings::contains_char(text, b'\\')
@@ -228,7 +228,7 @@ impl Rule for RequireUnicodeRegexp {
                     _ => return None,
                 };
                 if strings::contains_char(&flags?, self.other_flag()) {
-                    if !is_literally_written {
+                    if !is_plain_text {
                         return None;
                     }
                     let replaced = replace_first(text, 0, self.other_flag(), replace_flag)?;

@@ -30,7 +30,7 @@ fn is_key_named(key: Key, name: &str) -> bool {
 }
 
 /// oxlint points at the name.
-fn place<'a>(member: Member<'a>, key: Key<'a>, cx: &Cx<'a, NoMisusedNew>) -> Span {
+fn report_span<'a>(member: Member<'a>, key: Key<'a>, cx: &Cx<'a, NoMisusedNew>) -> Span {
     if cx.language().is_oxlint { key.inner_span(cx.file()) } else { member.span() }
 }
 
@@ -65,7 +65,7 @@ impl Rule for NoMisusedNew {
                 };
                 if member.is_signature() {
                     if is_key_named(key, "constructor") {
-                        cx.report(place(member, key, cx), ERROR_MESSAGE_INTERFACE);
+                        cx.report(report_span(member, key, cx), ERROR_MESSAGE_INTERFACE);
                     }
                 } else if is_key_named(key, "new")
                     && !func.has_body()
@@ -73,7 +73,7 @@ impl Rule for NoMisusedNew {
                     && let Node::Class(class) = member.parent()
                     && is_matching_parent_type(class.name(), func)
                 {
-                    cx.report(place(member, key, cx), ERROR_MESSAGE_CLASS);
+                    cx.report(report_span(member, key, cx), ERROR_MESSAGE_CLASS);
                 }
             }
             _ => {}

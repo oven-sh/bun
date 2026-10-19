@@ -106,7 +106,7 @@ impl Rule for NoCycle {
             line: it.importer.start,
             kind: RequestKind::Other,
             is_only_importing_types: false,
-            may_be_itself: false,
+            may_reexport_itself: false,
         }));
         set_lines(file.text(), &mut requests[known..]);
         // Cases the strongly connected components can't answer, because they're built from value imports only.
@@ -284,7 +284,7 @@ impl NoCycle {
             let is_cyclic = if is_in_node_modules(modules.path(imported)) {
                 false
             } else if imported == me {
-                !request.may_be_itself
+                !request.may_reexport_itself
             } else if self.max_depth == usize::MAX {
                 modules.component(imported) == modules.component(me)
             } else {

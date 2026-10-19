@@ -106,10 +106,10 @@ impl Rule for NewlineAfterImport {
         let mut requires = std::mem::take(&mut cx.state.requires);
         utils::sort::sort_unstable_by_key(&mut requires, |it| (it.0, it.1.span().end));
         // Keep only the last call of each statement.
-        requires.dedup_by(|call, kept| {
-            let is_in_same_statement = call.0 == kept.0;
+        requires.dedup_by(|call, retained| {
+            let is_in_same_statement = call.0 == retained.0;
             if is_in_same_statement {
-                kept.1 = call.1;
+                retained.1 = call.1;
             }
             is_in_same_statement
         });

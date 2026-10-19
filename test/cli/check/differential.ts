@@ -49,7 +49,7 @@ export async function linesOf(cmd: string[], cwd: string, root: string) {
  * The file checked first enters each cycle: type parameter variances, recursive aliases, and functions and constants
  * without annotations, each through a cycle of `n` modules. What tsc reports depends on `--checkers`.
  */
-export function modulesInRings(n: number) {
+export function modulesInCycles(n: number) {
   const files: Record<string, string> = {};
   for (let i = 0; i < n; i++) {
     const [a, b, d] = [(i + 1) % n, (i + 7) % n, (i * 3 + 2) % n];
@@ -77,7 +77,7 @@ export function modulesInRings(n: number) {
 }
 
 /** Calls `run` for each of `items`, a few at a time. */
-export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
+export async function inBatches<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
@@ -121,7 +121,7 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             }
           });
         const different: Record<string, object> = {};
-        await inTurns(cases, async ([name, it]) => {
+        await inBatches(cases, async ([name, it]) => {
           const cwd = join(root, name);
           const build = it.build ? ["-b"] : [];
           // One thread splits the files up differently.

@@ -178,11 +178,11 @@ impl Reader<'_> {
     }
 
     fn structure(&mut self) -> Struct {
-        let written = self.until(b"~!^ )");
+        let struct_name = self.until(b"~!^ )");
         let mut it = Struct {
-            name: match written.strip_prefix(b"&") {
+            name: match struct_name.strip_prefix(b"&") {
                 Some(rest) => [self.rule, rest].concat(),
-                None => written.to_vec(),
+                None => struct_name.to_vec(),
             },
             fields: Vec::new(),
             ignores_unknown_fields: false,
@@ -404,7 +404,7 @@ fn write_value(out: &mut Vec<u8>, value: &Json, is_spaced: bool) {
 /// `value` the way oxlint shows what it received: pretty-printed, then with every run of whitespace collapsed to one
 /// space, even inside strings.
 #[optimize(size)]
-fn shown(value: &Json) -> Vec<u8> {
+fn displayed_value(value: &Json) -> Vec<u8> {
     let mut printed = Vec::new();
     write_value(&mut printed, value, true);
     let Ok(text) = std::str::from_utf8(&printed) else {
@@ -583,8 +583,8 @@ fn check_sort_order(value: &Json) -> Checked {
         Json::Object(entries) => entries.first().map(|it| it.0.clone()),
         it => it.as_str().map(<[u8]>::to_vec),
     };
-    let is_there = |name: &[u8]| items.iter().any(|it| name_of(it).as_deref() == Some(name));
-    match SORT_ORDER.iter().all(|name| is_there(name)) {
+    let is_listed = |name: &[u8]| items.iter().any(|it| name_of(it).as_deref() == Some(name));
+    match SORT_ORDER.iter().all(|name| is_listed(name)) {
         true => Ok(()),
         false => Err(
             b"memberSyntaxSortOrder must contain 4 unique kinds, but duplicates were found"
@@ -607,7 +607,7 @@ fn pattern_of_function_name(name: &[u8]) -> Vec<u8> {
 
 /// Returns serde's error if `value` isn't a `ty`.
 fn check(ty: &Type, value: &Json) -> Checked {
-    let fits = |ty: &Type| check(ty, value).is_ok();
+    let matches_type = |ty: &Type| check(ty, value).is_ok();
     match (ty, value) {
         (Type::Any, _)
         | (Type::Bool, Json::Bool(_))
@@ -644,8 +644,8 @@ fn check(ty: &Type, value: &Json) -> Checked {
                 _ => invalid_type(value, name.as_bytes()),
             }
         }
-        (Type::Regex(before, behind), Json::String(written)) => {
-            let pattern = [&before[..], written, behind].concat();
+        (Type::Regex(prefix, suffix), Json::String(pattern_text)) => {
+            let pattern = [&prefix[..], pattern_text, suffix].concat();
             rust_regex::syntax_error(&pattern).map_or(Ok(()), Err)
         }
         (Type::Words(words, text), Json::String(word)) => match words.contains(&&word[..]) {
@@ -672,7 +672,7 @@ fn check(ty: &Type, value: &Json) -> Checked {
             }
         }
         (Type::Tuple(_), _) => invalid_type(value, b"a tuple"),
-        (Type::Untagged(text, variants), _) => match variants.iter().any(fits) {
+        (Type::Untagged(text, variants), _) => match variants.iter().any(matches_type) {
             true => Ok(()),
             false => Err(text.clone()),
         },
@@ -691,7 +691,7 @@ fn check(ty: &Type, value: &Json) -> Checked {
                 match ty {
                     Type::Struct(_) if matches!(value, Json::Object(_)) => return check(ty, value),
                     Type::Struct(_) => {}
-                    ty if fits(ty) => return Ok(()),
+                    ty if matches_type(ty) => return Ok(()),
                     _ => {}
                 }
             }
@@ -769,7 +769,7 @@ fn check_logical_assignment_operators(options: &[Json]) -> Checked {
 
 /// `no-unused-vars` reads its options by hand, in this order.
 fn check_no_unused_vars(option: &Json) -> Checked {
-    let refusal = |name: &str, why: &[&[u8]]| {
+    let invalid_option = |name: &str, why: &[&[u8]]| {
         let start: [&[u8]; 3] = [
             b"Invalid '",
             name.as_bytes(),
@@ -781,10 +781,10 @@ fn check_no_unused_vars(option: &Json) -> Checked {
         Json::String(text) if known.contains(&&text[..]) => Ok(()),
         Json::String(text) => {
             let known = known.join(&b" or "[..]);
-            refusal(name, &[b"Expected  or ", &known, b", got ", text])
+            invalid_option(name, &[b"Expected  or ", &known, b", got ", text])
         }
         Json::Bool(_) if takes_booleans => Ok(()),
-        other => refusal(name, &[b"Expected a string, got ", &compact(other)]),
+        other => invalid_option(name, &[b"Expected a string, got ", &compact(other)]),
     };
     let vars: &[&[u8]] = &[b"all", b"local"];
     match option {
@@ -793,7 +793,7 @@ fn check_no_unused_vars(option: &Json) -> Checked {
         Json::Object(_) => {}
         other => {
             let why: [&[u8]; 2] = [b"Expected a string or an object, got ", &compact(other)];
-            return refusal("vars", &why);
+            return invalid_option("vars", &why);
         }
     }
     let steps: [(&str, &[&[u8]], bool); 7] = [
@@ -810,7 +810,7 @@ fn check_no_unused_vars(option: &Json) -> Checked {
             (None, _) => {}
             (Some(value), []) => {
                 if let Some(why) = value.as_str().and_then(rust_regex::syntax_error) {
-                    return refusal(name, &[&why]);
+                    return invalid_option(name, &[&why]);
                 }
             }
             (Some(value), known) => word(name, value, known, takes_booleans)?,
@@ -824,7 +824,7 @@ fn check_no_unused_vars(option: &Json) -> Checked {
             Some(value @ Json::String(_)) => word(name, value, fixes, false)?,
             Some(other) => {
                 let why: [&[u8]; 2] = [b"Expected a boolean or string, got ", &compact(other)];
-                return refusal(name, &why);
+                return invalid_option(name, &why);
             }
         }
     }
@@ -848,7 +848,7 @@ fn check_restricted_property(entry: &Json) -> Checked {
         value.is_some_and(|it| *it != Json::Null)
     };
     let (object, property, allow_objects, allow_properties) = (has(0), has(1), has(3), has(4));
-    let refusal: &[u8] = match (object, property) {
+    let property_error: &[u8] = match (object, property) {
         (false, false) => b"expected either `object` or `property`",
         (true, false) if allow_objects => b"`allowObjects` requires `property`",
         (true, true) if allow_objects => b"`allowObjects` cannot be used with `object`",
@@ -856,12 +856,12 @@ fn check_restricted_property(entry: &Json) -> Checked {
         (true, true) if allow_properties => b"`allowProperties` cannot be used with `property`",
         _ => return Ok(()),
     };
-    Err(refusal.to_vec())
+    Err(property_error.to_vec())
 }
 
 /// oxlint's error for the `options` of the rule that `oxlint_rule_key` writes as `key`: the lines below "Invalid
 /// configuration for rule". `None` if it accepts them.
-pub(super) fn refusal(key: &[u8], options: &[Json]) -> Option<Vec<u8>> {
+pub(super) fn options_error(key: &[u8], options: &[Json]) -> Option<Vec<u8>> {
     let first = options.first()?;
     let Some((&how, text)) = row(key).and_then(<[u8]>::split_first) else {
         return Some(b"  This rule does not accept configuration options.".to_vec());
@@ -920,11 +920,18 @@ pub(super) fn refusal(key: &[u8], options: &[Json]) -> Option<Vec<u8>> {
             b"  ",
             &why[..],
             b"\n  received config: `",
-            &shown(first),
+            &displayed_value(first),
             b"`",
         ]
         .concat(),
-        b'w' | b'L' => [b"  ", &why[..], b", received `", &shown(&all()), b"`"].concat(),
+        b'w' | b'L' => [
+            b"  ",
+            &why[..],
+            b", received `",
+            &displayed_value(&all()),
+            b"`",
+        ]
+        .concat(),
         _ => [b"  ", &why[..]].concat(),
     })
 }

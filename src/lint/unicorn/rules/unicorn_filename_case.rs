@@ -177,12 +177,12 @@ impl FilenameCase {
         let Some((raw_filename, trimmed_filename)) = self.checked_part(path) else {
             return String::new();
         };
-        let around: Vec<&[u8]> = strings::split(raw_filename, trimmed_filename.as_bytes()).collect();
+        let surrounding_parts: Vec<&[u8]> = strings::split(raw_filename, trimmed_filename.as_bytes()).collect();
         let mut help = b"Rename the file to ".to_vec();
         for (i, case) in self.cases.iter().enumerate() {
             help.extend_from_slice(separator(i, self.cases.len()).as_bytes());
             help.push(b'\'');
-            help.extend_from_slice(&around.join(case.convert(trimmed_filename).as_bytes()));
+            help.extend_from_slice(&surrounding_parts.join(case.convert(trimmed_filename).as_bytes()));
             help.push(b'\'');
         }
         bstr::BStr::new(&help).to_string()

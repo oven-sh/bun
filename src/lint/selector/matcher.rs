@@ -150,7 +150,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
     }
 
     /// The list-valued fields of `node`'s parent.
-    fn lists_around(&self, node: VNode<'a>) -> impl Iterator<Item = Nodes<'a>> {
+    fn sibling_lists(&self, node: VNode<'a>) -> impl Iterator<Item = Nodes<'a>> {
         let dialect = self.dialect;
         let parent = self.parent(node);
         let entries = parent.map_or(&[][..], |it| it.node_type().fields()).iter();
@@ -166,7 +166,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
     /// `sibling`
     fn has_sibling(&self, node: VNode<'a>, selector: Id, side: Side) -> bool {
         let Some((list, at)) = self
-            .lists_around(node)
+            .sibling_lists(node)
             .find_map(|it| Some((it, it.index_of(node)?)))
         else {
             return false;
@@ -184,7 +184,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
     /// `adjacent`
     fn has_adjacent(&self, node: VNode<'a>, selector: Id, side: Side) -> bool {
         let Some((list, at)) = self
-            .lists_around(node)
+            .sibling_lists(node)
             .find_map(|it| Some((it, it.index_of(node)?)))
         else {
             return false;
@@ -199,7 +199,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
 
     /// `nthChild`
     fn is_nth_child(&self, node: VNode<'a>, nth: i32) -> bool {
-        self.lists_around(node).any(|list| {
+        self.sibling_lists(node).any(|list| {
             let at = match nth {
                 0 => None,
                 1.. => Some(nth as usize - 1),
@@ -262,10 +262,10 @@ impl<'s, 'a> Matcher<'s, 'a> {
     ) -> bool {
         let rest = path.get(1..).unwrap_or_default();
         let value = match first {
-            Bound::Entry(entry) => self.follow(Val::of_field(node, entry, self.dialect), rest),
+            Bound::Entry(entry) => self.follow(Val::from_field(node, entry, self.dialect), rest),
             Bound::Missing => Val::Undefined,
             Bound::Field(field) => match node_type.field(field) {
-                Some(entry) => self.follow(Val::of_field(node, entry, self.dialect), rest),
+                Some(entry) => self.follow(Val::from_field(node, entry, self.dialect), rest),
                 None => Val::Undefined,
             },
             Bound::No => self.follow(Val::Node(node), path),

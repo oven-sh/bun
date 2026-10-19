@@ -67,9 +67,9 @@ struct Region {
 pub(crate) struct ScopeTree {
     pub(crate) scopes: Vec<ScopeData>,
     /// Indexed by `FnId`.
-    pub(crate) of_fn: Vec<u32>,
+    pub(crate) scope_of_fn: Vec<u32>,
     /// Indexed by `ClassId`.
-    pub(crate) of_class: Vec<u32>,
+    pub(crate) scope_of_class: Vec<u32>,
     /// The `export as namespace N` statements.
     pub(crate) namespace_exports: Vec<hir::StmtId>,
     /// The ranges that typescript-eslint doesn't visit, which therefore contain no scopes,
@@ -224,17 +224,17 @@ fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) ->
         else {
             return false;
         };
-        let written = hir
+        let raw_text = hir
             .text
             .get(*pos as usize..*end as usize)
             .unwrap_or_default();
         // A template or a parenthesized string isn't a directive.
-        if !matches!(written.first(), Some(b'"' | b'\''))
+        if !matches!(raw_text.first(), Some(b'"' | b'\''))
             || hir.parens.binary_search_by_key(&e.0, |it| it.0.0).is_ok()
         {
             return false;
         }
-        if written.get(1..written.len() - 1) == Some(b"use strict") {
+        if raw_text.get(1..raw_text.len() - 1) == Some(b"use strict") {
             return true;
         }
     }
@@ -261,8 +261,8 @@ impl ScopeTree {
         let supports_strict = !is_javascript_mode(file) || language.ecma_version >= 5;
         let mut tree = ScopeTree {
             scopes: Vec::with_capacity(protos.len()),
-            of_fn: vec![NONE; file.hir.fns.len()],
-            of_class: vec![NONE; file.hir.classes.len()],
+            scope_of_fn: vec![NONE; file.hir.fns.len()],
+            scope_of_class: vec![NONE; file.hir.classes.len()],
             namespace_exports,
             unvisited,
             changes: Vec::with_capacity(protos.len() * 2),
@@ -291,9 +291,9 @@ impl ScopeTree {
                     step,
                 });
             }
-            let (around_end, outer) = stack.last().map_or((u32::MAX, NONE), |it| (it.0, it.1));
+            let (enclosing_end, outer) = stack.last().map_or((u32::MAX, NONE), |it| (it.0, it.1));
             // After a syntax error ranges can overlap.
-            let end = proto.end.min(around_end);
+            let end = proto.end.min(enclosing_end);
             match proto.what {
                 What::Lifted => {
                     tree.has_lifted_parts = true;
@@ -314,9 +314,9 @@ impl ScopeTree {
                     }
                     match block {
                         Block::Fn(f) if kind != ScopeKind::FunctionExpressionName => {
-                            tree.of_fn[f.idx()] = id;
+                            tree.scope_of_fn[f.idx()] = id;
                         }
-                        Block::Class(c) => tree.of_class[c.idx()] = id,
+                        Block::Class(c) => tree.scope_of_class[c.idx()] = id,
                         _ => {}
                     }
                     let parent = tree.scopes.get(outer as usize).copied();
@@ -457,11 +457,11 @@ impl ScopeTree {
                     stack.pop();
                 }
                 let region = regions.len() as u32;
-                let around = stack.last().copied();
+                let enclosing_region = stack.last().copied();
                 regions.push(Region {
                     start,
-                    end: around.map_or(end, |it| end.min(regions[it as usize].end)),
-                    parent: around.unwrap_or(region),
+                    end: enclosing_region.map_or(end, |it| end.min(regions[it as usize].end)),
+                    parent: enclosing_region.unwrap_or(region),
                     get,
                 });
                 stack.push(region);
@@ -494,9 +494,9 @@ impl ScopeTree {
         let after = self.scopes.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);
         while let Some(scope) = self.scopes.get(at) {
-            let is_around =
+            let encloses_node =
                 end.max(start + 1) <= scope.end && (scope.start, scope.end) != (start, end);
-            if Some(scope.block) == block || is_around || scope.parent == NONE {
+            if Some(scope.block) == block || encloses_node || scope.parent == NONE {
                 break;
             }
             at = scope.parent as usize;
@@ -529,9 +529,9 @@ impl ScopeTree {
                 return region.get;
             }
             // A region with the node's exact range is created by something inside the node.
-            let is_around =
+            let encloses_node =
                 end.max(start + 1) <= region.end && (region.start, region.end) != (start, end);
-            if is_around || region.parent as usize == at {
+            if encloses_node || region.parent as usize == at {
                 return region.get;
             }
             at = region.parent as usize;
@@ -670,20 +670,20 @@ impl<'f, 'a> Collector<'f, 'a> {
         let unvisited = &self.unvisited;
         let is_visited = |pos: u32| !unvisited.iter().any(|it| (it.0..it.1).contains(&pos));
         // The new index of each of `protos`.
-        let mut kept = 0;
-        let places: Vec<Option<u32>> = (self.protos.iter())
+        let mut retained_count = 0;
+        let new_indexes: Vec<Option<u32>> = (self.protos.iter())
             .map(|it| {
                 is_visited(it.start).then(|| {
-                    kept += 1;
-                    kept - 1
+                    retained_count += 1;
+                    retained_count - 1
                 })
             })
             .collect();
         self.protos.retain(|it| is_visited(it.start));
         self.zones.retain_mut(|it| {
-            let place = places.get(it.scope as usize).copied().flatten();
-            it.scope = place.unwrap_or(it.scope);
-            place.is_some()
+            let new_index = new_indexes.get(it.scope as usize).copied().flatten();
+            it.scope = new_index.unwrap_or(it.scope);
+            new_index.is_some()
         });
     }
 

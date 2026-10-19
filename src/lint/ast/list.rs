@@ -81,13 +81,13 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     #[inline]
     pub fn len(self) -> usize {
         match self.file.has_synthetic_nodes() {
-            true => self.count_written(),
+            true => self.count_non_synthetic(),
             false => self.len as usize,
         }
     }
 
     #[inline(never)]
-    fn count_written(self) -> usize {
+    fn count_non_synthetic(self) -> usize {
         self.iter().count()
     }
 
@@ -99,13 +99,13 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     #[inline]
     pub fn get(self, i: usize) -> Option<T> {
         match self.file.has_synthetic_nodes() {
-            true => self.get_written(i),
+            true => self.get_non_synthetic(i),
             false => (i < self.len as usize).then(|| self.at(i as u32)),
         }
     }
 
     #[inline(never)]
-    fn get_written(self, i: usize) -> Option<T> {
+    fn get_non_synthetic(self, i: usize) -> Option<T> {
         self.iter().nth(i)
     }
 

@@ -19,7 +19,7 @@ const FEW: usize = 8;
 type Page = [u64; 8];
 
 #[inline]
-fn place(id: u32) -> (u32, usize, u64) {
+fn bit_position(id: u32) -> (u32, usize, u64) {
     (id >> 9, ((id >> 6) & 7) as usize, 1 << (id & 63))
 }
 
@@ -37,12 +37,12 @@ impl Ids {
         if self.pages.is_empty() {
             return self.few.contains(&id);
         }
-        let (page, word, bit) = place(id);
+        let (page, word, bit) = bit_position(id);
         self.pages.get(&page).is_some_and(|it| it[word] & bit != 0)
     }
 
     fn set(&mut self, id: u32) -> bool {
-        let (page, word, bit) = place(id);
+        let (page, word, bit) = bit_position(id);
         let word = &mut self.pages.entry(page).or_default()[word];
         let is_new = *word & bit == 0;
         *word |= bit;
@@ -76,7 +76,7 @@ impl Ids {
                 self.few.len() != before
             }
             false => {
-                let (page, word, bit) = place(id);
+                let (page, word, bit) = bit_position(id);
                 self.pages.get_mut(&page).is_some_and(|it| {
                     let was_there = it[word] & bit != 0;
                     it[word] &= !bit;

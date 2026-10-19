@@ -96,9 +96,9 @@ fn truncate_to_width(text: &[u8], width: usize) -> &[u8] {
     &text[..end]
 }
 
-/// Converts `d` to input for `bun_ast::Msg::write_format`: the message, its location, and the last `shown` source lines
-/// up to the line it starts on. Only an error includes its code.
-fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, shown: usize) -> bun_ast::Data {
+/// Converts `d` to input for `bun_ast::Msg::write_format`: the message, its location, and the last `max_lines` source
+/// lines up to the line it starts on. Only an error includes its code.
+fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, max_lines: usize) -> bun_ast::Data {
     // Bun's own diagnostics have no code.
     let text = match d.code {
         code if code != 0 && includes_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
@@ -106,7 +106,7 @@ fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, shown: usize) -> 
     };
     // Leading blank lines carry no information.
     let lines = &d.source[..d.source.len().min((d.line - d.source_line) as usize + 1)];
-    let lines = &lines[lines.len().saturating_sub(shown)..];
+    let lines = &lines[lines.len().saturating_sub(max_lines)..];
     let blank = lines.iter().take_while(|line| line.trim_ascii().is_empty());
     let lines = &lines[blank.count()..];
     // An error on a blank line, for example at the end of the file, gets no source either, because the preceding line
@@ -534,8 +534,8 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
     }
     // The sort is stable, so ties stay in source order.
     groups.shared_sort_by_key(|group| std::cmp::Reverse(group.len()));
-    let shown = groups.len().min(MAX_GROUPS);
-    for group in &groups[..shown] {
+    let groups_shown = groups.len().min(MAX_GROUPS);
+    for group in &groups[..groups_shown] {
         match style.layout {
             Layout::Agent => write_agent(out, group[0], &group[1..], style),
             _ => {
@@ -544,10 +544,10 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
             }
         }
     }
-    let compact_count = (groups.len() - shown).min(MAX_COMPACT_GROUPS);
+    let compact_count = (groups.len() - groups_shown).min(MAX_COMPACT_GROUPS);
     if style.layout == Layout::Pretty && compact_count > 0 {
-        let width = with_commas(groups[shown].len()).len();
-        for group in &groups[shown..shown + compact_count] {
+        let width = with_commas(groups[groups_shown].len()).len();
+        for group in &groups[groups_shown..groups_shown + compact_count] {
             let first = group[0];
             pretty!(
                 out,
@@ -578,18 +578,18 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
         }
         out.push(b'\n');
     }
-    let shown = if style.layout == Layout::Pretty {
-        shown + compact_count
+    let groups_shown = if style.layout == Layout::Pretty {
+        groups_shown + compact_count
     } else {
-        shown
+        groups_shown
     };
-    let rest: usize = groups[shown..].iter().map(Vec::len).sum();
+    let rest: usize = groups[groups_shown..].iter().map(Vec::len).sum();
     if rest == 0 {
         return;
     }
     let (errors, more) = (
         plural(rest, b"more error", b"more errors"),
-        plural(groups.len() - shown, b"other kind", b"other kinds"),
+        plural(groups.len() - groups_shown, b"other kind", b"other kinds"),
     );
     if style.layout == Layout::Agent {
         let _ = writeln!(

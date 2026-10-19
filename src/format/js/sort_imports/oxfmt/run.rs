@@ -51,7 +51,7 @@ impl Line {
 /// An import, and how oxc reads its output: it goes by the text in the document, where a comment is text like any
 /// other.
 #[derive(Copy, Clone)]
-struct Written<'a> {
+struct PrintedImport<'a> {
     import: Import<'a>,
     /// The first text after the `from`, or after the `import` if there's no `from`.
     source: &'a [u8],
@@ -59,10 +59,10 @@ struct Written<'a> {
     has_comment_for_default: bool,
 }
 
-impl<'a> Written<'a> {
+impl<'a> PrintedImport<'a> {
     fn new(statement: Stmt<'a>, import: Import<'a>, f: &Formatter<'a>) -> Self {
         let source = import.spec_span().unwrap_or_default();
-        let mut written = Written {
+        let mut printed = PrintedImport {
             import,
             source: f.file().slice(source),
             has_comment_for_default: false,
@@ -91,19 +91,19 @@ impl<'a> Written<'a> {
                 });
             if let Some(comment) = comment {
                 let text = f.file().slice(comment.span());
-                written.source = bun_core::strings::index_of_char_usize(text, b'\n')
+                printed.source = bun_core::strings::index_of_char_usize(text, b'\n')
                     .map_or(text, |end| text[..end].trim_ascii_end());
             }
             let star = import
                 .namespace_span()
                 .filter(|_| import.default().is_none());
-            written.has_comment_for_default = star.is_some_and(|star| {
+            printed.has_comment_for_default = star.is_some_and(|star| {
                 !f.comments()
                     .comments_in_span(Span::before(keyword_end, star))
                     .is_empty()
             });
         }
-        written
+        printed
     }
 }
 
@@ -127,8 +127,8 @@ struct Orphan {
 }
 
 /// `extract_source_path`: `"./a.js?b"` becomes `./a.js`.
-fn source_path(written: &[u8]) -> &[u8] {
-    let mut source = written;
+fn source_path(raw_source: &[u8]) -> &[u8] {
+    let mut source = raw_source;
     for quote in *b"\"'" {
         while let [first, rest @ ..] = source
             && *first == quote
@@ -167,12 +167,12 @@ fn is_style(source: &[u8]) -> bool {
 }
 
 /// `compute_import_metadata`: the group, and true if the import stays in place.
-fn classify(written: Written, source: &[u8], options: &Options) -> (usize, bool) {
-    let import = written.import;
+fn classify(printed: PrintedImport, source: &[u8], options: &Options) -> (usize, bool) {
+    let import = printed.import;
     let (is_side_effect, is_style) = (import.is_side_effect(), is_style(source));
     let mut selectors = Selector::Import.bit();
     let mut add =
-        |selector: Selector, is_one: bool| selectors |= if is_one { selector.bit() } else { 0 };
+        |selector: Selector, applies: bool| selectors |= if applies { selector.bit() } else { 0 };
     add(Selector::SideEffectStyle, is_side_effect && is_style);
     add(Selector::SideEffect, is_side_effect);
     add(Selector::Style, is_style);
@@ -217,11 +217,11 @@ fn classify(written: Written, source: &[u8], options: &Options) -> (usize, bool)
         Modifier::Value.bit()
     };
     let mut add =
-        |modifier: Modifier, is_one: bool| modifiers |= if is_one { modifier.bit() } else { 0 };
+        |modifier: Modifier, applies: bool| modifiers |= if applies { modifier.bit() } else { 0 };
     add(Modifier::SideEffect, is_side_effect);
     add(
         Modifier::Default,
-        import.default().is_some() || written.has_comment_for_default,
+        import.default().is_some() || printed.has_comment_for_default,
     );
     add(Modifier::Wildcard, import.namespace().is_some());
     add(Modifier::Named, !import.named().is_empty());
@@ -319,7 +319,7 @@ fn should_insert_newline_between(
 /// Writes the lines of a chunk, which has no boundary in it, with its imports sorted.
 fn write_sorted<'a>(
     lines: &[Line],
-    imports: &[Written<'a>],
+    imports: &[PrintedImport<'a>],
     options: &Options,
     is_before_boundary: bool,
     out: &mut Vec<FormatElement>,
@@ -347,11 +347,11 @@ fn write_sorted<'a>(
                         after_slot,
                     });
                 }
-                let Some(&written) = imports.get(index as usize) else {
+                let Some(&printed) = imports.get(index as usize) else {
                     continue;
                 };
-                let (import, source) = (written.import, source_path(written.source));
-                let (group, is_ignored) = classify(written, source, options);
+                let (import, source) = (printed.import, source_path(printed.source));
+                let (group, is_ignored) = classify(printed, source, options);
                 units.push(Unit {
                     leading: current_pending..at,
                     line,
@@ -413,7 +413,7 @@ fn write_sorted<'a>(
 /// oxc's `transform`
 fn transform<'a>(
     lines: &[Line],
-    imports: &[Written<'a>],
+    imports: &[PrintedImport<'a>],
     options: &Options,
     out: &mut Vec<FormatElement>,
 ) {
@@ -465,7 +465,7 @@ pub(crate) struct ImportRun<'a> {
     is_next_sortable: Option<bool>,
     has_seen_import: bool,
     lines: Vec<Line>,
-    imports: Vec<Written<'a>>,
+    imports: Vec<PrintedImport<'a>>,
     /// Where the current line starts.
     line_start: usize,
 }
@@ -594,7 +594,7 @@ impl<'a> ImportRun<'a> {
             }
             Some(_) => {}
         }
-        self.imports.push(Written::new(statement, import, f));
+        self.imports.push(PrintedImport::new(statement, import, f));
         self.line_start = f.elements().len();
 
         // One line at a time. What's left for the statement to print is its own line.

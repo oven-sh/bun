@@ -127,11 +127,11 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     ["a = 1\nb = \n", "bunfig.toml:2:5"],
     [`[${command}]\nnothing = 1\n`, "bunfig.toml:2:1"],
     [`${command} = 1\n`, `bunfig.toml:1:${command.length + 4}`],
-  ])("an invalid bunfig.toml is an error and is left unchanged: %j", async (before, place) => {
+  ])("an invalid bunfig.toml is an error and is left unchanged: %j", async (before, location) => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": before });
     const result = await run(String(dir), command, "--init");
     expect(result.stderr).toContain("error: ");
-    expect(result.stderr).toContain(place);
+    expect(result.stderr).toContain(location);
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 2 });
     expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe(before);
   });
@@ -276,10 +276,10 @@ describe.concurrent("--init in a project with another tool's config", () => {
     ["fmt", { ".oxfmtrc.json": "{}" }, [], ".oxfmtrc.json"],
     ["fmt", { ".oxfmtrc.jsonc": "{}", "sub/a.js": "" }, ["--cwd", "sub"], "../.oxfmtrc.jsonc"],
     ["fmt", { "config/mine.json": "{}" }, ["--config", "config/mine.json"], "config/mine.json"],
-  ])("bun %s writes nothing if the config file is in use: %j %j", async (command, files, args, shown) => {
+  ])("bun %s writes nothing if the config file is in use: %j %j", async (command, files, args, configName) => {
     using dir = tempDir("bun-init-section", files);
     expect(await run(String(dir), command, "--init", ...args)).toEqual({
-      stdout: `Using ${shown}. bunfig.toml is not needed.\n`,
+      stdout: `Using ${configName}. bunfig.toml is not needed.\n`,
       stderr: "",
       exitCode: 0,
     });

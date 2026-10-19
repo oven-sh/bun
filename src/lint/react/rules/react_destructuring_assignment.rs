@@ -53,7 +53,7 @@ enum EvaluatedParam<'a> {
 }
 
 impl<'a> EvaluatedParam<'a> {
-    fn of(param: Param<'a>) -> EvaluatedParam<'a> {
+    fn from_param(param: Param<'a>) -> EvaluatedParam<'a> {
         // An `AssignmentPattern`, a `RestElement`, a `TSParameterProperty`.
         if param.default().is_some() || param.is_rest() || param.is_parameter_property() {
             return EvaluatedParam::Other;
@@ -75,7 +75,7 @@ impl<'a> EvaluatedParam<'a> {
 
 /// Returns the message for a component with `func`'s parameters under the `never` option.
 fn message_about_params(func: Func<'_>) -> Option<Message> {
-    let mut params = func.params_with_this().map(EvaluatedParam::of);
+    let mut params = func.params_with_this().map(EvaluatedParam::from_param);
     match (params.next(), params.next()) {
         (Some(EvaluatedParam::Destructuring), _) => Some(NO_DESTRUCT_PROPS_IN_SFC_ARG),
         (_, Some(EvaluatedParam::Destructuring)) => Some(NO_DESTRUCT_CONTEXT_IN_SFC_ARG),
@@ -102,7 +102,7 @@ enum Destructured<'a> {
 }
 
 impl<'a> Destructured<'a> {
-    fn by(declarator: VarDecl<'a>) -> Option<Destructured<'a>> {
+    fn from_declarator(declarator: VarDecl<'a>) -> Option<Destructured<'a>> {
         let init = declarator.init().filter(|_| declarator.pat().tag() == PatTag::Object)?;
         match init.as_ident() {
             Some(name) => name.is_any(&["props", "context"]).then_some(Destructured::Sfc(name)),
@@ -134,7 +134,7 @@ impl<'a> State<'a> {
         let mut names_of_params = FxHashSet::default();
         for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
             let node = Node::Func(func);
-            let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::of(it).name());
+            let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::from_param(it).name());
             let mut names = names.peekable();
             if names.peek().is_some()
                 && (is_any_related || self.components.get_stateless_component(node) == Some(node))
@@ -145,14 +145,14 @@ impl<'a> State<'a> {
         if names_of_params.is_empty() {
             return false;
         }
-        let others = self.candidates.len();
+        let previous_count = self.candidates.len();
         let members = [ExprTag::Dot, ExprTag::Index].map(|tag| file.exprs_of_kind(tag));
         for e in members.into_iter().flatten() {
             if e.object().and_then(Expr::as_ident).is_some_and(|it| names_of_params.contains(&it)) {
                 self.candidates.push(Node::Expr(e));
             }
         }
-        self.candidates.len() > others
+        self.candidates.len() > previous_count
     }
 
     fn is_in_class_property(&mut self, node: Expr<'a>) -> bool {
@@ -219,7 +219,7 @@ impl Rule for DestructuringAssignment {
     }
 
     fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        let is_candidate = match Destructured::by(declarator) {
+        let is_candidate = match Destructured::from_declarator(declarator) {
             Some(Destructured::Sfc(name)) => self.configuration == Configuration::Never || name.is("props"),
             Some(Destructured::Class(_)) => self.configuration == Configuration::Never,
             None => false,
@@ -277,11 +277,11 @@ impl DestructuringAssignment {
             return;
         }
         // Upstream uses the first function in the queue that has a name for the parameter.
-        let around = cx.state.sfc_params.last().copied().unwrap_or_default();
-        let mut names = func.params_with_this().map(|it| EvaluatedParam::of(it).name());
+        let outer_params = cx.state.sfc_params.last().copied().unwrap_or_default();
+        let mut names = func.params_with_this().map(|it| EvaluatedParam::from_param(it).name());
         cx.state.sfc_params.push(SfcParams {
-            props_name: names.next().flatten().or(around.props_name),
-            context_name: names.next().flatten().or(around.context_name),
+            props_name: names.next().flatten().or(outer_params.props_name),
+            context_name: names.next().flatten().or(outer_params.context_name),
         });
     }
 
@@ -312,7 +312,7 @@ impl DestructuringAssignment {
 
     fn handle_variable_declarator<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         let node = Node::VarDecl(declarator);
-        let name = match Destructured::by(declarator) {
+        let name = match Destructured::from_declarator(declarator) {
             Some(Destructured::Sfc(name)) => name,
             Some(Destructured::Class(name)) => {
                 if cx.state.components.get_parent_component(node).is_some() {

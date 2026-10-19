@@ -81,9 +81,9 @@ impl CheckedRequiresOnchangeOrReadonly {
         };
         let is_oxlint = cx.language().is_oxlint;
         // oxlint's AST has a node for parentheses.
-        let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
+        let is_plain = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
         let arguments = call.args();
-        if !arguments.first().filter(is_seen).and_then(Expr::as_string).is_some_and(|it| it.is("input")) {
+        if !arguments.first().filter(is_plain).and_then(Expr::as_string).is_some_and(|it| it.is("input")) {
             return;
         }
         // oxlint accepts any `createElement` except `document.createElement`.
@@ -91,7 +91,7 @@ impl CheckedRequiresOnchangeOrReadonly {
             true => is_create_element_call(call),
             false => is_create_element(e, cx.state),
         };
-        if is_creation && let Some(ExprKind::Object(properties)) = arguments.get(1).filter(is_seen).map(Expr::kind) {
+        if is_creation && let Some(ExprKind::Object(properties)) = arguments.get(1).filter(is_plain).map(Expr::kind) {
             // oxlint also accepts `"checked"`, but not `[checked]`.
             let name_of = |key: Key<'a>| match is_oxlint {
                 true => static_name(key).map(Name::bytes),

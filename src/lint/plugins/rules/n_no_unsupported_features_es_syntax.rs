@@ -59,8 +59,8 @@ pub struct State<'a> {
     /// The `var` declarators of variables that share a name with a `catch` clause's parameter, in source order.
     var_declarators: IdMap<Symbol<'a>, Vec<VarDecl<'a>>>,
     /// Caches for a node's enclosing function and its enclosing non-arrow function.
-    function_around: AncestorMemo<'a, ()>,
-    function_with_this_around: AncestorMemo<'a, Func<'a>>,
+    enclosing_function: AncestorMemo<'a, ()>,
+    enclosing_non_arrow_function: AncestorMemo<'a, Func<'a>>,
 }
 
 type Context<'a> = Cx<'a, EsSyntax>;
@@ -384,7 +384,7 @@ impl Rule for EsSyntax {
             ExprTag::Spread => self.spread(e, cx),
             ExprTag::Template | ExprTag::TaggedTemplate => self.template(e, cx),
             ExprTag::Await => {
-                if !is_in_function(Node::Expr(e), &mut cx.state.function_around) {
+                if !is_in_function(Node::Expr(e), &mut cx.state.enclosing_function) {
                     self.report(cx, TOP_LEVEL_AWAIT, e.span());
                 }
             }
@@ -672,8 +672,8 @@ struct Pattern {
 }
 
 impl Handler for Pattern {
-    fn on_lookaround_assertion_enter(&mut self, _: u32, behind: bool, _: bool) {
-        self.has_lookbehind |= behind;
+    fn on_lookaround_assertion_enter(&mut self, _: u32, is_lookbehind: bool, _: bool) {
+        self.has_lookbehind |= is_lookbehind;
     }
     fn on_capturing_group_enter(&mut self, _: u32, name: Option<&[u8]>) {
         self.has_named_group |= name.is_some_and(|it| !it.is_empty());
@@ -728,8 +728,8 @@ impl EsSyntax {
     }
 
     /// For a feature that has several listeners.
-    fn report_from_listener<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, by: u64) {
-        self.report_with(cx, feature, at, None, false, by);
+    fn report_from_listener<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, listener_rank: u64) {
+        self.report_with(cx, feature, at, None, false, listener_rank);
     }
 
     /// For a feature that was supported in strict mode first. `node`: the reported node.
@@ -737,7 +737,7 @@ impl EsSyntax {
         self.report_with(cx, feature, at, Some(node), false, listener_of(feature));
     }
 
-    fn report_with<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Option<Node<'a>>, is_position: bool, by: u64) {
+    fn report_with<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Option<Node<'a>>, is_position: bool, listener_rank: u64) {
         let Some(active) = self.active(&cx.state).filter(|it| it.has(feature)) else {
             return;
         };
@@ -757,13 +757,13 @@ impl EsSyntax {
                 return;
             }
         }
-        let by = if cx.state.is_in_program_exit.get() { listener(PROGRAM_EXIT, 0, 1) } else { by };
+        let listener_rank = if cx.state.is_in_program_exit.get() { listener(PROGRAM_EXIT, 0, 1) } else { listener_rank };
         cx.state.found.borrow_mut().push(Found {
             at,
             is_position,
             feature,
             supported,
-            rank: (by << 32) | ((active.listens_for(feature) as u64) << 16) | feature as u64,
+            rank: (listener_rank << 32) | ((active.listens_for(feature) as u64) << 16) | feature as u64,
         });
     }
 
@@ -935,7 +935,7 @@ impl EsSyntax {
     fn super_keyword<'a>(&self, e: Expr<'a>, cx: &mut Context<'a>) {
         // The enclosing function, skipping arrow functions.
         let with_this = |it: Node<'a>| it.as_func().filter(|it| is_function(*it) && !it.is_arrow());
-        let func = cx.state.function_with_this_around.find(Node::Expr(e), |_, parent| with_this(parent));
+        let func = cx.state.enclosing_non_arrow_function.find(Node::Expr(e), |_, parent| with_this(parent));
         let is_in_object_method = func.is_some_and(|func| match func.owner() {
             Node::Expr(owner) => matches!(owner.parent(), Node::Prop(prop) if prop.kind() == PropKind::Method),
             _ => false,
@@ -970,7 +970,7 @@ impl EsSyntax {
                 self.report(cx, FOR_OF_LOOPS, stmt.span());
                 if is_await {
                     self.report_from_listener(cx, ASYNC_ITERATION, stmt.span(), listener(NODE, 1, 1));
-                    if !is_in_function(Node::Stmt(stmt), &mut cx.state.function_around) {
+                    if !is_in_function(Node::Stmt(stmt), &mut cx.state.enclosing_function) {
                         self.report(cx, TOP_LEVEL_AWAIT, stmt.span());
                     }
                 }

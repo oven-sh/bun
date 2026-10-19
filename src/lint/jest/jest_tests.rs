@@ -493,14 +493,14 @@ pub(crate) mod valid_title {
 
     /// True if `raw` has as much leading and trailing whitespace as `cooked`.
     fn can_trim_raw_title(cooked: &[u8], raw: &[u8]) -> bool {
-        let whitespace_around = |text: &[u8]| {
+        let outer_whitespace = |text: &[u8]| {
             let without_start = strings::trim_unicode_whitespace_start(text).len();
             (
                 text.len().saturating_sub(without_start),
                 without_start.saturating_sub(strings::trim_unicode_whitespace(text).len()),
             )
         };
-        whitespace_around(cooked) == whitespace_around(raw)
+        outer_whitespace(cooked) == outer_whitespace(raw)
     }
 
     /// Matches `String.raw` on the global `String`.
@@ -864,11 +864,11 @@ pub(crate) mod no_identical_title {
                 _ => continue,
             };
             // In Bun, `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are one test.
-            let is_one_of_many = |name: &[u8]| {
+            let is_variant_modifier = |name: &[u8]| {
                 name == b"each"
                     || ctx.runner == Runner::Bun && (name == b"if" || name.ends_with(b"If"))
             };
-            if (result.members.iter()).any(|m| m.name().is_some_and(is_one_of_many)) {
+            if (result.members.iter()).any(|m| m.name().is_some_and(is_variant_modifier)) {
                 continue;
             }
             // oxlint's `get_closest_block`.

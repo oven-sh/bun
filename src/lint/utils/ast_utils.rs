@@ -980,7 +980,7 @@ pub fn is_specific_member_access(
     };
     object_name.is_none_or(|name| object.is_ident(name))
         && property_name.is_none_or(|name| match e.member_name() {
-            Some(written) => written.name().is(name),
+            Some(property) => property.name().is(name),
             None => get_static_property_name(e).is_some_and(|it| *it == *name.as_bytes()),
         })
 }
@@ -1516,8 +1516,8 @@ fn is_constant_chain(e: Expr<'_>, in_boolean_position: bool, constants: &mut Con
                     _ => false,
                 };
                 let is_right_constant = is_constant(right, in_boolean);
-                let is_identity_of = |operator: BinOp, is_left: bool| {
-                    op == operator && (is_left || is_logical_identity(right, operator))
+                let is_identity_of = |operator: BinOp, left_is_identity: bool| {
+                    op == operator && (left_is_identity || is_logical_identity(right, operator))
                 };
                 Constant {
                     is_constant: left.is_constant && (is_right_constant || is_left_identity)
@@ -1927,7 +1927,7 @@ fn find_jsdoc_comment<'a>(file: &'a File<'a>, start: u32) -> Option<Token<'a>> {
 
 /// The braces of the `JSXExpressionContainer` that's `node`'s parent in ESLint.
 fn jsx_container_of(node: Node<'_>) -> Option<Span> {
-    node.as_written().as_expr()?.jsx_container_span()
+    node.owner_or_self().as_expr()?.jsx_container_span()
 }
 
 /// ESLint's `getJSDocComment`, for a function or a class: the `/** .. */` comment that documents it. `documented_at` is
@@ -1953,7 +1953,7 @@ fn get_jsdoc_comment<'a>(
                 estree_parent(node).as_expr().map(Expr::kind),
                 Some(ExprKind::Call(_) | ExprKind::New(_))
             );
-            let of_ancestor = |child: Node<'a>, parent: Node<'a>| {
+            let decide_at_ancestor = |child: Node<'a>, parent: Node<'a>| {
                 if let Some(braces) = jsx_container_of(child)
                     && file.comments_before(braces).next().is_some()
                 {
@@ -1989,7 +1989,7 @@ fn get_jsdoc_comment<'a>(
             let start = match is_argument {
                 true => None,
                 false => documented_at
-                    .find_with(node, estree_parent, of_ancestor)
+                    .find_with(node, estree_parent, decide_at_ancestor)
                     .flatten(),
             };
             find_jsdoc_comment(file, start.unwrap_or_else(|| estree_span(node).start))

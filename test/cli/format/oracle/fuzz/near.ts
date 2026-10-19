@@ -135,15 +135,15 @@ if (process.argv[2] == "--child") {
   function changed(text: string, perFile: number) {
     const tokens = text.match(TOKEN) ?? [];
     // Whitespace is insignificant in JavaScript.
-    const places = tokens.flatMap((token, index) => (language == "js" && /^(\s|\/\/|\/\*)/.test(token) ? [] : [index]));
+    const sites = tokens.flatMap((token, index) => (language == "js" && /^(\s|\/\/|\/\*)/.test(token) ? [] : [index]));
     const texts = new Set<string>();
     const without = (...dropped: number[]) => tokens.filter((_, index) => !dropped.includes(index)).join("");
-    const pick = (count: number) => some(places.length, count).map(index => places[index]);
+    const pick = (count: number) => some(sites.length, count).map(index => sites[index]);
     for (const at of pick(perFile)) texts.add(without(at));
-    for (const index of some(places.length - 1, perFile >> 2)) texts.add(without(places[index], places[index + 1]));
+    for (const index of some(sites.length - 1, perFile >> 2)) texts.add(without(sites[index], sites[index + 1]));
     for (const at of pick(perFile >> 2)) texts.add([...tokens.slice(0, at + 1), ...tokens.slice(at)].join(""));
-    for (const index of some(places.length - 1, perFile >> 2)) {
-      const [a, b] = [places[index], places[index + 1]];
+    for (const index of some(sites.length - 1, perFile >> 2)) {
+      const [a, b] = [sites[index], sites[index + 1]];
       texts.add(tokens.map((token, at) => (at == a ? tokens[b] : at == b ? tokens[a] : token)).join(""));
     }
     for (const at of pick(perFile >> 2)) texts.add(tokens.slice(0, at + 1).join("") + "\n");

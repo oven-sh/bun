@@ -83,11 +83,11 @@ impl Rule for ForwardRefUsesRef {
             }
             report.suggest(OXLINT_ADD_REF_PARAMETER, |fixer| {
                 let span = func.params_span()?;
-                let written = fixer.file().slice(span);
-                let written = written.strip_suffix(b")").unwrap_or(written).trim_ascii_end();
-                let written = written.strip_suffix(b",").unwrap_or(written);
-                let open = if written.starts_with(b"(") { "" } else { "(" };
-                Some(fixer.replace(span, [open.as_bytes(), written, b", ref)"].concat()))
+                let params_text = fixer.file().slice(span);
+                let params_text = params_text.strip_suffix(b")").unwrap_or(params_text).trim_ascii_end();
+                let params_text = params_text.strip_suffix(b",").unwrap_or(params_text);
+                let open = if params_text.starts_with(b"(") { "" } else { "(" };
+                Some(fixer.replace(span, [open.as_bytes(), params_text, b", ref)"].concat()))
             });
         }
     }

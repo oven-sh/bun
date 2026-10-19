@@ -85,16 +85,16 @@ impl FormatCommand {
                 &rest,
                 run,
                 &|path, text, options| {
-                    bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(|refusal| {
-                        match refusal {
-                            bun_lint_driver::fmt::Refusal::Syntax => {
+                    bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(
+                        |rejection| match rejection {
+                            bun_lint_driver::fmt::FormatFailure::Syntax => {
                                 bun_format_conformance::Failure::SyntaxError
                             }
-                            bun_lint_driver::fmt::Refusal::Bug => {
+                            bun_lint_driver::fmt::FormatFailure::Bug => {
                                 bun_format_conformance::Failure::Other
                             }
-                        }
-                    })
+                        },
+                    )
                 },
             );
             Global::exit(u32::from(!ran));
@@ -115,9 +115,9 @@ impl FormatCommand {
                 ctx,
                 Tag::FormatCommand,
                 b"fmt",
-                &mut |file, path, is_named| {
+                &mut |file, path, is_from_flag| {
                     let section = bun_lint_driver::bunfig::format(file)?;
-                    defaults = section.map(|it| it.from_bunfig_at(path, is_named));
+                    defaults = section.map(|it| it.from_bunfig_at(path, is_from_flag));
                     Ok(match defaults {
                         Some(_) => Above::Unwanted,
                         None => Above::Needed,

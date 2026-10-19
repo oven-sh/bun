@@ -11,7 +11,7 @@ const MUTABLE: Message =
 /// ESLint's `getVariableByName(scope, name) !== null`, where `scope` is the scope that contains `stmt`. That also finds
 /// things that aren't a scope's `Symbol` here: the name of an enclosing function or class expression, a function's
 /// `arguments`, and the config's global variables.
-fn is_declared_around<'a>(stmt: Stmt<'a>, name: Name<'a>, cx: &mut Cx<'a, NoCatchShadow>) -> bool {
+fn is_declared_in_enclosing_scope<'a>(stmt: Stmt<'a>, name: Name<'a>, cx: &mut Cx<'a, NoCatchShadow>) -> bool {
     let scope = Node::Stmt(stmt).scope();
     if scope.resolve_name(name).is_some() {
         return true;
@@ -57,7 +57,7 @@ impl Rule for NoCatchShadow {
             return;
         };
         if let Some(name) = param.pat().as_ident()
-            && is_declared_around(stmt, name, cx)
+            && is_declared_in_enclosing_scope(stmt, name, cx)
             && let Some(clause) = stmt.catch_clause_span()
         {
             cx.report(clause, MUTABLE).data("name", name);

@@ -56,7 +56,7 @@ impl Value<'_> {
 
 /// The parent of ESLint's `fullNumberNode`, which is the literal with its sign.
 #[derive(Copy, Clone)]
-enum Place<'a> {
+enum ParentKind<'a> {
     /// The `init` of a `VariableDeclarator`.
     Declarator(VarDecl<'a>),
     /// The `right` of an `AssignmentPattern`.
@@ -103,48 +103,50 @@ fn is_jsx(node: Node) -> bool {
     matches!(node, Node::Expr(e) if e.tag() == ExprTag::Jsx)
 }
 
-fn place_of_member(member: Member<'_>, is_value: bool) -> Place<'_> {
+fn parent_kind_of_member(member: Member<'_>, is_value: bool) -> ParentKind<'_> {
     let flags = member.flags();
     let is_property_definition = member.kind() == MemberKind::Property
         && !flags.intersects(Flags::ACCESSOR | Flags::ABSTRACT)
         && !member.is_signature();
     match is_property_definition {
-        true => Place::ClassField {
+        true => ParentKind::ClassField {
             is_value,
             is_readonly: flags.contains(Flags::READONLY),
         },
-        false => Place::Other,
+        false => ParentKind::Other,
     }
 }
 
 /// `parent` is `full`'s parent.
-fn place_of_expr<'a>(full: Expr<'a>, parent: Node<'a>) -> Place<'a> {
+fn parent_kind_of_expr<'a>(full: Expr<'a>, parent: Node<'a>) -> ParentKind<'a> {
     let parent = match parent {
         Node::Expr(parent) => parent,
-        Node::VarDecl(declarator) => return Place::Declarator(declarator),
-        Node::Param(_) | Node::PatElem(_) => return Place::DefaultValue,
-        Node::PatProp(property) if property.default() == Some(full) => return Place::DefaultValue,
-        Node::PatProp(_) => return Place::Property,
-        Node::Member(member) => return place_of_member(member, member.init() == Some(full)),
-        Node::EnumMember(_) => return Place::EnumMember,
-        Node::Prop(property) if is_jsx(property.parent()) => return Place::Jsx,
-        Node::Prop(property) if property.kind() != PropKind::Spread => return Place::Property,
-        _ => return Place::Other,
+        Node::VarDecl(declarator) => return ParentKind::Declarator(declarator),
+        Node::Param(_) | Node::PatElem(_) => return ParentKind::DefaultValue,
+        Node::PatProp(property) if property.default() == Some(full) => {
+            return ParentKind::DefaultValue;
+        }
+        Node::PatProp(_) => return ParentKind::Property,
+        Node::Member(member) => return parent_kind_of_member(member, member.init() == Some(full)),
+        Node::EnumMember(_) => return ParentKind::EnumMember,
+        Node::Prop(property) if is_jsx(property.parent()) => return ParentKind::Jsx,
+        Node::Prop(property) if property.kind() != PropKind::Spread => return ParentKind::Property,
+        _ => return ParentKind::Other,
     };
     match parent.tag() {
-        ExprTag::Jsx => Place::Jsx,
-        ExprTag::Spread if is_jsx(parent.parent()) => Place::Jsx,
+        ExprTag::Jsx => ParentKind::Jsx,
+        ExprTag::Spread if is_jsx(parent.parent()) => ParentKind::Jsx,
         ExprTag::Assign
             if parent.assign_op() == Some(None) && utils::is_assignment_target(parent) =>
         {
-            Place::DefaultValue
+            ParentKind::DefaultValue
         }
-        ExprTag::Assign => Place::Assignment {
+        ExprTag::Assign => ParentKind::Assignment {
             is_to_identifier: parent
                 .left()
                 .is_some_and(|target| target.tag() == ExprTag::Ident),
         },
-        ExprTag::Index if parent.index() == Some(full) => Place::Index,
+        ExprTag::Index if parent.index() == Some(full) => ParentKind::Index,
         ExprTag::Call
             if parent.as_call().is_some_and(|call| {
                 call.args().get(1) == Some(full)
@@ -156,9 +158,9 @@ fn place_of_expr<'a>(full: Expr<'a>, parent: Node<'a>) -> Place<'a> {
                         ))
             }) =>
         {
-            Place::ParseIntRadix
+            ParentKind::ParseIntRadix
         }
-        _ => Place::Other,
+        _ => ParentKind::Other,
     }
 }
 
@@ -298,12 +300,12 @@ impl Checker {
             .flags()
             .intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME)
         {
-            self.check_key(member.key(), place_of_member(member, false), cx);
+            self.check_key(member.key(), parent_kind_of_member(member, false), cx);
         }
     }
 
     pub fn enum_member<'a, R: Rule>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, R>) {
-        self.check_key(member.key(), Place::EnumMember, cx);
+        self.check_key(member.key(), ParentKind::EnumMember, cx);
     }
 
     pub fn prop<'a, R: Rule>(&self, property: Prop<'a>, cx: &mut Cx<'a, R>) {
@@ -313,21 +315,21 @@ impl Checker {
         }
         let is_in_pattern =
             || matches!(property.parent(), Node::Expr(it) if it.is_assignment_target());
-        let place = match cx.language().is_oxlint && is_in_pattern() {
-            true => Place::Other,
-            false => Place::Property,
+        let parent_kind = match cx.language().is_oxlint && is_in_pattern() {
+            true => ParentKind::Other,
+            false => ParentKind::Property,
         };
-        self.check_key(key, place, cx);
+        self.check_key(key, parent_kind, cx);
     }
 
     pub fn pat<'a, R: Rule>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, R>) {
-        let place = match cx.language().is_oxlint {
-            true => Place::Other,
-            false => Place::Property,
+        let parent_kind = match cx.language().is_oxlint {
+            true => ParentKind::Other,
+            false => ParentKind::Property,
         };
         if let PatKind::Object(properties) = pattern.kind() {
             for property in properties {
-                self.check_key(property.key(), place, cx);
+                self.check_key(property.key(), parent_kind, cx);
             }
         }
     }
@@ -388,7 +390,7 @@ impl Checker {
             value,
             number: Some(e),
         };
-        self.check(literal, place_of_expr(full, parent), cx);
+        self.check(literal, parent_kind_of_expr(full, parent), cx);
     }
 
     fn check_type<'a, R: Rule>(&self, ty: TypeNode<'a>, cx: &Cx<'a, R>) {
@@ -415,11 +417,16 @@ impl Checker {
             value,
             number: None,
         };
-        self.check(literal, Place::LiteralType(ty), cx);
+        self.check(literal, ParentKind::LiteralType(ty), cx);
     }
 
     #[inline(never)]
-    fn check_key<'a, R: Rule>(&self, key: Option<Key<'a>>, place: Place<'a>, cx: &Cx<'a, R>) {
+    fn check_key<'a, R: Rule>(
+        &self,
+        key: Option<Key<'a>>,
+        parent_kind: ParentKind<'a>,
+        cx: &Cx<'a, R>,
+    ) {
         let Some(key) = key else {
             return;
         };
@@ -444,23 +451,28 @@ impl Checker {
             value,
             number: None,
         };
-        self.check(literal, place, cx);
+        self.check(literal, parent_kind, cx);
     }
 
     /// `literal` isn't an ignored value.
-    fn check<'a, R: Rule>(&self, literal: Literal<'a>, place: Place<'a>, cx: &Cx<'a, R>) {
+    fn check<'a, R: Rule>(
+        &self,
+        literal: Literal<'a>,
+        parent_kind: ParentKind<'a>,
+        cx: &Cx<'a, R>,
+    ) {
         if self.is_typescript_eslint {
             // If the number is in a position covered by one of typescript-eslint's added options, whether that option
             // allows it.
-            let is_allowed = match place {
-                Place::EnumMember => Some(self.ignore_enums),
-                Place::LiteralType(ty) if is_numeric_literal_type_in_one_union(ty) => {
+            let is_allowed = match parent_kind {
+                ParentKind::EnumMember => Some(self.ignore_enums),
+                ParentKind::LiteralType(ty) if is_numeric_literal_type_in_one_union(ty) => {
                     Some(self.ignore_numeric_literal_types)
                 }
-                Place::LiteralType(ty) if is_in_indexed_access_type(ty) => {
+                ParentKind::LiteralType(ty) if is_in_indexed_access_type(ty) => {
                     Some(self.ignore_type_indexes)
                 }
-                Place::ClassField {
+                ParentKind::ClassField {
                     is_readonly: true, ..
                 } => Some(self.ignore_readonly_class_properties),
                 _ => None,
@@ -477,37 +489,37 @@ impl Checker {
                 None => {}
             }
         }
-        let is_ignored = match place {
-            Place::DefaultValue => self.ignore_default_values,
-            Place::ClassField {
+        let is_ignored = match parent_kind {
+            ParentKind::DefaultValue => self.ignore_default_values,
+            ParentKind::ClassField {
                 is_value,
                 is_readonly,
             } => {
                 self.ignore_class_field_initial_values && is_value
                     || self.ignore_readonly_class_properties && is_readonly
             }
-            Place::EnumMember => self.ignore_enums,
-            Place::LiteralType(ty) => {
+            ParentKind::EnumMember => self.ignore_enums,
+            ParentKind::LiteralType(ty) => {
                 self.ignore_numeric_literal_types && is_numeric_literal_type(ty)
                     || self.ignore_type_indexes && is_in_indexed_access_type(ty)
             }
-            Place::ParseIntRadix | Place::Jsx => true,
-            Place::Index => self.ignore_array_indexes && literal.value.is_array_index(),
-            Place::Property
-            | Place::Assignment {
+            ParentKind::ParseIntRadix | ParentKind::Jsx => true,
+            ParentKind::Index => self.ignore_array_indexes && literal.value.is_array_index(),
+            ParentKind::Property
+            | ParentKind::Assignment {
                 is_to_identifier: false,
             } => !self.detect_objects,
-            Place::Declarator(_)
-            | Place::Assignment {
+            ParentKind::Declarator(_)
+            | ParentKind::Assignment {
                 is_to_identifier: true,
             }
-            | Place::Other => false,
+            | ParentKind::Other => false,
         };
         if is_ignored {
             return;
         }
-        match place {
-            Place::Declarator(declarator) => {
+        match parent_kind {
+            ParentKind::Declarator(declarator) => {
                 if self.enforce_const && declarator.var_kind() != VarKind::Const {
                     cx.report(literal.full, USE_CONST);
                 }

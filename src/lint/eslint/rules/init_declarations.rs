@@ -104,7 +104,7 @@ pub fn has_declare(statement: Stmt) -> bool {
 }
 
 /// Returns the innermost `declare namespace` around `statement`.
-pub fn declared_namespace_around(statement: Stmt<'_>) -> Option<Module<'_>> {
+pub fn enclosing_declared_namespace(statement: Stmt<'_>) -> Option<Module<'_>> {
     Node::Stmt(statement).ancestors().find_map(|ancestor| match ancestor.as_stmt()?.kind() {
         StmtKind::Module(module) if has_declare(module.stmt()) => Some(module),
         _ => None,

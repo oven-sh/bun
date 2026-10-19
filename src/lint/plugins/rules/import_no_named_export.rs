@@ -21,8 +21,8 @@ impl Rule for NoNamedExport {
         let language = file.language();
         // upstream's `sourceType`: the one in `parserOptions`, whatever its value. For espree, ESLint sets it there
         // itself.
-        let written = language.parser_options.get(b"sourceType").filter(|_| language.parser != Parser::Espree);
-        let is_module = match written {
+        let configured_source_type = language.parser_options.get(b"sourceType").filter(|_| language.parser != Parser::Espree);
+        let is_module = match configured_source_type {
             Some(source_type) => source_type.as_str().is_some_and(|it| it == b"module"),
             None => language.source_type == SourceType::Module,
         };

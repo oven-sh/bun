@@ -372,7 +372,7 @@ impl<'a> Found<'a> {
     /// The indices into `dependencies` in the iteration order of oxlint's hash table. oxlint lists the missing
     /// dependencies in that order and puts the report at the first. Inserting the same hashes into the same kind of
     /// table reproduces the order. `symbols` comes from [`symbol_sort_keys`].
-    fn order_of_oxlint(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
+    fn oxlint_report_order(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
         let dependency = |at: &u32| Some((&self.dependencies.get(*at as usize)?.0, *at));
         hashbrown_table_order(&mut self.inserted.iter().filter_map(dependency), symbols)
     }
@@ -386,11 +386,11 @@ fn hashbrown_table_order<'d, 'a>(
     let (mut seen, mut table): (FxHashSet<Hashed>, HashOrder<u32>) =
         (FxHashSet::default(), HashOrder::new());
     for (dependency, at) in inserted {
-        let place = dependency.symbol.and_then(symbol_sort_key);
+        let sort_key = dependency.symbol.and_then(symbol_sort_key);
         let hashed = Hashed {
             dependency,
             // oxc stores the id XORed with `u32::MAX`, so that `u32::MAX` is stored as 0, and hashes the stored value.
-            symbol: place
+            symbol: sort_key
                 .and_then(|it| symbols.binary_search(&it).ok())
                 .map(|it| it as u32 ^ u32::MAX),
         };
@@ -413,16 +413,16 @@ fn table_positions<'a>(
         .symbol_sort_keys
         .get_or_insert_with(|| symbol_sort_keys(file));
     let mut inserted = (declared.iter().enumerate()).map(|(at, it)| (&it.0, at as u32));
-    let mut places = vec![0; declared.len()];
-    for (place, at) in hashbrown_table_order(&mut inserted, symbols)
+    let mut table_ranks = vec![0; declared.len()];
+    for (table_rank, at) in hashbrown_table_order(&mut inserted, symbols)
         .into_iter()
         .enumerate()
     {
-        if let Some(it) = places.get_mut(at as usize) {
-            *it = place;
+        if let Some(it) = table_ranks.get_mut(at as usize) {
+            *it = table_rank;
         }
     }
-    places
+    table_ranks
 }
 
 /// Sorts `positions`, which are indices into `declared`, into the order oxlint visits them.
@@ -433,8 +433,8 @@ fn sort_in_oxlint_order<'a>(
     memo: &mut Memo<'a>,
 ) {
     if positions.len() > 1 {
-        let places = table_positions(declared, file, memo);
-        utils::sort::sort_unstable_by_key(positions, |at| places.get(*at).copied());
+        let table_ranks = table_positions(declared, file, memo);
+        utils::sort::sort_unstable_by_key(positions, |at| table_ranks.get(*at).copied());
     }
 }
 
@@ -472,7 +472,7 @@ impl Eq for Hashed<'_, '_> {}
 
 /// The start of the node that declares the symbol, and the start of its name. oxc numbers symbols in that order.
 fn symbol_sort_key(symbol: Symbol) -> Option<(u32, u32)> {
-    let places = symbol.declarations().filter_map(|declaration| {
+    let sort_keys = symbol.declarations().filter_map(|declaration| {
         let name = declaration.name_span()?.start;
         let node = match declaration {
             Declaration::Var(_) => declaration.node()?.span().start,
@@ -491,12 +491,12 @@ fn symbol_sort_key(symbol: Symbol) -> Option<(u32, u32)> {
         };
         Some((node, name))
     });
-    places.min()
+    sort_keys.min()
 }
 
 /// The [`symbol_sort_key`] of every symbol, sorted. ESLint's scopes have a class's and an enum's name twice.
 fn symbol_sort_keys<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
-    let mut places: Vec<(u32, u32)> = file.symbols().filter_map(symbol_sort_key).collect();
+    let mut sort_keys: Vec<(u32, u32)> = file.symbols().filter_map(symbol_sort_key).collect();
     // Add the symbols that ESLint has no variable for: an enum member with a computed name, and the names in `namespace
     // A.B.C`.
     for stmt in file
@@ -504,7 +504,7 @@ fn symbol_sort_keys<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
         .chain(file.stmts_of_kind(StmtTag::Module))
     {
         match stmt.kind() {
-            StmtKind::Enum(it) => places.extend(
+            StmtKind::Enum(it) => sort_keys.extend(
                 it.members()
                     .iter()
                     .map(|it| (it.span().start, it.span().start)),
@@ -512,14 +512,14 @@ fn symbol_sort_keys<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
             StmtKind::Module(it) if it.nested().is_some() => {
                 let names = std::iter::successors(Some(it), |it| it.nested())
                     .map(|it| it.name_span().start);
-                places.extend(names.map(|it| (it, it)));
+                sort_keys.extend(names.map(|it| (it, it)));
             }
             _ => {}
         }
     }
-    places.sort_unstable();
-    places.dedup();
-    places
+    sort_keys.sort_unstable();
+    sort_keys.dedup();
+    sort_keys
 }
 
 /// True if visiting `e` doesn't make oxlint reset its "inside a callee" flag.
@@ -542,7 +542,7 @@ fn keeps_callee_flag(e: Expr) -> bool {
 fn is_callee_of_call(member: Expr) -> bool {
     let mut child = member;
     while let Node::Expr(parent) = child.parent() {
-        let is_kept = match parent.kind() {
+        let keeps_flag = match parent.kind() {
             ExprKind::Call(call) => return call.callee() == child,
             ExprKind::Index { obj, .. } => obj == child || keeps_callee_flag(obj),
             ExprKind::Binary { left, .. } => left == child || keeps_callee_flag(left),
@@ -558,7 +558,7 @@ fn is_callee_of_call(member: Expr) -> bool {
             | ExprKind::Await(_) => true,
             _ => false,
         };
-        if !is_kept {
+        if !keeps_flag {
             return false;
         }
         child = parent;
@@ -676,7 +676,7 @@ pub(crate) struct Memo<'a> {
     /// Every `a.current` in the file, in source order.
     currents: Option<Vec<Expr<'a>>>,
     /// The enclosing function of a node.
-    function_around: AncestorMemo<'a, Func<'a>>,
+    enclosing_functions: AncestorMemo<'a, Func<'a>>,
 }
 
 struct Component<'a> {
@@ -987,11 +987,11 @@ fn print_array(array: Expr, removed: Option<Span>, appended: &[(Span, Vec<u8>)])
     let ExprKind::Array(elements) = array.kind() else {
         return Vec::new();
     };
-    let kept: SmallVec<[Expr; 8]> = elements
+    let remaining: SmallVec<[Expr; 8]> = elements
         .iter()
         .filter(|it| Some(it.outer_span()) != removed)
         .collect();
-    let len = kept.len() + appended.len();
+    let len = remaining.len() + appended.len();
     let is_multi_line = len > 2;
     let mut codegen = Codegen::default();
     codegen.code.push(b'[');
@@ -999,7 +999,7 @@ fn print_array(array: Expr, removed: Option<Span>, appended: &[(Span, Vec<u8>)])
         codegen.indent();
     }
     let names = appended.iter().map(|it| Err(&it.1));
-    for (i, item) in kept.iter().map(Ok).chain(names).enumerate() {
+    for (i, item) in remaining.iter().map(Ok).chain(names).enumerate() {
         if i != 0 {
             codegen.code.push(b',');
         }
@@ -1066,9 +1066,12 @@ pub(crate) fn run<'a, R: Rule>(
         _ => return,
     };
     let is_function = |it: &Func| !matches!(it.kind(), FnKind::StaticBlock);
-    let Some(component) = memo.function_around.find(Node::Expr(node), |_, parent| {
-        parent.as_func().filter(is_function)
-    }) else {
+    let Some(component) = memo
+        .enclosing_functions
+        .find(Node::Expr(node), |_, parent| {
+            parent.as_func().filter(is_function)
+        })
+    else {
         return;
     };
     let component = Component {
@@ -1275,7 +1278,7 @@ pub(crate) fn run<'a, R: Rule>(
             .symbol_sort_keys
             .get_or_insert_with(|| symbol_sort_keys(cx.file()));
         let mut ranks = vec![0; found.dependencies.len()];
-        for (rank, at) in found.order_of_oxlint(symbols).into_iter().enumerate() {
+        for (rank, at) in found.oxlint_report_order(symbols).into_iter().enumerate() {
             if let Some(it) = ranks.get_mut(at as usize) {
                 *it = rank;
             }
@@ -1344,10 +1347,10 @@ pub(crate) fn run<'a, R: Rule>(
         }
         // oxlint visits the pairs in its hash table's iteration order.
         if pairs.len() > 1 {
-            let places = table_positions(&declared, cx.file(), memo);
-            let place = |at: usize| places.get(at).copied().unwrap_or(0);
+            let table_ranks = table_positions(&declared, cx.file(), memo);
+            let rank_of = |at: usize| table_ranks.get(at).copied().unwrap_or(0);
             for it in &mut pairs {
-                let (first, second) = (place(it.0), place(it.1));
+                let (first, second) = (rank_of(it.0), rank_of(it.1));
                 (it.0, it.1) = (first.min(second), first.max(second));
             }
         }

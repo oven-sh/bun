@@ -168,14 +168,14 @@ fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, after: Result<Prop
 
 impl SortKeys {
     /// oxlint's `collect_fixable_properties`: returns `None` unless every property's name is known, they form one
-    /// group, spreads only come before and after them, and every comment moves with a property. `known` has the fixes
+    /// group, spreads only come before and after them, and every comment moves with a property. `fixes` has the fixes
     /// of the object literals in `props`.
     #[cold]
     #[inline(never)]
     fn collect_fixable_properties<'a, 'k>(
         &self,
         (whole, props): (Span, List<'a, Prop<'a>>),
-        known: &'k Fixes<'a>,
+        fixes: &'k Fixes<'a>,
     ) -> Option<Vec<FixableProperty<'a, 'k>>> {
         let file = props.first()?.file();
         // Every comment query below is inside the object, so one check up front can skip them all.
@@ -212,7 +212,7 @@ impl SortKeys {
             found.push(FixableProperty {
                 key: get_property_name(key, true)?,
                 span,
-                nested: value.and_then(|it| known.get(it)?.as_ref()),
+                nested: value.and_then(|it| fixes.get(it)?.as_ref()),
                 has_comma: span.end > prop.span().end,
             });
         }
@@ -222,9 +222,9 @@ impl SortKeys {
     /// oxlint's `build_object_fix`.
     #[cold]
     #[inline(never)]
-    fn build_object_fix<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> ObjectFix {
+    fn build_object_fix<'a>(&self, object: Expr<'a>, fixes: &Fixes<'a>) -> ObjectFix {
         let list = object.as_object()?;
-        let (file, props) = (object.file(), self.collect_fixable_properties((object.span(), list), known)?);
+        let (file, props) = (object.file(), self.collect_fixable_properties((object.span(), list), fixes)?);
         let (first, last) = (props.first()?, props.last()?);
         let mut sorted: Vec<&FixableProperty> = props.iter().collect();
         // With `natural` the comparison isn't transitive: `a10` < `a1b` < `a2` < `a10`. After the sort, a key is still
@@ -265,27 +265,27 @@ impl SortKeys {
     /// Runs [`SortKeys::build_object_fix`] on `root`, after running it on the object literals that are values in it.
     #[cold]
     #[inline(never)]
-    fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> ObjectFix {
+    fn fix_as_oxlint<'a>(&self, root: Expr<'a>, fixes: &mut Fixes<'a>) -> ObjectFix {
         let mut pending: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
-        if !known.contains_key(root) {
+        if !fixes.contains_key(root) {
             pending.push(root);
         }
         while let Some(&object) = pending.last() {
             let count = pending.len();
             if let Some(props) = object.as_object() {
                 for value in props.iter().filter_map(Prop::value) {
-                    if value.tag() == ExprTag::Object && !value.is_parenthesized() && !known.contains_key(value) {
+                    if value.tag() == ExprTag::Object && !value.is_parenthesized() && !fixes.contains_key(value) {
                         pending.push(value);
                     }
                 }
             }
             if pending.len() == count {
                 pending.pop();
-                let fix = self.build_object_fix(object, known);
-                known.insert(object, fix);
+                let fix = self.build_object_fix(object, fixes);
+                fixes.insert(object, fix);
             }
         }
-        known.get(root)?.clone()
+        fixes.get(root)?.clone()
     }
 
     fn is_valid_order(&self, a: &[u8], b: &[u8], is_oxlint: bool) -> bool {

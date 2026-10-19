@@ -24,7 +24,7 @@ const OXLINT_STRING_IN_REF_DEPRECATED: Message =
 #[derive(Default)]
 pub struct State<'a> {
     /// Caches a node's enclosing component, as oxlint finds it.
-    component_around: AncestorMemo<'a, Node<'a>>,
+    enclosing_component: AncestorMemo<'a, Node<'a>>,
     pragmas: OnceCell<Pragmas<'a>>,
 }
 
@@ -100,7 +100,7 @@ impl NoStringRefs {
         }
         // oxlint walks up the parents, upstream walks up the scopes.
         let is_in_component = if is_oxlint {
-            get_parent_component(node, &mut cx.state.component_around).is_some()
+            get_parent_component(node, &mut cx.state.enclosing_component).is_some()
         } else {
             let pragmas = cx.state.pragmas.get_or_init(|| Pragmas::new(member.file()));
             get_parent_es6_component(node, pragmas).is_some() || get_parent_es5_component(node, pragmas).is_some()

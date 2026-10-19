@@ -11,7 +11,7 @@ use super::union_type::{
     type_alias_union_breaks_after_operator, union_breaks_one_per_line, union_prints_itself,
     union_prints_own_comments, write_ts_union_type_in,
 };
-use crate::cursor::around_node;
+use crate::cursor::with_node_marks;
 use crate::js::comments::OwnedComments;
 use crate::js::format::{
     format_ignorable_name, format_name, format_node, identifier, name_without_comments,
@@ -116,7 +116,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                 if type_parameters_comments.is_ignored {
                     return write_ignored_node(type_parameters_node, f);
                 }
-                f.around_cursor(type_parameters_node.span(), |f| {
+                f.track_cursor(type_parameters_node.span(), |f| {
                     type_parameters(type_params, Node::Stmt(statement))
                         .with_options(options)
                         .write_without_comments(f);
@@ -258,7 +258,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
                 && union_prints_own_comments(ty, f)
                 && !f.comments().is_ignored(right_node) =>
         {
-            around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
+            with_node_marks(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
         }
         _ if ty != alias.ty()
             && matches!(alias.ty().kind(), TypeKind::Intersection(_))

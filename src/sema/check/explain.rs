@@ -46,11 +46,11 @@ pub struct MessageChain {
 }
 
 impl MessageChain {
-    fn of(chain: Vec<Reported>) -> Vec<MessageChain> {
-        let chain = chain.into_iter().map(|one| MessageChain {
-            code: one.code,
-            args: one.args,
-            message_chain: MessageChain::of(one.message_chain),
+    fn from_reported(chain: Vec<Reported>) -> Vec<MessageChain> {
+        let chain = chain.into_iter().map(|reported_entry| MessageChain {
+            code: reported_entry.code,
+            args: reported_entry.args,
+            message_chain: MessageChain::from_reported(reported_entry.message_chain),
         });
         chain.collect()
     }
@@ -124,13 +124,13 @@ impl Explained {
         // `WriteFlattenedDiagnosticMessage`. Also returns `d`'s chain.
         fn reported(
             d: &mut Reported,
-            otherwise: Category,
+            default_category: Category,
         ) -> (Category, Vec<u8>, Vec<MessageChain>) {
             let (category, template) =
-                messages::message(d.code).unwrap_or((otherwise, "Unknown error."));
+                messages::message(d.code).unwrap_or((default_category, "Unknown error."));
             let mut text = Vec::new();
             messages::format(&mut text, template, &d.args);
-            let message_chain = MessageChain::of(std::mem::take(&mut d.message_chain));
+            let message_chain = MessageChain::from_reported(std::mem::take(&mut d.message_chain));
             for chain in &message_chain {
                 chain.flatten(&mut text, 1);
             }

@@ -189,7 +189,7 @@ pub(crate) struct CxBase<'a> {
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
     /// [`oxlint_messages::of_rule`], computed on the first report.
-    pub(crate) said_by_oxlint: OnceCell<[&'static [Message]; 2]>,
+    pub(crate) oxlint_rule_messages: OnceCell<[&'static [Message]; 2]>,
 }
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
@@ -302,9 +302,9 @@ impl<'a> CxBase<'a> {
             // oxlint's message has the same id.
             true if !wants_text && !wants_help => message,
             true => {
-                let said =
-                    (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
-                oxlint_messages::of(said, message)
+                let oxlint_texts =
+                    (self.oxlint_rule_messages).get_or_init(|| oxlint_messages::of_rule(self.meta));
+                oxlint_messages::of(oxlint_texts, message)
             }
             false if language.eslint_8.is_some() => {
                 crate::linter::config::eslint8::message_of(self.meta, message)
@@ -714,7 +714,7 @@ impl<'a> Report<'a> {
             return;
         };
         // `possibly_truncate_snippet`
-        let shown = |text: &[u8]| -> Vec<u8> {
+        let truncated = |text: &[u8]| -> Vec<u8> {
             if text.len() <= 256 {
                 return text.to_vec();
             }
@@ -722,7 +722,7 @@ impl<'a> Report<'a> {
             let end = characters.nth(256).map_or(text.len(), |it| it.0);
             [text.get(..end).unwrap_or(text), b"..."].concat()
         };
-        let (before, after) = (shown(self.file.slice(fix.span)), shown(&fix.text));
+        let (before, after) = (truncated(self.file.slice(fix.span)), truncated(&fix.text));
         let help = match (fix.span.is_empty(), fix.text.is_empty()) {
             (true, _) => [b"Insert `", &after[..], b"`"].concat(),
             (false, true) if removes => [b"Remove `", &before[..], b"`."].concat(),
@@ -861,11 +861,11 @@ impl Drop for Report<'_> {
                 (Part::FirstLabel, &mut details.first_label),
                 (Part::Note, &mut details.note),
             ];
-            for (part, said) in parts {
-                if let (Found::WithData(text), true) = (texts.found(part), said.is_empty()) {
+            for (part, slot) in parts {
+                if let (Found::WithData(text), true) = (texts.found(part), slot.is_empty()) {
                     let text = interpolate_text(text, data);
                     let text = std::str::from_utf8(&text).unwrap_or_default();
-                    *said = Cow::Owned(text.to_owned());
+                    *slot = Cow::Owned(text.to_owned());
                 }
             }
         }

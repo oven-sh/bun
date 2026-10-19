@@ -117,8 +117,8 @@ impl NoCastToBrand {
 
     /// The brands in the module `specifier` whose minting functions `file` may not import.
     fn guarded<'r, 'a>(&'r self, specifier: Name<'a>, file: &'a File<'a>) -> impl Iterator<Item = &'r Brand> {
-        let of_module = self.brands.iter().filter(move |it| it.is_imported_as(specifier, file));
-        of_module.filter(move |it| !it.may_be_minted_in(file))
+        let module_brands = self.brands.iter().filter(move |it| it.is_imported_as(specifier, file));
+        module_brands.filter(move |it| !it.may_be_minted_in(file))
     }
 }
 

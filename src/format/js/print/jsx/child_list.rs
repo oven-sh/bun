@@ -1,7 +1,7 @@
 //! An element's children: Prettier's `printJsxChildren`, plus what `printJsxElementInternal` does with the result.
 
 use super::FormatJsxChild;
-use crate::cursor::around_jsx_children;
+use crate::cursor::with_jsx_children_marks;
 use crate::ir::element::{Group as GroupTag, GroupMode};
 use crate::js::utils::jsx::{
     JsxRawSpace, JsxSpace, has_line_break, is_jsx_whitespace, is_meaningful_jsx_text,
@@ -593,8 +593,9 @@ impl<'a> Format<'a> for FormatMultilineChildren {
             return write!(f, [hard_line_break(), empty_line()]);
         }
         let format_inner = format_with(|f| self.fmt_content(f));
-        let format_inner =
-            format_with(|f| around_jsx_children(self.element, false, f, |f| format_inner.fmt(f)));
+        let format_inner = format_with(|f| {
+            with_jsx_children_marks(self.element, false, f, |f| format_inner.fmt(f))
+        });
         write!(f, block_indent(&format_inner));
     }
 }
@@ -648,7 +649,7 @@ pub(super) struct FormatSingleChild<'a> {
 impl<'a> Format<'a> for FormatSingleChild<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let format_inner = format_with(|f| {
-            around_jsx_children(self.element, !self.forced_break, f, |f| match self.item {
+            with_jsx_children_marks(self.element, !self.forced_break, f, |f| match self.item {
                 Item::Word(word) => text_without_whitespace(word).fmt(f),
                 Item::Node(node) => FormatJsxChild(node).fmt(f),
             });

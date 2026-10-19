@@ -16,7 +16,7 @@ const OXLINT: Message = Message::new("", "Do not use `setState`.");
 #[derive(Default)]
 pub struct State<'a> {
     /// Caches a node's enclosing component, as oxlint finds it.
-    component_around: AncestorMemo<'a, Node<'a>>,
+    enclosing_component: AncestorMemo<'a, Node<'a>>,
     /// For upstream: the `this.setState` calls.
     calls: Vec<Expr<'a>>,
 }
@@ -60,7 +60,7 @@ impl Rule for NoSetState {
             return;
         }
         if let Some(callee) = callee_of_this_set_state(e)
-            && get_parent_component(Node::Expr(e), &mut cx.state.component_around).is_some()
+            && get_parent_component(Node::Expr(e), &mut cx.state.enclosing_component).is_some()
         {
             cx.report(callee, OXLINT);
         }

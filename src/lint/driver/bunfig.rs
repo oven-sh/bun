@@ -24,19 +24,19 @@ use bun_lint::options::Json;
 use bun_lint::utils::text::number_to_string;
 
 /// An error in a section, and its location in the file.
-pub struct Refusal {
+pub struct BunfigError {
     pub at: Loc,
     pub message: Vec<u8>,
 }
 
-fn reject<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
-    Err(Refusal {
+fn reject<T>(at: Loc, parts: &[&[u8]]) -> Result<T, BunfigError> {
+    Err(BunfigError {
         at,
         message: parts.concat(),
     })
 }
 
-fn expected<T>(what: &str, value: &Expr) -> Result<T, Refusal> {
+fn expected<T>(what: &str, value: &Expr) -> Result<T, BunfigError> {
     let received = value.data.tag_name().as_bytes();
     reject(
         value.loc,
@@ -143,12 +143,12 @@ impl Table {
 
     fn keys(&self) -> impl Iterator<Item = Vec<u8>> {
         let renamed = self.renamed.iter().map(|it| it.0);
-        let written = renamed.chain(self.without_flag.iter().copied());
-        (written.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
+        let explicit_keys = renamed.chain(self.without_flag.iter().copied());
+        (explicit_keys.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
     }
 
     /// The flag that `key` sets the default for.
-    fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, Refusal> {
+    fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, BunfigError> {
         let renamed = self.renamed.iter().find(|it| it.0 == key).map(|it| it.1);
         let flag = renamed.or_else(|| self.flags.iter().copied().find(|flag| key_of(flag) == key));
         let param = flag.and_then(|flag| self.params.iter().find(|it| it.names.long == Some(flag)));
@@ -176,7 +176,7 @@ impl Table {
     }
 
     /// Applies `key = value` as if it were the flag.
-    fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
+    fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), BunfigError> {
         apply_value(self.param_of(&key.name, key.at)?, value, set)
     }
 }
@@ -196,7 +196,7 @@ fn unknown_key<T>(
     at: Loc,
     section: &[u8],
     keys: impl Iterator<Item = Vec<u8>>,
-) -> Result<T, Refusal> {
+) -> Result<T, BunfigError> {
     let closest = keys
         .map(|it| (strings::edit_distance(key.iter().copied(), &it[..]), it))
         .min_by_key(|it| it.0)
@@ -205,13 +205,13 @@ fn unknown_key<T>(
     reject(at, &[&not_a_key(key, section, closest)])
 }
 
-fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
+fn at(value: &Expr) -> impl Fn(UsageError) -> BunfigError {
     let at = value.loc;
-    move |UsageError(message)| Refusal { at, message }
+    move |UsageError(message)| BunfigError { at, message }
 }
 
 /// Applies `value` as the value of the flag `param`.
-fn apply_value(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
+fn apply_value(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), BunfigError> {
     let name = param.names.long.unwrap_or_default();
     match (param.takes_value, &value.data) {
         (Values::None, Data::EBoolean(it)) => set(name, None, it.value).map_err(at(value)),
@@ -228,7 +228,7 @@ fn apply_value(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(),
 
 /// The text you'd write after the flag `param` to pass `value`. A flag takes a number if the help shows its value as
 /// `<n>`. `what` is the expected type to mention in the error when the flag takes a string.
-fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, Refusal> {
+fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, BunfigError> {
     match (&mut bun_lint::json::from_parsed(value), param.id.value) {
         (Some(Json::Number(number)), b"n") => Ok(number_to_string(*number)),
         (_, b"n") => expected("number", value),
@@ -243,7 +243,7 @@ struct Key {
 }
 
 /// The keys of the table `section`, with their values.
-fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, Refusal> {
+fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, BunfigError> {
     let Data::EObject(table) = &section.data else {
         return expected("object", section);
     };
@@ -363,7 +363,7 @@ const _: () = assert!(
 
 /// Value type of an option in a [`Feature`] table.
 #[derive(Copy, Clone)]
-enum Takes {
+enum ValueType {
     Boolean,
     String,
     Strings,
@@ -371,18 +371,18 @@ enum Takes {
     Array,
 }
 
-impl Takes {
-    fn check(self, value: &Expr) -> Result<(), Refusal> {
+impl ValueType {
+    fn check(self, value: &Expr) -> Result<(), BunfigError> {
         match (self, &value.data) {
-            (Takes::Boolean, Data::EBoolean(_))
-            | (Takes::String, Data::EString(_))
-            | (Takes::Array, Data::EArray(_)) => Ok(()),
-            (Takes::Strings, Data::EArray(items)) => (items.slice().iter())
+            (ValueType::Boolean, Data::EBoolean(_))
+            | (ValueType::String, Data::EString(_))
+            | (ValueType::Array, Data::EArray(_)) => Ok(()),
+            (ValueType::Strings, Data::EArray(items)) => (items.slice().iter())
                 .find(|it| !it.is_string())
                 .map_or(Ok(()), |it| expected("string", it)),
-            (Takes::Boolean, _) => expected("boolean", value),
-            (Takes::String, _) => expected("string", value),
-            (Takes::Strings | Takes::Array, _) => expected("array", value),
+            (ValueType::Boolean, _) => expected("boolean", value),
+            (ValueType::String, _) => expected("string", value),
+            (ValueType::Strings | ValueType::Array, _) => expected("array", value),
         }
     }
 }
@@ -409,7 +409,7 @@ struct Feature {
     name: &'static [u8],
     table: As,
     /// Each option is stored as `<name>.<key>`.
-    options: &'static [(&'static [u8], Takes)],
+    options: &'static [(&'static [u8], ValueType)],
 }
 
 const FEATURES: [Feature; 5] = [
@@ -418,15 +418,15 @@ const FEATURES: [Feature; 5] = [
         name: b"sortImports",
         table: As::Json(check_sort_imports),
         options: &[
-            (b"sortImports.groups", Takes::Array),
-            (b"sortImports.customGroups", Takes::Array),
-            (b"sortImports.internalPattern", Takes::Strings),
-            (b"sortImports.newlinesBetween", Takes::Boolean),
-            (b"sortImports.order", Takes::String),
-            (b"sortImports.ignoreCase", Takes::Boolean),
-            (b"sortImports.sortSideEffects", Takes::Boolean),
-            (b"sortImports.partitionByComment", Takes::Boolean),
-            (b"sortImports.partitionByNewline", Takes::Boolean),
+            (b"sortImports.groups", ValueType::Array),
+            (b"sortImports.customGroups", ValueType::Array),
+            (b"sortImports.internalPattern", ValueType::Strings),
+            (b"sortImports.newlinesBetween", ValueType::Boolean),
+            (b"sortImports.order", ValueType::String),
+            (b"sortImports.ignoreCase", ValueType::Boolean),
+            (b"sortImports.sortSideEffects", ValueType::Boolean),
+            (b"sortImports.partitionByComment", ValueType::Boolean),
+            (b"sortImports.partitionByNewline", ValueType::Boolean),
         ],
     },
     Feature {
@@ -434,36 +434,36 @@ const FEATURES: [Feature; 5] = [
         name: b"sortTailwindcss",
         table: As::Json(|_| Ok(())),
         options: &[
-            (b"sortTailwindcss.stylesheet", Takes::String),
-            (b"sortTailwindcss.config", Takes::String),
-            (b"sortTailwindcss.functions", Takes::Strings),
-            (b"sortTailwindcss.attributes", Takes::Strings),
-            (b"sortTailwindcss.preserveWhitespace", Takes::Boolean),
-            (b"sortTailwindcss.preserveDuplicates", Takes::Boolean),
+            (b"sortTailwindcss.stylesheet", ValueType::String),
+            (b"sortTailwindcss.config", ValueType::String),
+            (b"sortTailwindcss.functions", ValueType::Strings),
+            (b"sortTailwindcss.attributes", ValueType::Strings),
+            (b"sortTailwindcss.preserveWhitespace", ValueType::Boolean),
+            (b"sortTailwindcss.preserveDuplicates", ValueType::Boolean),
         ],
     },
     Feature {
         flag: b"sort-package-json",
         name: b"sortPackageJson",
         table: As::Parts,
-        options: &[(b"sortPackageJson.sortScripts", Takes::Boolean)],
+        options: &[(b"sortPackageJson.sortScripts", ValueType::Boolean)],
     },
     Feature {
         flag: b"jsdoc",
         name: b"jsdoc",
         table: As::Parts,
         options: &[
-            (b"jsdoc.capitalizeDescriptions", Takes::Boolean),
-            (b"jsdoc.commentLineStrategy", Takes::String),
-            (b"jsdoc.separateTagGroups", Takes::Boolean),
-            (b"jsdoc.separateReturnsFromParam", Takes::Boolean),
-            (b"jsdoc.bracketSpacing", Takes::Boolean),
-            (b"jsdoc.descriptionWithDot", Takes::Boolean),
-            (b"jsdoc.addDefaultToDescription", Takes::Boolean),
-            (b"jsdoc.preferCodeFences", Takes::Boolean),
-            (b"jsdoc.lineWrappingStyle", Takes::String),
-            (b"jsdoc.descriptionTag", Takes::Boolean),
-            (b"jsdoc.keepUnparsableExampleIndent", Takes::Boolean),
+            (b"jsdoc.capitalizeDescriptions", ValueType::Boolean),
+            (b"jsdoc.commentLineStrategy", ValueType::String),
+            (b"jsdoc.separateTagGroups", ValueType::Boolean),
+            (b"jsdoc.separateReturnsFromParam", ValueType::Boolean),
+            (b"jsdoc.bracketSpacing", ValueType::Boolean),
+            (b"jsdoc.descriptionWithDot", ValueType::Boolean),
+            (b"jsdoc.addDefaultToDescription", ValueType::Boolean),
+            (b"jsdoc.preferCodeFences", ValueType::Boolean),
+            (b"jsdoc.lineWrappingStyle", ValueType::String),
+            (b"jsdoc.descriptionTag", ValueType::Boolean),
+            (b"jsdoc.keepUnparsableExampleIndent", ValueType::Boolean),
         ],
     },
     Feature {
@@ -471,9 +471,9 @@ const FEATURES: [Feature; 5] = [
         name: b"svelte",
         table: As::Parts,
         options: &[
-            (b"svelte.sortOrder", Takes::String),
-            (b"svelte.allowShorthand", Takes::Boolean),
-            (b"svelte.indentScriptAndStyle", Takes::Boolean),
+            (b"svelte.sortOrder", ValueType::String),
+            (b"svelte.allowShorthand", ValueType::Boolean),
+            (b"svelte.indentScriptAndStyle", ValueType::Boolean),
         ],
     },
 ];
@@ -485,7 +485,7 @@ impl Feature {
     }
 
     /// Applies the `value` that `[fmt]` has for this feature.
-    fn set(&self, value: &Expr, options: &mut crate::fmt::cli::Options) -> Result<(), Refusal> {
+    fn set(&self, value: &Expr, options: &mut crate::fmt::cli::Options) -> Result<(), BunfigError> {
         let table = match &value.data {
             Data::EBoolean(it) => {
                 return options.set(self.flag, None, it.value).map_err(at(value));
@@ -496,11 +496,11 @@ impl Feature {
         let mut parts = Vec::new();
         for (key, value) in table {
             let mut known = self.options.iter();
-            let Some(&(name, takes)) = known.find(|it| self.key_of(it.0) == key.name) else {
+            let Some(&(name, value_type)) = known.find(|it| self.key_of(it.0) == key.name) else {
                 let keys = self.options.iter().map(|it| self.key_of(it.0).to_vec());
                 return unknown_key(&key.name, key.at, &[b"fmt.", self.name].concat(), keys);
             };
-            takes.check(value)?;
+            value_type.check(value)?;
             if matches!(self.table, As::Json(_)) {
                 continue;
             }
@@ -534,7 +534,7 @@ impl Feature {
             As::Json(check) => {
                 write_json(&mut whole, &json_of(value)?);
                 let at = value.loc;
-                check(&whole).map_err(|message| Refusal { at, message })?;
+                check(&whole).map_err(|message| BunfigError { at, message })?;
             }
             As::Parts => whole.extend_from_slice(b"true"),
         }
@@ -545,7 +545,7 @@ impl Feature {
 }
 
 /// Parses `file`'s `[fmt]` section.
-pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
+pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, BunfigError> {
     if let Some(section) = file.get(b"format") {
         return reject(
             section.loc,
@@ -576,7 +576,7 @@ fn set_in_format(
     key: &Key,
     value: &Expr,
     options: &mut crate::fmt::cli::Options,
-) -> Result<(), Refusal> {
+) -> Result<(), BunfigError> {
     if let Some(feature) = FEATURES.iter().find(|it| it.name == key.name) {
         return feature.set(value, options);
     }
@@ -598,23 +598,23 @@ fn set_in_format(
 }
 
 /// Parses one glob or an array of globs.
-fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, Refusal> {
+fn patterns(value: &Expr) -> Result<Vec<Vec<u8>>, BunfigError> {
     let all: Vec<Vec<u8>> = match &mut json_of(value)? {
         Json::String(one) => vec![std::mem::take(one)],
         Json::Array(all) => {
-            Takes::Strings.check(value)?;
+            ValueType::Strings.check(value)?;
             all.drain(..).filter_map(Json::into_string).collect()
         }
         _ => return expected("string or array", value),
     };
     match all.iter().find_map(|it| glob_error(it)) {
-        Some(refusal) => reject(value.loc, &[&refusal]),
+        Some(pattern_error) => reject(value.loc, &[&pattern_error]),
         None => Ok(all),
     }
 }
 
 /// Parses `[[fmt.overrides]]`. Same shape as in a `.prettierrc`. `options` takes the `[fmt]` keys that affect output.
-fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
+fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, BunfigError> {
     let items = tables_of(value, b"fmt")?;
     // `parser` only makes sense for some files, so it's allowed here and not at the top level.
     let is_option = |flag: &&&[u8]| crate::fmt::cli::option_of(flag).is_some();
@@ -657,7 +657,7 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, Refusal> {
 }
 
 /// The tables in `value`, which is the `overrides` array of `section`.
-fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal> {
+fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], BunfigError> {
     match &value.data {
         Data::EArray(items) => Ok(items.slice()),
         Data::EObject(_) => reject(
@@ -673,7 +673,7 @@ fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], Refusal>
 }
 
 /// Rejects `item`, an entry of `overrides`, if it has no `files` to say what it applies to.
-fn needs_files(item: &Expr, files: &[Vec<u8>]) -> Result<(), Refusal> {
+fn needs_files(item: &Expr, files: &[Vec<u8>]) -> Result<(), BunfigError> {
     match files.is_empty() {
         true => reject(item.loc, &[b"an override needs \"files\""]),
         false => Ok(()),
@@ -814,56 +814,69 @@ const _: () = assert!(
      add it to `flags`, docs/runtime/bunfig.mdx and the test. If it says what a single run does, add it to `actions`."
 );
 
-/// Parses `off`, `warn`, `error`, or the matching number. `of` is the rule or category name, for the error message.
-fn severity_of(of: &[u8], value: &Expr) -> Result<Severity, Refusal> {
-    let written = json_of(value)?;
-    let severity = bun_lint::linter::severity_of(&written);
+/// Parses `off`, `warn`, `error`, or the matching number. `subject` is the rule or category name, for the error
+/// message.
+fn severity_of(subject: &[u8], value: &Expr) -> Result<Severity, BunfigError> {
+    let setting_json = json_of(value)?;
+    let severity = bun_lint::linter::severity_of(&setting_json);
     severity.map_or_else(
-        || reject(value.loc, &[&crate::native::invalid_severity(of, &written)]),
+        || {
+            reject(
+                value.loc,
+                &[&crate::native::invalid_severity(subject, &setting_json)],
+            )
+        },
         Ok,
     )
 }
 
 /// Byte offset of a value in bunfig.toml, and of the values nested in it.
 #[derive(Clone, Debug, Default)]
-pub struct Place {
+pub struct ValueOffsets {
     pub at: usize,
-    pub items: Vec<Place>,
+    pub items: Vec<ValueOffsets>,
     /// Each key, the key's offset, and its value.
-    pub entries: Vec<(Vec<u8>, usize, Place)>,
+    pub entries: Vec<(Vec<u8>, usize, ValueOffsets)>,
 }
 
-impl Place {
-    fn of(value: &Expr) -> Place {
-        let mut place = Place {
+impl ValueOffsets {
+    fn from_value(value: &Expr) -> ValueOffsets {
+        let mut tree = ValueOffsets {
             at: value.loc.start.max(0) as usize,
-            ..Place::default()
+            ..ValueOffsets::default()
         };
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
-            return place;
+            return tree;
         }
         match &value.data {
-            Data::EArray(items) => place.items = items.slice().iter().map(Place::of).collect(),
+            Data::EArray(items) => {
+                tree.items = items.slice().iter().map(ValueOffsets::from_value).collect()
+            }
             Data::EObject(_) => {
                 let entries = entries(value).unwrap_or_default().into_iter();
-                let entries = entries
-                    .map(|(key, value)| (key.name, key.at.start.max(0) as usize, Place::of(value)));
-                place.entries = entries.collect();
+                let entries = entries.map(|(key, value)| {
+                    (
+                        key.name,
+                        key.at.start.max(0) as usize,
+                        ValueOffsets::from_value(value),
+                    )
+                });
+                tree.entries = entries.collect();
             }
             _ => {}
         }
-        place
+        tree
     }
 
     /// Returns the offset of the value at `path`, or of the deepest value that exists along it. With `is_about_key`,
     /// returns the offset of the last key instead.
     pub(crate) fn find(&self, path: &[Step], is_about_key: bool) -> usize {
-        let (mut place, mut at) = (self, self.at);
+        let (mut current, mut at) = (self, self.at);
         for (depth, step) in path.iter().enumerate() {
             let next = match step {
-                Step::Index(index) => place.items.get(*index).map(|it| (it.at, it)),
+                Step::Index(index) => current.items.get(*index).map(|it| (it.at, it)),
                 Step::Key(key) => {
-                    let mut entries = place.entries.iter();
+                    let mut entries = current.entries.iter();
                     entries.find(|it| it.0 == *key).map(|it| (it.1, &it.2))
                 }
             };
@@ -871,7 +884,7 @@ impl Place {
                 break;
             };
             let is_last = depth + 1 == path.len();
-            (place, at) = (
+            (current, at) = (
                 next,
                 if is_last && is_about_key {
                     key_at
@@ -894,11 +907,11 @@ pub struct BunfigPlugin {
 
 /// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in
 /// oxlint's `jsPlugins`.
-fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<BunfigPlugin>), Refusal> {
+fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<BunfigPlugin>), BunfigError> {
     let Data::EArray(items) = &value.data else {
         return expected("array", value);
     };
-    let (mut specifiers, mut places) = (Vec::new(), Vec::new());
+    let (mut specifiers, mut plugin_entries) = (Vec::new(), Vec::new());
     for item in items.slice() {
         let text = |value: &Expr| match json_of(value)?.as_str() {
             Some(text) => Ok(text.to_vec()),
@@ -938,12 +951,12 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<BunfigPlugin>), Refusal> {
             );
         };
         specifiers.push(specifier);
-        places.push(BunfigPlugin {
+        plugin_entries.push(BunfigPlugin {
             alias,
             at: item.loc.start.max(0) as usize,
         });
     }
-    Ok((specifiers, places))
+    Ok((specifiers, plugin_entries))
 }
 
 /// One entry of `[lint.rules]` or of an override's `rules`.
@@ -952,10 +965,10 @@ pub struct BunfigRule {
     pub key_at: usize,
     /// `None` if `--rule` has overridden this entry.
     pub setting: Option<Json>,
-    pub place: Place,
+    pub offsets: ValueOffsets,
 }
 
-fn json_of(value: &Expr) -> Result<Json, Refusal> {
+fn json_of(value: &Expr) -> Result<Json, BunfigError> {
     let json = bun_lint::json::from_parsed(value);
     json.map_or_else(
         || reject(value.loc, &[b"this value is nested too deeply"]),
@@ -968,8 +981,8 @@ type Rules = (Vec<(Vec<u8>, Json)>, Vec<BunfigRule>, Vec<Wildcard>);
 
 /// Parses `[lint.rules]` or an override's `rules`, and records where each entry is. This doesn't go through `--rule`,
 /// because that flag parses levn, which can't express every string.
-fn rules(table: &Expr) -> Result<Rules, Refusal> {
-    let (mut rules, mut places, mut wildcards) = (Vec::new(), Vec::new(), Vec::new());
+fn rules(table: &Expr) -> Result<Rules, BunfigError> {
+    let (mut rules, mut rule_entries, mut wildcards) = (Vec::new(), Vec::new(), Vec::new());
     for (rule, setting) in entries(table)? {
         let first = match &setting.data {
             Data::EArray(items) => items.slice().first().unwrap_or(setting),
@@ -987,19 +1000,19 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
             continue;
         }
         severity_of(&rule.name, first)?;
-        let written = json_of(setting)?;
-        places.push(BunfigRule {
+        let setting_value = json_of(setting)?;
+        rule_entries.push(BunfigRule {
             key_at,
-            setting: Some(written.clone()),
-            place: Place::of(setting),
+            setting: Some(setting_value.clone()),
+            offsets: ValueOffsets::from_value(setting),
         });
-        rules.push((rule.name, written));
+        rules.push((rule.name, setting_value));
     }
-    Ok((rules, places, wildcards))
+    Ok((rules, rule_entries, wildcards))
 }
 
 /// Parses `[[lint.overrides]]`.
-fn lint_overrides(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
+fn lint_overrides(value: &Expr) -> Result<Vec<crate::cli::Override>, BunfigError> {
     let items = tables_of(value, b"lint")?;
     let one = |item: &Expr| {
         let mut it = crate::cli::Override::default();
@@ -1007,7 +1020,7 @@ fn lint_overrides(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
             match &key.name[..] {
                 b"files" => it.files = patterns(value)?,
                 b"excludeFiles" => it.excluded = patterns(value)?,
-                b"rules" => (it.rules, it.places, it.wildcards) = rules(value)?,
+                b"rules" => (it.rules, it.rule_locations, it.wildcards) = rules(value)?,
                 b"globals" => it.globals = globals(value)?,
                 b"settings" => it.settings = settings(value)?,
                 _ => {
@@ -1030,7 +1043,7 @@ fn lint_overrides(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal> {
 }
 
 /// Parses `[lint.globals]` or an override's `globals`. As in ESLint, a boolean says whether the global is writable.
-fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
+fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, BunfigError> {
     let one = |(name, value): (Key, &Expr)| {
         let kind: &[u8] = match &bun_lint::json::from_parsed(value) {
             Some(Json::Bool(true)) => b"writable",
@@ -1053,13 +1066,13 @@ fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
 }
 
 /// Parses `[lint.settings]` or an override's `settings`.
-fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
+fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, BunfigError> {
     let one = |(name, value): (Key, &Expr)| Ok((name.name, json_of(value)?));
     entries(table)?.into_iter().map(one).collect()
 }
 
 /// Parses `file`'s `[lint]` section.
-pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
+pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, BunfigError> {
     let mut options = crate::cli::Options::default();
     let Some(section) = file.get(b"lint") else {
         return Ok(None);
@@ -1082,11 +1095,11 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 }
                 _ => return expected("number", value),
             },
-            b"fixType" => LINT.set(&key, value, set).map_err(|mut refusal| {
-                if refusal.message == crate::cli::INVALID_FIX_TYPE {
-                    refusal.message = b"Unknown fix type\n  Expected \"directive\", \"problem\", \"suggestion\", or \"layout\"".to_vec();
+            b"fixType" => LINT.set(&key, value, set).map_err(|mut failure| {
+                if failure.message == crate::cli::INVALID_FIX_TYPE {
+                    failure.message = b"Unknown fix type\n  Expected \"directive\", \"problem\", \"suggestion\", or \"layout\"".to_vec();
                 }
-                refusal
+                failure
             })?,
             // With the flag, an unknown name is only reported when the report is printed.
             b"format" => {

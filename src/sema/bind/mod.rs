@@ -616,14 +616,14 @@ impl<'s> Symbols<'s> {
     }
 
     fn set_rest(&mut self, index: usize, rest: RestOfSymbol) {
-        let place = &mut self.list[index].rest;
+        let slot = &mut self.list[index].rest;
         let is_plain =
             rest.exports.is_none() && rest.members.is_none() && rest.export_symbol.is_none();
-        match (*place, rest.value_declaration) {
-            (FIRST_IS_VALUE | NO_VALUE, 0) if is_plain => *place = FIRST_IS_VALUE,
-            (FIRST_IS_VALUE | NO_VALUE, u32::MAX) if is_plain => *place = NO_VALUE,
+        match (*slot, rest.value_declaration) {
+            (FIRST_IS_VALUE | NO_VALUE, 0) if is_plain => *slot = FIRST_IS_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, u32::MAX) if is_plain => *slot = NO_VALUE,
             (FIRST_IS_VALUE | NO_VALUE, _) => {
-                *place = self.rest.len() as u32;
+                *slot = self.rest.len() as u32;
                 self.rest.push(rest);
             }
             (at, _) => self.rest[at as usize] = rest,
@@ -1216,7 +1216,7 @@ struct FinallyBlock {
     /// The label at the start of the block. It counts as part of the block.
     label: u32,
     /// The first node after the block.
-    behind: u32,
+    first_after: u32,
     /// Index + 1 of the `finally` block around this one, or 0.
     parent: u32,
     /// How many `Flow::Reduce` nodes the block has: one for each of leaving it normally, by `return` and by an exception.
@@ -1256,7 +1256,7 @@ fn has_loop_types_that_depend_on_order(
             Some(last) if last.label == label => last.reduces += 1,
             _ => blocks.push(FinallyBlock {
                 label,
-                behind: reduce,
+                first_after: reduce,
                 parent: 0,
                 reduces: 1,
                 left_for: None,
@@ -1270,7 +1270,7 @@ fn has_loop_types_that_depend_on_order(
     for it in loops {
         while let Some(block) = next.next_if(|block| block.label < it.label) {
             block.is_in_loop = block.label <= end_of_loops;
-            end_of_blocks = end_of_blocks.max(block.behind);
+            end_of_blocks = end_of_blocks.max(block.first_after);
         }
         if it.label < end_of_blocks {
             return true;
@@ -1284,7 +1284,7 @@ fn has_loop_types_that_depend_on_order(
     let mut block_of = vec![0u32; flow.len()];
     let (mut open, mut next): (Vec<u32>, u32) = (Vec::new(), 0);
     for (i, block) in (0..).zip(&mut block_of) {
-        while (open.last()).is_some_and(|&it| blocks[it as usize].behind <= i) {
+        while (open.last()).is_some_and(|&it| blocks[it as usize].first_after <= i) {
             open.pop();
         }
         if let Some(it) = blocks.get_mut(next as usize)
@@ -1308,7 +1308,7 @@ fn has_loop_types_that_depend_on_order(
                 continue;
             };
             let block = &mut blocks[*block as usize - 1];
-            if (block.label..block.behind).contains(&i)
+            if (block.label..block.first_after).contains(&i)
                 || matches!(node, Flow::Reduce { label, .. } if label.0 == block.label)
             {
                 continue;
@@ -1332,7 +1332,7 @@ fn has_loop_types_that_depend_on_order(
         };
         parent.has_shared_node |= has_shared_node;
         for to in left_for.into_iter().flat_map(|it| [it.0, it.1]) {
-            if to <= parent.label || parent.behind <= to {
+            if to <= parent.label || parent.first_after <= to {
                 let (lowest, highest) = parent.left_for.unwrap_or((to, to));
                 parent.left_for = Some((lowest.min(to), highest.max(to)));
             }
@@ -1899,12 +1899,12 @@ impl<S: Storage> BoundIn<S> {
         match self.scopes[scope.idx()].kind {
             ScopeKind::File => true,
             ScopeKind::Module(m) => {
-                let mut around = std::iter::successors(Some(scope), |&at| {
+                let mut enclosing_scopes = std::iter::successors(Some(scope), |&at| {
                     Some(self.scopes[at.idx()].parent).filter(|parent| parent.is_some())
                 });
                 !matches!(hir[m].name, ModuleName::Global)
                     && (hir.kind == FileKind::Declaration
-                        || around.any(|at| {
+                        || enclosing_scopes.any(|at| {
                             matches!(self.scopes[at.idx()].kind, ScopeKind::Module(it)
                                 if hir[it].flags.contains(Flags::AMBIENT))
                         }))
@@ -2002,7 +2002,7 @@ pub(crate) fn large_table_entries(
         let names = &entries[start as usize..(start + len) as usize];
         (start..)
             .zip(names)
-            .map(move |(place, entry)| ((TableId(id), entry.0), place))
+            .map(move |(entry_index, entry)| ((TableId(id), entry.0), entry_index))
     })
 }
 
@@ -2271,11 +2271,11 @@ impl Bound<'_> {
     /// namespace creates, or the enclosing scope of any other declaration. `NONE` if the binder
     /// didn't reach it or it's an assignment.
     pub fn scope_of_declaration(&self, hir: &File, decl: Decl) -> ScopeId {
-        let around = |created: ScopeId| {
+        let parent_of = |created: ScopeId| {
             let created = self.scopes.get(created.idx());
             created.map_or(ScopeId::NONE, |scope| scope.parent)
         };
-        let of_statement = |it: StmtId| self.scope_of_stmt(it);
+        let scope_of_statement = |it: StmtId| self.scope_of_stmt(it);
         match decl {
             Decl::File | Decl::CommonJsVariable => ScopeId(0),
             Decl::Module(it) => self.module_scope[it.idx()],
@@ -2284,7 +2284,7 @@ impl Bound<'_> {
                 loop {
                     match self.pat_parent[root.idx()] {
                         PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                        PatParent::Var(it) => return of_statement(self.var_stmt[it.idx()]),
+                        PatParent::Var(it) => return scope_of_statement(self.var_stmt[it.idx()]),
                         PatParent::Param(it) => {
                             let function = self.fns.get(self.param_fn[it.idx()].idx());
                             return function.map_or(ScopeId::NONE, |function| function.scope);
@@ -2293,11 +2293,11 @@ impl Bound<'_> {
                     }
                 }
             }
-            Decl::Fn(it) => around(self.fns[it.idx()].scope),
-            Decl::Class(it) => around(self.class_scope[it.idx()]),
-            Decl::Interface(it) => around(self.interface_scope[it.idx()]),
-            Decl::Alias(it) => around(self.alias_scope[it.idx()]),
-            Decl::Enum(it) => around(self.enum_scope[it.idx()]),
+            Decl::Fn(it) => parent_of(self.fns[it.idx()].scope),
+            Decl::Class(it) => parent_of(self.class_scope[it.idx()]),
+            Decl::Interface(it) => parent_of(self.interface_scope[it.idx()]),
+            Decl::Alias(it) => parent_of(self.alias_scope[it.idx()]),
+            Decl::Enum(it) => parent_of(self.enum_scope[it.idx()]),
             Decl::EnumMember(it) => {
                 let owner = self.enum_scope.get(self.enum_member_owner[it.idx()].idx());
                 owner.map_or(ScopeId::NONE, |&it| it)
@@ -2307,7 +2307,9 @@ impl Bound<'_> {
             Decl::ImportSpec(it) => self.import_scope[hir[it].import.idx()],
             Decl::ImportEquals(it) => self.import_equals_scope[it.idx()],
             Decl::ExportSpec(it) => self.export_scope[hir[it].export.idx()],
-            Decl::ExportStarAs(it) | Decl::ExportExpr(it) | Decl::UmdGlobal(it) => of_statement(it),
+            Decl::ExportStarAs(it) | Decl::ExportExpr(it) | Decl::UmdGlobal(it) => {
+                scope_of_statement(it)
+            }
             Decl::ModuleExports(_)
             | Decl::ExportsProperty(_)
             | Decl::Expando(_)
@@ -2333,8 +2335,8 @@ impl Bound<'_> {
         if entries.len() <= Self::SCANNED {
             return entries.iter().find(|e| e.0 == name).map(|e| e.1);
         }
-        let place = *self.large_tables.get(&(table, name))?;
-        Some(self.entries[place as usize].1)
+        let entry_index = *self.large_tables.get(&(table, name))?;
+        Some(self.entries[entry_index as usize].1)
     }
 
     #[inline]

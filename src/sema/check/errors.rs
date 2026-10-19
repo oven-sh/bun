@@ -152,9 +152,9 @@ impl PartialEq for Container {
 pub(super) struct CheckedLeaves {
     /// Checked leaf files whose nodes are still in the memos, indexed by `FileId`.
     files: PositionSet,
-    is_any: bool,
+    has_files: bool,
     /// Number of entries left in the memos after the last sweep.
-    entries_kept: usize,
+    entries_after_sweep: usize,
 }
 
 impl Checker<'_, '_> {
@@ -166,13 +166,13 @@ impl Checker<'_, '_> {
     /// for other files only grows. So one sweep drops the nodes of several files, once the memos have doubled in size.
     /// Until then nothing reads the stale entries, and they use no more memory than the entries that are kept.
     fn forget_nodes_of_leaf(&mut self, file: FileId) {
-        if !self.checked_leaves.is_any {
+        if !self.checked_leaves.has_files {
             let files = self.files().modules.len();
             self.checked_leaves.files.reset(files);
-            self.checked_leaves.is_any = true;
+            self.checked_leaves.has_files = true;
         }
         self.checked_leaves.files.insert(file.idx());
-        if self.entries_by_node() < 2 * self.checked_leaves.entries_kept + 1024 {
+        if self.entries_by_node() < 2 * self.checked_leaves.entries_after_sweep + 1024 {
             return;
         }
         let leaves = std::mem::take(&mut self.checked_leaves.files);
@@ -194,8 +194,8 @@ impl Checker<'_, '_> {
             .retain(|key| is_kept(key.0));
         self.checked_leaves = CheckedLeaves {
             files: leaves,
-            is_any: false,
-            entries_kept: self.entries_by_node(),
+            has_files: false,
+            entries_after_sweep: self.entries_by_node(),
         };
     }
 
@@ -228,7 +228,7 @@ impl Checker<'_, '_> {
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
-        self.refused_expressions.clear();
+        self.rejected_expressions.clear();
         self.side_effect_free.get_mut().clear();
         self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
@@ -363,8 +363,8 @@ impl Checker<'_, '_> {
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript gets them too. A
         // diagnostic located in another file goes to that file's buffer at the next commit.
         let reported = std::mem::take(&mut self.reported).into_iter();
-        let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
-        self.reported = elsewhere;
+        let (semantic, in_other_files): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
+        self.reported = in_other_files;
         self.log_reported_from(0);
         let emits_later = !self.emits_first();
         self.is_type_checked = emits_later;
@@ -523,13 +523,13 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let is_ambient = hir.kind == FileKind::Declaration;
         // `getTypeFromImportTypeNode`
-        for &written in &hir.specifier_uses {
-            if written.kind == SpecifierKind::ImportType {
+        for &specifier_use in &hir.specifier_uses {
+            if specifier_use.kind == SpecifierKind::ImportType {
                 let site = SpecifierSite {
                     is_ambient,
                     ..Default::default()
                 };
-                self.resolve_external_module(file, written, site);
+                self.resolve_external_module(file, specifier_use, site);
             }
         }
         let index = self.exprs_by_kind(file);
@@ -547,7 +547,7 @@ impl Checker<'_, '_> {
             let argument = hir.id_at(args, 0);
             // `resolveExternalModuleNameWorker`
             if is_string_literal_like(hir, argument) {
-                let written = SpecifierUse {
+                let specifier_use = SpecifierUse {
                     spec: crate::bind::string_literal_text(hir, argument),
                     pos: hir[argument].pos,
                     kind: SpecifierKind::ImportCall,
@@ -558,7 +558,7 @@ impl Checker<'_, '_> {
                     is_ambient,
                     ..Default::default()
                 };
-                self.resolve_external_module(file, written, site);
+                self.resolve_external_module(file, specifier_use, site);
             }
         }
         // `checkAliasSymbol` for the names that `const a = require("m")` declares, and
@@ -606,13 +606,13 @@ impl Checker<'_, '_> {
     /// `resolveExternalModuleName` for `argument`, the argument of `require(spec)`. Returns true if the module is
     /// found.
     fn resolve_required_module(&mut self, file: FileId, argument: ExprId, spec: Atom) -> bool {
-        let written = SpecifierUse {
+        let specifier_use = SpecifierUse {
             spec,
             pos: self.hir(file)[argument].pos,
             kind: SpecifierKind::RequireCall,
             mode: self.require_resolution_mode(file, spec),
         };
-        self.resolve_external_module(file, written, SpecifierSite::default())
+        self.resolve_external_module(file, specifier_use, SpecifierSite::default())
     }
 
     /// Same as `resolve_required_module`, for the module that initializes the variable declaration or binding element
@@ -704,7 +704,7 @@ impl Checker<'_, '_> {
         } else if !matches!(decl, Decl::Require(_))
             && files.is_only_importable_as_default(usage, module)
         {
-            let at = self.place_of_token(file, start);
+            let at = self.span_of_token(file, start);
             self.error_at(at, 1544, &[Arg::Bytes(files.options.module.name())]);
         } else if files.alias_links(sym).immediate_target.is_none()
             && self.symbol_from_variable(sym).is_none()
@@ -750,16 +750,20 @@ impl Checker<'_, '_> {
         let module_name = fully_qualified_name(self, module, containing_location);
         self.enclosing_module_specifier_mode = None;
         // `DeclarationNameToString`: a string literal name keeps its quotes.
-        let written = match self.hir(from).text.get(start as usize) {
+        let name_text = match self.hir(from).text.get(start as usize) {
             Some(b'"' | b'\'') => word_at(self, from, start),
             _ => self.atom_text(name),
         };
-        let (module_name, written) = (Arg::Bytes(&module_name), Arg::Bytes(&written));
+        let (module_name, name_text) = (Arg::Bytes(&module_name), Arg::Bytes(&name_text));
         let mut related = Vec::new();
         match (code, other) {
             (2724, Some(suggestion)) => {
-                if let Some(place) = self.span_of_value_declaration(suggestion) {
-                    related.push(self.new_diagnostic(place, 2728, &[Arg::Sym(suggestion)]));
+                if let Some(declaration_span) = self.span_of_value_declaration(suggestion) {
+                    related.push(self.new_diagnostic(
+                        declaration_span,
+                        2728,
+                        &[Arg::Sym(suggestion)],
+                    ));
                 }
             }
             // `reportNonExportedMember`
@@ -767,10 +771,10 @@ impl Checker<'_, '_> {
                 let local = self.files().local_of_module(module, name);
                 let declarations = local.map(|local| self.files().decls_of(local));
                 for (i, &(of, decl)) in declarations.iter().flat_map(|it| it.iter()).enumerate() {
-                    if let Some(place) = self.error_place_of_declaration(of, decl) {
+                    if let Some(declaration_span) = self.error_span_of_declaration(of, decl) {
                         related.push(match i {
-                            0 => self.new_diagnostic(place, 2728, &[written]),
-                            _ => self.new_diagnostic(place, 6204, &[]),
+                            0 => self.new_diagnostic(declaration_span, 2728, &[name_text]),
+                            _ => self.new_diagnostic(declaration_span, 6204, &[]),
                         });
                     }
                 }
@@ -780,14 +784,14 @@ impl Checker<'_, '_> {
         let args: &[Arg<'_>] = match code {
             2460 | 2724 => &[
                 module_name,
-                written,
+                name_text,
                 other.map_or(Arg::Bytes(b""), Arg::Sym),
             ],
-            2595 | 2597 => &[written],
-            2616 => &[written, written, module_name],
-            _ => &[module_name, written],
+            2595 | 2597 => &[name_text],
+            2616 => &[name_text, name_text, module_name],
+            _ => &[module_name, name_text],
         };
-        let at = self.place_of_token(from, start);
+        let at = self.span_of_token(from, start);
         self.error_at(at, code, args).related_information = related;
     }
 
@@ -1246,19 +1250,19 @@ impl Checker<'_, '_> {
     /// Returns `Parent::None` for a member of a type literal and for a function type, whose parents aren't stored.
     pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let of_class = |c: ClassId| bound.class_owner[c.idx()].to_parent();
-        let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
-            MemberOwner::Class(c) => of_class(c),
+        let parent_of_class = |c: ClassId| bound.class_owner[c.idx()].to_parent();
+        let parent_of_member = |m: MemberId| match bound.member_owner[m.idx()] {
+            MemberOwner::Class(c) => parent_of_class(c),
             MemberOwner::Interface(i) => Parent::Stmt(hir[i].stmt),
             _ => Parent::None,
         };
-        let of_fn = |f: FnId| match bound.fns[f.idx()].owner {
+        let parent_of_fn = |f: FnId| match bound.fns[f.idx()].owner {
             FnOwner::Expr(x) => Parent::Expr(x),
             FnOwner::Stmt(s) => Parent::Stmt(s),
-            FnOwner::Member(m) => of_member(m),
+            FnOwner::Member(m) => parent_of_member(m),
             _ => Parent::None,
         };
-        let of_pattern = |mut pat: PatId| loop {
+        let parent_of_pattern = |mut pat: PatId| loop {
             match bound.pat_parent[pat.idx()] {
                 PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
                 PatParent::Var(d) => return Parent::VarInit(d),
@@ -1275,11 +1279,11 @@ impl Checker<'_, '_> {
             Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
             Parent::Prop(p) | Parent::PropKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
             Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-            Parent::FnBody(f) => of_fn(f),
-            Parent::ParamDefault(p) => of_fn(bound.param_fn[p.idx()]),
-            Parent::MemberInit(m) => of_member(m),
-            Parent::PatPropDefault(p) | Parent::PatKey(p) => of_pattern(hir[p].value),
-            Parent::PatElemDefault(p) => of_pattern(hir[p].pat),
+            Parent::FnBody(f) => parent_of_fn(f),
+            Parent::ParamDefault(p) => parent_of_fn(bound.param_fn[p.idx()]),
+            Parent::MemberInit(m) => parent_of_member(m),
+            Parent::PatPropDefault(p) | Parent::PatKey(p) => parent_of_pattern(hir[p].value),
+            Parent::PatElemDefault(p) => parent_of_pattern(hir[p].pat),
             // A member's or parameter's name and decorators are its children.
             Parent::MethodKey(p) => match hir[hir[p].value].kind {
                 ExprKind::Fn(f) => Parent::FnBody(f),
@@ -1293,7 +1297,7 @@ impl Checker<'_, '_> {
                 }
             }
             Parent::ParamDecorator(p) => Parent::ParamDefault(p),
-            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => of_class(c),
+            Parent::ClassExtends(c) | Parent::ClassDecorator(c) => parent_of_class(c),
             Parent::EnumInit(m) => Parent::Stmt(hir[bound.enum_member_owner[m.idx()]].stmt),
             Parent::Module(m) => Parent::Stmt(hir[m].stmt),
         }
@@ -1592,7 +1596,7 @@ impl Checker<'_, '_> {
                 && !hir.is_ambient(hir.node(first))
                 && (files.resolve_name(file, bound.type_scope[i], known::this, meaning)).is_none()
             {
-                let at = self.place_of_token(file, hir[first].pos);
+                let at = self.span_of_token(file, hir[first].pos);
                 self.add_diagnostic(Reported::new(at, 2304, held(vec![b"this".to_vec()])));
             }
         }
@@ -1684,10 +1688,10 @@ impl Checker<'_, '_> {
         }
         // `DeclarationNameToString`
         let hir = self.hir(file);
-        let written =
+        let name_range =
             hir[property].name_pos as usize..self.end_of_member_name(file, property) as usize;
         let args = [
-            Arg::Bytes(hir.text.get(written).unwrap_or_default()),
+            Arg::Bytes(hir.text.get(name_range).unwrap_or_default()),
             Arg::Atom(name),
         ];
         self.error(file, location, code, &args);
@@ -1769,7 +1773,7 @@ impl Checker<'_, '_> {
         &mut self,
         file: FileId,
         location: Node,
-        at: Option<super::related::Place>,
+        at: Option<super::related::FileSpan>,
         scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
@@ -1884,15 +1888,15 @@ impl Checker<'_, '_> {
             }
         }
         // `DeclarationNameToString`: keeps the escapes as written in the source text.
-        let written = hir
+        let raw_name = hir
             .text
             .get(at.1 as usize..at.2 as usize)
-            .filter(|written| {
-                bun_core::strings::contains_char(written, b'\\')
+            .filter(|raw_name| {
+                bun_core::strings::contains_char(raw_name, b'\\')
                     && hir.kind(location) == Kind::Identifier
                     && hir.text(location) == name
             });
-        let declaration_name = written.map_or(reported, Arg::Bytes);
+        let declaration_name = raw_name.map_or(reported, Arg::Bytes);
         let diagnostic = self.name_not_found_diagnostic(
             Some((file, scope)),
             at,
@@ -1910,7 +1914,7 @@ impl Checker<'_, '_> {
     pub(super) fn name_not_found_diagnostic(
         &mut self,
         location: Option<(FileId, ScopeId)>,
-        at: super::related::Place,
+        at: super::related::FileSpan,
         declaration_name: Arg<'_>,
         name: Atom,
         meaning: SymFlags,
@@ -2194,13 +2198,13 @@ fn get_spelling_suggestion_for_name<'a>(
     name: &[u8],
     candidates: impl Iterator<Item = (&'a [u8], SpellingSuggestion)>,
 ) -> Option<SpellingSuggestion> {
-    let place = |suggestion: SpellingSuggestion| match suggestion {
+    let sort_key = |suggestion: SpellingSuggestion| match suggestion {
         SpellingSuggestion::Symbol(sym) => sort_key_of_first_declaration(files, sym),
         SpellingSuggestion::Word(_) => None,
     };
     // `compareSymbols`
     let compare = |a: (&'a [u8], SpellingSuggestion), b: (&'a [u8], SpellingSuggestion)| {
-        match (place(a.1), place(b.1)) {
+        match (sort_key(a.1), sort_key(b.1)) {
             (Some(a), Some(b)) => a.cmp(&b),
             (a, b) => b.is_some().cmp(&a.is_some()),
         }
@@ -2238,15 +2242,15 @@ fn spelling_suggestion_in_scope(
 /// The queries `getSuggestionForSymbolNameLookup` makes about a table's symbols.
 pub(crate) trait SuggestionLookup {
     /// `getSymbol`, given the table's entry.
-    fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym>;
+    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym>;
 
     /// `tryResolveAlias(candidate).Flags`, or `None` for nil.
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags>;
 }
 
 impl SuggestionLookup for Checker<'_, '_> {
-    fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
-        Checker::get_symbol(self, held, meaning)
+    fn get_symbol(&mut self, table_entry: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
+        Checker::get_symbol(self, table_entry, meaning)
     }
 
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags> {
@@ -2308,9 +2312,9 @@ impl Files<'_> {
         let files = self;
         let (mut word, mut is_among_locals) = (None, false);
         // `getSuggestionForSymbolNameLookup`
-        let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+        let lookup = &mut |table: SymbolTable, table_entry: Option<Sym>, meaning: SymFlags| {
             is_among_locals = matches!(table, SymbolTable::Locals(..));
-            if let Some(found) = symbols.get_symbol(held, meaning) {
+            if let Some(found) = symbols.get_symbol(table_entry, meaning) {
                 return Some(found);
             }
             // `GetSpellingSuggestion` first gets each candidate's name, then computes its edit distance.
@@ -2409,8 +2413,9 @@ impl Files<'_> {
                     );
                     if let Some(among_globals) = among_globals {
                         let mut known = among_globals.borrow_mut();
-                        let of_meaning = known.among_globals.entry(meaning.bits()).or_default();
-                        of_meaning.insert(text.to_vec(), suggestion);
+                        let suggestions_for_meaning =
+                            known.among_globals.entry(meaning.bits()).or_default();
+                        suggestions_for_meaning.insert(text.to_vec(), suggestion);
                     }
                     suggestion
                 }
@@ -2639,7 +2644,7 @@ impl Checker<'_, '_> {
     }
 
     /// `getErrorRangeForNode` of `e`, excluding enclosing parentheses.
-    pub(super) fn place_of_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+    pub(super) fn span_of_expr(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
         (
             file,
             self.error_start_inside_parentheses(file, e),
@@ -2715,7 +2720,7 @@ impl Checker<'_, '_> {
             }
         }
         let (left, right) = self.type_names_for_error_display(effective_left, effective_right);
-        let at = self.place_of_expr(file, e);
+        let at = self.span_of_expr(file, e);
         if matches!(
             op,
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
@@ -2760,7 +2765,7 @@ impl Checker<'_, '_> {
         let at = self.span_of_parenthesized_expr(file, location);
         let did_you_mean = self.new_diagnostic(at, 1369, &[Arg::Bytes(&suggestion)]);
         let always = if is_equality { "false" } else { "true" };
-        let diagnostic = self.error_at(self.place_of_expr(file, e), 2845, &[Arg::Text(always)]);
+        let diagnostic = self.error_at(self.span_of_expr(file, e), 2845, &[Arg::Text(always)]);
         if !(is_left_nan && is_right_nan) {
             diagnostic.add_related_info(did_you_mean);
         }
@@ -2785,7 +2790,7 @@ impl Checker<'_, '_> {
         let found = start_of_token_before(&hir.text, self.start_of(file, right), &operator);
         let at = match found {
             Some(start) => (file, start, start + operator.len() as u32),
-            None => self.place_of_token(file, self.start_inside_parentheses(file, e)),
+            None => self.span_of_token(file, self.start_inside_parentheses(file, e)),
         };
         self.error_at(at, 2447, &[Arg::Bytes(&operator), Arg::Text(suggested)]);
     }
@@ -2807,7 +2812,7 @@ impl Checker<'_, '_> {
             && f64::from_bits(bits).abs() >= 32.0
         {
             let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });
-            let written = self.source_text(
+            let left_text = self.source_text(
                 file,
                 self.start_of(file, left),
                 self.end_of_expr(file, left),
@@ -2815,11 +2820,11 @@ impl Checker<'_, '_> {
             let operator = operator_text(op, is_assignment);
             let count = crate::atom::number_to_string(f64::from_bits(bits) % 32.0);
             let args = [
-                Arg::Bytes(&written),
+                Arg::Bytes(&left_text),
                 Arg::Bytes(&operator),
                 Arg::Bytes(&count),
             ];
-            let diagnostic = self.new_diagnostic(self.place_of_expr(file, e), 6807, &args);
+            let diagnostic = self.new_diagnostic(self.span_of_expr(file, e), 6807, &args);
             self.add_error_or_suggestion(is_error, diagnostic);
         }
     }
@@ -2957,21 +2962,21 @@ impl Checker<'_, '_> {
         {
             let object = self.type_of_expr(file, obj);
             let object = self.non_null_type(object);
-            let (read, written) = (
+            let (read, write_type) = (
                 self.type_of_property(object, name),
                 self.write_type_of_property(object, name),
             );
-            if let Some(written) = written
-                && read != Some(written)
+            if let Some(write_type) = write_type
+                && read != Some(write_type)
             {
-                expected = written;
+                expected = write_type;
                 // `checkPropertyAccessExpression` ends with `getFlowTypeOfAccessExpression`.
                 if let ExprKind::Dot { .. } = hir[left].kind {
                     let prop = self.get_property_of_type(object, name).map(|found| found.0);
                     let right = (file, hir.name_pos(left), hir[left].end);
                     let target = self.target_kind(file, left);
                     expected = self.get_flow_type_of_access_expression(
-                        file, left, prop, written, right, target,
+                        file, left, prop, write_type, right, target,
                     );
                 }
             }

@@ -205,7 +205,7 @@ impl NoUselessEscape {
         if !may_have_useless_escape(pattern) {
             return;
         }
-        let mode = regex::Mode::of_flags(literal.flags());
+        let mode = regex::Mode::from_flags(literal.flags());
         let Ok(ast) = regex::parse_pattern(pattern, mode, regex::Options::default()) else {
             return;
         };

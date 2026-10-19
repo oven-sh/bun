@@ -683,12 +683,12 @@ impl Checker<'_, '_> {
                 ExprKind::Ident(name) => self
                     .symbol_of_identifier(file, tag, name)
                     .filter(|&sym| self.files().flags(sym).intersects(SymFlags::VALUE))
-                    .and_then(|sym| self.place_of_symbol(sym)),
+                    .and_then(|sym| self.span_of_symbol(sym)),
                 ExprKind::Dot { obj, name, .. } => {
                     let object = self.type_of_expr(file, obj);
                     let object = self.apparent_type(object);
                     let prop = self.prop_ref(object, name);
-                    prop.and_then(|(prop, _)| self.place_of_prop(prop))
+                    prop.and_then(|(prop, _)| self.span_of_prop(prop))
                 }
                 _ => None,
             };
@@ -784,8 +784,8 @@ impl Checker<'_, '_> {
         for sig in self.signatures(factory_type, false) {
             let params = self.sig_params(sig);
             let first = self.param_type_at(&params, 0).unwrap_or(TypeId::ANY);
-            for taken in self.signatures(first, false) {
-                let params = self.sig_params(taken);
+            for callback_sig in self.signatures(first, false) {
+                let params = self.sig_params(callback_sig);
                 if self.has_effective_rest_parameter(&params) {
                     return None;
                 }
@@ -1106,7 +1106,7 @@ impl Checker<'_, '_> {
         }
         // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`, which is that of the
         // symbol that all declarations of the name share.
-        let mut written: Vec<(Atom, PropId)> = Vec::new();
+        let mut explicit_props: Vec<(Atom, PropId)> = Vec::new();
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind != PropKind::Spread {
@@ -1116,12 +1116,12 @@ impl Checker<'_, '_> {
                 ) && let Some(name) = self.member_name(file, prop.key)
                 {
                     let value_declaration = self.first_declaration_of_literal_member(file, p);
-                    written.retain(|w| w.0 != name);
-                    written.push((name, value_declaration));
+                    explicit_props.retain(|w| w.0 != name);
+                    explicit_props.push((name, value_declaration));
                 }
                 continue;
             }
-            if written.is_empty() {
+            if explicit_props.is_empty() {
                 continue;
             }
             let ty = self.type_of_expr(file, prop.value);
@@ -1132,7 +1132,7 @@ impl Checker<'_, '_> {
             // `tryMergeUnionOfObjectTypeAndEmptyObject`
             let merged = self.try_merge_union_of_object_type_and_empty_object(ty);
             let parts = self.parts(merged);
-            for &(name, overwritten) in &written {
+            for &(name, overwritten) in &explicit_props {
                 // Neither optional nor partial: every constituent is guaranteed to have it.
                 let mut always = !parts.is_empty();
                 for &part in parts {

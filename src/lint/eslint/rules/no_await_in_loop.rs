@@ -70,12 +70,12 @@ impl NoAwaitInLoop {
         if is_in_loop == Some(true) {
             let whole = await_node.span();
             // oxlint reports at the keyword, which it assumes is four bytes after the start of a `for`.
-            let place = match (cx.language().is_oxlint, await_node) {
+            let report_span = match (cx.language().is_oxlint, await_node) {
                 (false, _) => whole,
                 (true, Node::Stmt(it)) if it.tag() == StmtTag::ForOf => Span::new(whole.start + 4, whole.start + 9),
                 (true, _) => Span::new(whole.start, whole.start + 5),
             };
-            cx.report(place, UNEXPECTED_AWAIT);
+            cx.report(report_span, UNEXPECTED_AWAIT);
         }
     }
 }

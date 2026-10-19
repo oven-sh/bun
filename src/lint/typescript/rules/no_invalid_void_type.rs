@@ -68,7 +68,7 @@ fn is_valid_union_member(member: TypeNode) -> bool {
 /// `node` that has a body. For oxlint, the innermost non-arrow function with a body.
 fn parent_function_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, Node<'a>>) -> Option<Node<'a>> {
     let is_oxlint = node.file().language().is_oxlint;
-    let is_one = |ancestor: Node<'a>| match ancestor {
+    let is_function_declaration = |ancestor: Node<'a>| match ancestor {
         Node::Func(func) if is_oxlint => {
             func.has_body() && !matches!(func.kind(), FnKind::Arrow | FnKind::StaticBlock)
         }
@@ -80,7 +80,7 @@ fn parent_function_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, 
         }
         _ => false,
     };
-    known.find(node, |_, ancestor| is_one(ancestor).then_some(ancestor))
+    known.find(node, |_, ancestor| is_function_declaration(ancestor).then_some(ancestor))
 }
 
 /// oxlint's `has_function_overload_signatures`: looks for a declaration without a body, with the same name and the same
@@ -106,7 +106,7 @@ fn oxlint_function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
     Node::Func(func).ancestors().any(|ancestor| {
         let statements = match ancestor {
             Node::File(file) => Some(file.body()),
-            Node::Func(around) if around.kind() != FnKind::StaticBlock => around.body_statements(),
+            Node::Func(outer_function) if outer_function.kind() != FnKind::StaticBlock => outer_function.body_statements(),
             Node::Stmt(statement) => match statement.kind() {
                 StmtKind::Block(statements) => Some(statements),
                 StmtKind::Module(module) => Some(module.innermost().body()),
@@ -152,10 +152,10 @@ impl NoInvalidVoidType {
                 let Some(name) = name else {
                     return;
                 };
-                let written = cx.slice(name);
-                if !allowed.iter().any(|it| without_spaces(written).eq(it.iter().copied())) {
+                let name_text = cx.slice(name);
+                if !allowed.iter().any(|it| without_spaces(name_text).eq(it.iter().copied())) {
                     cx.report(ty, INVALID_VOID_FOR_GENERIC)
-                        .data("generic", without_spaces(written).collect::<Vec<u8>>());
+                        .data("generic", without_spaces(name_text).collect::<Vec<u8>>());
                 }
             }
         }

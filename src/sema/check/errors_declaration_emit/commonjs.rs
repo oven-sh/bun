@@ -27,7 +27,7 @@ struct ExportName {
 
 impl ExportName {
     /// The name as the printer emits it.
-    fn written(&self) -> Vec<u8> {
+    fn printed_name(&self) -> Vec<u8> {
         if self.is_identifier {
             self.text.clone()
         } else {
@@ -103,14 +103,14 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if is_wrapped {
                 self.set_indent(self.indent + 1);
             }
-            let written = self.transform_commonjs_export_worker(e, &name);
+            let export_statements = self.transform_commonjs_export_worker(e, &name);
             if is_wrapped {
                 self.set_indent(self.indent - 1);
             }
             self.tracker.get_symbol_accessibility_diagnostic = saved;
-            if let Some(written) = written {
-                let written = self.wrap_in_cjs_export_namespace(written);
-                self.cjs_export_members.extend(written);
+            if let Some(export_statements) = export_statements {
+                let export_statements = self.wrap_in_cjs_export_namespace(export_statements);
+                self.cjs_export_members.extend(export_statements);
             }
         }
     }
@@ -175,7 +175,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let specifier = if name.is_identifier && self.name(source) == &name.text[..] {
                 name.text.clone()
             } else {
-                [self.name(source), b" as ", &name.written()[..]].concat()
+                [self.name(source), b" as ", &name.printed_name()[..]].concat()
             };
             let text = [b"export { ", &specifier[..], b" };"].concat();
             return Some(vec![Statement::new(StatementKind::ExportDeclaration, text)]);
@@ -241,7 +241,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 b"export { ",
                 &new_id[..],
                 b" as ",
-                &name.written()[..],
+                &name.printed_name()[..],
                 b" };",
             ]
             .concat();
@@ -279,7 +279,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 b"export { ",
                 &class_name[..],
                 b" as ",
-                &name.written()[..],
+                &name.printed_name()[..],
                 b" };",
             ]
             .concat();
@@ -355,7 +355,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             b"export { ",
             &alias[..],
             b" as ",
-            &name.written()[..],
+            &name.printed_name()[..],
             b" };",
         ]
         .concat();
@@ -439,7 +439,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         self.name(name).to_vec()
                     } else {
                         let property =
-                            self.text_of(Written::PropertyName(hir.property_name(hir.node(p))));
+                            self.text_of(ReusedNode::PropertyName(hir.property_name(hir.node(p))));
                         [&property[..], b" as ", self.name(name)].concat()
                     });
                 }
@@ -518,7 +518,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if name == known::constructor {
                 continue;
             }
-            let written = match hir[target].kind {
+            let name_text = match hir[target].kind {
                 // `getLiteralTextOfNode`
                 ExprKind::Index { index, .. } => hir.text
                     [hir[index].pos as usize..self.c.end_of_expr(file, index) as usize]
@@ -538,7 +538,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 [
                     &comments[..],
                     modifier,
-                    &written[..],
+                    &name_text[..],
                     &ensured.text()[..],
                     b";",
                 ]

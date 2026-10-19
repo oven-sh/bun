@@ -142,14 +142,14 @@ impl Checker {
                     .partition_point(|it| it.0.start <= start)
                     .wrapping_sub(1);
             }
-            let around = methods.get_mut(at).filter(|it| start < it.0.end);
-            if around.as_ref().is_some_and(|it| it.3) {
+            let enclosing_method = methods.get_mut(at).filter(|it| start < it.0.end);
+            if enclosing_method.as_ref().is_some_and(|it| it.3) {
                 continue;
             }
-            match (self.owner_of_this(e, state), around) {
-                (Some(owner), Some(around)) if around.1 == owner => {
-                    around.3 = true;
-                    if let Some(is_using_this) = state.is_using_this.get_mut(around.2) {
+            match (self.owner_of_this(e, state), enclosing_method) {
+                (Some(owner), Some(enclosing_method)) if enclosing_method.1 == owner => {
+                    enclosing_method.3 = true;
+                    if let Some(is_using_this) = state.is_using_this.get_mut(enclosing_method.2) {
                         *is_using_this = true;
                     }
                 }

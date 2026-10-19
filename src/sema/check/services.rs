@@ -62,19 +62,19 @@ impl ManyChildren<'_> {
     fn push_containing(self, offset: u32, work: &mut SmallVec<[Node; 16]>) {
         let from = self.spans.partition_point(|it| it.end <= offset);
         let to = self.spans.partition_point(|it| it.start <= offset);
-        let mut around = self
+        let mut containing = self
             .spans
             .get(from..to)
             .unwrap_or_default()
             .iter()
             .peekable();
         for &(position, part) in self.parts {
-            while let Some(it) = around.next_if(|it| it.position < position) {
+            while let Some(it) = containing.next_if(|it| it.position < position) {
                 work.push(it.node);
             }
             work.push(part);
         }
-        work.extend(around.map(|it| it.node));
+        work.extend(containing.map(|it| it.node));
     }
 }
 
@@ -347,8 +347,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                             known.insert(name);
                         }
                         std::collections::hash_map::Entry::Occupied(_) => {}
-                        std::collections::hash_map::Entry::Vacant(place) => {
-                            place.insert(name);
+                        std::collections::hash_map::Entry::Vacant(vacant) => {
+                            vacant.insert(name);
                         }
                     }
                 }
@@ -919,13 +919,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `context_free_type_of_expression` as a tool sees it when it asks before anything has resolved the call `node`.
     /// The call is resolved again, without a contextual type. Anything but a call gets plain
     /// `context_free_type_of_expression`.
-    pub fn context_free_type_of_call_resolved_afresh(&mut self, node: NodeRef) -> TypeId {
+    pub fn context_free_type_of_freshly_resolved_call(&mut self, node: NodeRef) -> TypeId {
         let Some(e) = self.expr_of(node) else {
             return TypeId::ERROR;
         };
         match self.c.hir(node.file)[e].kind {
             ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => {
-                (self.c).context_free_type_of_call_resolved_afresh(node.file, e)
+                (self.c).context_free_type_of_freshly_resolved_call(node.file, e)
             }
             _ => self.c.context_free_type_of_expression(node.file, e),
         }

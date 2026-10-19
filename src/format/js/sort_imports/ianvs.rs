@@ -719,11 +719,12 @@ pub(super) fn preprocess(
     let header_end = out.len();
     let mut comments = model.comments.iter().enumerate().peekable();
     let mut keep = |out: &mut Vec<u8>, at: u32, to: u32| {
-        let mut kept = &text[at as usize..to as usize];
+        let mut retained = &text[at as usize..to as usize];
         let mut at = at;
         if out.len() == header_end {
-            let trimmed = kept.len() - bun_core::strings::trim_js_whitespace_start(kept).len();
-            (kept, at) = (&kept[trimmed..], at + trimmed as u32);
+            let trimmed =
+                retained.len() - bun_core::strings::trim_js_whitespace_start(retained).len();
+            (retained, at) = (&retained[trimmed..], at + trimmed as u32);
         }
         while let Some((id, comment)) = comments.next_if(|it| it.1.span.start < to) {
             if comment.span.start >= at {
@@ -735,7 +736,7 @@ pub(super) fn preprocess(
                 });
             }
         }
-        out.extend_from_slice(kept);
+        out.extend_from_slice(retained);
     };
     let mut at = from;
     for span in removed {

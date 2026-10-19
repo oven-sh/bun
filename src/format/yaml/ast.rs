@@ -308,10 +308,10 @@ impl<'a> Context<'_, 'a> {
                 if offset.saturating_sub(start) <= 64 {
                     units(start, offset)
                 } else {
-                    let (place, before_place) = self.last_offset.get();
-                    let column = match offset >= place {
-                        true => before_place + units(place, offset),
-                        false => before_place.saturating_sub(units(offset, place)),
+                    let (cached_offset, cached_units) = self.last_offset.get();
+                    let column = match offset >= cached_offset {
+                        true => cached_units + units(cached_offset, offset),
+                        false => cached_units.saturating_sub(units(offset, cached_offset)),
                     };
                     self.last_offset.set((offset, column));
                     column
@@ -441,9 +441,9 @@ impl<'a> Context<'_, 'a> {
         }
         while let Some(token) = self.peek().filter(|&token| is_content_property(token)) {
             if token.kind != TokenKind::Comment {
-                let place = self.point(token.start);
-                if place.line != self.point(indicator.start).line
-                    && place.column <= self.point(entry).column
+                let token_point = self.point(token.start);
+                if token_point.line != self.point(indicator.start).line
+                    && token_point.column <= self.point(entry).column
                 {
                     break;
                 }
@@ -591,7 +591,7 @@ impl<'a> Context<'_, 'a> {
 
     /// Returns where `yaml` ends the block scalar whose lines start at `body` and whose successor starts at `next`.
     /// Trailing blank lines that aren't indented further than the first line are only part of it with `+`.
-    fn end_of_block_scalar(&self, body: usize, next: usize, is_kept: bool) -> usize {
+    fn end_of_block_scalar(&self, body: usize, next: usize, has_keep_indicator: bool) -> usize {
         let text = self.text;
         let mut after_line_break = match next >= text.len() && !text.ends_with(b"\n") {
             true => text.len() + 1,
@@ -606,12 +606,12 @@ impl<'a> Context<'_, 'a> {
                 _ => break,
             }
         }
-        while !is_kept && after_line_break >= 2 {
+        while !has_keep_indicator && after_line_break >= 2 {
             let last = after_line_break - 2;
-            let blanks = (text.get(..=last).unwrap_or_default().iter().rev())
+            let trailing_spaces = (text.get(..=last).unwrap_or_default().iter().rev())
                 .take_while(|&&byte| byte == b' ')
                 .count();
-            match last.checked_sub(blanks) {
+            match last.checked_sub(trailing_spaces) {
                 Some(at) if at >= body && text[at] == b'\n' && at + 1 + indent > last => {
                     after_line_break = at + 1;
                 }
@@ -631,12 +631,12 @@ impl<'a> Context<'_, 'a> {
         let header = &rest[..strings::index_of_any(rest, b" \t\n").unwrap_or(rest.len())];
         // Bun's parser reads `| 2` and `|2 -` as `|2` and `|2-`. In YAML only a comment can follow the whitespace.
         let after_header = &rest[header.len()..];
-        let blanks = after_header
+        let whitespace_len = after_header
             .iter()
             .take_while(|b| matches!(b, b' ' | b'\t'))
             .count();
-        if !matches!(after_header.get(blanks), None | Some(b'\n' | b'#')) {
-            let at = token.start + (header.len() + blanks) as u32;
+        if !matches!(after_header.get(whitespace_len), None | Some(b'\n' | b'#')) {
+            let at = token.start + (header.len() + whitespace_len) as u32;
             self.recorded_error = Some(SyntaxError(Message::UnexpectedCharacter, at));
             return Err(Unexpected);
         }
@@ -1036,16 +1036,16 @@ impl<'a> Context<'_, 'a> {
         let items_column = (content.children.first())
             .map_or(1, |item| self.nodes[item.index()].position.start.column);
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
-            let place = self.point(token.start);
+            let token_point = self.point(token.start);
             // A document whose content isn't a block collection ends with the line after the content.
-            if !is_block && place.line > last_line + 1 {
+            if !is_block && token_point.line > last_line + 1 {
                 break;
             }
             self.at += 1;
             let comment = self.transform_comment(token);
-            if place.line > last_line
+            if token_point.line > last_line
                 && !is_open
-                && (!is_block || place.column <= items_column || !end_comments.is_empty())
+                && (!is_block || token_point.column <= items_column || !end_comments.is_empty())
             {
                 end_comments.push(comment);
             }

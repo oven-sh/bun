@@ -278,13 +278,13 @@ impl NoBaseToString {
             return true;
         }
         // Find every type that contains one of `others`, at any depth.
-        let mut around: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
+        let mut containers: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
         for (inner, outer) in reached_from {
-            around.get_or_insert_with(inner, SmallVec::new).extend(outer);
+            containers.get_or_insert_with(inner, SmallVec::new).extend(outer);
         }
         let mut has_other: IdSet<Type<'a>> = others.iter().copied().collect();
         while let Some(t) = others.pop() {
-            for &outer in around.get(t).map(|it| it.as_slice()).unwrap_or_default() {
+            for &outer in containers.get(t).map(|it| it.as_slice()).unwrap_or_default() {
                 if has_other.insert(outer) {
                     others.push(outer);
                 }
@@ -381,12 +381,12 @@ impl NoBaseToString {
             walk.visited.push(ty);
             let certainty = self.collect_elements_certainty(ty, walk);
             walk.visited.pop();
-            let revisited_around = walk.first_revisited.filter(|&first| first < index);
-            if revisited_around.is_none() && !walk.was_cut_off {
+            let revisited_outer = walk.first_revisited.filter(|&first| first < index);
+            if revisited_outer.is_none() && !walk.was_cut_off {
                 walk.known.insert(ty, certainty);
             }
             walk.was_cut_off |= was_cut_off_before;
-            walk.first_revisited = match (revisited_before, revisited_around) {
+            walk.first_revisited = match (revisited_before, revisited_outer) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),
             };
@@ -526,11 +526,11 @@ impl NoBaseToString {
             Usefulness::Sometimes => "may",
         };
         // oxlint's span and name include the parentheses around it.
-        let (place, name) = match cx.language().is_oxlint {
+        let (report_span, name) = match cx.language().is_oxlint {
             true => (node.outer_span(), cx.file().slice(node.outer_span())),
             false => (node.span(), node.text()),
         };
-        cx.report(place, message).data("name", name).data("certainty", certainty);
+        cx.report(report_span, message).data("name", name).data("certainty", certainty);
     }
 
     fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &mut Cx<'a, Self>) {

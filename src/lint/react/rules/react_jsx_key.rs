@@ -107,7 +107,7 @@ impl Rule for JsxKey {
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
-        let (is_given, options) = (options.get(0).is_some_and(|it| it.as_object().is_some()), options.object(0));
+        let (has_options_object, options) = (options.get(0).is_some_and(|it| it.as_object().is_some()), options.object(0));
         let checks = |default| Checks {
             key_must_before_spread: options.bool_or("checkKeyMustBeforeSpread", default),
             warn_on_duplicates: options.bool_or("warnOnDuplicates", default),
@@ -115,7 +115,7 @@ impl Rule for JsxKey {
             arrays_outside_jsx: options.bool_or("checkArraysOutsideJSX", true),
         };
         // oxlint turns every check off if there are no options. In an options object, a missing key is on.
-        JsxKey { eslint: checks(false), oxlint: checks(is_given) }
+        JsxKey { eslint: checks(false), oxlint: checks(has_options_object) }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {

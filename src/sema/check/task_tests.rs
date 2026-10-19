@@ -168,10 +168,10 @@ fn insert_keeps_existing_entry_and_rewrite_replaces_it() {
     }
     assert_eq!(tables.by_key.insert(&task, (own, one), one, stored()), one);
     assert_eq!(tables.by_key.insert(&task, (own, one), two, stored()), one);
-    let (first, kept) = (tables.shapes).insert_ref(&task, own, Box::new([one]), stored());
-    assert_eq!(**kept, [one]);
-    let (second, kept) = (tables.shapes).insert_ref(&task, own, Box::new([two]), stored());
-    assert_eq!((second, &**kept), (first, &[one][..]));
+    let (first, in_table) = (tables.shapes).insert_ref(&task, own, Box::new([one]), stored());
+    assert_eq!(**in_table, [one]);
+    let (second, in_table) = (tables.shapes).insert_ref(&task, own, Box::new([two]), stored());
+    assert_eq!((second, &**in_table), (first, &[one][..]));
     // `u32::MAX` isn't a node, so nothing is stored.
     tables.by_node.insert(&task, (A, u32::MAX), one, stored());
     assert_eq!(tables.by_node.get(&task, &(A, u32::MAX)), None);
@@ -207,7 +207,7 @@ fn task_visits_unimported_files() {
     let mut task = begin(&session, &tables.types, 0);
     for file in [A, B, C] {
         task.begin_file(file, false);
-        // A hashed entry, before the first entry keyed by a node of the file and after it.
+        // A hashed entry before each file's first node-keyed entry, so hashed and node-keyed entries alternate.
         tables
             .by_id
             .insert(&task, TypeId(file.0), TypeId::ANY, stored());
@@ -221,10 +221,10 @@ fn task_visits_unimported_files() {
     for file in [A, B, C] {
         for node in 0..3 {
             assert_eq!(tables.by_node.get(&task, &(file, node)), Some(TypeId(node)));
-            let kept = tables
+            let in_table = tables
                 .by_node
                 .insert(&task, (file, node), TypeId::ANY, stored());
-            assert_eq!(kept, TypeId(node));
+            assert_eq!(in_table, TypeId(node));
         }
     }
     // The task visits a file a second time.
@@ -232,8 +232,8 @@ fn task_visits_unimported_files() {
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId(1)));
     tables.by_node.insert(&task, (A, 5), TypeId::ANY, stored());
     assert_eq!(tables.by_node.get(&task, &(A, 1)), Some(TypeId(1)));
-    let kept = tables.by_node.insert(&task, (A, 1), TypeId::ANY, stored());
-    assert_eq!(kept, TypeId(1));
+    let in_table = tables.by_node.insert(&task, (A, 1), TypeId::ANY, stored());
+    assert_eq!(in_table, TypeId(1));
 }
 
 #[test]
@@ -243,15 +243,15 @@ fn reference_to_stored_value_survives_later_inserts() {
     let tables = Tables::new(&session);
     let task = begin(&session, &tables.types, 0);
     let first = tables.keyof(&task, TypeId::STRING);
-    let (handle, kept) = (tables.shapes).insert_ref(&task, first, Box::new([first]), stored());
+    let (handle, in_table) = (tables.shapes).insert_ref(&task, first, Box::new([first]), stored());
     assert!(handle.is_local());
     let mut of = first;
     for _ in 0..5000 {
         of = tables.keyof(&task, of);
         tables.shapes.insert(&task, of, Box::new([of]), stored());
     }
-    assert_eq!(**kept, [first]);
-    assert!(std::ptr::eq(kept, tables.shapes.at(&task, handle)));
+    assert_eq!(**in_table, [first]);
+    assert!(std::ptr::eq(in_table, tables.shapes.at(&task, handle)));
     assert_eq!(tables.shapes.handle(&task, &first), Some(handle));
 }
 
@@ -447,21 +447,21 @@ fn hashed_lists_its_entries_in_insertion_order() {
     let mut hashed = Hashed::<u64, u32>::default();
     // Neither in key order nor in hash order.
     let keys: Vec<u64> = (0..1000u64).map(|i| i.wrapping_mul(7919) % 1009).collect();
-    for (place, &key) in keys.iter().enumerate() {
+    for (position, &key) in keys.iter().enumerate() {
         assert_eq!(
-            *hashed.insert(spread_word(key), key, place as u32),
-            place as u32
+            *hashed.insert(spread_word(key), key, position as u32),
+            position as u32
         );
     }
     // `insert` doesn't overwrite. `replace` does, and the entry keeps its position.
     assert_eq!(*hashed.insert(spread_word(keys[5]), keys[5], 77), 5);
     hashed.replace(spread_word(keys[6]), keys[6], 77);
-    assert_eq!(hashed.place(spread_word(keys[6]), &keys[6]), Some(6));
+    assert_eq!(hashed.index_of(spread_word(keys[6]), &keys[6]), Some(6));
     assert_eq!(hashed.get(spread_word(5000), &5000), None);
     assert_eq!(hashed.len(), 1000);
-    for (place, &key) in keys.iter().enumerate() {
-        let expected = if place == 6 { 77 } else { place as u32 };
-        assert_eq!(hashed.entry(place as u32), Some(&(key, expected)));
+    for (position, &key) in keys.iter().enumerate() {
+        let expected = if position == 6 { 77 } else { position as u32 };
+        assert_eq!(hashed.entry(position as u32), Some(&(key, expected)));
     }
     assert_eq!(hashed.entry(1000), None);
 }
@@ -682,8 +682,8 @@ fn commit_publishes_every_kind_of_entry() {
         assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
         assert_eq!(tables.shapes.handle(task, &STRING), Some(shape));
         assert_eq!(tables.shapes.at(task, shape)[..], [NUMBER]);
-        let kept = tables.indirect_by_node.get_ref(task, &(A, 4));
-        assert_eq!(kept.map(|it| &it[..]), Some(&[STRING][..]));
+        let in_table = tables.indirect_by_node.get_ref(task, &(A, 4));
+        assert_eq!(in_table.map(|it| &it[..]), Some(&[STRING][..]));
         assert_eq!(tables.members.get(task, &STRING), Some(holder));
         assert_eq!(tables.by_key.get(task, &(STRING, NUMBER)), Some(STRING));
     }
@@ -722,7 +722,7 @@ fn begin_drops_earlier_entries() {
 /// checking it here is a compile error.
 fn is_like_new(task: &mut Task) -> bool {
     let Task {
-        place,
+        round_and_index,
         file,
         uncommitted_files,
         diagnostics,
@@ -749,7 +749,7 @@ fn is_like_new(task: &mut Task) -> bool {
         buffer,
         file_local,
     } = task;
-    place.is_none()
+    round_and_index.is_none()
         && file.is_none()
         && uncommitted_files.is_empty()
         && diagnostics.is_empty()
@@ -803,7 +803,7 @@ fn ended_task_is_like_new() {
         file: A,
         id: SymbolId(7),
     };
-    check(&|task| task.place = Some((0, 1)));
+    check(&|task| task.round_and_index = Some((0, 1)));
     check(&|task| task.file = Some(A));
     check(&|task| task.uncommitted_files.push(A));
     check(&|task| {
@@ -935,8 +935,8 @@ fn visited_file_snapshot_lasts_for_the_visit() {
     next_statement(&second);
     assert_eq!(tables.by_node.get(&second, &(A, 1)), None);
     // It computes its own entry, which loses to the committed one.
-    let kept = tables.by_node.insert(&second, (A, 1), NUMBER, stored());
-    assert_eq!(kept, NUMBER);
+    let in_table = tables.by_node.insert(&second, (A, 1), NUMBER, stored());
+    assert_eq!(in_table, NUMBER);
     assert_eq!(commit(&tables, &commits, &second, 2), 0);
     assert_eq!(tables.by_node.commit_of((A, 1)), Some(1));
     assert_eq!(tables.by_node.commit_of((A, 2)), None);
@@ -1097,9 +1097,9 @@ fn node_entries_of_a_commit_appear_atomically() {
                 let mut seen = 0;
                 while seen < 50 {
                     next_statement(&reader);
-                    let is_there = |at: u32| tables.by_node.get(&reader, &(A, at)).is_some();
+                    let is_stored = |at: u32| tables.by_node.get(&reader, &(A, at)).is_some();
                     // Later entries first, so a commit that finishes during the scan would be noticed.
-                    let pairs = (0..50).rev().map(|i| (is_there(99 - i), is_there(i)));
+                    let pairs = (0..50).rev().map(|i| (is_stored(99 - i), is_stored(i)));
                     let pairs: Vec<(bool, bool)> = pairs.collect();
                     assert!(pairs.iter().all(|pair| pair.0 == pair.1));
                     seen = pairs.iter().filter(|pair| pair.0).count();
@@ -1157,14 +1157,14 @@ fn first_immediate_write_wins() {
     (tables.by_key).rewrite(&first, (STRING, STRING), NUMBER, from_now(&first));
     (tables.shapes).insert_ref(&first, STRING, Box::new([NUMBER]), from_now(&first));
     // The second task stores the same value.
-    let kept = (tables.by_id).rewrite(&second, STRING, NUMBER, from_now(&second));
-    assert_eq!(kept, NUMBER);
+    let in_table = (tables.by_id).rewrite(&second, STRING, NUMBER, from_now(&second));
+    assert_eq!(in_table, NUMBER);
     // `rewrite` only looks in the task's own part, as it does for a key that `get` didn't find.
     (tables.by_id).rewrite(&second, STRING, STRING, from_now(&second));
     let spread = spread_in_window(&(STRING, STRING));
     let key = (STRING, STRING);
-    let kept = (tables.by_key).insert_absent(&second, spread, key, STRING, from_now(&second));
-    assert_eq!(kept, NUMBER);
+    let in_table = (tables.by_key).insert_absent(&second, spread, key, STRING, from_now(&second));
+    assert_eq!(in_table, NUMBER);
     for task in [&first, &second] {
         assert_eq!(tables.by_id.get(task, &STRING), Some(NUMBER));
         assert_eq!(tables.by_key.get(task, &(STRING, STRING)), Some(NUMBER));
@@ -1259,10 +1259,10 @@ fn held_back_entry_wins_over_later_immediate_write() {
     let other = begin_writing_immediately(&session, &tables, &commits, 1);
     tables.by_id.insert(&task, STRING, NUMBER, stored());
     (tables.by_key).insert(&task, (STRING, STRING), NUMBER, stored());
-    let kept = tables.by_id.insert(&task, STRING, STRING, from_now(&task));
-    assert_eq!(kept, NUMBER);
-    let kept = (tables.by_key).insert(&task, (STRING, STRING), STRING, from_now(&task));
-    assert_eq!(kept, NUMBER);
+    let in_table = tables.by_id.insert(&task, STRING, STRING, from_now(&task));
+    assert_eq!(in_table, NUMBER);
+    let in_table = (tables.by_key).insert(&task, (STRING, STRING), STRING, from_now(&task));
+    assert_eq!(in_table, NUMBER);
     assert_eq!(tables.by_id.get(&other, &STRING), None);
     assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
 }

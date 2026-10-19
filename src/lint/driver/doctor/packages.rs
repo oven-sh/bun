@@ -103,7 +103,7 @@ impl Need {
     }
 
     /// The reason printed after the names of `count` packages.
-    fn shown(&self, count: usize) -> String {
+    fn explanation(&self, count: usize) -> String {
         let (it, its) = if count == 1 {
             ("it", "its")
         } else {
@@ -211,12 +211,12 @@ impl Packages {
                 continue;
             };
             let uses = required_by(&installed);
-            let (kept, removable) = std::mem::take(&mut packages.removable)
+            let (still_needed, removable) = std::mem::take(&mut packages.removable)
                 .into_iter()
                 .partition(|it| uses.contains(it));
             packages.removable = removable;
-            let kept: Vec<Vec<u8>> = kept;
-            for name in kept {
+            let still_needed: Vec<Vec<u8>> = still_needed;
+            for name in still_needed {
                 let need = Need::Dependent(stays.clone());
                 packages.needed.push((name.clone(), need));
                 staying.push(name);
@@ -277,7 +277,7 @@ impl Packages {
                 "{} {} <d>({})<r>\n",
                 label,
                 BStr::new(&names.join(&b", "[..])),
-                need.shown(names.len())
+                need.explanation(names.len())
             );
         }
         if !self.removable.is_empty() {

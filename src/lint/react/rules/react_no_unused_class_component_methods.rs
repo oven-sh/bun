@@ -41,11 +41,11 @@ fn is_lifecycle(name: &[u8], is_class: bool) -> bool {
     }
 }
 
-/// `quasis[0].value.raw` for the source text `written`. espree normalizes every line break in it to a line feed.
-fn raw_of_template<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
+/// `quasis[0].value.raw` for the source text `raw_text`. espree normalizes every line break in it to a line feed.
+fn raw_of_template<'a>(file: &File<'a>, raw_text: &'a [u8]) -> Cow<'a, [u8]> {
     match file.uses_typescript_parser() {
-        true => Cow::Borrowed(written),
-        false => strings::crlf_as_lf(written),
+        true => Cow::Borrowed(raw_text),
+        false => strings::crlf_as_lf(raw_text),
     }
 }
 
@@ -67,7 +67,7 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         }
         // For a template literal, use the raw source text.
         KeyKind::ComputedString(name) => Some(match file.slice(key.inner_span(file)) {
-            [b'`', written @ .., b'`'] => raw_of_template(file, written),
+            [b'`', raw_text @ .., b'`'] => raw_of_template(file, raw_text),
             _ => Cow::Borrowed(name.bytes()),
         }),
         KeyKind::Private(_) => None,

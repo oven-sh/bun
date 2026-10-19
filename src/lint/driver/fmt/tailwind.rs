@@ -62,14 +62,14 @@ struct Found {
 fn find(directory: &[u8], package: &[u8]) -> Option<Found> {
     // Maybe only another workspace package depends on it. pnpm and Bun's isolated linker still link every installed
     // package into one shared directory.
-    let places: [&[u8]; 3] = [
+    let module_directories: [&[u8]; 3] = [
         b"node_modules/",
         b"node_modules/.pnpm/node_modules/",
         b"node_modules/.bun/node_modules/",
     ];
-    let root = places.iter().find_map(|place| {
+    let root = module_directories.iter().find_map(|module_directory| {
         paths::ancestors(directory)
-            .map(|it| paths::join(it, &[place, package].concat()))
+            .map(|it| paths::join(it, &[module_directory, package].concat()))
             .find(|it| fs::is_file(&paths::join(it, b"package.json")))
     })?;
     let names: [&[u8]; 4] = [
@@ -147,22 +147,22 @@ pub(crate) struct Classes {
 }
 
 /// A view of [`Classes`] for the files in one directory.
-struct OfGroup {
+struct GroupOrders {
     classes: Arc<Classes>,
     /// `Err` holds the reason it can't be asked.
     which: Result<TailwindId, Vec<u8>>,
 }
 
-impl std::fmt::Debug for OfGroup {
+impl std::fmt::Debug for GroupOrders {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("OfGroup")
+        f.write_str("GroupOrders")
     }
 }
 
 /// All mutable state is behind a lock.
-impl std::panic::RefUnwindSafe for OfGroup {}
+impl std::panic::RefUnwindSafe for GroupOrders {}
 
-impl Orders for OfGroup {
+impl Orders for GroupOrders {
     fn has_tailwind(&self) -> bool {
         self.which.is_ok()
     }
@@ -322,11 +322,11 @@ pub(crate) fn plugin_option(name: &[u8], value: &[u8]) -> Option<Result<(Vec<u8>
     if is_right {
         return Some(Ok((PLUGIN_OPTIONS[at].1.to_vec(), value)));
     }
-    let mut refusal = [b"Invalid ", name, b" value. Expected ", expected].concat();
-    refusal.extend_from_slice(b", but received ");
-    super::config::write_as_shown(&mut refusal, &value);
-    refusal.push(b'.');
-    Some(Err(refusal))
+    let mut message = [b"Invalid ", name, b" value. Expected ", expected].concat();
+    message.extend_from_slice(b", but received ");
+    super::config::write_as_shown(&mut message, &value);
+    message.push(b'.');
+    Some(Err(message))
 }
 
 /// Returns the plugin's warning about its options, given as `sortTailwindcss` `entries`.
@@ -442,7 +442,7 @@ pub(crate) fn for_file(
         preserves_duplicates: is_on(b"preserveDuplicates"),
         follows_plugin,
         oxc: Oxc::Absent,
-        orders: Box::new(OfGroup {
+        orders: Box::new(GroupOrders {
             classes: Arc::clone(classes),
             which,
         }),
@@ -463,13 +463,13 @@ impl Classes {
         let known = self.known.lock();
         let package = known.not_installed.as_deref()?;
         let has_some = known.by_directory.values().any(Option::is_some);
-        let (places, there): (&[u8], &[u8]) = match has_some {
+        let (in_some_directories, there): (&[u8], &[u8]) = match has_some {
             true => (b" in some directories", b" there"),
             false => (b"", b""),
         };
         let start = b"Tailwind CSS classes are not sorted";
         let why = b" is not installed";
-        Some([start, places, b" (", package, why, there, b")"].concat())
+        Some([start, in_some_directories, b" (", package, why, there, b")"].concat())
     }
 
     /// Asks Tailwind about the unknown classes. `Err` is the message to print when Tailwind can't be asked for some

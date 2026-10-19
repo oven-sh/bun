@@ -325,11 +325,11 @@ describe.concurrent("bun lint with processors", () => {
       );
       expect(result.exitCode).toBe(1);
       // A block that the processor returns without a name is linted in the file's language.
-      const whole = await lint(files, ["b.txt"]);
-      expect(whole.stderr).toContain(
+      const unnamedBlock = await lint(files, ["b.txt"]);
+      expect(unnamedBlock.stderr).toContain(
         "1 file was not linted because it needs eslint, which is not installed (1 *.txt): b.txt",
       );
-      expect(whole.exitCode).toBe(2);
+      expect(unnamedBlock.exitCode).toBe(2);
     },
     timeout,
   );
@@ -1007,8 +1007,8 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     const result = await lint({ ...json, ...Object.fromEntries(files) }, ["-f", "json", "."]);
     expect(summary(result.raw).split("\n")).toEqual(
       cases.map(([, , expected], i) => {
-        const [place, ...message] = expected.split(" ");
-        return `${files[i][0]}: ${place} null Parsing error: ${message.join(" ")} [fatal]`;
+        const [position, ...message] = expected.split(" ");
+        return `${files[i][0]}: ${position} null Parsing error: ${message.join(" ")} [fatal]`;
       }),
     );
     expect(result.exitCode).toBe(1);
@@ -1515,16 +1515,18 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     ["a byte order mark", (text: string) => mark + text],
     ["carriage returns", (text: string) => text.replaceAll("\n", "\r\n")],
     ["both", (text: string) => mark + text.replaceAll("\n", "\r\n")],
-  ])("U+2028 and U+2029 aren't line breaks in JSON: a file with %s", (_, written) => {
+  ])("U+2028 and U+2029 aren't line breaks in JSON: a file with %s", (_, transform) => {
     // Unless the file is short, the linter counts lines without saving their offsets, so the formatter recomputes them.
     const more = Array.from({ length: 50 }, (_, i) => `  "${i}": "${"-".repeat(40)}",\n`).join("");
     const text = `{\n  "s": "${separators}",\n${more}  "a": 1,\n  "a": 2\n}\n`;
-    const files = { ...json, "a.json": written(text) };
+    const files = { ...json, "a.json": transform(text) };
 
     test.each(["pretty", "agent"])("the code excerpt in %s shows the right line", async format => {
       const result = await lint(files, ["-f", format, "a.json"]);
-      const shown = result.stdout.split("\n").filter(line => line.includes('"a"') && !line.includes("Duplicate"));
-      expect(shown.at(-1)).toEndWith('"a": 2');
+      const excerptLines = result.stdout
+        .split("\n")
+        .filter(line => line.includes('"a"') && !line.includes("Duplicate"));
+      expect(excerptLines.at(-1)).toEndWith('"a": 2');
       expect(result.stdout).toContain(format === "pretty" ? "a.json:54:3" : 'line="54" column="3"');
     });
 
@@ -1532,7 +1534,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       "%s prints the right line",
       async format => {
         const result = await lint(files, ["-f", format, "a.json"]);
-        const places = {
+        const expectedByFormat = {
           stylish: "  54:3  error",
           json: '"line":54,"column":3,"messageId":"duplicateKey","endLine":54,"endColumn":6',
           unix: "a.json:54:3:",
@@ -1542,7 +1544,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
           gitlab: '"begin": 54',
           sarif: '"startLine": 54',
         };
-        expect(result.stdout).toContain(places[format as keyof typeof places]);
+        expect(result.stdout).toContain(expectedByFormat[format as keyof typeof expectedByFormat]);
       },
     );
   });
@@ -1622,7 +1624,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
       "a.jsonc": '{ "a": [1,], }',
       "x.json": "{}",
     });
-    const [allowed, printed, refused, wrong, elsewhere] = await Promise.all([
+    const [allowed, printed, disallowed, wrong, elsewhere] = await Promise.all([
       lint(files("{ allowTrailingCommas: true, globals: { a: true } }"), ["-f", "json", "a.jsonc"]),
       lint(files("{ allowTrailingCommas: true }"), ["--print-config", "a.jsonc"]),
       lint(files("{ allowTrailingCommas: false }"), ["-f", "json", "a.jsonc"]),
@@ -1633,7 +1635,7 @@ describe.concurrent("bun lint with the built-in JSON languages", () => {
     expect(allowed.exitCode).toBe(0);
     expect(JSON.parse(printed.raw).language).toBe("json/jsonc");
     expect(JSON.parse(printed.raw).languageOptions).toEqual({ allowTrailingCommas: true });
-    expect(summary(refused.raw)).toBe(
+    expect(summary(disallowed.raw)).toBe(
       "a.jsonc: 1:10 null Parsing error: Trailing commas are not allowed in JSONC [fatal]",
     );
     expect(wrong.stderr).toContain('Key "languageOptions": allowTrailingCommas must be a boolean if provided.');

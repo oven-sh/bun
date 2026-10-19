@@ -6179,14 +6179,14 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     const rules = { "no-irregular-whitespace": "error" };
     const found = await diagnosticsOf(files, { categories: { correctness: "off" }, rules });
     type Span = { offset: number; length: number; line: number; column: number };
-    const places = Object.entries(found).map(([name, all]) => [
+    const spans = Object.entries(found).map(([name, all]) => [
       name,
       ...all.map(({ labels: [{ span }] }) => {
         const { offset, length, line, column } = span as Span;
         return `${offset}+${length} ${line}:${column}`;
       }),
     ]);
-    expect(places).toEqual([
+    expect(spans).toEqual([
       ["a.js"],
       ["b.js"],
       ["c.js", "10+3 1:11"],

@@ -3,7 +3,7 @@
 use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
 use super::{ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -90,11 +90,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 && (is_ecmascript || it.flags.contains(Flags::EXPORT))
         };
         if self.f.classes.get(class.idx()).is_some_and(lacks_name) {
-            let is_in_list_of_file = self.lists == 1 << ListKind::SourceElements as u32;
+            let is_at_top_level = self.lists == 1 << ListKind::SourceElements as u32;
             match self.recovers() {
                 // The linter reports this with oxc's message.
                 _ if is_ecmascript && self.options.dialect.oxc => {}
-                true if is_in_list_of_file => {}
+                true if is_at_top_level => {}
                 true if !is_ecmascript => {
                     if let Some(class) = self.f.classes.get_mut(class.idx()) {
                         class.flags -= Flags::EXPORT;
@@ -161,7 +161,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[track_caller]
     fn discard_type_arguments(&mut self) {
         if !self.recovers() {
-            return self.refuse(Refusal::Reported);
+            return self.reject(Rejection::Reported);
         }
         let before = self.checkpoint();
         let (list, _) = self.type_arguments_unchecked();
@@ -221,7 +221,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     let saved = p.enter_context(ctx::NO_RECORD, 0);
                     let extended = p.left_hand_side_expression();
                     p.context = saved;
-                    let of_import = p.import_with_type_arguments(first_token);
+                    let import_error = p.import_with_type_arguments(first_token);
                     if index > 0 || has_extends {
                         // Type arguments that the expression didn't consume aren't stored anywhere.
                         if p.token() == T::LessThan {
@@ -267,7 +267,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                     element_error =
                         element_error.or_else(|| p.import_with_type_arguments(first_token));
-                    element_error = element_error.or(of_import);
+                    element_error = element_error.or(import_error);
                 }),
                 false => {
                     let saved = self.enter_context(ctx::TYPE, 0);
@@ -289,13 +289,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if (comma.is_some() || count == 0) && !is_extends && self.is_for_oxc() {
                 self.unexpected_like_oxc();
             }
-            let is_refused = self.is_ecmascript && !self.is_for_oxc();
+            let is_rejected = self.is_ecmascript && !self.is_for_oxc();
             // `checkGrammarHeritageClause`
             match comma {
                 _ if heritage.has_error => {}
-                Some(_) if is_refused => self.report(),
+                Some(_) if is_rejected => self.report(),
                 Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, comma, &[]),
-                None if count == 0 && is_refused => self.report(),
+                None if count == 0 && is_rejected => self.report(),
                 None if count == 0 => {
                     let at = (keyword.1, Diagnostic::NO_LENGTH);
                     let keyword: &[u8] = if is_extends {
@@ -352,14 +352,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let less_than = (self.token() == T::LessThan).then(|| self.pos());
         let type_params = self.type_parameters();
         // A class expression's name shares a scope with its type parameters.
-        let named_alike = self.f.type_params.get(type_params.range());
-        if named_alike.is_some_and(|all| all.iter().any(|it| it.name == name)) {
+        let own_type_params = self.f.type_params.get(type_params.range());
+        if own_type_params.is_some_and(|all| all.iter().any(|it| it.name == name)) {
             self.may_redeclare();
         }
         let empty_list = less_than.filter(|_| type_params.is_empty());
         let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
         // TypeScript parses the rest of an exported class in the await context even on the first parse.
-        let in_names = self.names_are_in_await_context;
+        let saved_names_context = self.names_are_in_await_context;
         self.names_are_in_await_context |=
             flags.contains(Flags::EXPORT) && !self.options.dialect.oxc;
         let heritage = self.class_heritage();
@@ -401,12 +401,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if has_members {
             self.expect(T::CloseBrace);
         }
-        self.names_are_in_await_context = in_names;
+        self.names_are_in_await_context = saved_names_context;
         self.class_depth -= 1;
         if std::mem::replace(&mut self.has_odd_members, has_odd_members) {
-            let (written, place) = (&self.s.members[members..], self.place());
+            let (parsed_members, call_site) = (&self.s.members[members..], self.call_site());
             let is_abstract = flags.contains(Flags::ABSTRACT);
-            oxc::class_members(&mut self.f, self.lx.src, written, is_abstract, place);
+            oxc::class_members(
+                &mut self.f,
+                self.lx.src,
+                parsed_members,
+                is_abstract,
+                call_site,
+            );
         }
         let members: Span<MemberId> = take_span!(self, members, members);
         for index in decorators..self.s.decorators.len() {
@@ -560,8 +566,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         {
             // It's positioned after its decorators.
             let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
-            let written = self.s.modifiers.get(first_modifier..).unwrap_or_default();
-            let name_pos = written
+            let own_modifiers = self.s.modifiers.get(first_modifier..).unwrap_or_default();
+            let name_pos = own_modifiers
                 .iter()
                 .find(is_keyword)
                 .map_or_else(|| self.pos(), |it| it.pos);
@@ -581,7 +587,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.s.members.push(member);
         }
         let is_default = flags.contains(Flags::DEFAULT);
-        let written = flags;
+        let declared_flags = flags;
         // The checker reports these from the modifier list.
         flags -= Flags::CONST | Flags::EXPORT | Flags::DEFAULT;
         // `parseClassElement`: its own `declare` makes a property or a method ambient.
@@ -626,8 +632,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         let name = (name_pos, self.prev_end());
         // oxc treats `static constructor` like any other name.
-        let is_keyword =
-            name_token == T::Constructor && !(written.contains(Flags::STATIC) && self.is_for_oxc());
+        let is_keyword = name_token == T::Constructor
+            && !(declared_flags.contains(Flags::STATIC) && self.is_for_oxc());
         key = declared_key(key, name_token, is_default);
         flags |= member_name_flags(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor a property with a missing name looks for a `?`.
@@ -663,7 +669,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && key == PropKey::Name(known::constructor)
             && kind == MemberKind::Property
             && !is_generator
-            && !written.contains(Flags::STATIC)
+            && !declared_flags.contains(Flags::STATIC)
             && question.is_none();
         // The checker reports the `async` of `async a!`.
         if !is_function
@@ -768,7 +774,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         member.modifiers = self.take_modifiers(first_modifier);
         if self.is_for_oxc() {
-            self.check_class_member_like_oxc(&member, written, name, context);
+            self.check_class_member_like_oxc(&member, declared_flags, name, context);
         }
         if is_quoted_constructor && self.reports_like_oxc() {
             let at = (name.1, self.prev_end());

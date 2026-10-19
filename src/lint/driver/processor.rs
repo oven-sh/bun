@@ -7,7 +7,9 @@ use crate::configs::{Flavor, Loaded};
 use crate::lint::{Context, Fixes};
 use crate::paths;
 use crate::results::FileResult;
-use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages, write_messages};
+use bun_lint::js_plugin::{
+    self, Block, EslintFailure, Processor, Route, read_messages, write_messages,
+};
 use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
 use std::sync::Arc;
 
@@ -40,10 +42,10 @@ fn needs_eslint() -> LintResult {
 
 /// ESLint's error for a `processor` that doesn't exist.
 fn no_such_processor(config: &ResolvedConfig) -> Vec<u8> {
-    let written = config.processor.as_deref().unwrap_or_default();
-    let (plugin, name) = match bun_core::strings::last_index_of_char(written, b'/') {
-        Some(at) => (&written[..at], &written[at + 1..]),
-        None => (&b""[..], written),
+    let processor_id = config.processor.as_deref().unwrap_or_default();
+    let (plugin, name) = match bun_core::strings::last_index_of_char(processor_id, b'/') {
+        Some(at) => (&processor_id[..at], &processor_id[at + 1..]),
+        None => (&b""[..], processor_id),
     };
     [
         b"Key \"processor\": Could not find \"",
@@ -254,8 +256,8 @@ impl Context<'_, '_> {
                 },
                 Some(linted.deprecated),
             ),
-            Err(Refusal::NotInstalled) => (needs_eslint(), None),
-            Err(Refusal::Thrown(message)) => (thrown(message), None),
+            Err(EslintFailure::NotInstalled) => (needs_eslint(), None),
+            Err(EslintFailure::Thrown(message)) => (thrown(message), None),
         }
     }
 

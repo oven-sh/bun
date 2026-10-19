@@ -77,17 +77,17 @@ impl Rule for ReactNoNamespaceHooks {
         let specifiers = react_imports(file).flat_map(|it| it.1.named()).filter(|it| !it.is_type_only());
         let imported: FxHashMap<&[u8], Name> =
             specifiers.map(|it| (it.imported().bytes(), it.local().name())).collect();
-        let means = |name: Name<'a>, at: Expr<'a>| Node::Expr(at).scope().resolve_name(name);
-        let lacking = || hooks.iter().filter(|it| !imported.contains_key(it.1.bytes()));
-        let mut missing: Vec<Name> = lacking().map(|it| it.1).collect();
+        let resolve_at = |name: Name<'a>, at: Expr<'a>| Node::Expr(at).scope().resolve_name(name);
+        let unimported = || hooks.iter().filter(|it| !imported.contains_key(it.1.bytes()));
+        let mut missing: Vec<Name> = unimported().map(|it| it.1).collect();
         utils::sort::sort_unstable_by_key(&mut missing, |it| it.bytes());
         missing.dedup();
         // Can't import a name that already refers to something else where the hook is used.
-        let can_import = lacking().all(|it| means(it.1, it.0).is_none());
+        let can_import = unimported().all(|it| resolve_at(it.1, it.0).is_none());
         for &(hook, name) in &hooks {
             let report = cx.report(hook, NAMESPACE_HOOK).data("name", name);
             match imported.get(name.bytes()) {
-                Some(&local) if means(local, hook) == file.top_level_scope().get_name(local) => {
+                Some(&local) if resolve_at(local, hook) == file.top_level_scope().get_name(local) => {
                     report.fix(|fixer| fixer.replace(hook, local));
                 }
                 None if can_import => {

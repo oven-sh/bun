@@ -32,7 +32,7 @@ struct MemberChain<'a, 'b> {
 pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatter<'a>) {
     let mut members = Members::new();
     let has_inner_call = push_chain_members(call_expression, &mut members, f);
-    if !is_one_group_after_the_head(has_inner_call, f)
+    if !has_single_group_after_head(has_inner_call, f)
         || (lays_out_by_comment_position(f)
             && (members.iter())
                 .any(|member| needs_empty_line_before_for_oxfmt(std::slice::from_ref(member), f)))
@@ -81,7 +81,7 @@ fn name_in_brackets_can_be_factory(f: &Formatter<'_>) -> bool {
 
 /// A group ends before a member access that follows a call, and after a comment. Without either, a
 /// chain has at most one group after the head, and no call that an empty line could follow.
-fn is_one_group_after_the_head(has_inner_call: bool, f: &Formatter<'_>) -> bool {
+fn has_single_group_after_head(has_inner_call: bool, f: &Formatter<'_>) -> bool {
     !has_inner_call && f.is_quiet()
 }
 
@@ -548,7 +548,7 @@ fn is_factory(name: &[u8]) -> bool {
 /// group after the head, or a comment between its links.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut members = Members::new();
-    if is_one_group_after_the_head(push_chain_members(expression, &mut members, f), f) {
+    if has_single_group_after_head(push_chain_members(expression, &mut members, f), f) {
         return false;
     }
     members.reverse();

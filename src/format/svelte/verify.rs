@@ -115,8 +115,8 @@ impl Check<'_, '_> {
     /// Reads the code at `span`, with its comments. `ignored_keys` holds the spans of the keys in it
     /// that don't count, in order.
     #[optimize(size)]
-    fn code(&mut self, (before, behind): Wrapper, span: Span, ignored_keys: &[(usize, usize)]) {
-        let program = [before, span.of(self.text), behind].concat();
+    fn code(&mut self, (prefix, suffix): Wrapper, span: Span, ignored_keys: &[(usize, usize)]) {
+        let program = [prefix, span.of(self.text), suffix].concat();
         let (reader, comments) = (&mut self.reader, &mut self.comments);
         let mut is_read = false;
         let path = path_of(self.tree.uses_typescript);
@@ -128,7 +128,7 @@ impl Check<'_, '_> {
             }
             is_read = true;
             reader.mark(50);
-            read_tokens(file, before.len(), ignored_keys, reader);
+            read_tokens(file, prefix.len(), ignored_keys, reader);
             for comment in file.comments() {
                 *comments += 1;
                 reader.count(comment.text());
@@ -150,9 +150,9 @@ impl Check<'_, '_> {
         self.reader.mark(u8::from(pattern.is_some()));
         if let Some(pattern) = pattern {
             // `{ a: a }` is the same as `{ a }`.
-            let written = pattern.span.of(self.text);
-            let mut keys = match strings::contains_char(written, b':') {
-                true => repeated_keys(self.parse, written, self.tree.uses_typescript),
+            let pattern_text = pattern.span.of(self.text);
+            let mut keys = match strings::contains_char(pattern_text, b':') {
+                true => repeated_keys(self.parse, pattern_text, self.tree.uses_typescript),
                 false => Vec::new(),
             };
             crate::sort::sort_by_key(&mut keys, |it| it.0);
@@ -273,7 +273,7 @@ impl Check<'_, '_> {
 
     /// True if it holds only whitespace.
     #[optimize(size)]
-    fn is_blank(&self, fragment: FragmentId) -> bool {
+    fn is_whitespace_only(&self, fragment: FragmentId) -> bool {
         self.tree
             .fragment(fragment)
             .iter()
@@ -333,23 +333,23 @@ impl Check<'_, '_> {
     /// Reads the text in `fragment` and its position among the other children, which are pushed onto `next` in
     /// reverse order.
     #[optimize(size)]
-    fn enter_fragment(&mut self, fragment: FragmentId, how: Text, next: &mut Vec<Next>) {
+    fn enter_fragment(&mut self, fragment: FragmentId, mode: Text, next: &mut Vec<Next>) {
         let tree = self.tree;
         let children = tree.fragment(fragment);
         let from = next.len();
-        if matches!(how, Text::Code) {
-            next.extend(children.iter().rev().map(|&id| Next::Node(id, how)));
+        if matches!(mode, Text::Code) {
+            next.extend(children.iter().rev().map(|&id| Next::Node(id, mode)));
             return;
         }
         let is_text = |id: &Id| matches!(tree[*id].kind, Kind::Text { .. } | Kind::Comment { .. });
-        let is_blank = children.iter().all(|&id| match &tree[id].kind {
+        let is_whitespace_only = children.iter().all(|&id| match &tree[id].kind {
             Kind::Text { raw } => raw.trim_ascii().is_empty(),
             Kind::Comment { .. } => true,
             _ => false,
         });
-        let is_free_at = match how {
+        let is_free_at = match mode {
             Text::Words(start, end) => (start, end),
-            _ => (is_blank, is_blank),
+            _ => (is_whitespace_only, is_whitespace_only),
         };
         let (mut at, mut previous) = (0, None);
         while at < children.len() {
@@ -362,21 +362,21 @@ impl Check<'_, '_> {
                 && self.texts(
                     run,
                     (is_free_before, is_free_after),
-                    how == Text::Preformatted,
+                    mode == Text::Preformatted,
                 );
             // Now we know what comes after `previous`.
-            if let Some(Next::Node(_, Text::Words(_, behind))) =
+            if let Some(Next::Node(_, Text::Words(_, free_after_previous))) =
                 next.last_mut().filter(|_| previous.is_some())
             {
-                *behind = !has_words && is_free_after;
+                *free_after_previous = !has_words && is_free_after;
             }
-            next.extend(run.iter().map(|&id| Next::Node(id, how)));
+            next.extend(run.iter().map(|&id| Next::Node(id, mode)));
             if let Some(following) = following {
                 self.reader.mark(9);
                 next.push(Next::Node(
                     following,
-                    match how {
-                        Text::Preformatted => how,
+                    match mode {
+                        Text::Preformatted => mode,
                         // What comes after it is filled in once that has been read, unless it's the last child.
                         _ => Text::Words(!has_words && is_free_before, is_free_at.1),
                     },
@@ -389,8 +389,8 @@ impl Check<'_, '_> {
 
     /// Reads `id` and pushes its contents onto `next` in reverse order.
     #[optimize(size)]
-    fn enter(&mut self, id: Id, around: Text, next: &mut Vec<Next>) {
-        let is_pre = around == Text::Preformatted;
+    fn enter(&mut self, id: Id, enclosing: Text, next: &mut Vec<Next>) {
+        let is_pre = enclosing == Text::Preformatted;
         let tree = self.tree;
         let node = &tree[id];
         let whole = Span {
@@ -398,13 +398,13 @@ impl Check<'_, '_> {
             end: node.end,
         };
         let mut fragments: [Option<Option<FragmentId>>; 3] = [None; 3];
-        let mut how = match around {
-            Text::Preformatted | Text::Code => around,
+        let mut mode = match enclosing {
+            Text::Preformatted | Text::Code => enclosing,
             _ => Text::WordsInBlock,
         };
         match &node.kind {
             // Other text was already read with its fragment.
-            Kind::Text { raw } if around == Text::Code => return self.reader.count(raw),
+            Kind::Text { raw } if enclosing == Text::Code => return self.reader.count(raw),
             Kind::Text { .. } => return,
             Kind::Comment { data } => {
                 self.comments += 1;
@@ -414,7 +414,7 @@ impl Check<'_, '_> {
                 self.reader.mark(10 + element.kind as u8);
                 self.reader.name(b"", element.name);
                 match (element.multipart_this_attribute, element.this) {
-                    (Some(written), _) => self.span(written),
+                    (Some(this_span), _) => self.span(this_span),
                     // `this={"a"}` is the same as `this="a"`, unless the text would mean something other than the
                     // string.
                     (None, Some(this)) if this.kind == ExpressionKind::Text => {
@@ -436,8 +436,8 @@ impl Check<'_, '_> {
                 self.attributes(&element.attributes);
                 fragments[0] = Some(Some(element.fragment));
                 let is_regular = element.kind == ElementKind::RegularElement;
-                how = match element.name {
-                    _ if around == Text::Code => Text::Code,
+                mode = match element.name {
+                    _ if enclosing == Text::Code => Text::Code,
                     b"script" | b"style" | b"template" if is_regular => Text::Code,
                     _ if is_pre => Text::Preformatted,
                     name if is_regular
@@ -450,8 +450,8 @@ impl Check<'_, '_> {
                         && !self.is_block_element(id)
                         && self.sensitivity != HtmlWhitespaceSensitivity::Ignore =>
                     {
-                        match around {
-                            Text::Words(..) => around,
+                        match enclosing {
+                            Text::Words(..) => enclosing,
                             _ => Text::Words(false, false),
                         }
                     }
@@ -516,8 +516,8 @@ impl Check<'_, '_> {
                 // same as `{#await a}{/await}`. An empty `{:catch}` still counts, and so does an empty
                 // `{:then b /* c */}`.
                 let has_comment = value.is_some_and(|it| it.has_comments);
-                let pending = pending.filter(|&it| !self.is_blank(it));
-                let then = then.filter(|&it| has_comment || !self.is_blank(it));
+                let pending = pending.filter(|&it| !self.is_whitespace_only(it));
+                let then = then.filter(|&it| has_comment || !self.is_whitespace_only(it));
                 self.pattern(value.filter(|_| then.is_some()));
                 self.pattern(error.filter(|_| catch.is_some()));
                 fragments = [Some(pending), Some(then), Some(*catch)];
@@ -576,7 +576,7 @@ impl Check<'_, '_> {
             }
         }
         next.push(Next::End);
-        next.extend((fragments.into_iter().rev().flatten()).map(|it| Next::Fragment(it, how)));
+        next.extend((fragments.into_iter().rev().flatten()).map(|it| Next::Fragment(it, mode)));
     }
 }
 
@@ -609,16 +609,16 @@ fn is_spelled_like_modifier(word: &[u8]) -> bool {
     )
 }
 
-/// Sorted start offsets of the expressions with one of `tags` for which `is_one` returns true.
+/// Sorted start offsets of the expressions with one of `tags` for which `predicate` returns true.
 #[optimize(size)]
 fn starts_of<'a>(
     file: &'a File<'a>,
     tags: &[ExprTag],
-    is_one: impl Fn(Expr<'a>) -> bool,
+    predicate: impl Fn(Expr<'a>) -> bool,
 ) -> Vec<u32> {
     let all = tags.iter().flat_map(|&tag| file.exprs_of_kind(tag));
     let mut starts: Vec<u32> = all
-        .filter(|&it| is_one(it))
+        .filter(|&it| predicate(it))
         .map(|it| it.span().start)
         .collect();
     crate::sort::sort(&mut starts[..]);
@@ -793,12 +793,12 @@ fn signature(
     );
     while let Some(it) = next.pop() {
         match it {
-            Next::Node(id, around) => check.enter(id, around, &mut next),
+            Next::Node(id, enclosing) => check.enter(id, enclosing, &mut next),
             Next::End => check.reader.mark(0),
             Next::Fragment(None, _) => check.reader.mark(6),
-            Next::Fragment(Some(fragment), how) => {
+            Next::Fragment(Some(fragment), mode) => {
                 check.reader.mark(7);
-                check.enter_fragment(fragment, how, &mut next);
+                check.enter_fragment(fragment, mode, &mut next);
             }
         }
     }

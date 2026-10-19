@@ -1000,14 +1000,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 // `Symbol.iterator`: the property of the global `SymbolConstructor`.
                 UniqueSymbolDeclaration::SymbolConstructor => {
                     let atoms = self.c.atoms();
-                    let written = atoms
+                    let property_name = atoms
                         .bytes(name)
                         .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
-                    let (written, constructor) =
-                        (atoms.lookup(written)?, atoms.lookup(b"SymbolConstructor")?);
+                    let (property_name, constructor) = (
+                        atoms.lookup(property_name)?,
+                        atoms.lookup(b"SymbolConstructor")?,
+                    );
                     let constructor = self.c.global_type_symbol(constructor)?;
                     let constructor = self.c.declared_type(constructor);
-                    let (prop, mapper) = self.c.get_property_of_type(constructor, written)?;
+                    let (prop, mapper) = self.c.get_property_of_type(constructor, property_name)?;
                     Some(self.symbol_of_prop(prop, mapper))
                 }
             };

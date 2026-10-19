@@ -137,10 +137,10 @@ struct ScopeInfo<'a> {
 pub struct State<'a> {
     /// The root nodes of the code paths to analyze.
     roots: FxHashSet<Node<'a>>,
-    /// Memo for [`known_from_parent`].
-    known: AncestorMemo<'a, Known>,
+    /// Memo for [`usefulness_from_parent`].
+    usefulness_memo: AncestorMemo<'a, Usefulness>,
     /// The `return` statements at the end of their function, each with the function.
-    at_the_end: Vec<(Node<'a>, Stmt<'a>)>,
+    returns_at_end: Vec<(Node<'a>, Stmt<'a>)>,
     /// The function enclosing a `return` statement.
     functions: AncestorMemo<'a, Func<'a>>,
     /// True if a `return` statement is in a loop or in a `finally` block.
@@ -319,18 +319,18 @@ const STATEMENTS: [StmtTag; 28] = [
 
 /// The verdict on a `return` without a value, as far as the statements alone can prove one.
 #[derive(Copy, Clone)]
-enum Known {
+enum Usefulness {
     /// It isn't reported: it's in a loop, or removing it would let another statement run.
     Useful,
     /// The function ends right after it, so it's reported if it's reachable.
     Useless,
-    Nothing,
+    Undecided,
 }
 
 /// Without the `return`, execution would continue with the statement after it, or after the `if` statements and blocks
 /// that it ends. This is one step of that search: `current` is the `return` statement or one of those enclosing
 /// statements, and `parent` is its parent.
-fn known_from_parent<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
+fn usefulness_from_parent<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Usefulness> {
     let list = match parent {
         Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => parent.as_block(),
@@ -352,25 +352,25 @@ fn known_from_parent<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
                 | StmtTag::DoWhile
         ) || matches!(next.as_return(), Some(Some(_)));
         return Some(if is_executed {
-            Known::Useful
+            Usefulness::Useful
         } else {
-            Known::Nothing
+            Usefulness::Undecided
         });
     }
     match parent {
         // A `return` in a static block is an error.
         Node::Func(func) if list.is_some() && func.kind() != FnKind::StaticBlock => {
-            Some(Known::Useless)
+            Some(Usefulness::Useless)
         }
         Node::Stmt(parent) => match parent.tag() {
             StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => {
-                Some(Known::Useful)
+                Some(Usefulness::Useful)
             }
             StmtTag::If => None,
             StmtTag::Block if parent.as_block().is_some() => None,
-            _ => Some(Known::Nothing),
+            _ => Some(Usefulness::Undecided),
         },
-        _ => Some(Known::Nothing),
+        _ => Some(Usefulness::Undecided),
     }
 }
 
@@ -443,7 +443,7 @@ fn oxlint_executes_after<'a>(child: Node<'a>, case: Case<'a>) -> Option<bool> {
 impl NoUselessReturn {
     /// oxlint doesn't analyze code paths. It only looks at the statements after the `return`.
     fn oxlint_is_useless<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
-        let at_the_end = &mut state.oxlint_at_the_end;
+        let at_end_memo = &mut state.oxlint_at_the_end;
         let is_useless =
             state
                 .oxlint_useless
@@ -451,7 +451,7 @@ impl NoUselessReturn {
                     Node::Case(case) => match oxlint_executes_after(child, case)? {
                         true => Some(false),
                         // It stops there, and doesn't even look at what follows the `switch` that the `break` exits.
-                        false => Some(at_the_end.find(parent, oxlint_is_at_the_end) == Some(true)),
+                        false => Some(at_end_memo.find(parent, oxlint_is_at_the_end) == Some(true)),
                     },
                     _ => oxlint_is_at_the_end(child, parent),
                 });
@@ -609,8 +609,11 @@ impl Rule for NoUselessReturn {
             }
             return;
         }
-        let known = cx.state.known.find(statement.into(), known_from_parent);
-        if matches!(known, Some(Known::Useful)) {
+        let usefulness = cx
+            .state
+            .usefulness_memo
+            .find(statement.into(), usefulness_from_parent);
+        if matches!(usefulness, Some(Usefulness::Useful)) {
             return;
         }
         let function = cx
@@ -618,8 +621,8 @@ impl Rule for NoUselessReturn {
             .functions
             .find(statement.into(), |_, parent| parent.as_func());
         let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
-        match known {
-            Some(Known::Useless) => cx.state.at_the_end.push((root, statement)),
+        match usefulness {
+            Some(Usefulness::Useless) => cx.state.returns_at_end.push((root, statement)),
             _ => {
                 cx.state.roots.insert(root);
             }
@@ -628,7 +631,7 @@ impl Rule for NoUselessReturn {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         // A function where every `return` is already decided isn't analyzed.
-        for (root, statement) in std::mem::take(&mut cx.state.at_the_end) {
+        for (root, statement) in std::mem::take(&mut cx.state.returns_at_end) {
             if !cx.state.roots.contains(&root) && statement.is_reachable() {
                 self.report(statement, cx);
             }

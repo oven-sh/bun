@@ -191,13 +191,13 @@ impl NoUnnecessaryTypeArguments {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        let of_class =
+        let class_type_parameters =
             || get_type_parameters_from_type(get_symbol_at_location(class?.callee()), false, is_oxlint);
         let sig_decl = node.resolved_signature().and_then(|sig| sig.declaration());
         let type_parameters = match sig_decl {
             // A constructor has none. tsgolint falls back to the class's.
-            Some(sig_decl) => type_parameters_of(sig_decl).or_else(|| of_class().filter(|_| is_oxlint)),
-            None => of_class(),
+            Some(sig_decl) => type_parameters_of(sig_decl).or_else(|| class_type_parameters().filter(|_| is_oxlint)),
+            None => class_type_parameters(),
         };
         let Some(type_parameters) = type_parameters else {
             return;

@@ -25,11 +25,11 @@ impl Handler for Collector<'_> {
     }
 
     fn on_character(&mut self, start: u32, _: u32, value: u32) {
-        let written = self.source.get(start as usize..).unwrap_or_default();
+        let source_text = self.source.get(start as usize..).unwrap_or_default();
         if value <= 0x1F
-            && (written.first() == Some(&(value as u8))
-                || written.starts_with(b"\\x")
-                || written.starts_with(b"\\u"))
+            && (source_text.first() == Some(&(value as u8))
+                || source_text.starts_with(b"\\x")
+                || source_text.starts_with(b"\\u"))
         {
             self.control_chars.push(value as u8);
         }
@@ -45,7 +45,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
     }
     let mut collector = Collector { source: pattern, control_chars: Vec::new() };
     // Characters before a syntax error still count.
-    _ = regex::validate_pattern(pattern, Mode::of_flags(flags), regex::Options::default(), &mut collector);
+    _ = regex::validate_pattern(pattern, Mode::from_flags(flags), regex::Options::default(), &mut collector);
     if collector.control_chars.is_empty() {
         return;
     }
@@ -108,15 +108,15 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
         if is_null || groups > 0 && value > 1 && u32::from(value) <= groups {
             return None;
         }
-        let place = pattern.span(start, end);
-        let written = cx.slice(place);
-        let after_backslashes = strings::trim_left(written, b"\\");
+        let char_span = pattern.span(start, end);
+        let source_text = cx.slice(char_span);
+        let after_backslashes = strings::trim_left(source_text, b"\\");
         let is_the_digit = after_backslashes.first().and_then(|it| char::from(*it).to_digit(16)) == Some(u32::from(value));
-        let escape = written.strip_prefix(b"\\\\").or_else(|| written.strip_prefix(b"\\"));
+        let escape = source_text.strip_prefix(b"\\\\").or_else(|| source_text.strip_prefix(b"\\"));
         if !is_the_digit && !escape.is_some_and(|it| matches!(it.first(), Some(b'x' | b'u'))) {
             return None;
         }
-        let label = move || match (is_octal, place.end - place.start) {
+        let label = move || match (is_octal, char_span.end - char_span.start) {
             (false, _) => format!("'U+{value:04X}' is a control character."),
             (true, len) => {
                 let digits = if matches!(len, 3 | 4) { len as usize - 1 } else { 1 };
@@ -125,7 +125,7 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
                 )
             }
         };
-        Some((place, label))
+        Some((char_span, label))
     });
     let Some((first, label)) = found.next() else {
         return;
@@ -134,8 +134,8 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
     let message = if others.is_empty() { CONTROL_CHARACTER } else { CONTROL_CHARACTERS };
     cx.report(first, message).labels_with(|labels| {
         labels.first(label());
-        for (place, label) in &others {
-            labels.push(*place, label());
+        for (char_span, label) in &others {
+            labels.push(*char_span, label());
         }
     });
 }

@@ -121,7 +121,7 @@ tags! {
 impl<'a> TypeNode<'a> {
     /// `None` if the HIR leaves `id` empty, or if the type comes from a JSDoc comment.
     #[inline]
-    pub(crate) fn written(file: &'a File<'a>, id: hir::TypeNodeId) -> Option<Self> {
+    pub(crate) fn in_source(file: &'a File<'a>, id: hir::TypeNodeId) -> Option<Self> {
         TypeNode::some(file, id).filter(|ty| !super::Handle::is_synthetic(*ty))
     }
 

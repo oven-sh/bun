@@ -51,8 +51,8 @@ fn member_value(initializer: Expr<'_>) -> Option<Value<'_>> {
     (!number.is_nan()).then_some(Value::Number(if is_negated { -number } else { number }))
 }
 
-fn report<'a>(place: Span, value: Value<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
-    let report = cx.report(place, DUPLICATE_VALUE);
+fn report<'a>(report_span: Span, value: Value<'a>, cx: &mut Cx<'a, NoDuplicateEnumValues>) {
+    let report = cx.report(report_span, DUPLICATE_VALUE);
     match value {
         Value::Number(value) => report.data("value", number_to_string(value)),
         Value::String(value) => report.data("value", value),
@@ -75,9 +75,9 @@ fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumVal
         let here = initializer.span();
         let before = seen.entry(value.key()).or_insert(here);
         if *before != here {
-            let place = *before;
+            let report_span = *before;
             let second_name = member.key().and_then(Key::name).map_or(&b""[..], |it| it.bytes());
-            let report = cx.report(place, DUPLICATE_VALUE).data("second_name", second_name);
+            let report = cx.report(report_span, DUPLICATE_VALUE).data("second_name", second_name);
             let report = report.label(here, "and is re-used here");
             // A number is printed as written.
             match value {

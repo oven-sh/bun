@@ -143,9 +143,9 @@ impl DepFields {
                 _ => Vec::new(),
             };
             // `Object.assign` of an array onto an array overwrites by index.
-            let kept = bundled.split_off(names.len().min(bundled.len()));
+            let tail = bundled.split_off(names.len().min(bundled.len()));
             bundled = names;
-            bundled.extend(kept);
+            bundled.extend(tail);
         }
         for name in bundled.into_iter().flatten() {
             all.add(name, IN_BUNDLED_DEPS);

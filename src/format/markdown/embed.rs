@@ -186,8 +186,8 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                 let count = 2 + rest.iter().filter(|op| matches!(op, Op::Line(_))).count();
                 // The printer collapses consecutive line breaks into at most one empty line. After a line break written
                 // as text it doesn't even print that one, because the current line is empty.
-                let is_one_empty_line = count == 2 && !is_literal;
-                match is_one_empty_line {
+                let is_single_empty_line = count == 2 && !is_literal;
+                match is_single_empty_line {
                     true => f.write_element(FormatElement::Line(LineMode::Hard)),
                     false => write_line_breaks(count, f),
                 }
@@ -196,7 +196,7 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                         f.write_element(*element);
                     }
                 }
-                f.write_element(FormatElement::Line(if is_one_empty_line {
+                f.write_element(FormatElement::Line(if is_single_empty_line {
                     LineMode::Empty
                 } else {
                     LineMode::Hard
@@ -240,10 +240,10 @@ pub(crate) fn write_template<'a>(
     }
 
     // The indentation of the first non-blank line is stripped from all lines.
-    let is_blank_byte = |byte: &&u8| byte.is_ascii_whitespace() && **byte != b'\n';
+    let is_space_but_not_line_break = |byte: &&u8| byte.is_ascii_whitespace() && **byte != b'\n';
     let indentation = bun_core::strings::split(&text, b"\n")
         .find(|line| !line.iter().all(u8::is_ascii_whitespace))
-        .map(|line| line[..line.iter().take_while(is_blank_byte).count()].to_vec())
+        .map(|line| line[..line.iter().take_while(is_space_but_not_line_break).count()].to_vec())
         .unwrap_or_default();
     if !indentation.is_empty() {
         let mut dedented = Vec::with_capacity(text.len());

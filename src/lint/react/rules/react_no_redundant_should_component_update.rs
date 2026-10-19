@@ -51,14 +51,14 @@ impl Rule for NoRedundantShouldComponentUpdate {
         }
         let is_oxlint = cx.state.pragmas.is_none();
         // oxlint uses the key's static value, upstream its `name`.
-        let is_it = |member: &Member<'a>| {
+        let is_should_component_update = |member: &Member<'a>| {
             if is_oxlint {
                 member.key().and_then(static_name).is_some_and(|name| name.is("shouldComponentUpdate"))
             } else {
                 get_property_name(Node::Member(*member)).is_some_and(|name| name == b"shouldComponentUpdate")
             }
         };
-        let Some(member) = class.members().iter().find(is_it) else {
+        let Some(member) = class.members().iter().find(is_should_component_update) else {
             return;
         };
         let name = class.name().map(Ident::bytes).or_else(|| name_of_parent(class, is_oxlint)).unwrap_or_default();

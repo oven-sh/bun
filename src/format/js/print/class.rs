@@ -118,16 +118,20 @@ fn last_modifier_must_stay_on_name_line(member: Member<'_>) -> bool {
     if function.is_some_and(Func::is_async) {
         return true;
     }
-    let written = (member.modifiers().iter()).fold(Flags::empty(), |all, it| all | it.flag());
+    let modifier_flags =
+        (member.modifiers().iter()).fold(Flags::empty(), |all, it| all | it.flag());
     // Checked from the last modifier printed to the first. `IN` and `OUT` are Flow's `+` and `-`.
-    if written.intersects(Flags::IN | Flags::OUT) {
+    if modifier_flags.intersects(Flags::IN | Flags::OUT) {
         return false;
     }
-    if written.intersects(Flags::ABSTRACT | Flags::OVERRIDE | Flags::READONLY | Flags::ACCESSOR) {
+    if modifier_flags
+        .intersects(Flags::ABSTRACT | Flags::OVERRIDE | Flags::READONLY | Flags::ACCESSOR)
+    {
         return true;
     }
-    !written.contains(Flags::STATIC)
-        && written.intersects(Flags::AMBIENT | Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE)
+    !modifier_flags.contains(Flags::STATIC)
+        && modifier_flags
+            .intersects(Flags::AMBIENT | Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE)
 }
 
 /// In `static // comment⏎async a() {}` the modifiers aren't nodes, so the comment is attached to the name as a leading
@@ -154,7 +158,7 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
         return;
     };
     if !member.modifiers().is_empty() {
-        write!(f, FormatDecorators::of_member(member));
+        write!(f, FormatDecorators::from_member(member));
         write_comments_between_modifiers(member, f);
         for (flag, keyword) in [
             (Flags::PUBLIC, "public "),
@@ -343,7 +347,7 @@ impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
 }
 
 /// `a = class extends (⏎ b.C<D> ⏎) {}`. For Prettier the parentheses are around `b.C`, and `<D>` comes after them.
-fn type_arguments_of_super_class_are_in_its_parentheses(f: &Formatter<'_>) -> bool {
+fn super_class_type_arguments_are_in_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -556,7 +560,7 @@ impl<'a> Format<'a> for FormatClass<'a> {
 }
 
 /// `class A extends B /* comment */⏎<C> {}` is `B<C> /* comment */` for Prettier and `B /* comment */<C>` for oxfmt.
-fn comments_of_super_class_are_around_its_type_arguments(f: &Formatter<'_>) -> bool {
+fn super_class_comments_wrap_type_arguments(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
@@ -571,13 +575,12 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
         let FormatSuperClass { class, extends } = *self;
         // A JSX element writes its own comments, and so does the content of a `ChainExpression`.
         let comments = (!f.is_quiet()
-            && comments_of_super_class_are_around_its_type_arguments(f)
+            && super_class_comments_wrap_type_arguments(f)
             && extends.tag() != ExprTag::Jsx
             && !is_chain_expression_without_comments(extends, f))
         .then(|| comments_of_expression(extends, f));
         let type_arguments = type_arguments(class.extends_args(), Node::Class(class));
-        let are_type_arguments_in_parentheses =
-            type_arguments_of_super_class_are_in_its_parentheses(f);
+        let are_type_arguments_in_parentheses = super_class_type_arguments_are_in_parentheses(f);
         let content = format_with(|f| {
             match comments {
                 Some(_) => write!(f, FormatNodeWithoutTrailingComments(&extends)),

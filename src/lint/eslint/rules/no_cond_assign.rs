@@ -31,7 +31,7 @@ fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
 }
 
 /// Where to report. oxlint reports at the operator.
-fn place<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
+fn report_span<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
     match assignment.operator_span() {
         Some(operator) if cx.language().is_oxlint => operator,
         _ => assignment.span(),
@@ -64,7 +64,7 @@ impl NoCondAssign {
         if let Some(Some(kind)) = kind
             && !utils::is_assignment_target(e)
         {
-            cx.report(place(e, cx), UNEXPECTED).data("type", kind).hint(hint(e, false));
+            cx.report(report_span(e, cx), UNEXPECTED).data("type", kind).hint(hint(e, false));
         }
     }
 
@@ -75,7 +75,7 @@ impl NoCondAssign {
             && let assignment = get_inner_expression(test)
             && assignment.tag() == ExprTag::Assign
         {
-            cx.report(place(assignment, cx), UNEXPECTED).data("type", kind);
+            cx.report(report_span(assignment, cx), UNEXPECTED).data("type", kind);
         }
     }
 
@@ -101,7 +101,7 @@ impl NoCondAssign {
             _ => 1,
         };
         if test.parens().len() < needed {
-            cx.report(place(test, cx), MISSING).hint(hint(test, needed == 1));
+            cx.report(report_span(test, cx), MISSING).hint(hint(test, needed == 1));
         }
     }
 }

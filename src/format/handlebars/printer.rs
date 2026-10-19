@@ -251,7 +251,7 @@ impl<'a> Printer<'a> {
         }
         for (index, &id) in nodes.iter().enumerate() {
             let node = self.tree.node(id);
-            let is_as_written = node.is_as_written
+            let is_verbatim = node.is_verbatim
                 || self.is_prettier_ignore(id)
                 || (index >= 2 && self.is_prettier_ignore(nodes[index - 2]));
             if let Kind::Text { chars } = node.kind {
@@ -263,7 +263,7 @@ impl<'a> Printer<'a> {
                         Some(Kind::MustacheComment { .. }) => true,
                         // When whitespace is insignificant, the block goes on the next line anyway.
                         Some(Kind::BlockStatement { .. }) => {
-                            self.is_white_space_sensitive || self.pre_depth > 0 || is_as_written
+                            self.is_white_space_sensitive || self.pre_depth > 0 || is_verbatim
                         }
                         Some(_) => false,
                         None => parent == Parent::Block && self.is_white_space_sensitive,
@@ -271,7 +271,7 @@ impl<'a> Printer<'a> {
                 {
                     chars.to_mut().push(b'\\');
                 }
-                match is_as_written {
+                match is_verbatim {
                     // The backslash that escapes a mustache comes before the text node's span, so Prettier doesn't
                     // print it.
                     true if self.options.is_in_markdown => {
@@ -282,7 +282,7 @@ impl<'a> Printer<'a> {
                 }
                 continue;
             }
-            if is_as_written {
+            if is_verbatim {
                 self.ignored(node);
                 continue;
             }
@@ -521,7 +521,7 @@ impl<'a> Printer<'a> {
     fn attribute(&mut self, id: NodeId) {
         let node = self.tree.node(id);
         match node.kind {
-            _ if node.is_as_written => self.ignored(node),
+            _ if node.is_verbatim => self.ignored(node),
             Kind::Attr { name, value } => self.attr_node(self.text(name), value),
             Kind::ElementModifier { call } => {
                 self.start_group();
@@ -819,13 +819,13 @@ impl<'a> Printer<'a> {
         // tags.
         let mut strips = (strip & !ast::INVERSE_OPEN & !ast::INVERSE_CLOSE)
             | (outer.1 & (ast::INVERSE_CLOSE | ast::CLOSE_OPEN));
-        // In a block written as `{{else if a}}`, Handlebars also applies the `~` of a following `{{~else if b}}` to the
-        // implied `{{~/if}}`.
+        // Printed as `{{else if a}}`, the block loses its `{{/if}}`, and Handlebars then uses the `~` of a following
+        // `{{~else if b}}` as its close strip too (`prepareBlock` gets the inverse chain as `close`).
         if matches!(self.body_of(inverse).0, [next] if matches!(self.tree.kind(*next), Kind::BlockStatement { strip, .. } if strip & ast::CHAINED != 0))
         {
             strips |= strip & ast::INVERSE_OPEN;
         }
-        if node.is_as_written || (strip & ast::CHAINED == 0 && strips != 0) {
+        if node.is_verbatim || (strip & ast::CHAINED == 0 && strips != 0) {
             return false;
         }
         match self.head_name(call) {
@@ -862,8 +862,8 @@ impl<'a> Printer<'a> {
         self.token(if strips { "~}}" } else { "}}" });
     }
 
-    /// If `else_if_of` is set, the block is printed as the `{{else if ..}}` of an outer block with that `strip`.
-    fn block_statement(&mut self, node: Node, else_if_of: Option<u8>) {
+    /// If `outer_strip` is set, the block is printed as the `{{else if ..}}` of an outer block with that `strip`.
+    fn block_statement(&mut self, node: Node, outer_strip: Option<u8>) {
         let Kind::BlockStatement {
             call,
             program,
@@ -878,7 +878,7 @@ impl<'a> Printer<'a> {
         let is_ignoring_white_space = !self.is_white_space_sensitive;
 
         self.start_group();
-        match else_if_of {
+        match outer_strip {
             // `printElseIfBlock`
             Some(outer) => {
                 self.open_mustache(outer & ast::INVERSE_OPEN != 0, "else ");
@@ -923,7 +923,7 @@ impl<'a> Printer<'a> {
         }
         self.out.end_group();
 
-        if else_if_of.is_none() {
+        if outer_strip.is_none() {
             self.start_group();
         }
         // `printProgram`
@@ -962,7 +962,7 @@ impl<'a> Printer<'a> {
                 self.out.end_indent();
             }
         }
-        if else_if_of.is_some() {
+        if outer_strip.is_some() {
             return;
         }
         // `printCloseBlock`
@@ -990,7 +990,7 @@ impl<'a> Printer<'a> {
         else {
             return;
         };
-        if node.is_as_written {
+        if node.is_verbatim {
             return self.ignored(node);
         }
         self.start_group();
@@ -1049,7 +1049,7 @@ impl<'a> Printer<'a> {
     fn expression(&mut self, id: NodeId, needs_opposite_quote: bool) {
         let node = self.tree.node(id);
         match node.kind {
-            _ if node.is_as_written => self.ignored(node),
+            _ if node.is_verbatim => self.ignored(node),
             Kind::SubExpression { .. } if !self.stack.has_room() => {}
             Kind::SubExpression { call } => {
                 self.start_group();

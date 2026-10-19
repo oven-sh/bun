@@ -80,18 +80,18 @@ pub(crate) fn parse<'a>(
         })
     };
     let find_short = |name: u8| params.iter().find(|param| param.names.short == Some(name));
-    let unknown = |written: &[u8], name: &[u8]| {
+    let unknown = |option_text: &[u8], name: &[u8]| {
         let closest = (params.iter().filter_map(|param| param.names.long))
             .min_by_key(|long| strings::edit_distance(name.iter().copied(), *long));
         match closest {
             Some(closest) => error(&[
                 b"Invalid option '",
-                written,
+                option_text,
                 b"' - perhaps you meant '--",
                 closest,
                 b"'?",
             ]),
-            None => error(&[b"Invalid option '", written, b"'."]),
+            None => error(&[b"Invalid option '", option_text, b"'."]),
         }
     };
     // The flag whose value is the next argument.

@@ -18,7 +18,7 @@ const NOT_TEXT: u8 = 1;
 struct Marker {
     start: usize,
     end: usize,
-    place: (Index, Index),
+    index_range: (Index, Index),
 }
 
 fn is_whitespace(byte: u8) -> bool {
@@ -148,7 +148,7 @@ impl Listens for NoSpaceInEmphasis {
         for &span in texts.iter() {
             let first = masked.len();
             let between = cx.document.slice(Span::before(from, span));
-            util::push_blanks(between, false, &mut masked);
+            util::push_as_spaces(between, false, &mut masked);
             if !between.iter().all(|&byte| is_whitespace(byte)) {
                 masked[first..].fill(NOT_TEXT);
             }
@@ -173,7 +173,7 @@ impl Listens for NoSpaceInEmphasis {
             let marker = Marker {
                 start,
                 end,
-                place: (index, index + len as Index),
+                index_range: (index, index + len as Index),
             };
             // A `*` or `~` with whitespace on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 *
             // 4` into `2 *3* 4`.
@@ -197,7 +197,7 @@ impl Listens for NoSpaceInEmphasis {
             };
             match open[at].1.take() {
                 Some(opening) if is_broken_pair(&masked, opening, marker) => {
-                    let (opening, closing) = (opening.place, marker.place);
+                    let (opening, closing) = (opening.index_range, marker.index_range);
                     report_whitespace(opening.1, opening.0, opening.1 + 2)?;
                     report_whitespace(closing.0 - 1, closing.0 - 2, closing.1)?;
                 }

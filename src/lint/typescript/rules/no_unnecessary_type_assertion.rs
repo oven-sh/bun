@@ -325,8 +325,8 @@ fn contains_any(ty: Type) -> bool {
 }
 
 fn contains_type_variable(ty: Type) -> bool {
-    let is_one = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
-    type_contains(ty, is_one, &mut Visited::default()).unwrap_or(false)
+    let is_type_variable_or_index = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
+    type_contains(ty, is_type_variable_or_index, &mut Visited::default()).unwrap_or(false)
 }
 
 fn has_phantom_type_arguments(ty: Type) -> bool {
@@ -765,8 +765,8 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
             continue;
         }
         let arg_index = call.args().iter().position(|it| it == argument).unwrap_or_else(|| call.args().len());
-        let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
-        let mut element_path = element_path.into_iter().rev().skip(left_out);
+        let (arg_index, skipped) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
+        let mut element_path = element_path.into_iter().rev().skip(skipped);
         return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, &mut element_path);
     }
     false
@@ -909,7 +909,7 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
         if let ExprKind::Call(it) | ExprKind::New(it) | ExprKind::TaggedTemplate(it) = call.kind()
             && it.type_args().is_empty()
         {
-            let ty = call.context_free_type_of_call_resolved_afresh();
+            let ty = call.context_free_type_of_freshly_resolved_call();
             return (0..awaits).fold(ty, |ty, _| ty.get_awaited_type().unwrap_or(ty));
         }
     }
@@ -941,7 +941,7 @@ impl<'a> Visitor<'a> for InferringCallFinder {
             && infers_type_arguments(e) == Some(true)
         {
             // If its type is the same without a contextual type, the assertion doesn't affect it.
-            self.is_found = e.context_free_type_of_call_resolved_afresh() != e.ty();
+            self.is_found = e.context_free_type_of_freshly_resolved_call() != e.ty();
         }
     }
 
@@ -971,7 +971,7 @@ fn infers_type_arguments(node: Expr) -> Option<bool> {
 
 /// `Array.from(a.querySelectorAll("b")) as C[]`: the asserted type also becomes the inner call's contextual type,
 /// through the outer call's type parameters. Such an assertion isn't reported.
-fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> bool {
+fn asserted_type_reaches_call_in_arguments(expression: Expr) -> bool {
     let mut call = expression;
     while let ExprKind::Await(argument) = call.kind() {
         call = argument;
@@ -1059,7 +1059,7 @@ impl NoUnnecessaryTypeAssertion {
         if cast_type.is_unresolved() || uncast_type.is_unresolved() {
             return;
         }
-        if cx.language().is_oxlint && is_asserted_type_expected_of_a_call_in_the_arguments(expression) {
+        if cx.language().is_oxlint && asserted_type_reaches_call_in_arguments(expression) {
             return;
         }
         // If an identifier with a conditional type has its constraint as its type, tsgolint uses the declared type.

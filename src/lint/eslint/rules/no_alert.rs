@@ -67,11 +67,11 @@ impl Rule for NoAlert {
             return;
         }
         // oxlint reports at the callee.
-        let place = if cx.language().is_oxlint { callee.span() } else { e.span() };
+        let report_span = if cx.language().is_oxlint { callee.span() } else { e.span() };
         match callee.kind() {
             ExprKind::Ident(name) => {
                 if !is_shadowed(callee) {
-                    cx.report(place, UNEXPECTED).data("name", name);
+                    cx.report(report_span, UNEXPECTED).data("name", name);
                 }
             }
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
@@ -79,7 +79,7 @@ impl Rule for NoAlert {
                     && is_prohibited_identifier(&name)
                     && is_global_this_reference_or_global_window(e, obj)
                 {
-                    cx.report(place, UNEXPECTED).data("name", name);
+                    cx.report(report_span, UNEXPECTED).data("name", name);
                 }
             }
             _ => {}

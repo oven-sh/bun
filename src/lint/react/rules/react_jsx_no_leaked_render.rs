@@ -30,8 +30,8 @@ impl Rule for JsxNoLeakedRender {
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
-        let given = config.strings("validStrategies");
-        let strategies = if config.has("validStrategies") { &given[..] } else { &["ternary", "coerce"][..] };
+        let configured = config.strings("validStrategies");
+        let strategies = if config.has("validStrategies") { &configured[..] } else { &["ternary", "coerce"][..] };
         let strategy_of = |it: &&str| if *it == "coerce" { Strategy::Coerce } else { Strategy::Ternary };
         JsxNoLeakedRender {
             allows_ternary: strategies.contains(&"ternary"),

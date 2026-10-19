@@ -17,7 +17,7 @@ pub enum Method {
 }
 
 impl Method {
-    fn of(name: &[u8]) -> Method {
+    fn from_name(name: &[u8]) -> Method {
         match name {
             b"GET" => Method::Get,
             b"HEAD" => Method::Head,
@@ -25,7 +25,7 @@ impl Method {
         }
     }
 
-    fn of_any_case(name: &[u8]) -> Method {
+    fn from_name_ignoring_case(name: &[u8]) -> Method {
         if name.eq_ignore_ascii_case(b"GET") {
             Method::Get
         } else if name.eq_ignore_ascii_case(b"HEAD") {
@@ -35,9 +35,9 @@ impl Method {
         }
     }
 
-    fn of_template(template: Template) -> Method {
+    fn from_template(template: Template) -> Method {
         match template.quasi_count() {
-            1 => Method::of_any_case(template.raw(0)),
+            1 => Method::from_name_ignoring_case(template.raw(0)),
             _ => Method::Unknown,
         }
     }
@@ -132,8 +132,8 @@ fn method_of<'a>(value: Expr<'a>, known: &mut Known<'a>) -> Option<Method> {
         return Some(Method::Unknown);
     }
     let (variable, is_object) = match value.kind() {
-        ExprKind::String(name) => return Some(Method::of_any_case(name.bytes())),
-        ExprKind::Template(template) => return Some(Method::of_template(template)),
+        ExprKind::String(name) => return Some(Method::from_name_ignoring_case(name.bytes())),
+        ExprKind::Template(template) => return Some(Method::from_template(template)),
         ExprKind::Dot { obj, .. } if !value.is_private_member() && !value.is_chain_root() => (obj, true),
         _ => (value, false),
     };
@@ -159,7 +159,7 @@ fn method_of_enum(symbol: Symbol) -> Option<Method> {
     };
     let initializers = declaration.members().iter().filter_map(EnumMember::init);
     let first_string = initializers.filter(|it| !it.is_parenthesized()).find_map(Expr::as_string);
-    first_string.map(|it| Method::of(it.bytes()))
+    first_string.map(|it| Method::from_name(it.bytes()))
 }
 
 fn method_of_variable(symbol: Symbol) -> Option<Method> {
@@ -169,8 +169,8 @@ fn method_of_variable(symbol: Symbol) -> Option<Method> {
                 return None;
             };
             Some(match declarator.init().filter(|it| !it.is_parenthesized()).map(Expr::kind) {
-                Some(ExprKind::String(name)) => Method::of_any_case(name.bytes()),
-                Some(ExprKind::Template(template)) => Method::of_template(template),
+                Some(ExprKind::String(name)) => Method::from_name_ignoring_case(name.bytes()),
+                Some(ExprKind::Template(template)) => Method::from_template(template),
                 _ => Method::Unknown,
             })
         }
@@ -201,7 +201,7 @@ fn method_of_variable(symbol: Symbol) -> Option<Method> {
 fn string_literal(ty: TypeNode) -> Option<Method> {
     match ty.kind() {
         TypeKind::StringLit(name) if !ty.is_parenthesized() && !ty.text().starts_with(b"`") => {
-            Some(Method::of_any_case(name.bytes()))
+            Some(Method::from_name_ignoring_case(name.bytes()))
         }
         _ => None,
     }

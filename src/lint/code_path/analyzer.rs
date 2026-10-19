@@ -41,7 +41,7 @@ bitflags::bitflags! {
         const JSX_NAME = 1 << 5;
         /// Not an ESTree node, and irrelevant to the analysis.
         const ABSENT = 1 << 6;
-        /// It matters which of its children a node is. See `place_of_expr` and `preprocess`.
+        /// It matters which of its children a node is. See `flags_from_parent` and `preprocess`.
         const CHILD_POSITION_MATTERS = 1 << 7;
         /// Leaving it takes more work than just emitting pending segment changes.
         const HAS_EXIT = 1 << 8;
@@ -217,7 +217,7 @@ pub(super) fn is_binding_a_reference(pat: Pat) -> bool {
 }
 
 /// The flags `e` gets from being a particular child of `parent`.
-fn place_of_expr<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
+fn flags_from_parent<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
     match parent.node {
         Node::Expr(parent_expr) => match parent_expr.kind() {
             ExprKind::Assign { target, .. } if target == e => Is::PATTERN,
@@ -754,7 +754,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             && parent.is.contains(Is::CHILD_POSITION_MATTERS)
         {
             match node {
-                Node::Expr(e) => is = place_of_expr(e, parent),
+                Node::Expr(e) => is = flags_from_parent(e, parent),
                 Node::Prop(_) if parent.is.contains(Is::PATTERN) => {
                     is = Is::PATTERN | Is::CHILD_POSITION_MATTERS
                 }
@@ -1079,10 +1079,10 @@ impl<'a> Recorder<'_, 'a> {
             };
             self.enter(node);
             // Until something may have thrown in a `try` block, every name matters.
-            let is_left_out = matters.is_some_and(|it| it.can_skip(node))
+            let is_skipped = matters.is_some_and(|it| it.can_skip(node))
                 && !self.builder.is_before_first_throwable()
                 || is_shallow && self.builder.has_started_inner_code_path();
-            if is_left_out {
+            if is_skipped {
                 self.exit(node);
                 continue;
             }
@@ -1143,7 +1143,7 @@ pub(super) fn steps_of<'a>(
         exit,
     };
     // Whether a node starts a code path depends on its parent.
-    let (around, first) = match root {
+    let (parent_frame, first) = match root {
         Node::Func(func) => match func.owner() {
             owner @ Node::Member(_) => (Some((owner, Is::empty())), root),
             owner => (None, owner),
@@ -1151,7 +1151,7 @@ pub(super) fn steps_of<'a>(
         Node::Expr(_) => (Some((root.parent(), Is::CHILD_POSITION_MATTERS)), root),
         _ => (None, root),
     };
-    if let Some((node, is)) = around {
+    if let Some((node, is)) = parent_frame {
         recorder.builder.ancestors.push(Frame { node, is });
     }
     recorder.walk(vec![first], None, is_shallow);

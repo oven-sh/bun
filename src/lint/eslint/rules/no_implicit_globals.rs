@@ -77,7 +77,7 @@ struct HoistedFunction<'a> {
     /// The scope that oxc puts it in.
     to: Scope<'a>,
     /// The outermost scope that is `to` or encloses it, and in which oxc has a function with that name.
-    around: Scope<'a>,
+    outermost_scope: Scope<'a>,
 }
 
 impl<'a> HoistedFunction<'a> {
@@ -101,7 +101,7 @@ impl<'a> HoistedFunction<'a> {
                 && !func.is_async()
                 && !func.is_generator()
             {
-                hoisted.push(HoistedFunction { symbol, start: name.span().start, to, around: to });
+                hoisted.push(HoistedFunction { symbol, start: name.span().start, to, outermost_scope: to });
             }
         }
         utils::sort::sort_unstable_by_key(&mut hoisted, |it| (it.key(), it.to.id(), it.start));
@@ -116,8 +116,8 @@ impl<'a> HoistedFunction<'a> {
             {
                 return false;
             }
-            if let Some(last) = last_of_name.filter(|last| last.around.contains(it.to)) {
-                it.around = last.around;
+            if let Some(last) = last_of_name.filter(|last| last.outermost_scope.contains(it.to)) {
+                it.outermost_scope = last.outermost_scope;
             }
             last = Some(*it);
             true
@@ -130,7 +130,7 @@ impl<'a> HoistedFunction<'a> {
         let (name, start) = (reference.name(), reference.span().start);
         let after = hoisted.partition_point(|it| it.key() <= (name.atom().0, start));
         let before = after.checked_sub(1).and_then(|it| hoisted.get(it));
-        before.is_some_and(|it| it.symbol.name() == name && it.around.contains(reference.scope()))
+        before.is_some_and(|it| it.symbol.name() == name && it.outermost_scope.contains(reference.scope()))
     }
 }
 
@@ -178,16 +178,16 @@ impl NoImplicitGlobals {
             let Some((kind, is_lexical, whole)) = kind_of(declaration, is_oxlint) else {
                 continue;
             };
-            let place = if is_oxlint { declaration.name_span() } else { Some(whole) };
-            let Some(place) = place.filter(|_| !is_lexical || self.lexical_bindings) else {
+            let report_span = if is_oxlint { declaration.name_span() } else { Some(whole) };
+            let Some(report_span) = report_span.filter(|_| !is_lexical || self.lexical_bindings) else {
                 continue;
             };
             if is_readonly {
-                cx.report(place, REDECLARATION_OF_READONLY_GLOBAL);
+                cx.report(report_span, REDECLARATION_OF_READONLY_GLOBAL);
                 continue;
             }
             let message = if is_lexical { GLOBAL_LEXICAL_BINDING } else { GLOBAL_NON_LEXICAL_BINDING };
-            cx.report(place, message).data("kind", kind);
+            cx.report(report_span, message).data("kind", kind);
         }
     }
 

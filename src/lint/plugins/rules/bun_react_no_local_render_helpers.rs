@@ -62,7 +62,7 @@ impl Rule for ReactNoLocalRenderHelpers {
         if !self.is_render_name(symbol.name().bytes()) {
             return;
         }
-        let Some(around) = function_of(symbol).and_then(Func::enclosing) else {
+        let Some(enclosing_function) = function_of(symbol).and_then(Func::enclosing) else {
             return;
         };
         // Either it's called, or it's passed to a function that calls it.
@@ -71,7 +71,7 @@ impl Rule for ReactNoLocalRenderHelpers {
         let element = |_, parent: Node<'a>| parent.as_expr().filter(|it| it.tag() == ExprTag::Jsx);
         let is_in_jsx = uses.any(|it| {
             let found = cx.state.find(Node::Expr(it), element);
-            found.is_some_and(|found| around.span().contains(found.span()))
+            found.is_some_and(|found| enclosing_function.span().contains(found.span()))
         });
         if is_in_jsx && let Some(span) = symbol.declarations().next().and_then(Declaration::name_span) {
             cx.report(span, LOCAL_HELPER).data("name", symbol.name());

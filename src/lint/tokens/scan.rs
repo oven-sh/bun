@@ -204,7 +204,7 @@ impl Marks {
     #[inline]
     fn name(&mut self, text: &[u8], stops: ScannerStops, at: u32) {
         let len = stops.after_name.run(at as usize) as usize;
-        let word = Word::of_chunk(Chunk::at(text, at as usize), len);
+        let word = Word::from_chunk(Chunk::at(text, at as usize), len);
         if !matches!(word, Word::Name | Word::Strict | Word::StrictAndEspree) {
             self.names.push(at);
         }
@@ -476,7 +476,7 @@ impl Word {
 
     /// Classifies the first `len` bytes of `chunk`.
     #[inline]
-    fn of_chunk(chunk: Chunk, len: usize) -> Word {
+    fn from_chunk(chunk: Chunk, len: usize) -> Word {
         if !(2..=10).contains(&len) {
             return Word::Name;
         }
@@ -499,8 +499,8 @@ impl Word {
     }
 
     #[inline]
-    fn of(word: &[u8]) -> Word {
-        Word::of_chunk(Chunk::at(word, 0), word.len())
+    fn from_bytes(word: &[u8]) -> Word {
+        Word::from_chunk(Chunk::at(word, 0), word.len())
     }
 }
 
@@ -557,7 +557,7 @@ struct Scanner<'a> {
 
 /// Returns `file`'s tokens and comments.
 pub(super) fn scan<'a>(file: &'a File<'a>) -> (Vec<RawToken>, Vec<RawToken>) {
-    let dialect = Dialect::of(file);
+    let dialect = Dialect::for_file(file);
     let mut stops = ScannerStopsBuffer::default();
     let stops = stops.find(file.text());
     let scanner = Scanner::run(file, stops, dialect, Marks::new(file, stops, dialect));
@@ -577,7 +577,7 @@ pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
     let start = start_of_code(file);
     if text[start..].starts_with(b"#!") {
         let end = find_line_end(text, start + 2);
-        if end > start + 2 || Dialect::of(file) != Dialect::TypeScript {
+        if end > start + 2 || Dialect::for_file(file) != Dialect::TypeScript {
             comments.push(RawToken {
                 start: start as u32,
                 end: end as u32,
@@ -607,19 +607,19 @@ fn start_of_code(file: &File) -> usize {
 
 /// True if escape sequences in `file`'s names are decoded, as espree and oxlint do.
 pub(super) fn decodes_names(file: &File) -> bool {
-    Dialect::of(file) != Dialect::TypeScript
+    Dialect::for_file(file) != Dialect::TypeScript
 }
 
 fn has_html_comments<'a>(file: &'a File<'a>) -> bool {
     match file.language().is_oxlint {
         // oxc allows them in TypeScript too.
         true => crate::utils::oxlint::source_type(file) != SourceType::Module,
-        false => Dialect::of(file) != Dialect::TypeScript && !file.is_module(),
+        false => Dialect::for_file(file) != Dialect::TypeScript && !file.is_module(),
     }
 }
 
 impl Dialect {
-    fn of(file: &File) -> Dialect {
+    fn for_file(file: &File) -> Dialect {
         match file.is_javascript() && file.language().parser != Parser::TypeScript {
             _ if file.language().is_oxlint => Dialect::Oxc,
             true => Dialect::Espree {
@@ -920,7 +920,7 @@ impl<'a> Scanner<'a> {
             return;
         }
         let mut kind = TokenKind::Identifier;
-        let word = Word::of_chunk(Chunk::at(text, start), end - start);
+        let word = Word::from_chunk(Chunk::at(text, start), end - start);
         if word != Word::Name {
             kind = self.word_kind(word);
         }
@@ -993,7 +993,7 @@ impl<'a> Scanner<'a> {
             }
             let is_es5 = self.dialect == Dialect::Espree { is_es5: true };
             if at == end
-                && Word::of(&word[..len]) == Word::StrictAndEspree
+                && Word::from_bytes(&word[..len]) == Word::StrictAndEspree
                 && (!is_es5 || word[0] == b's')
             {
                 kind = TokenKind::Keyword;

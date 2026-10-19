@@ -105,7 +105,11 @@ pub(crate) struct BaseTypeAnswers<'a> {
 
 impl<'a> BaseTypeAnswers<'a> {
     /// Returns the answer for `ty`, calling `ask` if it isn't cached.
-    pub(crate) fn get_or_ask(&mut self, ty: Type<'a>, ask: impl FnOnce(&mut Self) -> bool) -> bool {
+    pub(crate) fn get_or_compute(
+        &mut self,
+        ty: Type<'a>,
+        ask: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
         if let Some(&answer) = self.known.get(ty) {
             return answer;
         }
@@ -122,13 +126,13 @@ impl<'a> BaseTypeAnswers<'a> {
         self.open.push(ty);
         let answer = ask(self);
         self.open.pop();
-        let reopened_around = self.first_reopened.filter(|&first| first < index);
+        let reopened_outer = self.first_reopened.filter(|&first| first < index);
         // A "no" that was computed while an outer type was still open may be wrong in another context, so don't cache
         // it.
-        if answer || reopened_around.is_none() {
+        if answer || reopened_outer.is_none() {
             self.known.insert(ty, answer);
         }
-        self.first_reopened = match (reopened_before, reopened_around) {
+        self.first_reopened = match (reopened_before, reopened_outer) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
@@ -172,7 +176,7 @@ fn recurse<'a>(
             .any(|base_type| recurse(base_type, predicate, known))
     };
     match base_types.len() > 1 {
-        true => known.get_or_ask(ty, ask),
+        true => known.get_or_compute(ty, ask),
         false => ask(known),
     }
 }

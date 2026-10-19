@@ -67,11 +67,11 @@ fn end_including_previous_statement_semicolon(comment: Comment<'_>, f: &Formatte
         return end;
     }
     let rest = f.source_text().as_bytes().get(end as usize..);
-    let blanks = (rest.unwrap_or_default().iter())
+    let whitespace_len = (rest.unwrap_or_default().iter())
         .take_while(|b| b.is_ascii_whitespace())
         .count() as u32;
-    match f.source_text().byte_at(end + blanks) {
-        Some(b';') => end + blanks + 1,
+    match f.source_text().byte_at(end + whitespace_len) {
+        Some(b';') => end + whitespace_len + 1,
         _ => end,
     }
 }

@@ -186,11 +186,11 @@ impl<'p> Parser<'p> {
 
     #[optimize(size)]
     fn bump_if(&mut self, prefix: &str) -> bool {
-        let is_there = self.rest().starts_with(prefix);
-        if is_there {
+        let has_prefix = self.rest().starts_with(prefix);
+        if has_prefix {
             prefix.chars().for_each(|_| _ = self.bump());
         }
-        is_there
+        has_prefix
     }
 
     #[optimize(size)]
@@ -935,13 +935,13 @@ impl<'p> Parser<'p> {
                         | "xdigit"
                 )
         };
-        let is_one = parse();
-        if !is_one {
+        let is_ascii_class = parse();
+        if !is_ascii_class {
             self.pos = start;
         } else if is_negated {
             self.defer_error_unless_unicode(self.span_from(start), INVALID_UTF8);
         }
-        is_one
+        is_ascii_class
     }
 
     /// Returns whether such a class can exist.

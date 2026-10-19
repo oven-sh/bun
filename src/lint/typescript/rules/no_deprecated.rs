@@ -36,7 +36,7 @@ impl<'a> IdentifierLike<'a> {
     }
 
     /// For a name that isn't a node here.
-    fn of_ident(ident: Ident<'a>, file: &'a File<'a>) -> Self {
+    fn from_ident(ident: Ident<'a>, file: &'a File<'a>) -> Self {
         IdentifierLike::new(file.type_checker().ts_node(ident), ident.span(), ident.bytes())
     }
 }
@@ -53,26 +53,26 @@ pub struct Deprecations<'a> {
     /// Set for tsgolint, which checks each declaration itself, so a member doesn't inherit the tag of what it
     /// implements or overrides.
     ignores_inherited_tags: bool,
-    of_symbols: IdMap<TsSymbol<'a>, Option<&'a [u8]>>,
-    of_signatures: IdMap<Signature<'a>, Option<&'a [u8]>>,
+    symbol_reasons: IdMap<TsSymbol<'a>, Option<&'a [u8]>>,
+    signature_reasons: IdMap<Signature<'a>, Option<&'a [u8]>>,
 }
 
 impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(symbol)`
-    fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
+    fn for_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
         let ignores_inherited_tags = self.ignores_inherited_tags;
-        *self.of_symbols.get_or_insert_with(symbol, || match ignores_inherited_tags {
+        *self.symbol_reasons.get_or_insert_with(symbol, || match ignores_inherited_tags {
             true => symbol.declarations().find_map(deprecation_of_declaration),
             false => symbol.deprecation(),
         })
     }
 
     /// `getJsDocDeprecation(signature)`
-    fn of_signature(&mut self, signature: Option<Signature<'a>>) -> Option<&'a [u8]> {
+    fn for_signature(&mut self, signature: Option<Signature<'a>>) -> Option<&'a [u8]> {
         let signature = signature?;
         let ignores_inherited_tags = self.ignores_inherited_tags;
-        *self.of_signatures.get_or_insert_with(signature, || match ignores_inherited_tags {
+        *self.signature_reasons.get_or_insert_with(signature, || match ignores_inherited_tags {
             true => signature.declaration().and_then(deprecation_of_declaration),
             false => signature.deprecation(),
         })
@@ -88,29 +88,29 @@ impl<'a> Deprecations<'a> {
         let mut symbol = symbol?;
         if !symbol.has_flags(SymbolFlags::ALIAS) {
             return match check_deprecations_of_aliased_symbol {
-                true => self.of_symbol(Some(symbol)),
+                true => self.for_symbol(Some(symbol)),
                 false => None,
             };
         }
         let target_symbol = symbol.get_aliased_symbol();
         let mut seen = IdSet::new();
         while symbol.has_flags(SymbolFlags::ALIAS) && seen.insert(symbol) {
-            if let Some(reason) = self.of_symbol(Some(symbol)) {
+            if let Some(reason) = self.for_symbol(Some(symbol)) {
                 return Some(reason);
             }
             symbol.declarations().next()?;
             symbol = symbol.get_immediate_aliased_symbol()?;
             if check_deprecations_of_aliased_symbol && symbol == target_symbol {
-                return self.of_symbol(Some(symbol));
+                return self.for_symbol(Some(symbol));
             }
         }
         None
     }
 
     /// `getCallLikeDeprecation(node)`, where `call` is `node.parent`.
-    fn of_call_like(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
+    fn for_call_like(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
         if self.ignores_inherited_tags {
-            return self.of_call_like_as_tsgolint(node, call);
+            return self.tsgolint_for_call_like(node, call);
         }
         let symbol = node.get_symbol_at_location();
         let aliased_symbol = symbol.map(TsSymbol::skip_alias);
@@ -124,19 +124,19 @@ impl<'a> Deprecations<'a> {
         if let Some(reason) = self.search_in_aliases_chain(symbol, !has_overloads) {
             return Some(reason);
         }
-        if let Some(reason) = self.of_signature(call.get_resolved_signature()) {
+        if let Some(reason) = self.for_signature(call.get_resolved_signature()) {
             return Some(reason);
         }
         match has_overloads {
             true => None,
-            false => self.of_symbol(aliased_symbol),
+            false => self.for_symbol(aliased_symbol),
         }
     }
 
     /// tsgolint's `getCallLikeDeprecation`: the signature's declaration is checked before the symbol.
-    fn of_call_like_as_tsgolint(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
+    fn tsgolint_for_call_like(&mut self, node: TsNode<'a>, call: TsNode<'a>) -> Option<&'a [u8]> {
         let signature = call.get_resolved_signature();
-        if let Some(reason) = self.of_signature(signature) {
+        if let Some(reason) = self.for_signature(signature) {
             return Some(reason);
         }
         let symbol = node.get_symbol_at_location()?;
@@ -150,14 +150,14 @@ impl<'a> Deprecations<'a> {
         }
         // If the signature has no declaration, any deprecated overload counts.
         match has_overloads && signature.and_then(Signature::declaration).is_none() {
-            true => self.of_symbol(Some(aliased_symbol)),
+            true => self.for_symbol(Some(aliased_symbol)),
             false => None,
         }
     }
 
     /// `getDeprecationReason(node)` for a `node` whose parent is a `Property`. `object_type` returns the type of the
     /// `ObjectExpression` or `ObjectPattern`.
-    fn of_property(
+    fn for_property(
         &mut self,
         node: TsNode<'a>,
         name: &[u8],
@@ -167,10 +167,10 @@ impl<'a> Deprecations<'a> {
         if let Some(reason) = self.search_in_aliases_chain(property_symbol, true) {
             return Some(reason);
         }
-        if let Some(reason) = self.of_symbol(object_type().get_property(name)) {
+        if let Some(reason) = self.for_symbol(object_type().get_property(name)) {
             return Some(reason);
         }
-        if let Some(reason) = self.of_symbol(property_symbol) {
+        if let Some(reason) = self.for_symbol(property_symbol) {
             return Some(reason);
         }
         let value_symbol = property_symbol?.value_declaration()?.get_shorthand_assignment_value_symbol();
@@ -178,16 +178,16 @@ impl<'a> Deprecations<'a> {
     }
 
     /// `getDeprecationReason(node)` for any other `node`.
-    fn of_identifier(&mut self, node: TsNode<'a>) -> Option<&'a [u8]> {
+    fn for_identifier(&mut self, node: TsNode<'a>) -> Option<&'a [u8]> {
         self.search_in_aliases_chain(node.get_symbol_at_location(), true)
     }
 
     /// `getDeprecationReason(node)` for an identifier that's `callee`, or the property of the `MemberExpression`
     /// `callee`.
-    fn of_expression(&mut self, node: TsNode<'a>, callee: Expr<'a>) -> Option<&'a [u8]> {
+    fn for_expression(&mut self, node: TsNode<'a>, callee: Expr<'a>) -> Option<&'a [u8]> {
         match get_call_like_node(callee) {
-            Some((callee, call)) => self.of_call_like(callee.ts_node(), call.ts_node()),
-            None => self.of_identifier(node),
+            Some((callee, call)) => self.for_call_like(callee.ts_node(), call.ts_node()),
+            None => self.for_identifier(node),
         }
     }
 }
@@ -247,7 +247,7 @@ fn deprecation_of_declaration<'a>(declaration: TsNode<'a>) -> Option<&'a [u8]> {
     let reason = root.deprecation()?;
     // The other places `getJSDocTags` takes the tag from: a variable's initializer, the thing a function or type is the
     // value of, and the `namespace A` of `namespace A.B`.
-    let elsewhere = match (root.kind(), root.parent()) {
+    let other_source = match (root.kind(), root.parent()) {
         (SyntaxKind::VariableDeclaration, _) => root.initializer(),
         (kind, Some(parent)) => match parent.kind() {
             SyntaxKind::PropertyAssignment
@@ -260,7 +260,7 @@ fn deprecation_of_declaration<'a>(declaration: TsNode<'a>) -> Option<&'a [u8]> {
         },
         (_, None) => None,
     };
-    if elsewhere.is_some_and(has_tag) {
+    if other_source.is_some_and(has_tag) {
         return None;
     }
     Some(if root == declaration { reason } else { &b""[..] })
@@ -410,7 +410,7 @@ impl NoDeprecated {
 
     /// For an identifier that needs no special handling.
     fn check_plain<'a>(&self, node: IdentifierLike<'a>, cx: &mut Cx<'a, Self>) {
-        let reason = cx.state.of_identifier(node.node);
+        let reason = cx.state.for_identifier(node.node);
         self.report(node, reason, cx);
     }
 
@@ -451,7 +451,7 @@ impl NoDeprecated {
                     ExprKind::Jsx(jsx) if jsx.tag() == Some(e) || jsx.close_tag() == Some(e) => return,
                     _ => {}
                 }
-                cx.state.of_expression(node, e)
+                cx.state.for_expression(node, e)
             }
             Node::Prop(prop)
                 if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() && !prop.is_import_attribute() =>
@@ -461,7 +461,7 @@ impl NoDeprecated {
                 };
                 if is_oxlint && prop.kind() != PropKind::Shorthand {
                     // For tsgolint a value, even in a pattern, and a computed key are identifiers like any other.
-                    cx.state.of_identifier(node)
+                    cx.state.for_identifier(node)
                 } else {
                     // Upstream treats the value in a pattern and the key in an object as a declaration, even if the key
                     // is computed.
@@ -471,7 +471,7 @@ impl NoDeprecated {
                     if prop.kind() == PropKind::Shorthand {
                         node = NameOf(prop).ts_node();
                     }
-                    cx.state.of_property(node, name, || object.ty())
+                    cx.state.for_property(node, name, || object.ty())
                 }
             }
             // tsgolint looks up an identifier that's a `BindingElement`'s default as a property of the destructured
@@ -484,16 +484,16 @@ impl NoDeprecated {
                     let Node::Pat(pattern) = prop.parent() else {
                         return;
                     };
-                    cx.state.of_property(node, property_name, || binding_pattern_source_type(pattern))
+                    cx.state.for_property(node, property_name, || binding_pattern_source_type(pattern))
                 }
-                false => cx.state.of_identifier(node),
+                false => cx.state.for_identifier(node),
             },
             // A computed key.
             Node::PatProp(prop) if prop.default() != Some(e) => {
                 let Node::Pat(pattern) = prop.parent() else {
                     return;
                 };
-                cx.state.of_property(node, name, || pattern.ty())
+                cx.state.for_property(node, name, || pattern.ty())
             }
             // A computed key. Upstream doesn't handle abstract members. For tsgolint it's an identifier like any other.
             Node::Member(member)
@@ -504,7 +504,7 @@ impl NoDeprecated {
                 return;
             }
             Node::EnumMember(member) if member.init() != Some(e) => return,
-            _ => cx.state.of_identifier(node),
+            _ => cx.state.for_identifier(node),
         };
         self.report(IdentifierLike::new(node, e.span(), name), reason, cx);
     }
@@ -516,13 +516,13 @@ impl NoDeprecated {
             return;
         };
         let node = IdentifierLike::new(NameOf(e).ts_node(), name.span(), name.bytes());
-        let reason = cx.state.of_expression(node.node, e);
+        let reason = cx.state.for_expression(node.node, e);
         self.report(node, reason, cx);
     }
 
     fn check_super<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let node = IdentifierLike { node: e.ts_node(), span: e.span(), name: b"super", is_super: true };
-        let reason = cx.state.of_expression(node.node, e);
+        let reason = cx.state.for_expression(node.node, e);
         self.report(node, reason, cx);
     }
 
@@ -544,7 +544,7 @@ impl NoDeprecated {
             }
             _ => return,
         };
-        let Some(reason) = cx.state.of_symbol(property) else {
+        let Some(reason) = cx.state.for_symbol(property) else {
             return;
         };
         if type_matches_some_specifier(object_type, &self.allow) {
@@ -574,8 +574,8 @@ impl NoDeprecated {
             let node = IdentifierLike::new(tag.ts_node(), tag.span(), name.bytes());
             let reason = match cx.language().is_oxlint && jsx.is_self_closing() {
                 // For tsgolint a `JsxSelfClosingElement`'s tag isn't called, so the symbol decides.
-                true => cx.state.of_identifier(node.node),
-                false => cx.state.of_call_like(node.node, element.ts_node()),
+                true => cx.state.for_identifier(node.node),
+                false => cx.state.for_call_like(node.node, element.ts_node()),
             };
             self.report(node, reason, cx);
         }
@@ -593,7 +593,7 @@ impl NoDeprecated {
             let Some(contextual_type) = *contextual_type.get_or_insert_with(|| jsx_attributes_type(element, tag)) else {
                 return;
             };
-            if let Some(reason) = cx.state.of_symbol(contextual_type.get_property(name.bytes())) {
+            if let Some(reason) = cx.state.for_symbol(contextual_type.get_property(name.bytes())) {
                 let node = IdentifierLike::new(NameOf(attribute).ts_node(), key.span(cx.file()), name.bytes());
                 self.report(node, Some(reason), cx);
             }
@@ -619,7 +619,7 @@ impl NoDeprecated {
                 && let KeyKind::Ident(name) = key.kind()
             {
                 let node = IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name.bytes());
-                let reason = cx.state.of_property(node.node, node.name, || object.ty());
+                let reason = cx.state.for_property(node.node, node.name, || object.ty());
                 self.report(node, reason, cx);
             }
         }
@@ -654,7 +654,7 @@ impl NoDeprecated {
                 },
             };
             let symbol = expected.get_property(name).filter(|it| is_deprecated_symbol(*it));
-            let Some(reason) = cx.state.of_symbol(symbol) else {
+            let Some(reason) = cx.state.for_symbol(symbol) else {
                 continue;
             };
             // tsgolint also matches `allow` against the object's contextual type.
@@ -689,7 +689,7 @@ impl NoDeprecated {
                 _ => None,
             };
             for node in [key, bound].into_iter().flatten() {
-                let reason = cx.state.of_property(node.node, property_name, || {
+                let reason = cx.state.for_property(node.node, property_name, || {
                     *source_type.get_or_insert_with(|| binding_pattern_source_type(pattern))
                 });
                 self.report(node, reason, cx);
@@ -792,7 +792,7 @@ impl Rule for NoDeprecated {
                         continue;
                     };
                     let node = IdentifierLike::new(node, key.span(cx.file()), name.bytes());
-                    let reason = cx.state.of_property(node.node, node.name, || pattern.ty());
+                    let reason = cx.state.for_property(node.node, node.name, || pattern.ty());
                     self.report(node, reason, cx);
                 }
             }
@@ -835,7 +835,7 @@ impl Rule for NoDeprecated {
             TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } => self.check_entity_name(name, cx),
             TypeKind::Predicate { .. } => {
                 if let Some(parameter_name) = ty.predicate_param().filter(|it| !it.name().is("this")) {
-                    self.check_plain(IdentifierLike::of_ident(parameter_name, cx.file()), cx);
+                    self.check_plain(IdentifierLike::from_ident(parameter_name, cx.file()), cx);
                 }
             }
             _ => {}
@@ -856,7 +856,7 @@ impl Rule for NoDeprecated {
                 let mut at = Some(module);
                 while let Some(module) = at {
                     if let ModuleName::Ident(name) = module.name() {
-                        self.check_plain(IdentifierLike::of_ident(name, cx.file()), cx);
+                        self.check_plain(IdentifierLike::from_ident(name, cx.file()), cx);
                     }
                     at = module.nested();
                 }
@@ -883,7 +883,7 @@ impl Rule for NoDeprecated {
         let node = IdentifierLike::new(NameOf(specifier).ts_node(), exported.span(), exported.bytes());
         let symbol = node.node.get_symbol_at_location();
         // The alias itself is deprecated.
-        if cx.state.of_symbol(symbol).is_some() {
+        if cx.state.for_symbol(symbol).is_some() {
             return;
         }
         let reason = cx.state.search_in_aliases_chain(symbol, true);

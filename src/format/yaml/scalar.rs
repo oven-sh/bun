@@ -87,7 +87,7 @@ fn double_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
         return Cow::Borrowed(inner);
     }
     let at = |i: usize| source.get(i).copied();
-    let is_blank = |ch: Option<u8>| matches!(ch, Some(b' ' | b'\t'));
+    let is_space_or_tab = |ch: Option<u8>| matches!(ch, Some(b' ' | b'\t'));
     let mut result = Vec::with_capacity(inner.len());
     let mut i = 1;
     while i < end {
@@ -133,7 +133,7 @@ fn double_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
                 result.extend_from_slice(escape.as_bytes());
             } else if next == b'\n' {
                 // An escaped line break produces nothing, and the next line's indentation is skipped too.
-                while is_blank(at(i + 1)) {
+                while is_space_or_tab(at(i + 1)) {
                     i += 1;
                 }
             } else if matches!(next, b'x' | b'u' | b'U') {
@@ -168,7 +168,7 @@ fn double_quoted_value(source: &[u8]) -> Cow<'_, [u8]> {
         } else if matches!(ch, b' ' | b'\t') {
             // Whitespace at the end of a line is dropped.
             let start = i;
-            while is_blank(at(i + 1)) {
+            while is_space_or_tab(at(i + 1)) {
                 i += 1;
             }
             if at(i + 1) != Some(b'\n') {

@@ -176,8 +176,11 @@ pub(super) fn settings_have_unknown_resolver(settings: &Json) -> bool {
         return true;
     }
     // `resolverReducer` recurses into arrays, and throws on anything that isn't a string or an object.
-    let written = settings.get(b"import/resolver");
-    let mut pending: Vec<&Json> = written.filter(|it| it.is_truthy()).into_iter().collect();
+    let resolver_setting = settings.get(b"import/resolver");
+    let mut pending: Vec<&Json> = resolver_setting
+        .filter(|it| it.is_truthy())
+        .into_iter()
+        .collect();
     while let Some(it) = pending.pop() {
         match it {
             Json::Array(items) => pending.extend(items),
@@ -698,10 +701,10 @@ impl Reader<'_> {
         {
             self.reject_duplicate_plugin(prefix, location, modules_of(prefix))?;
             // `twin` distinguishes the plugins that different objects register under the same name.
-            let is_it = |it: &(Box<[u8]>, Json)| {
+            let is_same_plugin = |it: &(Box<[u8]>, Json)| {
                 *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
             };
-            let known = self.js_locations.iter().position(is_it);
+            let known = self.js_locations.iter().position(is_same_plugin);
             object
                 .js_plugins
                 .push(known.unwrap_or(self.js_locations.len()) as u32);
@@ -1028,9 +1031,12 @@ impl Reader<'_> {
         &mut self,
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
-        for (place, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
+        for (location_index, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
             // A `NamedPlugin`.
-            if self.js_plugin_location_indices.contains(&(place as u32)) {
+            if self
+                .js_plugin_location_indices
+                .contains(&(location_index as u32))
+            {
                 continue;
             }
             let mut unknown = self.unknown_rules.iter();
@@ -1043,7 +1049,7 @@ impl Reader<'_> {
                 self.js_plugins.push(load(location, prefix).map_err(|why| {
                     ConfigError::new(&[b"Failed to load the plugin \"", prefix, b"\": ", &why])
                 })?);
-                self.js_plugin_location_indices.push(place as u32);
+                self.js_plugin_location_indices.push(location_index as u32);
             }
             // From here on only its location is needed.
             if let Json::Object(entries) = location {

@@ -146,11 +146,11 @@ struct Provisional {
     /// - 1: `cycles` was incremented
     /// - 2: `limits` was incremented
     /// - 4: an incomplete flow-loop type was read
-    /// - 8: a query was refused for lack of native stack or query depth
+    /// - 8: a query was rejected for lack of native stack or query depth
     /// - 16: the cycle passes a barrier (`is_behind_barrier`)
     /// - 32: a request for members got the members in place, which bit 1 doesn't cover
     /// - 64: `anySignature` was read
-    moved: u8,
+    event_bits: u8,
     serial: u64,
 }
 
@@ -798,7 +798,7 @@ impl<'s> Program<'s> {
             resolution_start: 0,
             eager: Vec::new(),
             loop_values: Vec::new(),
-            unmarked_refusals: 0,
+            unmarked_rejections: 0,
             non_circular_returns: Vec::new(),
             array_or_tuple_constraint_requests: Vec::new(),
             mapped_instantiations_in_progress: Vec::new(),
@@ -976,7 +976,7 @@ impl<'s> Program<'s> {
             taint_events: Vec::new(),
             cycle_at: 0,
             limit_at: 0,
-            refused_at: 0,
+            rejected_at: 0,
             enclosing_module_specifier_mode: None,
             emit_resolver_links: Default::default(),
             expected: Requested::All,
@@ -1073,7 +1073,7 @@ impl<'s> Program<'s> {
             work: 0,
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
-            refused_expressions: Vec::new(),
+            rejected_expressions: Vec::new(),
             side_effect_free: Default::default(),
             context_sensitive_functions: Default::default(),
             context_sensitivity_visits: Default::default(),
@@ -1296,7 +1296,7 @@ struct InferenceContextInfo {
 enum EnterOutcome {
     Entered,
     /// Out of time, stack or depth, or a cycle that tsgo detects, defers or never runs into.
-    Refused,
+    Rejected,
 }
 
 /// `Checker.currentNode`
@@ -1497,7 +1497,7 @@ pub struct Checker<'p, 's> {
     /// `report_discarded_errors_of` rechecks an expression. Diagnostics reported then are kept.
     context_free_level: usize,
     /// `resolved_signature` resolves the calls in this range of a file as if they had never been
-    /// resolved, and doesn't store the results. See `context_free_type_of_call_resolved_afresh`.
+    /// resolved, and doesn't store the results. See `context_free_type_of_freshly_resolved_call`.
     calls_to_resolve_afresh: Option<(FileId, u32, u32)>,
     /// The calls resolved that way, each with its result, or `None` while it's being resolved.
     calls_resolved_afresh: Vec<(ExprId, Option<ResolvedCall>)>,
@@ -1510,7 +1510,7 @@ pub struct Checker<'p, 's> {
     loop_values: Vec<usize>,
     /// How many cycles `mark_cycle_from` has left unmarked because of `eager`. If it grows during a
     /// walk of a loop, tsgo doesn't make that walk. See `Flow::Loop` in `flow_type`.
-    unmarked_refusals: u64,
+    unmarked_rejections: u64,
     /// The height of `stack` at each request of `getNonCircularReturnTypeOfSignature` in progress.
     non_circular_returns: Vec<usize>,
     /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
@@ -1520,7 +1520,7 @@ pub struct Checker<'p, 's> {
     mapped_instantiations_in_progress: Vec<mapped::MappedInstantiation>,
     /// The index in `stack` from which a query counts as in progress.
     resolution_start: usize,
-    /// True if the last `enter` refused because the query is one of TypeScript's own resolutions and is in progress.
+    /// True if the last `enter` rejected the query because it's one of TypeScript's own resolutions and is in progress.
     found_cycle: bool,
     /// True if the frame popped by the last `leave` was in a cycle.
     left_a_cycle: bool,
@@ -1681,13 +1681,13 @@ pub struct Checker<'p, 's> {
     variances_cut_short: FxHashMap<Sym, (u64, &'s [u8])>,
     #[expect(
         clippy::vec_box,
-        reason = "whoever takes one moves a pointer, not 280 bytes"
+        reason = "taking one moves a pointer instead of 280 bytes"
     )]
     free_relaters: Vec<Box<relate::Relater>>,
     /// Each equals `Inference::for_params(&[], None)`. They're swapped in for an inference that's taken out.
     #[expect(
         clippy::vec_box,
-        reason = "whoever takes one moves a pointer, not 592 bytes"
+        reason = "taking one moves a pointer instead of 592 bytes"
     )]
     spare_inferences: Vec<Box<infer::Inference>>,
     /// The flags that the comparisons in progress have set about the reliability of the variance being computed.
@@ -1792,7 +1792,7 @@ pub struct Checker<'p, 's> {
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,
-    /// The types whose `Query::Constraint` is in flight and was marked at a refused `enter`.
+    /// The types whose `Query::Constraint` is in flight and was marked at a rejected `enter`.
     /// `pushTypeResolution` marks every entry from the start of the cycle to the top of the stack.
     /// The frame's `leave` removes the type and stores the flag.
     constraints_marked_circular: Vec<TypeId>,
@@ -1825,11 +1825,11 @@ pub struct Checker<'p, 's> {
     /// the length is bounded by the depth of `stack`. See `lowest_taint_since`.
     taint_events: Vec<(u64, u32)>,
     /// `work` when `cycles` was last incremented, when `limits` was, and when a query was last
-    /// refused by `bailed_out`. `QueryFrame::serial` is `work` when the frame was pushed, so the
+    /// rejected by `bailed_out`. `QueryFrame::serial` is `work` when the frame was pushed, so the
     /// event happened since then if the value is at least the serial number.
     cycle_at: u64,
     limit_at: u64,
-    refused_at: u64,
+    rejected_at: u64,
     /// `GetModeForUsageLocation` of `TryGetModuleSpecifierFromDeclaration(enclosingDeclaration)`,
     /// while the name of an import or an export is printed.
     enclosing_module_specifier_mode: Option<ResolutionMode>,
@@ -2063,7 +2063,7 @@ pub struct Checker<'p, 's> {
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
-    /// A file, and which of its expressions `prepare_around` has processed.
+    /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
     /// The stack pointer when the checker was created, and how far below that it may go.
     stack_base: usize,
@@ -2075,23 +2075,23 @@ pub struct Checker<'p, 's> {
     /// another scope for the same question without computing anything new.
     scopes_begun: u64,
     /// `enter` takes its slow path when `work` reaches this value. It's the next value of `work`
-    /// while `refused_expressions` isn't empty, and `WORK_TRAP_DISARMED` otherwise.
+    /// while `rejected_expressions` isn't empty, and `WORK_TRAP_DISARMED` otherwise.
     work_trap: u64,
-    /// The file, start and end of the expressions in which a query was refused for lack of native
-    /// stack. See `refuse_for_lack_of_stack`.
-    refused_expressions: Vec<(FileId, u32, u32)>,
+    /// The file, start and end of the expressions in which a query was rejected for lack of native
+    /// stack. See `reject_for_lack_of_stack`.
+    rejected_expressions: Vec<(FileId, u32, u32)>,
     /// `is_side_effect_free` of the binary expressions with a long chain of binary expressions on their left.
     side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
     /// `isContextSensitive` of the functions in a long chain where each function returns nothing but the next one.
     context_sensitive_functions: std::cell::RefCell<FxHashMap<(FileId, FnId), bool>>,
     /// How many functions it has visited.
     context_sensitivity_visits: std::cell::Cell<u64>,
-    /// Set when a query was refused for lack of stack. `enter` refuses every query while `stack` is
-    /// higher than this. `usize::MAX` if no query was refused. See `starts_over_from_lower`.
+    /// Set when a query was rejected for lack of stack. `enter` rejects every query while `stack` is
+    /// higher than this. `usize::MAX` if no query was rejected. See `starts_over_from_lower`.
     unwind_to: usize,
     /// `work` of the next `enter` while unwinding. That `enter` takes the slow path (`work_trap`).
     unwind_work: u64,
-    /// The innermost resolution that was in progress at the refusal. The frame at `unwind_to`
+    /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
     /// resolves it and starts over.
     restart_with: Option<Query>,
 }
@@ -2182,7 +2182,7 @@ impl<'p, 's> Checker<'p, 's> {
             return recent.get().1;
         }
         let declared = match self.p.declared_type_params.get(&self.task, &(file, tp)) {
-            Some(kept) => kept,
+            Some(cached) => cached,
             None => self.intern_type_param(file, tp),
         };
         recent.set(((file, tp), declared));
@@ -2215,15 +2215,25 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `cloneTypeParameter`: the type parameter `tp` of a signature found where the signature's outer
-    /// type parameters are mapped by `around`. With an identity mapping nothing was instantiated, so
+    /// type parameters are mapped by `outer_mapper`. With an identity mapping nothing was instantiated, so
     /// it's the declared type parameter (`resolveObjectTypeMembers`, `getObjectTypeInstantiation`).
-    pub fn cloned_type_param(&self, file: FileId, tp: TypeParamId, around: MapperId) -> TypeId {
-        let around = if self.types().mapping(around).iter().all(|p| p.0 == p.1) {
+    pub fn cloned_type_param(
+        &self,
+        file: FileId,
+        tp: TypeParamId,
+        outer_mapper: MapperId,
+    ) -> TypeId {
+        let outer_mapper = if self
+            .types()
+            .mapping(outer_mapper)
+            .iter()
+            .all(|p| p.0 == p.1)
+        {
             MapperId::IDENTITY
         } else {
-            around
+            outer_mapper
         };
-        self.intern(TypeData::TypeParam(file, tp, around))
+        self.intern(TypeData::TypeParam(file, tp, outer_mapper))
     }
 
     #[inline]
@@ -2300,7 +2310,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn enter(&mut self, q: Query) -> bool {
         self.work += 1;
         self.found_cycle = false;
-        if (self.work == self.work_trap || self.is_stack_low()) && self.refuse_for_lack_of_stack(q)
+        if (self.work == self.work_trap || self.is_stack_low()) && self.reject_for_lack_of_stack(q)
         {
             return false;
         }
@@ -2354,20 +2364,20 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// The slow path of the first test in `enter`. Returns false if `q` isn't refused.
+    /// The slow path of the first test in `enter`. Returns false if `q` isn't rejected.
     ///
-    /// After a refusal no query in flight is cacheable. Every later query about a part of the same
-    /// expression or type node would descend the same chain and be refused again, which costs depth^3
+    /// After a rejection no query in flight is cacheable. Every later query about a part of the same
+    /// expression or type node would descend the same chain and be rejected again, which costs depth^3
     /// for nested calls. So the outermost one in flight is recorded, and until the end of `check_file`
-    /// every query about an expression or a type node inside it is refused immediately.
+    /// every query about an expression or a type node inside it is rejected immediately.
     #[cold]
     #[inline(never)]
-    fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
+    fn reject_for_lack_of_stack(&mut self, q: Query) -> bool {
         if self.unwind_to != usize::MAX {
             if self.work == self.unwind_work && self.stack.len() > self.unwind_to {
                 self.unwind_work = self.work + 1;
                 self.work_trap = self.work + 1;
-                self.last_enter = EnterOutcome::Refused;
+                self.last_enter = EnterOutcome::Rejected;
                 self.bailed_out_from(self.unwind_to);
                 return true;
             }
@@ -2377,22 +2387,22 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_low = self.is_stack_low();
         if is_low {
-            self.refuse_outermost_in_flight(q);
+            self.reject_outermost_in_flight(q);
             // Not every query is about an expression or a type node. One that continues regardless ends up here again.
             self.unwind_to = 0;
             self.unwind_work = self.work + 1;
             self.restart_with = None;
         }
         // Every later `enter` takes this path.
-        self.work_trap = if self.refused_expressions.is_empty() && !is_low {
+        self.work_trap = if self.rejected_expressions.is_empty() && !is_low {
             WORK_TRAP_DISARMED
         } else {
             self.work + 1
         };
-        if !is_low && !self.is_refused(q) {
+        if !is_low && !self.is_rejected(q) {
             return false;
         }
-        self.last_enter = EnterOutcome::Refused;
+        self.last_enter = EnterOutcome::Rejected;
         self.bailed_out();
         true
     }
@@ -2411,40 +2421,40 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn is_in_refused_expression(&self, (file, start, end): (FileId, u32, u32)) -> bool {
+    fn is_in_rejected_expression(&self, (file, start, end): (FileId, u32, u32)) -> bool {
         let contains =
             |outer: &(FileId, u32, u32)| outer.0 == file && outer.1 <= start && end <= outer.2;
-        self.refused_expressions.iter().any(contains)
+        self.rejected_expressions.iter().any(contains)
     }
 
-    /// True if `q` is about part of one of the `refused_expressions`.
-    fn is_refused(&self, q: Query) -> bool {
-        !self.refused_expressions.is_empty()
-            && (self.span_of_query(q)).is_some_and(|span| self.is_in_refused_expression(span))
+    /// True if `q` is about part of one of the `rejected_expressions`.
+    fn is_rejected(&self, q: Query) -> bool {
+        !self.rejected_expressions.is_empty()
+            && (self.span_of_query(q)).is_some_and(|span| self.is_in_rejected_expression(span))
     }
 
-    /// Adds the outermost expression or type node in flight to `refused_expressions`. `q` is the innermost.
-    fn refuse_outermost_in_flight(&mut self, q: Query) {
+    /// Adds the outermost expression or type node in flight to `rejected_expressions`. `q` is the innermost.
+    fn reject_outermost_in_flight(&mut self, q: Query) {
         let mut in_flight = self.stack.iter().chain([&q]);
         let outermost = in_flight.find_map(|&q| Some((q, self.span_of_query(q)?)));
         if let Some((outermost, span)) = outermost
-            && !self.is_in_refused_expression(span)
+            && !self.is_in_rejected_expression(span)
         {
             let span = match outermost {
-                Query::TypeNode(..) => self.span_of_statement_around(span),
+                Query::TypeNode(..) => self.enclosing_statement_span(span),
                 _ => span,
             };
-            self.refused_expressions.push(span);
+            self.rejected_expressions.push(span);
         }
     }
 
-    /// Returns the span of the top-level statement that contains `span`. That's what is refused for a type node.
+    /// Returns the span of the top-level statement that contains `span`. That's what is rejected for a type node.
     ///
     /// `checkSourceElement` isn't a query, and it requests a type node's type after visiting the node's
     /// children. So the outermost type node in flight is the one it has just returned to, and the next
-    /// one it returns to encloses that. That one would descend to the refused node and be cut short,
+    /// one it returns to encloses that. That one would descend to the rejected node and be cut short,
     /// then the one around it, and so on, which costs depth^2, and more with the search in `stack`.
-    fn span_of_statement_around(&self, span: (FileId, u32, u32)) -> (FileId, u32, u32) {
+    fn enclosing_statement_span(&self, span: (FileId, u32, u32)) -> (FileId, u32, u32) {
         let hir = self.hir(span.0);
         let mut statements = hir.ids(hir.body).map(|s| hir[s].loc);
         match statements.find(|loc| (loc.pos..loc.end).contains(&span.1)) {
@@ -2454,19 +2464,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Called when `is_most_of_stack_in_use` and `q` would use more. tsgo has a stack that grows.
-    /// Returns true if `q` is refused.
+    /// Returns true if `q` is rejected.
     ///
     /// A variable's type, a function's return type and a symbol's declared type are the same from any stack
     /// height, as long as nothing in progress is a context for them. In that case the outermost such frame
     /// resolves the innermost one from its own height, where it can use the stack that the frames in
     /// between took, and then starts over (`retry_too_deep_query`). The frames below it don't see a
-    /// refusal. A cycle that needs more stack than there is never closes, and is refused again.
+    /// rejection. A cycle that needs more stack than there is never closes, and is rejected again.
     ///
     /// None of the frames in between cache their result. A frame that continued regardless would recompute,
     /// from its lower height, what the frames above it couldn't finish, and a chain of functions that's n
-    /// links too long would cost n^3. So every query is refused until `stack` is back at `unwind_to`.
+    /// links too long would cost n^3. So every query is rejected until `stack` is back at `unwind_to`.
     ///
-    /// Anything else continues with the stack that's left. See `refuse_for_lack_of_stack`.
+    /// Anything else continues with the stack that's left. See `reject_for_lack_of_stack`.
     #[cold]
     #[inline(never)]
     fn starts_over_from_lower(&mut self, q: Query) -> bool {
@@ -2496,7 +2506,7 @@ impl<'p, 's> Checker<'p, 's> {
             "too deep: {:?}",
             &self.stack[self.stack.len().saturating_sub(12)..]
         );
-        self.last_enter = EnterOutcome::Refused;
+        self.last_enter = EnterOutcome::Rejected;
         self.unwind_work = self.work + 1;
         self.work_trap = self.work + 1;
         self.unwind_to = outermost;
@@ -2507,15 +2517,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Call after the `leave` of a `Query::Symbol`, a `Query::Return` or a `Query::Declared`, if
     /// `stack.len() == unwind_to`. Returns true if the caller should start over because the query
-    /// that `starts_over_from_lower` refused now has a result.
+    /// that `starts_over_from_lower` rejected now has a result.
     #[cold]
     #[inline(never)]
     fn retry_too_deep_query(&mut self) -> bool {
-        // Every `enter` since the refusal was refused in turn.
+        // Every `enter` since the rejection was rejected in turn.
         let is_unwinding = self.unwind_work == self.work + 1;
         let restart_with = self.restart_with.take().filter(|_| is_unwinding);
         self.unwind_to = usize::MAX;
-        self.work_trap = if self.refused_expressions.is_empty() {
+        self.work_trap = if self.rejected_expressions.is_empty() {
             WORK_TRAP_DISARMED
         } else {
             self.work + 1
@@ -2711,7 +2721,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        self.last_enter = EnterOutcome::Refused;
+        self.last_enter = EnterOutcome::Rejected;
         // Everything in progress between there and here is computed without the result, so it's provisional.
         let from = i + usize::from(!self.is_requested_eagerly(i));
         // The exception is a repeated request for base types. `getBaseTypes` ends by resetting the
@@ -2957,7 +2967,7 @@ impl<'p, 's> Checker<'p, 's> {
             || barriers > loop_values
             || barriers > 0 && !self.is_cycle_of_initializers(i)
         {
-            self.unmarked_refusals += 1;
+            self.unmarked_rejections += 1;
             return false;
         }
         for j in i..self.stack.len() {
@@ -3155,10 +3165,10 @@ impl<'p, 's> Checker<'p, 's> {
         self.limits + self.times_cut_short.get()
     }
 
-    /// Changes whenever a query is refused or a computation is cut short. If it's the same before
+    /// Changes whenever a query is rejected or a computation is cut short. If it's the same before
     /// and after, what was computed in between is complete and may outlive the frames around it.
     fn interruptions(&self) -> (u64, u64, u64) {
-        (self.unmarked_refusals, self.cuts(), self.refused_at)
+        (self.unmarked_rejections, self.cuts(), self.rejected_at)
     }
 
     /// Call when a result that was cut short has been read. Records the same marks as recomputing
@@ -3168,7 +3178,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.bailed_out();
     }
 
-    /// Call when a query was refused only because of the depth at which it was made. Made from
+    /// Call when a query was rejected only because of the depth at which it was made. Made from
     /// elsewhere it would have a result, so nothing computed from the missing result may be cached.
     fn bailed_out(&mut self) {
         self.bailed_out_from(0);
@@ -3176,10 +3186,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `bailed_out` for the case where the frame at `from` makes the query again. See `starts_over_from_lower`.
     fn bailed_out_from(&mut self, from: usize) {
-        self.note_gave_up("a query that was refused");
+        self.note_gave_up("a rejected query");
         self.mark_tainted_from(from);
         self.note_cycle();
-        self.refused_at = self.work;
+        self.rejected_at = self.work;
     }
 
     /// True if `q` is a `checkExpression` call. A method or accessor of an object literal isn't an expression,
@@ -3283,15 +3293,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `instantiateTypeWithAlias`, `getConditionalType`: an instantiation limit was hit. Reports
-    /// 2589 at `currentNode` and returns the error type. Safe to call after any `enter` that
-    /// refused. Returns `UNRESOLVED` where the recursion here isn't evidence of recursion in tsgo:
-    /// after a refusal, and more than 60 levels of `instantiate` deep under a conditional type.
+    /// 2589 at `currentNode` and returns the error type. Safe to call after any rejected `enter`.
+    /// Returns `UNRESOLVED` where the recursion here isn't evidence of recursion in tsgo: after a
+    /// rejection, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
-        self.note_gave_up("instantiation that is excessively deep");
-        // Only the call right after a refused `enter` sees the refusal.
+        self.note_gave_up("excessively deep instantiation");
+        // Only the call right after a rejected `enter` sees the rejection.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
         {
-            EnterOutcome::Refused => false,
+            EnterOutcome::Rejected => false,
             // `getConditionalType` loops where `conditional_type` recurses, so a tail call costs one
             // level of `instantiate` here and none in tsgo. `instantiate` allows at least 60 levels.
             EnterOutcome::Entered => {
@@ -3309,9 +3319,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a
     /// conditional type too, because `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
-        self.note_gave_up("the depth of instantiation");
+        self.note_gave_up("the instantiation depth limit");
         self.instantiation_limit_hits += 1;
-        if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
+        if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Rejected
+        {
             return TypeId::UNRESOLVED;
         }
         self.error_at_current_node(2589);
@@ -3361,7 +3372,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// program, so which task reaches the limit, and at which node, is too.
     #[cold]
     fn error_at_current_node(&mut self, code: u32) {
-        self.note_gave_up("a limit that is reported");
+        self.note_gave_up("a reported limit");
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
         // Outside of an expression, `c.currentNode` is the statement or declaration that `checkSourceElement`
@@ -3487,11 +3498,11 @@ impl<'p, 's> Checker<'p, 's> {
         for stale in &mut self.stale_resolutions[above..] {
             stale.0 = height;
         }
-        let of_pat = self.popped_for_symbol.take();
+        let pat_result = self.popped_for_symbol.take();
         let is_module_exports = matches!(q, Query::Symbol(symbol)
             if self.files().flags(symbol).contains(SymFlags::MODULE_EXPORTS));
-        let mut popped = of_pat.unwrap_or(circular);
-        if of_pat.is_none()
+        let mut popped = pat_result.unwrap_or(circular);
+        if pat_result.is_none()
             && !is_module_exports
             && self.is_resolution(q)
             && above < self.stale_resolutions.len()
@@ -3706,7 +3717,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Stores `raw`, the result of `q`, for which `leave` has just returned `Err(open)`.
     /// `provisional` returns it while it's valid.
     ///
-    /// A frame is non-cacheable if its result depends on a query in flight (a cycle), on a refused query (native
+    /// A frame is non-cacheable if its result depends on a query in flight (a cycle), on a rejected query (native
     /// stack, instantiation depth) or on a binding pattern whose implied type is being computed. Nothing is
     /// written to a shared cache then. The result stays valid until the outermost non-cacheable frame is popped,
     /// because everything it depends on is unchanged until then. It's stored in `provisional` for that time.
@@ -3719,8 +3730,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// the frame at the stack height at which that loop was pushed, or the outermost frame marked
     /// by `taint_from` if that is higher.
     ///
-    /// A result that depends on a refused query (`bailed_out`) is reused only at the same or a
-    /// greater stack height, where recomputing it would be refused again. A query from a lower
+    /// A result that depends on a rejected query (`bailed_out`) is reused only at the same or a
+    /// greater stack height, where recomputing it would be rejected again. A query from a lower
     /// height has more capacity and may succeed, so it recomputes.
     ///
     /// A hit has the same effects as recomputing the result, and no more. A type comparison in
@@ -3780,10 +3791,10 @@ impl<'p, 's> Checker<'p, 's> {
                         None => u32::MAX,
                     },
                     height: self.stack.len() as u32,
-                    moved: since(self.cycle_at)
+                    event_bits: since(self.cycle_at)
                         | since(self.limit_at) << 1
                         | u8::from(flow) << 2
-                        | since(self.refused_at) << 3
+                        | since(self.rejected_at) << 3
                         | u8::from(is_behind_barrier) << 4
                         | since(self.members_in_place_hit_at) << 5
                         | since(self.any_signature_read_at) << 6,
@@ -3793,7 +3804,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if `mark_cycle_from` refuses a cycle whose head is `stack[from - 1]` because of `eager`.
+    /// True if `mark_cycle_from` rejects a cycle whose head is `stack[from - 1]` because of `eager`.
     fn is_behind_barrier(&self, from: usize) -> bool {
         let above = |barriers: &[usize]| barriers.iter().filter(|&&at| at >= from).count();
         above(&self.eager) > above(&self.loop_values)
@@ -3824,16 +3835,16 @@ impl<'p, 's> Checker<'p, 's> {
             self.provisional.remove(&q);
             return None;
         }
-        if entry.moved & 8 != 0 && self.stack.len() < entry.height as usize {
+        if entry.event_bits & 8 != 0 && self.stack.len() < entry.height as usize {
             return None;
         }
         // `checkExpressionCached` empties `flowLoopStack`, so what follows from a loop's incomplete
         // type is recomputed where the loop isn't visible.
-        if entry.moved & 4 != 0 && !self.is_flow_loop_visible(depth) {
+        if entry.event_bits & 4 != 0 && !self.is_flow_loop_visible(depth) {
             return None;
         }
         // Without the barrier the cycle is marked.
-        if entry.moved & 16 != 0 && !self.is_behind_barrier(entry.from as usize) {
+        if entry.event_bits & 16 != 0 && !self.is_behind_barrier(entry.from as usize) {
             return None;
         }
         // The same test as in `enter`.
@@ -3842,25 +3853,25 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        if entry.moved & 8 != 0 {
-            self.refused_at = self.work;
+        if entry.event_bits & 8 != 0 {
+            self.rejected_at = self.work;
         }
         // The counters that guard the other memo tables change if they changed then.
-        match (entry.from, entry.moved & 4) {
+        match (entry.from, entry.event_bits & 4) {
             (u32::MAX, _) => {}
             (from, 0) => self.mark_tainted_from(from as usize),
             (from, _) => self.taint_from(from as usize),
         }
-        if entry.moved & 1 != 0 {
+        if entry.event_bits & 1 != 0 {
             self.note_cycle();
         }
-        if entry.moved & 32 != 0 {
+        if entry.event_bits & 32 != 0 {
             self.note_members_in_place();
         }
-        if entry.moved & 2 != 0 {
+        if entry.event_bits & 2 != 0 {
             self.note_limit();
         }
-        if entry.moved & 64 != 0 {
+        if entry.event_bits & 64 != 0 {
             self.note_any_signature();
         }
         Some(entry.raw)
@@ -3872,8 +3883,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn provisional_as_assigned(&self, q: Query) -> Option<u64> {
         let entry = self.provisional.get(&q)?;
         let scope = self.frames.get(entry.depth as usize)?;
-        let is_valid =
-            scope.serial == entry.serial && entry.from != u32::MAX && entry.moved & !(1 | 32) == 0;
+        let is_valid = scope.serial == entry.serial
+            && entry.from != u32::MAX
+            && entry.event_bits & !(1 | 32) == 0;
         is_valid.then_some(entry.raw)
     }
 
@@ -3888,7 +3900,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Call when the checker gives up: at an instantiation limit (2589), a union size limit (2590) or a
-    /// comparison limit (2859), for lack of native stack, or at a depth at which a query is refused. The
+    /// comparison limit (2859), for lack of native stack, or at a depth at which a query is rejected. The
     /// result then isn't a function of the question alone. How far from the limit a computation begins, and
     /// how much of it is left to do, depends on what was computed before, which for a task that sees commits
     /// includes what it found there. Such a task is discarded. `limit` is the limit's name, for `--timing`.
@@ -4179,12 +4191,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
 
         if let Some(counterpart) = self.counterparts_of_literals.borrow().get(ty) {
-            let kept = match self.types().has_fresh_literal(ty) == fresh {
+            let chosen = match self.types().has_fresh_literal(ty) == fresh {
                 true => ty,
                 false => counterpart,
             };
 
-            return kept;
+            return chosen;
         }
         let found = self.intern_with_freshness(ty, fresh);
         if found != ty {
@@ -4354,7 +4366,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let declaration = self.files.global_type_declaration(symbol);
         let error_node =
-            declaration.and_then(|(file, node)| self.error_place_of_declaration(file, node));
+            declaration.and_then(|(file, node)| self.error_span_of_declaration(file, node));
         // Only 2317 mentions the number.
         let args = [Arg::Atom(name), Arg::Number(arity)];
         let args = &args[..1 + usize::from(code == 2317)];

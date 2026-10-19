@@ -632,7 +632,7 @@ impl Checker<'_, '_> {
             } else {
                 continue;
             };
-            if let Some(at) = self.place_of_declaration(file, d) {
+            if let Some(at) = self.span_of_declaration(file, d) {
                 let name = Arg::Bytes(&hir.text[at.1 as usize..at.2 as usize]);
                 self.error_at(at, code, &[name]);
             }

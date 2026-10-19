@@ -226,9 +226,9 @@ impl<'a> File<'a> {
     /// Switches scope queries to typescript-eslint's [analysis](self#two-analyses), or back to
     /// oxc's. The two only differ with an oxlint config. Returns the previous setting.
     #[inline]
-    pub(crate) fn use_eslint_scopes(&self, asks: bool) -> bool {
-        let asks = asks && self.language().has_oxc_scopes;
-        self.semantic_index().uses_eslint_scopes.replace(asks)
+    pub(crate) fn use_eslint_scopes(&self, enable: bool) -> bool {
+        let enable = enable && self.language().has_oxc_scopes;
+        self.semantic_index().uses_eslint_scopes.replace(enable)
     }
 
     /// [`File::use_eslint_scopes`] for the lifetime of the returned guard.
@@ -1130,11 +1130,11 @@ impl<'a> Scope<'a> {
     }
 
     fn resolve_atom(self, name: Atom) -> Option<Symbol<'a>> {
-        let (tree, wants) = (self.file.scope_tree(), variables::VALUE | variables::TYPE);
+        let (tree, wanted_flags) = (self.file.scope_tree(), variables::VALUE | variables::TYPE);
         let found = self
             .file
             .variables()
-            .resolve(tree, self.id.0, name, u32::MAX, wants);
+            .resolve(tree, self.id.0, name, u32::MAX, wanted_flags);
         found.map(|index| Symbol::at(self.file, index))
     }
 
@@ -1456,7 +1456,7 @@ impl<'a> Expr<'a> {
     pub fn symbol(self) -> Option<Symbol<'a>> {
         self.as_ident()?;
         let file = self.file();
-        let symbol = Symbol::at(file, file.reference_list().of_expr(self.id())?);
+        let symbol = Symbol::at(file, file.reference_list().variable_of_expr(self.id())?);
         (!symbol.is_implicit_arguments()).then_some(symbol)
     }
 
@@ -1475,7 +1475,7 @@ impl<'a> Pat<'a> {
     /// The symbol that an identifier pattern declares.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        let index = self.file().variables().of_pat(self.id())?;
+        let index = self.file().variables().variable_of_pat(self.id())?;
         Some(Symbol::at(self.file(), index))
     }
 }
@@ -1490,7 +1490,7 @@ impl<'a> Func<'a> {
     /// The scope of its parameters and body. `None` for an index signature, and inside [what is not
     /// visited](self#what-is-not-visited).
     pub fn scope(self) -> Option<Scope<'a>> {
-        let scope = *self.file().scope_tree().of_fn.get(self.id().idx())?;
+        let scope = *self.file().scope_tree().scope_of_fn.get(self.id().idx())?;
         (scope != scopes::NONE).then(|| Scope::new(self.file(), ScopeId(scope)))
     }
 }
@@ -1503,7 +1503,11 @@ impl<'a> Class<'a> {
 
     /// The scope of its type parameters, heritage and members.
     pub fn scope(self) -> Option<Scope<'a>> {
-        let scope = *self.file().scope_tree().of_class.get(self.id().idx())?;
+        let scope = *self
+            .file()
+            .scope_tree()
+            .scope_of_class
+            .get(self.id().idx())?;
         (scope != scopes::NONE).then(|| Scope::new(self.file(), ScopeId(scope)))
     }
 }

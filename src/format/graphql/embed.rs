@@ -15,12 +15,12 @@ fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
 /// Returns the nodes whose leading comments can specify the language of the template `e`: the template itself, and an
 /// expression statement or an `as const` directly around it.
 fn nodes_with_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> [Option<AstNodes<'a>>; 2] {
-    let parent_counts = match parent {
+    let includes_parent = match parent {
         AstNodes::ExpressionStatement(_) => true,
         AstNodes::TSAsExpression(cast) => matches!(cast.kind(), ExprKind::AsConst(_)),
         _ => false,
     };
-    [Some(e.as_ast_nodes()), parent_counts.then_some(parent)]
+    [Some(e.as_ast_nodes()), includes_parent.then_some(parent)]
 }
 
 /// True if a comment could specify the language of the template `e`. A cheap check before trying each embedded
@@ -97,14 +97,14 @@ fn lines(text: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> + Clone {
 /// Returns `None` if Prettier leaves the template as it is.
 fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     let raw = template.raw(index);
-    let is_as_written = bun_core::strings::index_of_any(raw, b"\\\r").is_none();
-    let text = if is_as_written {
+    let raw_equals_cooked = bun_core::strings::index_of_any(raw, b"\\\r").is_none();
+    let text = if raw_equals_cooked {
         raw
     } else {
         template.cooked(index)?.bytes()
     };
     // An escape can produce a lone surrogate, which isn't a valid GraphQL character.
-    if !is_as_written && std::str::from_utf8(text).is_err() {
+    if !raw_equals_cooked && std::str::from_utf8(text).is_err() {
         return None;
     }
     let is_last = index + 1 == template.quasi_count();

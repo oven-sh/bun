@@ -69,11 +69,12 @@ pub(crate) fn read_bunfigs(
     ctx: &mut ContextData,
     tag: Tag,
     command: &[u8],
-    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::Refusal>,
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::BunfigError>,
 ) {
     let config_path = bunfig_before(command);
     let mut read = |file: &bun_ast::Expr, path: &[u8]| {
-        read(file, path, config_path.is_some()).map_err(|refusal| (refusal.at, refusal.message))
+        read(file, path, config_path.is_some())
+            .map_err(|rejection| (rejection.at, rejection.message))
     };
     let mut above = Above::Needed;
     let here = &mut |file: &bun_ast::Expr| {
@@ -207,20 +208,20 @@ fn run_to_end(
     else {
         return Err(b"Could not start a process: out of memory".to_vec());
     };
-    let [read, written] = match bun_sys::pipe() {
+    let [read_end, write_end] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
     };
     // The child must not inherit the write end, or it would wait for itself to close it.
     #[cfg(unix)]
-    for end in [&read, &written] {
+    for end in [&read_end, &write_end] {
         let _ = bun_sys::set_close_on_exec(end.handle());
     }
     let options = SpawnOptions {
         argv,
         stdout: SyncStdio::Buffer,
         stderr: SyncStdio::Buffer,
-        stdin: SyncStdio::Pipe(read.handle()),
+        stdin: SyncStdio::Pipe(read_end.handle()),
         cwd: Box::<[u8]>::from(cwd),
         envp: Some(envp.as_ptr()),
         #[cfg(windows)]
@@ -234,10 +235,10 @@ fn run_to_end(
     };
     // Write the input while reading the program's output, so that neither side blocks the other.
     let spawned = std::thread::scope(|scope| {
-        scope.spawn(move || input.iter().try_for_each(|it| written.write_all(it)));
+        scope.spawn(move || input.iter().try_for_each(|it| write_end.write_all(it)));
         let spawned = spawn(&options);
         // Closing the read end makes a writer that's still writing fail instead of blocking.
-        drop(read);
+        drop(read_end);
         spawned
     });
     match spawned {
@@ -260,9 +261,9 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 /// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here.
 /// A reader that has gone away (`| head`) isn't.
 pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
-    let written = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+    let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
     let _ = Output::error_writer().write_all(stderr);
-    let exit_code = match written {
+    let exit_code = match write_result {
         Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
             let why = error.msg().unwrap_or(b"unknown error");
             Output::err_generic(

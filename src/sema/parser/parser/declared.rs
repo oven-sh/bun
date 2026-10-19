@@ -130,8 +130,8 @@ struct Level {
     id: u32,
     /// The length of `Declared::log` when the scope was opened.
     log: u32,
-    /// `Declared::holds_vars` outside this scope.
-    holds_vars: u32,
+    /// `Declared::var_scope` outside this scope.
+    outer_var_scope: u32,
 }
 
 /// The state when a speculative parse began.
@@ -139,7 +139,7 @@ struct Level {
 pub(crate) struct Mark {
     stamp: Entry,
     log: u32,
-    holds_vars: u32,
+    var_scope: u32,
     unopened: u32,
 }
 
@@ -155,7 +155,7 @@ pub(crate) struct Declared {
     /// An entry with no flags for the innermost scope that has a level.
     stamp: Entry,
     /// The innermost open scope that `var` declarations belong to: a function, a static block, a namespace or the file.
-    holds_vars: u32,
+    var_scope: u32,
     /// The last id handed out. Ids are never reused, not even across files.
     last: u32,
     /// Indexed by the low bits of a name's atom number. Two names that share a slot are treated as one, which can only
@@ -188,13 +188,13 @@ impl Declared {
             return;
         }
         // A file with its own atoms numbers them from 0. Beyond a million names, some share a slot.
-        let places = (KNOWN_TEXTS.len() + text_len / 4)
+        let table_len = (KNOWN_TEXTS.len() + text_len / 4)
             .next_power_of_two()
             .min(1 << 20);
-        if self.table.len() < places {
-            self.table.resize(places, 0);
+        if self.table.len() < table_len {
+            self.table.resize(table_len, 0);
         }
-        self.mask = places as u32 - 1;
+        self.mask = table_len as u32 - 1;
         if self.last > u32::MAX / 2 {
             self.table.fill(0);
             self.last = 0;
@@ -205,7 +205,7 @@ impl Declared {
             self.levels.resize(DEPTHS, Level::default());
         }
         self.last += 1;
-        self.holds_vars = self.last;
+        self.var_scope = self.last;
         self.stamp = stamp_of(self.last, 0);
         if let Some(level) = self.levels.first_mut() {
             level.id = self.last;
@@ -235,25 +235,30 @@ impl Declared {
             return true;
         }
         let (flags, excludes) = self.rule(kind);
-        let place = name.0 & self.mask;
+        let table_index = name.0 & self.mask;
         let is_hoisted = (kind == Declares::Var
             || kind == Declares::Function && self.is_javascript)
-            && scope_of(self.stamp) != self.holds_vars;
-        let Some(entry) = self.table.get_mut(place as usize) else {
+            && scope_of(self.stamp) != self.var_scope;
+        let Some(entry) = self.table.get_mut(table_index as usize) else {
             return false;
         };
         let old = *entry;
         let is_open = (self.levels.get(depth_of(old))).is_some_and(|it| it.id == scope_of(old));
         if is_hoisted || is_open {
-            return self.declare_existing_or_hoisted(place, old, (flags, excludes), is_hoisted);
+            return self.declare_existing_or_hoisted(
+                table_index,
+                old,
+                (flags, excludes),
+                is_hoisted,
+            );
         }
         *entry = self.stamp | Entry::from(flags);
         false
     }
 
     #[inline(always)]
-    fn put(&mut self, place: u32, flags: u16) {
-        if let Some(entry) = self.table.get_mut(place as usize) {
+    fn put(&mut self, table_index: u32, flags: u16) {
+        if let Some(entry) = self.table.get_mut(table_index as usize) {
             *entry = self.stamp | Entry::from(flags);
         }
     }
@@ -262,7 +267,7 @@ impl Declared {
     #[inline(never)]
     fn declare_existing_or_hoisted(
         &mut self,
-        place: u32,
+        table_index: u32,
         old: Entry,
         (flags, excludes): (u16, u16),
         is_hoisted: bool,
@@ -272,26 +277,26 @@ impl Declared {
                 flag::FUNCTION => flag::FUNCTION_IN_BLOCK,
                 _ => flags,
             };
-            self.log.push((place | HOISTED, Entry::from(above)));
+            self.log.push((table_index | HOISTED, Entry::from(above)));
         }
         if !self.is_open(old) {
-            self.put(place, flags);
+            self.put(table_index, flags);
             return false;
         }
         let clashes = old as u16 & excludes != 0;
         if scope_of(old) == scope_of(self.stamp) {
-            self.put(place, old as u16 | flags);
+            self.put(table_index, old as u16 | flags);
             return clashes;
         }
-        self.log.push((place, old));
-        self.put(place, flags);
+        self.log.push((table_index, old));
+        self.put(table_index, flags);
         // oxc checks each scope up to the function and stops at the first one that has the name.
-        is_hoisted && scope_of(old) >= self.holds_vars && clashes
+        is_hoisted && scope_of(old) >= self.var_scope && clashes
     }
 
     /// Returns false if the scope is too deep.
     #[inline(always)]
-    fn open_level(&mut self, holds_vars: bool) -> bool {
+    fn open_level(&mut self, is_var_scope: bool) -> bool {
         let depth = depth_of(self.stamp) + 1;
         let Some(level) = self.levels.get_mut(depth) else {
             return false;
@@ -300,11 +305,11 @@ impl Declared {
         *level = Level {
             id: self.last,
             log: self.log.len() as u32,
-            holds_vars: self.holds_vars,
+            outer_var_scope: self.var_scope,
         };
         self.stamp = stamp_of(self.last, depth);
-        if holds_vars {
-            self.holds_vars = self.last;
+        if is_var_scope {
+            self.var_scope = self.last;
         }
         true
     }
@@ -339,20 +344,23 @@ impl Declared {
         if let Some(level) = self.levels.get_mut(depth) {
             level.id = 0;
         }
-        let around = depth.saturating_sub(1);
-        self.stamp = stamp_of(self.levels.get(around).map_or(0, |it| it.id), around);
-        self.holds_vars = level.holds_vars;
+        let outer_depth = depth.saturating_sub(1);
+        self.stamp = stamp_of(
+            self.levels.get(outer_depth).map_or(0, |it| it.id),
+            outer_depth,
+        );
+        self.var_scope = level.outer_var_scope;
     }
 
     /// Restores the entries replaced since the log had length `from`. Hoisted names are left in `carried`.
     fn unwind(&mut self, from: u32) {
         self.carried.clear();
         while self.log.len() > from as usize
-            && let Some((place, entry)) = self.log.pop()
+            && let Some((table_index, entry)) = self.log.pop()
         {
-            if place & HOISTED != 0 {
-                self.carried.push((place & !HOISTED, entry as u16));
-            } else if let Some(slot) = self.table.get_mut(place as usize) {
+            if table_index & HOISTED != 0 {
+                self.carried.push((table_index & !HOISTED, entry as u16));
+            } else if let Some(slot) = self.table.get_mut(table_index as usize) {
                 *slot = entry;
             }
         }
@@ -360,32 +368,32 @@ impl Declared {
 
     #[inline(never)]
     fn close_level_with_log(&mut self, depth: usize, level: Level) {
-        let held_vars = self.holds_vars == scope_of(self.stamp);
+        let was_var_scope = self.var_scope == scope_of(self.stamp);
         self.unwind(level.log);
         self.leave(depth, level);
-        if held_vars {
+        if was_var_scope {
             return;
         }
-        let keeps_hoisting = scope_of(self.stamp) != self.holds_vars;
+        let keeps_hoisting = scope_of(self.stamp) != self.var_scope;
         for index in 0..self.carried.len() {
-            let Some(&(place, flags)) = self.carried.get(index) else {
+            let Some(&(table_index, flags)) = self.carried.get(index) else {
                 break;
             };
-            let Some(&old) = self.table.get(place as usize) else {
+            let Some(&old) = self.table.get(table_index as usize) else {
                 continue;
             };
             match self.is_open(old) {
                 true if scope_of(old) == scope_of(self.stamp) => {
-                    self.put(place, old as u16 | flags)
+                    self.put(table_index, old as u16 | flags)
                 }
                 true => {
-                    self.log.push((place, old));
-                    self.put(place, flags);
+                    self.log.push((table_index, old));
+                    self.put(table_index, flags);
                 }
-                false => self.put(place, flags),
+                false => self.put(table_index, flags),
             }
             if keeps_hoisting {
-                self.log.push((place | HOISTED, Entry::from(flags)));
+                self.log.push((table_index | HOISTED, Entry::from(flags)));
             }
         }
     }
@@ -395,7 +403,7 @@ impl Declared {
         Mark {
             stamp: self.stamp,
             log: self.log.len() as u32,
-            holds_vars: self.holds_vars,
+            var_scope: self.var_scope,
             unopened: self.unopened,
         }
     }
@@ -406,12 +414,16 @@ impl Declared {
             return;
         }
         self.unwind(to.log);
-        let (kept, open) = (depth_of(to.stamp), depth_of(self.stamp));
-        for level in self.levels.get_mut(kept + 1..=open).unwrap_or_default() {
+        let (target_depth, open) = (depth_of(to.stamp), depth_of(self.stamp));
+        for level in self
+            .levels
+            .get_mut(target_depth + 1..=open)
+            .unwrap_or_default()
+        {
             level.id = 0;
         }
         self.stamp = to.stamp;
-        self.holds_vars = to.holds_vars;
+        self.var_scope = to.var_scope;
     }
 
     /// Adds `name` to the set `names`, which is identified by an id that no scope has. Only valid at the end of the
@@ -448,17 +460,17 @@ impl Declared {
             // Collect the names that top-level statements plainly declare. Any other name counts as possibly
             // undeclared, such as one bound in a pattern or a `var` in a block.
             self.last += 1;
-            let at_top = self.last;
+            let top_level_names = self.last;
             for id in f.ids(f.body) {
                 match kind_of(id) {
                     Some(StmtKind::Fn(it)) => {
                         if let Some(it) = f.fns.get(it.idx()) {
-                            self.add_to(at_top, it.name);
+                            self.add_to(top_level_names, it.name);
                         }
                     }
                     Some(StmtKind::Class(it)) => {
                         if let Some(it) = f.classes.get(it.idx()) {
-                            self.add_to(at_top, it.name);
+                            self.add_to(top_level_names, it.name);
                         }
                     }
                     Some(StmtKind::Var(list)) => {
@@ -466,7 +478,7 @@ impl Declared {
                             if let Some(PatKind::Ident(name)) =
                                 f.pats.get(it.pat.idx()).map(|it| it.kind)
                             {
-                                self.add_to(at_top, name);
+                                self.add_to(top_level_names, name);
                             }
                         }
                     }
@@ -474,15 +486,15 @@ impl Declared {
                 }
             }
             for it in f.imports.iter() {
-                self.add_to(at_top, it.default);
-                self.add_to(at_top, it.namespace);
+                self.add_to(top_level_names, it.default);
+                self.add_to(top_level_names, it.namespace);
                 for it in f.import_specs.get(it.named.range()).unwrap_or_default() {
-                    self.add_to(at_top, it.local);
+                    self.add_to(top_level_names, it.local);
                 }
             }
             is_undeclared = f.exports.iter().filter(is_local).any(|it| {
                 let items = f.export_specs.get(it.items.range()).unwrap_or_default();
-                !items.iter().all(|it| self.is_in(at_top, it.local))
+                !items.iter().all(|it| self.is_in(top_level_names, it.local))
             });
         }
         self.last += 1;

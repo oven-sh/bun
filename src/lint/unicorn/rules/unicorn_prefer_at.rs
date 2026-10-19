@@ -246,10 +246,10 @@ fn substring_single_character_index<'a>(first: Expr<'a>, second: Expr<'a>) -> Op
     {
         return Some(if start < end { first } else { second });
     }
-    let is_one = |it: Expr<'a>| as_number(it).is_some_and(|it| (it - 1.0).abs() < f64::EPSILON);
+    let is_number_one = |it: Expr<'a>| as_number(it).is_some_and(|it| (it - 1.0).abs() < f64::EPSILON);
     let is_plus_one = |expression: Expr<'a>, index: Expr<'a>| {
         matches!(get_inner_expression(expression).kind(), ExprKind::Binary { op: BinOp::Add, left: a, right: b }
-            if is_one(b) && is_same_inner_expression(a, index) || is_one(a) && is_same_inner_expression(b, index))
+            if is_number_one(b) && is_same_inner_expression(a, index) || is_number_one(a) && is_same_inner_expression(b, index))
     };
     if is_plus_one(second, first) {
         return Some(first);
@@ -258,7 +258,7 @@ fn substring_single_character_index<'a>(first: Expr<'a>, second: Expr<'a>) -> Op
         return Some(second);
     }
     matches!(get_inner_expression(first).kind(), ExprKind::Binary { op: BinOp::Sub, left, right }
-        if is_one(right) && is_same_inner_expression(left, second))
+        if is_number_one(right) && is_same_inner_expression(left, second))
     .then_some(first)
 }
 

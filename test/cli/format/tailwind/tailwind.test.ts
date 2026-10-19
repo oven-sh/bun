@@ -189,8 +189,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     const files = { ...version3, "other.js": "module.exports = { reversed: true };\n", "src/a.jsx": input };
     const nearest = { ".oxfmtrc.json": '{ "sortTailwindcss": true }', "tailwind.config.ts": "export default {};\n" };
     expect(await format({ ...files, ...nearest }, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [sorted] });
-    const named = { ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "other.js" } }' };
-    expect(await format({ ...files, ...named, "src/a.jsx": sorted }, ["src/a.jsx"])).toMatchObject({
+    const explicit = { ".oxfmtrc.json": '{ "sortTailwindcss": { "config": "other.js" } }' };
+    expect(await format({ ...files, ...explicit, "src/a.jsx": sorted }, ["src/a.jsx"])).toMatchObject({
       stderr: "",
       files: [reversed],
     });
@@ -206,8 +206,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       "sub/b.jsx": sorted,
     });
     const below = await formatIn(join(String(dir), "sub"), ["a.jsx"], ["a.jsx"]);
-    const beside = await formatIn(String(dir), ["sub/b.jsx"], ["sub/b.jsx"]);
-    expect([below, beside]).toMatchObject([
+    const fromRoot = await formatIn(String(dir), ["sub/b.jsx"], ["sub/b.jsx"]);
+    expect([below, fromRoot]).toMatchObject([
       { stderr: "", files: [reversed] },
       { stderr: "", files: [sorted] },
     ]);
@@ -714,8 +714,8 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
         "a.jsx": sorted,
       };
       const flags = ["--config", "config/.prettierrc"];
-      const beside = await format({ ...project, ...files, "app.css": "/* reversed */\n" }, ["a.jsx"], flags);
-      expect(beside).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+      const inCwd = await format({ ...project, ...files, "app.css": "/* reversed */\n" }, ["a.jsx"], flags);
+      expect(inCwd).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
       const elsewhere = await format({ ...project, ...files, "config/app.css": "/* reversed */\n" }, ["a.jsx"], flags);
       expect(elsewhere).toMatchObject({ files: [sorted], exitCode: 2 });
       expect(elsewhere.stderr).toContain("app.css");

@@ -90,7 +90,7 @@ fn get_default_props_from_object_expression<'a>(
 }
 
 /// `components.get(componentUtil.getParentES6Component(context, node))`
-fn get_es6_component_around<'a>(
+fn get_enclosing_es6_component<'a>(
     node: Member<'a>,
     components: &Components<'a>,
 ) -> Option<ComponentId> {
@@ -204,7 +204,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             return;
         }
         // find component this propTypes/defaultProps belongs to
-        let Some(component) = get_es6_component_around(node, components) else {
+        let Some(component) = get_enclosing_es6_component(node, components) else {
             return;
         };
         let Some(return_statement) = find_return_statement(Node::Member(node)) else {
@@ -229,7 +229,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             return;
         };
         // find component this propTypes/defaultProps belongs to
-        let Some(component) = get_es6_component_around(node, components) else {
+        let Some(component) = get_enclosing_es6_component(node, components) else {
             return;
         };
         let expression = resolve_node_value(value);
@@ -335,7 +335,7 @@ impl<'a> Instructions<'a> for DefaultPropsInstructions<'a> {
     fn program_exit(&mut self, components: &mut Components<'a>) {
         #[expect(
             clippy::iter_over_hash_type,
-            reason = "each is written to its own component"
+            reason = "each entry updates its own component, so order doesn't matter"
         )]
         for (component, default_props) in self.default_props.drain() {
             let default_props = match default_props {

@@ -162,13 +162,13 @@ impl PropInstantiation {
     /// True if `apply_to(own)` and `other.apply_to(theirs)` would make `own` and `theirs` equal.
     /// They have the same name.
     pub(super) fn yields_same_prop_as(self, own: &Prop, other: Self, theirs: &Prop) -> bool {
-        let name_type = |it: Self, of: &Prop| match it {
+        let name_type = |it: Self, source_prop: &Prop| match it {
             Self::MapperWithKey(_) => TypeId::UNRESOLVED,
-            Self::Type(_) | Self::Mapper(_) => of.name_type,
+            Self::Type(_) | Self::Mapper(_) => source_prop.name_type,
         };
-        let mapper = |it: Self, of: &Prop| match it {
+        let mapper = |it: Self, source_prop: &Prop| match it {
             Self::Mapper(mapper) | Self::MapperWithKey(mapper) => mapper,
-            Self::Type(_) => of.mapper,
+            Self::Type(_) => source_prop.mapper,
         };
         own.flags == theirs.flags
             && name_type(self, own) == name_type(other, theirs)
@@ -269,13 +269,13 @@ impl<'p, 's> Checker<'p, 's> {
         if second == MapperId::IDENTITY {
             return first;
         }
-        if let Some(kept) = self.recent_composed.get(first.0, second.0) {
-            return MapperId(kept);
+        if let Some(cached_mapper) = self.recent_composed.get(first.0, second.0) {
+            return MapperId(cached_mapper);
         }
         let spread = match self.p.composed.get_or_hash(&self.task, &(first, second)) {
-            Ok(kept) => {
-                self.recent_composed.put(first.0, second.0, kept.0);
-                return kept;
+            Ok(cached_mapper) => {
+                self.recent_composed.put(first.0, second.0, cached_mapper.0);
+                return cached_mapper;
             }
             Err(spread) => spread,
         };
@@ -317,13 +317,13 @@ impl<'p, 's> Checker<'p, 's> {
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
                 let key = (first, second);
-                let kept =
+                let stored_mapper =
                     (self.p.composed).insert_absent(&self.task, spread, key, composed, stored);
                 // Same rule as for `recent_instantiations`.
-                if first.is_local() || second.is_local() || !kept.is_local() {
-                    self.recent_composed.put(first.0, second.0, kept.0);
+                if first.is_local() || second.is_local() || !stored_mapper.is_local() {
+                    self.recent_composed.put(first.0, second.0, stored_mapper.0);
                 }
-                kept
+                stored_mapper
             }
             Err(_) => composed,
         }
@@ -498,14 +498,16 @@ impl<'p, 's> Checker<'p, 's> {
             return t;
         }
 
-        if let Some(kept) = self.cached_with_fixed_mapper(fixed, t) {
-            return kept;
+        if let Some(cached_type) = self.cached_with_fixed_mapper(fixed, t) {
+            return cached_type;
         }
-        let forgotten = self.links.times_forgotten();
+        let forgotten = self.links.restrictive_resets();
         let ((instantiated, _), stored) = self.derive_settled(
             |c| c.derive_instantiation_of_type_parameters(t, map),
             |c, &(_, mapper)| {
-                c.is_mapper_idle(mapper) && may_cache(c) && c.links.times_forgotten() == forgotten
+                c.is_mapper_idle(mapper)
+                    && may_cache(c)
+                    && c.links.restrictive_resets() == forgotten
             },
         );
         if let Some(stored) = stored {
@@ -542,11 +544,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
         if !self.pinned_restrictive_instantiations.is_empty()
-            && let Some(&kept) = self.pinned_restrictive_instantiations.get(&t)
+            && let Some(&pinned) = self.pinned_restrictive_instantiations.get(&t)
         {
-            return kept;
+            return pinned;
         }
-        let around = self.left_a_renamed_param_unchanged.replace(false);
+        let outer_flag = self.left_a_renamed_param_unchanged.replace(false);
         let map: fn(&Self, TypeId) -> TypeId = |c, param| match c.data(param) {
             // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
             TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
@@ -575,7 +577,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(self.data(result), TypeData::Cond { .. }) {
             self.restrictive_instantiations.insert(result);
         }
-        if self.left_a_renamed_param_unchanged.replace(around) {
+        if self.left_a_renamed_param_unchanged.replace(outer_flag) {
             self.pinned_restrictive_instantiations.insert(t, result);
             self.pinned_restrictive_instantiations
                 .insert(result, result);
@@ -727,10 +729,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mapper = self.compose(prop.mapper, outer);
         let links = self.instantiated_symbol_links.get(&sym)?;
-        let kept = links
+        let found_link = links
             .iter()
             .find(|link| (link.0, link.1) == (mapper, is_write_type));
-        kept.map(|link| link.2)
+        found_link.map(|link| link.2)
     }
 
     /// The assignment in `getTypeOfInstantiatedSymbol`, after a `getTypeOfSymbol(links.target)`
@@ -881,8 +883,8 @@ impl<'p, 's> Checker<'p, 's> {
             && self.non_cacheable_mark() == (scope.counters.0 + marks, scope.counters.1)
             && let Some(innermost) = self.index_infos_in_instantiation.last_mut()
         {
-            let kept = (result, marks != 0);
-            innermost.instantiations.insert((ty, mapper), kept);
+            let cache_entry = (result, marks != 0);
+            innermost.instantiations.insert((ty, mapper), cache_entry);
         }
         match self.end_scope_by_counters(scope) {
             Ok(stored) if !hit_the_limit && self.index_infos_in_instantiation.is_empty() => {
@@ -947,12 +949,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// True if `getOuterTypeParameters` of the object literal that `written` is a property of
+    /// True if `getOuterTypeParameters` of the object literal that `literal_prop` is a property of
     /// returns only type parameters declared in its enclosing declarations. A context sensitive
     /// function adds those of its contextual signature (`assignContextualParameterTypes`).
-    fn has_only_declared_outer_type_params(&self, file: FileId, written: PropId) -> bool {
+    fn has_only_declared_outer_type_params(&self, file: FileId, literal_prop: PropId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let literal = bound.prop_owner[written.idx()];
+        let literal = bound.prop_owner[literal_prop.idx()];
         if literal.is_none() || !matches!(hir[literal].kind, ExprKind::Object(_)) {
             return false;
         }
@@ -1055,10 +1057,11 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 if let Origin::Mapped(file, node) = *origin {
                     // `newAlias`: `instantiateTypeAlias(t.alias, m)`
-                    let kept = self.stored_alias(ty).map(|(alias, type_arguments)| {
-                        (*alias, self.instantiate_all(type_arguments, mapper))
-                    });
-                    let alias = match &kept {
+                    let instantiated_alias =
+                        self.stored_alias(ty).map(|(alias, type_arguments)| {
+                            (*alias, self.instantiate_all(type_arguments, mapper))
+                        });
+                    let alias = match &instantiated_alias {
                         Some((alias, type_arguments)) => NewAlias::Given(*alias, type_arguments),
                         None => NewAlias::OfNode,
                     };
@@ -1104,8 +1107,8 @@ impl<'p, 's> Checker<'p, 's> {
                     match p.source {
                         // `getObjectTypeInstantiation` maps the literal's outer type parameters and
                         // nothing else. `p.mapper` has an entry for each of them.
-                        PropSource::Literal(file, written)
-                            if self.has_only_declared_outer_type_params(file, written) =>
+                        PropSource::Literal(file, literal_prop)
+                            if self.has_only_declared_outer_type_params(file, literal_prop) =>
                         {
                             p.mapper = self.map_mapper(p.mapper, mapper)
                         }
@@ -1289,7 +1292,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A generic element is left as is: `TypeFlagsInstantiableNonPrimitive`,
             // `isGenericMappedType`.
-            let waits = match self.data(elem) {
+            let stays_variadic = match self.data(elem) {
                 TypeData::TypeParam(..)
                 | TypeData::ThisParam(_)
                 | TypeData::Marker(_)
@@ -1302,7 +1305,7 @@ impl<'p, 's> Checker<'p, 's> {
                 } => self.is_generic(elem),
                 _ => false,
             };
-            if waits {
+            if stays_variadic {
                 out_elems.push(elem);
                 out_flags.push(flag);
                 continue;
@@ -1475,11 +1478,11 @@ impl<'p, 's> Checker<'p, 's> {
                         continue;
                     }
                     let mut new = param;
-                    if let TypeData::TypeParam(file, tp, around) = *self.data(param)
-                        && around != MapperId::IDENTITY
+                    if let TypeData::TypeParam(file, tp, outer_mapper) = *self.data(param)
+                        && outer_mapper != MapperId::IDENTITY
                     {
-                        let around = self.map_mapper(around, mapper);
-                        new = self.cloned_type_param(file, tp, around);
+                        let outer_mapper = self.map_mapper(outer_mapper, mapper);
+                        new = self.cloned_type_param(file, tp, outer_mapper);
                     }
                     if new != param {
                         fresh.push((param, new));
@@ -1559,10 +1562,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(value) = self.types().map(mapper, declared) else {
             return Some(declared);
         };
-        let TypeData::TypeParam(f, t, around) = *self.data(value) else {
+        let TypeData::TypeParam(f, t, outer_mapper) = *self.data(value) else {
             return None;
         };
-        if (f, t) != (file, tp) || around == MapperId::IDENTITY {
+        if (f, t) != (file, tp) || outer_mapper == MapperId::IDENTITY {
             return None;
         }
         let own = self.hir(file)[func].type_params;
@@ -1573,7 +1576,7 @@ impl<'p, 's> Checker<'p, 's> {
             .copied()
             .filter(|pair| !self.is_declared_among(pair.0, file, own))
             .collect();
-        (around == self.types().mapper(outer)).then_some(value)
+        (outer_mapper == self.types().mapper(outer)).then_some(value)
     }
 
     /// `instantiateSignatureEx`. Returns the mapper of a signature of `func` that has `own`,
@@ -1613,7 +1616,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.types().mapper_of(&pairs);
         }
         let outer = pairs.len();
-        let mut around = None;
+        let mut outer_mapper = None;
         for tp in type_params.iter() {
             let declared = self.type_param(file, tp);
             match self.open_type_param(file, func, tp, own) {
@@ -1623,9 +1626,9 @@ impl<'p, 's> Checker<'p, 's> {
                     None => {
                         // Where no outer type parameter is instantiated it's the declared one,
                         // which needs no entry.
-                        let around =
-                            *around.get_or_insert_with(|| self.types().mapper_of(&pairs[..outer]));
-                        let fresh = self.cloned_type_param(file, tp, around);
+                        let outer_mapper = *outer_mapper
+                            .get_or_insert_with(|| self.types().mapper_of(&pairs[..outer]));
+                        let fresh = self.cloned_type_param(file, tp, outer_mapper);
                         if fresh != declared {
                             pairs.push((declared, fresh));
                         }
@@ -1728,12 +1731,12 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let mut first: smallvec::SmallVec<[(TypeId, TypeId); 8]> = outer.collect();
-        let around = self.types().mapper_of(&first);
+        let outer_mapper = self.types().mapper_of(&first);
         let mut second: smallvec::SmallVec<[(TypeId, TypeId); 4]> = smallvec::SmallVec::new();
         for tp in own.iter() {
             let declared = self.type_param(file, tp);
             if let Some(actual) = self.types().map(mapper, declared) {
-                let open = self.cloned_type_param(file, tp, around);
+                let open = self.cloned_type_param(file, tp, outer_mapper);
                 first.push((declared, open));
                 if actual != open {
                     second.push((open, actual));

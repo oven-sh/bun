@@ -7,7 +7,7 @@ use crate::prelude::*;
 use crate::write;
 
 /// oxfmt doesn't see an empty line in `a: 1\n\n, b: 2`.
-fn comma_ends_the_search_for_line_breaks(f: &Formatter<'_>) -> bool {
+fn line_break_search_stops_at_comma(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -15,7 +15,7 @@ impl<'a> Formatter<'a> {
     /// Returns the number of line breaks before the node at `span`, or before its leading comments.
     #[inline]
     pub(crate) fn lines_before(&self, span: Span) -> usize {
-        let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
+        let looks_past_comma = !line_break_search_stops_at_comma(self);
         if self.is_quiet() {
             return (self.source_text()).get_lines_before(span, None, looks_past_comma);
         }

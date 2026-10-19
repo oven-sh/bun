@@ -4,7 +4,7 @@ use super::class::declared_key;
 use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::lexer::Mark;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -389,7 +389,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn function_type_without_parentheses(&mut self, operator: T) -> TypeNodeId {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return TypeNodeId::NONE;
         }
         let full = self.full_start();
@@ -662,7 +662,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             // It may be meant as the keyword, which is an error.
             T::EscapedReservedWord => {
-                self.refuse(Refusal::EscapedKeyword);
+                self.reject(Rejection::EscapedKeyword);
                 return TypeNodeId::NONE;
             }
             T::Number => {
@@ -903,7 +903,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && !self.is_flow()
             && self.is_followed_by_word_on_same_line();
         if starts_something_else && !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         }
         if is_word && !starts_something_else {
             if token != T::PrivateIdentifier {
@@ -1146,7 +1146,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             None if self.has_failed() => TypeNodeId::NONE,
             // A syntax error in Flow's parser.
             None if self.is_flow() => {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
                 TypeNodeId::NONE
             }
             None => {
@@ -1252,7 +1252,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn continues_after_type_arguments(&mut self) -> bool {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return false;
         }
         match self.token() {
@@ -2359,7 +2359,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !matches!(kind, MemberKind::Getter | MemberKind::Setter) {
             // `parseTypeMemberSemicolon` reports the `{`.
             if !self.recovers() {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
             return false;
         }

@@ -595,7 +595,7 @@ impl Walk<'_, '_> {
                 self.atom(x, y, "a key")?;
                 match self.is_sorted(x, y) {
                     true => Ok(()),
-                    false => self.name_as_written(at),
+                    false => self.name_spelling(at),
                 }
             }
             (PropKey::Private(x), PropKey::Private(y)) => self.atom(x, y, "a key"),
@@ -609,7 +609,7 @@ impl Walk<'_, '_> {
     /// gains or loses its quotes.
     #[inline]
     #[optimize(size)]
-    fn name_as_written(&mut self, at: (u32, u32)) -> Same {
+    fn name_spelling(&mut self, at: (u32, u32)) -> Same {
         let is_plain = |program: &Program<'_>, at: u32| {
             program
                 .text
@@ -632,7 +632,7 @@ impl Walk<'_, '_> {
         if a.is_empty() && b.is_empty() {
             return Ok(());
         }
-        const STAY: Flags = Flags::EXPORT
+        const FIXED_KEYWORDS: Flags = Flags::EXPORT
             .union(Flags::DEFAULT)
             .union(Flags::ASYNC)
             .union(Flags::ACCESSOR);
@@ -647,7 +647,7 @@ impl Walk<'_, '_> {
                 },
                 rest @ ..,
             ] = list
-                && !keyword.intersects(STAY)
+                && !keyword.intersects(FIXED_KEYWORDS)
             {
                 all |= *keyword;
                 *list = rest;
@@ -965,7 +965,7 @@ impl Walk<'_, '_> {
                 for (m, n) in i.members.iter().zip(j.members.iter()) {
                     let (m, n) = both!(self, enum_members, m, n, "a member of an enum is missing");
                     let result = (self.atom(m.name, n.name, "the name of a member of an enum"))
-                        .and_then(|()| self.name_as_written((m.pos, n.pos)))
+                        .and_then(|()| self.name_spelling((m.pos, n.pos)))
                         .and_then(|()| self.name_kind(m.name_kind, n.name_kind))
                         .and_then(|()| self.expr(m.computed_name, n.computed_name))
                         .and_then(|()| self.expr(m.init, n.init));
@@ -979,7 +979,7 @@ impl Walk<'_, '_> {
                     (ModuleName::Ident(x), ModuleName::Ident(y))
                     | (ModuleName::String(x), ModuleName::String(y)) => {
                         self.atom(x, y, "the name of a namespace")?;
-                        self.name_as_written((i.name_pos, j.name_pos))?;
+                        self.name_spelling((i.name_pos, j.name_pos))?;
                     }
                     (ModuleName::Global, ModuleName::Global) => {}
                     _ => return self.differ_somewhere("the kind of a namespace"),
@@ -1154,7 +1154,7 @@ impl Walk<'_, '_> {
                     if !is_same {
                         return self.differ("a name of an import", s.start, t.start);
                     }
-                    self.name_as_written((s.imported_pos, t.imported_pos))?;
+                    self.name_spelling((s.imported_pos, t.imported_pos))?;
                 }
                 Ok(())
             }
@@ -1191,8 +1191,8 @@ impl Walk<'_, '_> {
                     if !is_same {
                         return self.differ("a name of an export", s.start, t.start);
                     }
-                    self.name_as_written((s.local_pos, t.local_pos))?;
-                    self.name_as_written((s.pos, t.pos))?;
+                    self.name_spelling((s.local_pos, t.local_pos))?;
+                    self.name_spelling((s.pos, t.pos))?;
                 }
                 Ok(())
             }
@@ -1217,7 +1217,7 @@ impl Walk<'_, '_> {
                 self.atom(spec, spec2, "a module specifier")?;
                 self.atom(alias, alias2, "the name of an export")?;
                 if alias.is_some() {
-                    self.name_as_written((alias_pos, alias_pos2))?;
+                    self.name_spelling((alias_pos, alias_pos2))?;
                 }
                 self.check(
                     (type_only, mode) == (type_only2, mode2),
@@ -2526,7 +2526,7 @@ fn function_kind(function: &Func) -> FnKind {
     match function.kind {
         FnKind::Method
             if function.name == bun_sema::atom::known::constructor
-                && !function.flags.intersects(NOT_OF_A_CONSTRUCTOR) =>
+                && !function.flags.intersects(NON_CONSTRUCTOR_FLAGS) =>
         {
             FnKind::Constructor
         }
@@ -2534,7 +2534,7 @@ fn function_kind(function: &Func) -> FnKind {
     }
 }
 
-const NOT_OF_A_CONSTRUCTOR: Flags = Flags::STATIC
+const NON_CONSTRUCTOR_FLAGS: Flags = Flags::STATIC
     .union(Flags::COMPUTED_NAME)
     .union(Flags::ASYNC)
     .union(Flags::GENERATOR);

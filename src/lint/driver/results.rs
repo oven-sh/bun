@@ -95,12 +95,11 @@ impl FileResult {
     }
 
     /// oxlint's error for the file at `path`, which it can't open. It then continues with the next file. `error` is
-    /// formatted like Rust prints it. With `is_named`, the problem belongs to that file. For oxlint it belongs to no
-    /// file.
-    pub(crate) fn unopened(path: Vec<u8>, error: &[u8], is_named: bool) -> FileResult {
+    /// formatted like Rust prints it. For oxlint the problem belongs to no file, so `belongs_to_file` is false.
+    pub(crate) fn unopened(path: Vec<u8>, error: &[u8], belongs_to_file: bool) -> FileResult {
         let start: &[u8] = b"Failed to open file ";
         let message = [start, &path, b" with error \"", error, b"\""].concat();
-        let path = if is_named { path } else { Vec::new() };
+        let path = if belongs_to_file { path } else { Vec::new() };
         FileResult::about(path, Severity::Error, &message)
     }
 
@@ -139,7 +138,7 @@ impl FileResult {
     }
 
     /// The text that `--fix` writes.
-    pub(crate) fn written(&self) -> Option<&[u8]> {
+    pub(crate) fn text_to_write(&self) -> Option<&[u8]> {
         self.fixed_text.as_deref().or(self.text.as_deref())
     }
 

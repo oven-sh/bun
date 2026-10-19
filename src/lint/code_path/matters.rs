@@ -96,7 +96,7 @@ impl Matters {
             listens_in_types,
         };
         for (i, raw) in hir.exprs.iter().enumerate() {
-            let is_it = listened.has_index(raw.kind.tag() as u32)
+            let is_relevant = listened.has_index(raw.kind.tag() as u32)
                 || match raw.kind {
                     K::Fn(_) | K::Class(_) | K::Cond { .. } | K::Yield { .. } => true,
                     K::Binary { op, .. } => is_logical(op),
@@ -133,7 +133,7 @@ impl Matters {
                     K::String(_) => listens_for_templates,
                     _ => false,
                 };
-            if is_it {
+            if is_relevant {
                 matters.mark(Node::Expr(Expr::from_raw(file, i as u32)));
             }
         }

@@ -122,13 +122,13 @@ impl AwaitThenable {
             return;
         }
         // oxlint points at the awaited expression.
-        let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
+        let report_span = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
         let keyword = Span::new(node.span().start, node.span().start + "await".len() as u32);
         let labels = |labels: &mut Details| {
             labels.first("This expression is not Promise-like");
             labels.push(keyword, "");
         };
-        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest_behavior_change(REMOVE_AWAIT, &[], |fixer| {
+        cx.report(report_span, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest_behavior_change(REMOVE_AWAIT, &[], |fixer| {
             let file = fixer.file();
             let await_keyword = file.tokens_in(node).find(is_await_keyword)?;
             let await_removal_fix = fixer.remove(get_await_token_removal_range(file, await_keyword));
@@ -161,21 +161,21 @@ impl AwaitThenable {
         if let ExprKind::Array(elements) = argument.kind() {
             for element in elements.iter().filter(|element| !element.is_missing()) {
                 if is_always_non_awaitable_type(get_constrained_type_at_location(element), element) {
-                    let place = if is_oxlint { element.outer_span() } else { element.span() };
-                    cx.report(place, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+                    let report_span = if is_oxlint { element.outer_span() } else { element.span() };
+                    cx.report(report_span, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
                         labels.first("This expression is not Promise-like");
                         labels.push(argument.outer_span(), "Promise aggregator input");
-                        labels.push(place, "");
+                        labels.push(report_span, "");
                     });
                 }
             }
             return;
         }
         if is_invalid_promise_aggregator_input(argument, get_constrained_type_at_location(argument)) {
-            let place = if is_oxlint { argument.outer_span() } else { argument.span() };
-            cx.report(place, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+            let report_span = if is_oxlint { argument.outer_span() } else { argument.span() };
+            cx.report(report_span, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
                 labels.first("This expression is not Promise-like");
-                labels.push(place, "");
+                labels.push(report_span, "");
             });
         }
     }

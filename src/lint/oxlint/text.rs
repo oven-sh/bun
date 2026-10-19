@@ -60,7 +60,7 @@ pub fn find_next_token_within<'a>(file: &'a File<'a>, within: Span, token: &[u8]
     loop {
         let rest = Span::new(from, within.end);
         let at = from + strings::index_of(file.slice(rest), token)? as u32;
-        match file.comment_around(at) {
+        match file.comment_containing(at) {
             Some(comment) => from = comment.end().max(at + 1),
             None => return Some(at),
         }

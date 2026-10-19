@@ -926,7 +926,7 @@ export {};
 
 // Returns `program` with one more line at the top, which looks up 12 names that no member has in each of its unions.
 // After that, `bun check` has cached everything it ever caches about a union and its members.
-function afterOtherNames(program: string) {
+function afterUnrelatedLookups(program: string) {
   const aliases = Array.from(program.matchAll(/^type (\w+) =/gm), found => found[1]);
   const reads = aliases.flatMap(alias => Array.from({ length: 12 }, (_, i) => `(null! as ${alias}).other${i}`));
   return `// @ts-ignore\n[${reads.join(", ")}];${program}`;
@@ -937,7 +937,7 @@ test.concurrent.each(Object.keys(cases))("reports the same errors at every union
   using dir = tempDir("bun-check-union", {
     "tsconfig.json": tsconfig,
     ...Object.fromEntries(sizes.map(size => [`first${size}.ts`, program(size)])),
-    ...Object.fromEntries(sizes.map(size => [`later${size}.ts`, afterOtherNames(program(size))])),
+    ...Object.fromEntries(sizes.map(size => [`later${size}.ts`, afterUnrelatedLookups(program(size))])),
   });
   const byFile: Record<string, string[]> = {};
   let file = "";
@@ -2157,7 +2157,7 @@ const filler = (count: number, prefix = "f") => each(count, i => `${prefix}${i}?
 const reads = (prefix: string, values: string[]) =>
   values.map((value, i) => `const ${prefix}${i}: never = ${value};`).join("\n");
 /** `owner.name`, `owner[0]`, `owner()` */
-const of = (owner: string, names: string[]) => names.map(name => `${owner}${/^\w/.test(name) ? "." : ""}${name}`);
+const accesses = (owner: string, names: string[]) => names.map(name => `${owner}${/^\w/.test(name) ? "." : ""}${name}`);
 
 // `errors`: what TypeScript 7.0.2 reports for `program(count)`, for every `count` in `sizes`, without the file name.
 const members: Record<string, { sizes: number[]; program: (count: number) => string; errors: string }> = {
@@ -2167,7 +2167,7 @@ const members: Record<string, { sizes: number[]; program: (count: number) => str
     program: count => {
       const names = ["a", "b", "same", "both", "opt", "req", "ro", "rw", "fixed", "m", "p", "toString"];
       const byName = (v: string) => `
-${reads(v, of(v, names))}
+${reads(v, accesses(v, names))}
 ${v}.ro = 1;
 ${v}.rw = 1;
 ${v}.fixed = 1;
@@ -2252,7 +2252,7 @@ class D { private x = 1; w = 1; }
 type N = C & E & { n?: 1 };
 type Conflict = C & D;
 declare const n: N;
-${reads("n", of("n", ["x", "z", "e", "acc", "only"]))}
+${reads("n", accesses("n", ["x", "z", "e", "acc", "only"]))}
 n.acc = 1;
 n.only = 1;
 n.none;
@@ -2294,20 +2294,20 @@ declare const newable: A & (new () => A);
 declare const items: string[] & A;
 declare const pair: [1, 2] & A;
 declare const space: typeof Space & A;
-${reads("branded", of("branded", ["brand", "length", "none"]))}
-${reads("indexed", of("indexed", ["a", "anything", "toString", "f0"]))}
-${reads("callable", of("callable", ["a", "name", "(1)", "none"]))}
-${reads("newable", [...of("newable", ["a", "prototype", "none"]), "new newable()"])}
-${reads("items", of("items", ["a", "length", "[0]", "none"]))}
-${reads("pair", of("pair", ["a", "length", "[1]", "[2]", "none"]))}
-${reads("space", of("space", ["a", "value", "Only", "f0"]))}
+${reads("branded", accesses("branded", ["brand", "length", "none"]))}
+${reads("indexed", accesses("indexed", ["a", "anything", "toString", "f0"]))}
+${reads("callable", accesses("callable", ["a", "name", "(1)", "none"]))}
+${reads("newable", [...accesses("newable", ["a", "prototype", "none"]), "new newable()"])}
+${reads("items", accesses("items", ["a", "length", "[0]", "none"]))}
+${reads("pair", accesses("pair", ["a", "length", "[1]", "[2]", "none"]))}
+${reads("space", accesses("space", ["a", "value", "Only", "f0"]))}
 function generic<T extends { t: 1 }, U extends { u: 1 } | { u: 2; v: 3 }, K extends string>(
   one: T & A, union: U & A, text: K & A, all: T & U & A,
 ) {
-${reads("one", of("one", ["t", "a", "f0", "none"]))}
-${reads("union", of("union", ["u", "a", "v"]))}
-${reads("text", of("text", ["a", "length", "none"]))}
-${reads("all", of("all", ["t", "u", "a"]))}
+${reads("one", accesses("one", ["t", "a", "f0", "none"]))}
+${reads("union", accesses("union", ["u", "a", "v"]))}
+${reads("text", accesses("text", ["a", "length", "none"]))}
+${reads("all", accesses("all", ["t", "u", "a"]))}
   const keys: never = null! as Exclude<keyof (T & A), \`f\${number}\`>;
 }
 export {};
@@ -2385,10 +2385,10 @@ type N = ${each(count, i => `P${i}`, " & ")};
 type L = ${each(count, i => `P${i}`, " & ")} & { l?: 1 };
 declare const n: N;
 declare const l: L;
-${reads("n", of("n", names))}
+${reads("n", accesses("n", names))}
 const n_keys: never = null! as Exclude<keyof N, \`f\${string}\` | \`own\${number}\`>;
 const l_keys: never = null! as Exclude<keyof L, \`f\${string}\` | \`own\${number}\`>;
-${reads("l", of("l", names))}
+${reads("l", accesses("l", names))}
 export {};
 `;
     },
@@ -2434,11 +2434,11 @@ type N = Leaf & { n: 1 };
 type G<T> = Mid<T> & { g: T };
 declare const n: N;
 declare const g: G<number>;
-${reads("n", of("n", ["value", "self()", "self().self().n", "mid", "leaf", "map(x => x.length).value", "f0", "none"]))}
-${reads("g", of("g", ["value", "self()", "self().g", "mid", "g", "none"]))}
+${reads("n", accesses("n", ["value", "self()", "self().self().n", "mid", "leaf", "map(x => x.length).value", "f0", "none"]))}
+${reads("g", accesses("g", ["value", "self()", "self().g", "mid", "g", "none"]))}
 function generic<T>(one: G<T>, list: G<T[]>) {
-${reads("one", of("one", ["value", "self().g", "mid"]))}
-${reads("list", of("list", ["value", "self().g", "mid"]))}
+${reads("one", accesses("one", ["value", "self().g", "mid"]))}
+${reads("list", accesses("list", ["value", "self().g", "mid"]))}
 }
 const n_keys: never = null! as Exclude<keyof N, \`f\${number}\`>;
 const g_keys: never = null! as Exclude<keyof G<1>, \`f\${number}\`>;
@@ -2554,10 +2554,10 @@ type None = { readonly [K in keyof Source]?: Source[K] };
 type Picked = Pick<Source, "c" | "d" | "f0">;
 type Named = { [K in "c" | "d" | "z"]: K };
 ${reads("r", [
-  ...of("(null! as Merged)", ["ab", "c", "a"]),
-  ...of("(null! as Dropped)", ["b", "a", "f0"]),
+  ...accesses("(null! as Merged)", ["ab", "c", "a"]),
+  ...accesses("(null! as Dropped)", ["b", "a", "f0"]),
   "null! as keyof Dropped",
-  ...of("(null! as Renamed)", ["get_c", "c"]),
+  ...accesses("(null! as Renamed)", ["get_c", "c"]),
   ...["Same", "Copy", "All", "None", "Picked", "Named"].map(alias => `(null! as ${alias}).c`),
   "(null! as Copy).e",
   "(null! as All).e",
@@ -3399,12 +3399,12 @@ declare const differs: ${union(i => `G<${i % 2}>`)};
 declare const getters: ${union(() => "Get")};
 declare const mixed: ${union(i => (i === 1 ? "Plain" : "Get"))};
 ${reads("r", [
-  ...of("one", ["theme", "ro", "opt", "method()"]),
-  ...of("generic", ["g", "fixed", "maybe"]),
-  ...of("equal", ["g", "fixed"]),
-  ...of("differs", ["g", "fixed"]),
-  ...of("getters", ["value", "both", "plain"]),
-  ...of("mixed", ["value", "both", "plain"]),
+  ...accesses("one", ["theme", "ro", "opt", "method()"]),
+  ...accesses("generic", ["g", "fixed", "maybe"]),
+  ...accesses("equal", ["g", "fixed"]),
+  ...accesses("differs", ["g", "fixed"]),
+  ...accesses("getters", ["value", "both", "plain"]),
+  ...accesses("mixed", ["value", "both", "plain"]),
 ])}
 one.ro = 1;
 one.theme = 1;

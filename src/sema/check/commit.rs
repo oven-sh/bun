@@ -31,7 +31,7 @@
 //!   starts depends on what was computed before, which for a task includes the entries it found. It's discarded like an
 //!   invalid one, but its file waits for the last round.
 //! - **A cycle is entered from the first file that leads to it.** What a query gets when it comes back around to
-//!   itself, or to a placeholder it has put in place, depends on where the checker entered the cycle
+//!   itself, or to a partial result it already has in place, depends on where the checker entered the cycle
 //!   (`Checker::close_ring_from`). `tsc --singleThreaded` enters from the first file in program order that leads there.
 //!   So a task is only trusted about a cycle if every file before the one it's visiting is checked for good. None of
 //!   those files leads to the cycle, or the task would have found the members' results (`Task::close_cycle`). Any other
@@ -306,8 +306,8 @@ impl View<'_> {
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
         let stored = self.numbers.stored.load(Ordering::Acquire);
-        if let Some(of_file) = self.file_snapshots.get(file.idx()) {
-            of_file.set(stored + 1);
+        if let Some(file_snapshot) = self.file_snapshots.get(file.idx()) {
+            file_snapshot.set(stored + 1);
             self.touched.borrow_mut().push(file.0);
         }
         stored
@@ -321,9 +321,9 @@ impl View<'_> {
         let pinned = self.pinned.get();
         self.touched.borrow_mut().retain(|&file| {
             if file != pinned
-                && let Some(of_file) = self.file_snapshots.get(file as usize)
+                && let Some(file_snapshot) = self.file_snapshots.get(file as usize)
             {
-                of_file.set(0);
+                file_snapshot.set(0);
             }
             file == pinned
         });
@@ -713,7 +713,7 @@ impl<'s> Checker<'_, 's> {
         if has_missed && !self.task.was_discarded() {
             // That cycle is already committed, so the file can be rechecked right away.
             drop(self.task.take_cycle_members());
-            (self.task).discard_until_recheck("a ring of which it has missed a member");
+            (self.task).discard_until_recheck("a cycle member that it missed");
         }
     }
 
@@ -760,7 +760,7 @@ impl<'s> Checker<'_, 's> {
     /// (`Program::is_invalid`), so it has to find what was evaluated along with them.
     fn commit(&mut self, is_between_files: bool) -> bool {
         let p = self.p;
-        let Some([of_entries_written_at_once, mut reported]) =
+        let Some([immediate_diagnostics, mut reported]) =
             self.take_diagnostics_for_commit(is_between_files)
         else {
             if let Some(view) = self.task.view() {
@@ -768,7 +768,7 @@ impl<'s> Checker<'_, 's> {
             }
             return !self.task.was_discarded();
         };
-        p.publish_reported(self.task.number(), of_entries_written_at_once);
+        p.publish_reported(self.task.number(), immediate_diagnostics);
         if self.task.was_discarded() {
             return false;
         }
@@ -797,14 +797,14 @@ impl<'s> Checker<'_, 's> {
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
-        let asked = Instant::now();
+        let lock_requested = Instant::now();
         let mut committing = p.commits.committing.lock();
         let entered = Instant::now();
         let is_invalid = !self.task.is_trusted()
             && (self.task.view()).is_some_and(|view| p.is_invalid(&self.task, view, &committing));
         if is_invalid {
             drop(committing);
-            (self.task).discard_until_recheck("a commit that is invalid");
+            (self.task).discard_until_recheck("an invalid commit");
             return false;
         }
         let number = committing.number + 1;
@@ -824,7 +824,7 @@ impl<'s> Checker<'_, 's> {
         p.publish_reported(task.number(), reported);
         let stored = (p.commits).store(&tables_of(p), task, &mut log, number, ring);
         drop(committing);
-        task.count_waits([entered - asked, entered.elapsed(), Duration::ZERO]);
+        task.count_waits([entered - lock_requested, entered.elapsed(), Duration::ZERO]);
         task.count_committed(log.len() as u64, stored);
         if let Some(view) = task.view() {
             view.has_committed(number);
@@ -848,13 +848,13 @@ impl<'s> Checker<'_, 's> {
             self.task.uncommitted_files.clear();
             return;
         }
-        let in_doubt = &self.task.uncommitted_files;
+        let uncommitted = &self.task.uncommitted_files;
         log.node_keys.retain(|&entry| {
-            let is_in_doubt = in_doubt.contains(&FileId(entry[1]));
-            if is_in_doubt {
+            let is_uncommitted = uncommitted.contains(&FileId(entry[1]));
+            if is_uncommitted {
                 withheld.push(entry);
             }
-            !is_in_doubt
+            !is_uncommitted
         });
     }
 

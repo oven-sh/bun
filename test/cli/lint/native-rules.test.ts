@@ -88,10 +88,10 @@ async function listed() {
 
 /** Lists every core rule that has a typescript-eslint version, and whether that version needs type information. */
 function pairsOf(rules: Listed[]) {
-  const ofESLint = new Set(rules.filter(it => it.scope === "eslint").map(it => it.value));
+  const eslintRuleNames = new Set(rules.filter(it => it.scope === "eslint").map(it => it.value));
   const base = (name: string) => (name === "only-throw-error" ? "no-throw-literal" : name);
   return rules
-    .filter(it => it.scope === "typescript" && ofESLint.has(base(it.value)))
+    .filter(it => it.scope === "typescript" && eslintRuleNames.has(base(it.value)))
     .map(it => ({
       base: base(it.value),
       extension: `@typescript-eslint/${it.value}`,
@@ -125,12 +125,14 @@ describe.concurrent("every built-in rule", () => {
       bunfig(Object.fromEntries(rules.map(it => [`${it.scope}/${it.value}`, setting(it.value, "error")]))),
       "d.tsx",
     );
-    const ofHooks = (it: { scope: string; value: string }) =>
+    const isHooksRule = (it: { scope: string; value: string }) =>
       it.scope === "react" && asListed.has(`react-hooks/${it.value}`);
-    expect(rules.filter(ofHooks).map(it => it.value)).toContain("rules-of-hooks");
-    expect(rules.filter(ofHooks).map(it => it.value)).toContain("exhaustive-deps");
-    expect(rules.filter(ofHooks).map(it => it.value)).not.toContain("jsx-key");
-    const names = rules.map(it => spellings[ofHooks(it) ? "react-hooks" : it.scope].map(prefix => prefix + it.value));
+    expect(rules.filter(isHooksRule).map(it => it.value)).toContain("rules-of-hooks");
+    expect(rules.filter(isHooksRule).map(it => it.value)).toContain("exhaustive-deps");
+    expect(rules.filter(isHooksRule).map(it => it.value)).not.toContain("jsx-key");
+    const names = rules.map(it =>
+      spellings[isHooksRule(it) ? "react-hooks" : it.scope].map(prefix => prefix + it.value),
+    );
     const ids = names.map(it => it[0]).sort();
     const on = (found: Map<string, number>) =>
       [...found].flatMap(([id, severity]) => (severity === 2 ? [id] : [])).sort();
@@ -138,9 +140,9 @@ describe.concurrent("every built-in rule", () => {
     expect(on(asListed)).toEqual(runningOn("d.tsx"));
     await Promise.all(
       [0, 1, 2].map(async nth => {
-        const written = names.map(it => it[Math.min(nth, it.length - 1)]);
+        const chosenNames = names.map(it => it[Math.min(nth, it.length - 1)]);
         const found = await configured(
-          bunfig(Object.fromEntries(written.map(id => [id, setting(id, "error")]))),
+          bunfig(Object.fromEntries(chosenNames.map(id => [id, setting(id, "error")]))),
           "a.js",
         );
         expect(on(found)).toEqual(runningOn("a.js"));
@@ -235,8 +237,8 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
       results.map(({ filePath, messages }) => {
         const name = basename(filePath);
         const own = pairs.find(it => it.base === name.slice(0, -3))!;
-        const ofPair = messages.filter(it => it.ruleId === own.base || it.ruleId === own.extension);
-        return [name, ofPair.map(it => `${it.severity} ${it.ruleId}`)];
+        const pairMessages = messages.filter(it => it.ruleId === own.base || it.ruleId === own.extension);
+        return [name, pairMessages.map(it => `${it.severity} ${it.ruleId}`)];
       }),
     );
     return { byFile, skipped: /Skipped (\d+) rules? that needs? type information/.exec(stderr)?.[1] };
@@ -486,7 +488,7 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
       expect(stderr).not.toContain("error:");
       return problems(stdout);
     };
-    const ofESLint = ["a.js:1 max-params", "b.ts:1 max-params"];
+    const baseRuleOnly = ["a.js:1 max-params", "b.ts:1 max-params"];
     expect(
       await Promise.all([
         run({ "max-params": ["error", { max: 2 }] }),
@@ -495,7 +497,13 @@ describe.concurrent("core rules and their typescript-eslint versions never both 
         run({}, `/* eslint max-params: ["error", 2] */\n`),
         run({ "max-params": ["error", { max: 2 }] }, `/* eslint max-params: ["error", 2] */\n`),
       ]),
-    ).toEqual([["a.js:1 max-params", "b.ts:1 @typescript-eslint/max-params"], ofESLint, ofESLint, ofESLint, ofESLint]);
+    ).toEqual([
+      ["a.js:1 max-params", "b.ts:1 @typescript-eslint/max-params"],
+      baseRuleOnly,
+      baseRuleOnly,
+      baseRuleOnly,
+      baseRuleOnly,
+    ]);
   });
 
   test("eslint-disable works with either name and isn't reported as unused", async () => {
@@ -632,7 +640,7 @@ export function A({ list, on }: { list: any[]; on: Object }) {
   ];
   const expected = rules.flatMap(it => it[1]).sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
   const ids = new Set(expected.map(it => it.slice(it.indexOf(" ") + 1)));
-  const ofThese = (stdout: string) => problems(stdout).filter(it => ids.has(it.slice(it.indexOf(" ") + 1)));
+  const relevantProblems = (stdout: string) => problems(stdout).filter(it => ids.has(it.slice(it.indexOf(" ") + 1)));
 
   test("when set in [lint.rules]", async () => {
     const { stdout, exitCode } = await lint(
@@ -642,7 +650,7 @@ export function A({ list, on }: { list: any[]; on: Object }) {
       },
       ["-f", "json"],
     );
-    expect(ofThese(stdout)).toEqual(expected);
+    expect(relevantProblems(stdout)).toEqual(expected);
     expect(exitCode).toBe(1);
   });
 
@@ -653,14 +661,14 @@ export function A({ list, on }: { list: any[]; on: Object }) {
       "--rule",
       JSON.stringify(Object.fromEntries(rules.map(it => [it[0], "error"]))),
     ]);
-    expect(ofThese(stdout)).toEqual(expected);
+    expect(relevantProblems(stdout)).toEqual(expected);
     expect(exitCode).toBe(1);
   });
 
   test("but are off by default", async () => {
     const { stdout } = await lint(files, ["-f", "json"]);
     // no-explicit-any is on by default for TypeScript.
-    expect(ofThese(stdout)).toEqual(["view.tsx:2 @typescript-eslint/no-explicit-any"]);
+    expect(relevantProblems(stdout)).toEqual(["view.tsx:2 @typescript-eslint/no-explicit-any"]);
   });
 
   test("prettier/prettier works without prettier installed", async () => {
@@ -966,13 +974,13 @@ debugger; // eslint-disable-line no-debugger
 `;
     const rules = { "capitalized-comments": "error", "no-inline-comments": "error", "no-debugger": "error" } as const;
     const flat = { "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n` };
-    const [alone, fixed, withEslint] = await Promise.all([
+    const [withBunfig, fixed, withEslint] = await Promise.all([
       lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json"]),
       // Capitalizing a directive comment would break it.
       lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json", "--fix-dry-run"]),
       lint({ "a.js": code, ...flat }, ["-f", "json"]),
     ]);
-    expect(problems(alone.stdout)).toEqual(["a.js:7 capitalized-comments"]);
+    expect(problems(withBunfig.stdout)).toEqual(["a.js:7 capitalized-comments"]);
     expect(JSON.parse(fixed.stdout)[0].output).toBe(code.replace("another", "Another"));
     expect(problems(withEslint.stdout)).toEqual([
       "a.js:1 capitalized-comments",
@@ -1178,11 +1186,11 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
 
   test("a rule named in [lint.rules] runs whether or not the project uses its framework", async () => {
     const rules = `[lint.rules]\n"@next/next/no-img-element" = "warn"\n"jest/valid-expect" = "error"\n`;
-    const [alone, withCategories] = await Promise.all([
+    const [rulesOnly, withCategories] = await Promise.all([
       lint({ ...frameworkFiles, "package.json": dependsOn(), "bunfig.toml": rules }, ["-f", "json"]),
       lint({ ...project, "package.json": dependsOn(), "bunfig.toml": correctnessAndPerf + rules }, ["-f", "json"]),
     ]);
-    expect(problems(alone.stdout)).toEqual(sorted(next, jest));
+    expect(problems(rulesOnly.stdout)).toEqual(sorted(next, jest));
     expect(problems(withCategories.stdout)).toEqual(sorted(general, next, jest));
   });
 
@@ -1339,16 +1347,14 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
   test("react/* and react-hooks/* are separate plugins", async () => {
     const hooks = `export function App({ on }) {\n  if (on) useState(0);\n  return <div children="a" />;\n}\n`;
     const files = { "app.jsx": hooks, "package.json": dependsOn("react") };
-    const [ofHooks, ofReact] = ["app.jsx:2 react-hooks/rules-of-hooks", "app.jsx:3 react/no-children-prop"];
+    const [hooksProblem, reactProblem] = ["app.jsx:2 react-hooks/rules-of-hooks", "app.jsx:3 react/no-children-prop"];
     const correctness = `[lint.categories]\ncorrectness = "error"\n`;
-    const ofBoth = async (bunfig: string) => (await found(bunfig, [], files)).filter(it => it.includes(" react"));
-    const off = (name: string) => ofBoth(`${correctness}[lint.rules]\n"${name}/*" = "off"\n`);
-    expect(await Promise.all([ofBoth(correctness), off("react"), off("react-hooks"), off("react_hooks")])).toEqual([
-      [ofHooks, ofReact],
-      [ofHooks],
-      [ofReact],
-      [ofReact],
-    ]);
+    const reactProblems = async (bunfig: string) =>
+      (await found(bunfig, [], files)).filter(it => it.includes(" react"));
+    const off = (name: string) => reactProblems(`${correctness}[lint.rules]\n"${name}/*" = "off"\n`);
+    expect(
+      await Promise.all([reactProblems(correctness), off("react"), off("react-hooks"), off("react_hooks")]),
+    ).toEqual([[hooksProblem, reactProblem], [hooksProblem], [reactProblem], [reactProblem]]);
   });
 
   test("react/* leaves react/jsx-uses-react on, which only keeps no-unused-vars quiet about React", async () => {
@@ -1441,9 +1447,9 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
 export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     const files = { "a.js": "export {};\n", "demo.js": plugin };
     const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n[lint.rules]\n`;
-    const named = `${load}"demo/one" = "error"\n"demo/two" = "error"\n`;
-    expect(await found(named, [], files)).toEqual(["a.js:1 demo/one", "a.js:1 demo/two"]);
-    expect(await found(named, ["--rule", "demo/*: off"], files)).toEqual([]);
+    const listedByName = `${load}"demo/one" = "error"\n"demo/two" = "error"\n`;
+    expect(await found(listedByName, [], files)).toEqual(["a.js:1 demo/one", "a.js:1 demo/two"]);
+    expect(await found(listedByName, ["--rule", "demo/*: off"], files)).toEqual([]);
     expect(await found(`${load}"demo/*" = "off"\n"demo/two" = "error"\n`, [], files)).toEqual(["a.js:1 demo/two"]);
   });
 
@@ -1595,12 +1601,12 @@ describe.concurrent("[lint.settings]", () => {
       "eslint.config.mjs": `const rule = { create: context => ({ Program: node => context.report({ node, message: JSON.stringify(context.settings) }) }) };
 export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, settings: { mine: 1 }, plugins: { p: { rules: { r: rule } } }, rules: { "p/r": "error" } }];\n`,
     };
-    const [ofOxlint, ofESLint] = await Promise.all([
+    const [withOxlint, withESLint] = await Promise.all([
       lint({ ...files, ...oxlint }, ["-f", "unix"]),
       lint({ ...files, ...eslint }, ["-f", "unix"]),
     ]);
-    expect(ofOxlint.stdout).toContain("[Error/jsx-a11y(alt-text)]");
-    expect(ofESLint.stdout).toContain(`{"mine":1,"jsx-a11y":{"components":{"Picture":"img"}}}`);
+    expect(withOxlint.stdout).toContain("[Error/jsx-a11y(alt-text)]");
+    expect(withESLint.stdout).toContain(`{"mine":1,"jsx-a11y":{"components":{"Picture":"img"}}}`);
   });
 });
 
@@ -1675,22 +1681,22 @@ describe.concurrent("unknown rules", () => {
     ],
   ];
 
-  test.each(cases)("%s is rejected", async (written, said, saidToFlag = said) => {
+  test.each(cases)("%s is rejected", async (key, message, flagMessage = message) => {
     const [inFile, byFlag] = await Promise.all([
       lint({
         ...source,
-        "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n"${written}" = "error"\n`,
+        "bunfig.toml": `[lint.rules]\n"no-debugger" = "error"\n"${key}" = "error"\n`,
       }),
-      lint(source, ["--rule", JSON.stringify({ [written]: "error" })]),
+      lint(source, ["--rule", JSON.stringify({ [key]: "error" })]),
     ]);
     expect(inFile).toEqual({
       stdout: "",
-      stderr: `3 | "${written}" = "error"\n    ^\nerror: ${said}\n    at bunfig.toml:3:1\n`,
+      stderr: `3 | "${key}" = "error"\n    ^\nerror: ${message}\n    at bunfig.toml:3:1\n`,
       exitCode: 2,
     });
     expect(byFlag).toEqual({
       stdout: "",
-      stderr: `error: ${saidToFlag}\n`,
+      stderr: `error: ${flagMessage}\n`,
       exitCode: 2,
     });
   });
@@ -1783,14 +1789,14 @@ describe.concurrent("invalid rule settings", () => {
     [`"eqeqeq" = 3`, 12, `3 is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"`],
   ];
 
-  test.each(cases.filter(it => it[2] !== ""))("%s is rejected", async (line, column, said) => {
+  test.each(cases.filter(it => it[2] !== ""))("%s is rejected", async (line, column, message) => {
     const { stdout, stderr, exitCode } = await lint({
       ...source,
       "bunfig.toml": `[lint.rules]\n${line}\n`,
     });
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
-      stderr: `2 | ${line}\n${" ".repeat(column + 3)}^\nerror: ${said}\n    at bunfig.toml:2:${column}\n`,
+      stderr: `2 | ${line}\n${" ".repeat(column + 3)}^\nerror: ${message}\n    at bunfig.toml:2:${column}\n`,
       exitCode: 2,
     });
   });
@@ -1801,9 +1807,9 @@ describe.concurrent("invalid rule settings", () => {
       lint(source, ["--rule", `eqeqeq: eror`]),
       lint({ ...source, ...bunfig({ eqeqeq: ["error", "smart"] }) }, ["--rule", `eqeqeq: [error, smrt]`]),
     ]);
-    const said = `error: "smrt" is not a valid option for eqeqeq\n  Expected "always", "smart", or "allow-null"\n`;
-    expect(options).toEqual({ stdout: "", stderr: said, exitCode: 2 });
-    expect(overBunfig).toEqual({ stdout: "", stderr: said, exitCode: 2 });
+    const expectedError = `error: "smrt" is not a valid option for eqeqeq\n  Expected "always", "smart", or "allow-null"\n`;
+    expect(options).toEqual({ stdout: "", stderr: expectedError, exitCode: 2 });
+    expect(overBunfig).toEqual({ stdout: "", stderr: expectedError, exitCode: 2 });
     expect(severity).toEqual({
       stdout: "",
       stderr: `error: "eror" is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"\n`,

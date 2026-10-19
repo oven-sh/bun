@@ -267,7 +267,7 @@ queries! {
     fn shorthand_assignment_value_symbol(node: NodeRef) -> Option<SymbolRef>;
     fn symbol_in_scope(node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef>;
     fn resolve_name(node: NodeRef, name: &[u8], meaning: SymbolFlags, exclude_globals: bool) -> Option<SymbolRef>;
-    fn context_free_type_of_call_resolved_afresh(node: NodeRef) -> TypeId;
+    fn context_free_type_of_freshly_resolved_call(node: NodeRef) -> TypeId;
 
     // ── types ──
     fn type_flags(ty: TypeId) -> TypeFlags;
@@ -498,9 +498,9 @@ impl<'a> Types<'a> {
 
 /// A program's names as written in the source. The checker mangles a `#x` so that the name identifies the declaring
 /// class.
-struct WrittenNames<'i>(&'i dyn bun_sema::atom::Intern);
+struct SourceNames<'i>(&'i dyn bun_sema::atom::Intern);
 
-impl bun_sema::atom::Intern for WrittenNames<'_> {
+impl bun_sema::atom::Intern for SourceNames<'_> {
     fn intern(&self, text: &[u8]) -> bun_sema::atom::Atom {
         self.0.intern(text)
     }
@@ -539,7 +539,7 @@ pub fn with_file_and_modules<R>(
         return None;
     }
     let path = path.unwrap_or_else(|| module.file_name());
-    let atoms = &WrittenNames(&checker.p.files.atoms);
+    let atoms = &SourceNames(&checker.p.files.atoms);
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         let file = File::new(path, hir, bound, atoms, language, Some(types));

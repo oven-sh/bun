@@ -426,7 +426,7 @@ pub struct Parents {
     rows: Box<[Node]>,
     /// The parents of the `TemplateSpan` and the `JsxExpression` around an expression and of the `QualifiedName` that
     /// ends with a name. Those wrappers are themselves the entry in `rows` for that expression or name. Sorted.
-    around: Box<[(Node, Node)]>,
+    wrapper_parents: Box<[(Node, Node)]>,
 }
 
 /// The node of every function and of every class of a file.
@@ -870,8 +870,8 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
                 self.one(node.with(Part::ConstType)) || self.one(operand)
             }
             ExprKind::AsConst(operand) => {
-                let is_written = file.start_of_part(Part::ConstType, node) != 0;
-                self.one(operand) || self.part(node, Part::ConstType, is_written)
+                let is_in_source = file.start_of_part(Part::ConstType, node) != 0;
+                self.one(operand) || self.part(node, Part::ConstType, is_in_source)
             }
             ExprKind::Yield { value, .. } => self.one(value),
             // `<T>e` has its type first.
@@ -1247,9 +1247,9 @@ impl<'s> File<'s> {
         match node.part() {
             None => Node::NONE,
             Some(Part::Span | Part::Qualified | Part::JsxExpression) => {
-                let around = &self.parents().around;
-                let at = around.binary_search_by_key(&node, |&(wrapper, _)| wrapper);
-                at.map_or(Node::NONE, |at| around[at].1)
+                let wrapper_parents = &self.parents().wrapper_parents;
+                let at = wrapper_parents.binary_search_by_key(&node, |&(wrapper, _)| wrapper);
+                at.map_or(Node::NONE, |at| wrapper_parents[at].1)
             }
             Some(Part::Base) => row.with(Part::Extends),
             Some(Part::NameLiteral) if matches!(self.data(row), NodeData::PatProp(_)) => {
@@ -1366,7 +1366,7 @@ impl<'s> File<'s> {
     fn compute_parents(&self) -> Parents {
         let total = self.bases.0[VECTORS];
         let mut rows = vec![Node::NONE; total as usize];
-        let mut around = Vec::new();
+        let mut wrapper_parents = Vec::new();
         // The current HIR node or part, and the parts of that HIR node that have children.
         let (current_node, open) = (Cell::new(Node::NONE), RefCell::new(Vec::new()));
         let mut visit = |child: Node| {
@@ -1377,7 +1377,7 @@ impl<'s> File<'s> {
                     return false;
                 }
                 Some(Part::Span | Part::Qualified | Part::JsxExpression) => {
-                    around.push((child, node));
+                    wrapper_parents.push((child, node));
                 }
                 // In the head of a `for` it represents its HIR node, which isn't a tsgo node.
                 Some(Part::DeclarationList) if child.row() != node.row() => {
@@ -1423,17 +1423,17 @@ impl<'s> File<'s> {
             }
         }
         // The later entry wins here too.
-        around.shared_sort_by_key(|&(inner, _)| inner);
-        around.dedup_by(|later, kept| {
-            let is_same = later.0 == kept.0;
+        wrapper_parents.shared_sort_by_key(|&(inner, _)| inner);
+        wrapper_parents.dedup_by(|later, retained| {
+            let is_same = later.0 == retained.0;
             if is_same {
-                *kept = *later;
+                *retained = *later;
             }
             is_same
         });
         Parents {
             rows: rows.into(),
-            around: around.into(),
+            wrapper_parents: wrapper_parents.into(),
         }
     }
 
@@ -1499,9 +1499,9 @@ impl<'s> File<'s> {
 
     /// A `with` statement is stored as a block of its object and its body, positioned at the keyword.
     pub(crate) fn is_with_statement(&self, s: StmtId) -> bool {
-        let written = self.text.get(self[s].start as usize..);
+        let statement_text = self.text.get(self[s].start as usize..);
         matches!(self[s].kind, StmtKind::Block(list) if list.len() == 2)
-            && written.is_some_and(|text| text.starts_with(b"with"))
+            && statement_text.is_some_and(|text| text.starts_with(b"with"))
     }
 
     /// Returns the position of the `:` of the `JsxNamespacedName` that starts at `pos`, or `None` if the name there is
@@ -1999,9 +1999,9 @@ impl<'s> File<'s> {
             },
             // The expression of an `ExpressionWithTypeArguments` is an expression.
             Part::Qualified => {
-                let around =
+                let enclosing =
                     self.find_ancestor(row.with(part), |n| n.part() != Some(Part::Qualified));
-                match self.kind(around) {
+                match self.kind(enclosing) {
                     Kind::ExpressionWithTypeArguments => Kind::PropertyAccessExpression,
                     _ => Kind::QualifiedName,
                 }
@@ -2318,7 +2318,7 @@ impl<'s> File<'s> {
 
     /// Returns the start of a part that begins with a token the HIR doesn't store, which directly precedes its first
     /// child. Returns 0 if it has no child, or if something else precedes it.
-    fn start_of_token_before_first_child(&self, node: Node, written: &[u8]) -> u32 {
+    fn start_of_token_before_first_child(&self, node: Node, token_text: &[u8]) -> u32 {
         let mut first = Node::NONE;
         self.for_each_child(node, &mut |child| {
             first = child;
@@ -2326,7 +2326,7 @@ impl<'s> File<'s> {
         });
         match self.start(first) {
             0 => 0,
-            start => start_of_token_before(&self.text, start, written).unwrap_or(0),
+            start => start_of_token_before(&self.text, start, token_text).unwrap_or(0),
         }
     }
 
@@ -2668,14 +2668,14 @@ impl RangeSet {
     pub fn new(ranges: impl Iterator<Item = TextRange>) -> RangeSet {
         let mut ranges: Vec<TextRange> = ranges.collect();
         ranges.shared_sort_unstable_by_key(|range| range.pos);
-        ranges.dedup_by(|next, kept| {
-            let is_in_it = next.pos < kept.end;
-            kept.end = if is_in_it {
-                kept.end.max(next.end)
+        ranges.dedup_by(|next, retained| {
+            let overlaps = next.pos < retained.end;
+            retained.end = if overlaps {
+                retained.end.max(next.end)
             } else {
-                kept.end
+                retained.end
             };
-            is_in_it
+            overlaps
         });
         RangeSet(ranges)
     }
@@ -3358,7 +3358,7 @@ impl File<'_> {
 
     /// True if `e` starts inside an expression that a class extends.
     pub fn is_in_class_extends(&self, e: ExprId) -> bool {
-        let places = self.lazy.cells.class_extends_ranges.get_or_init(|| {
+        let extends_ranges = self.lazy.cells.class_extends_ranges.get_or_init(|| {
             let bases = self.classes.iter().flat_map(|class| {
                 std::iter::once(class.extends).chain(self.ids(class.other_extends))
             });
@@ -3374,7 +3374,7 @@ impl File<'_> {
             }))
             .into_boxed()
         });
-        places.contain(self[e].pos)
+        extends_ranges.contain(self[e].pos)
     }
 
     /// `isInAmbientOrTypeNode`, in one walk up the parents. A node that starts outside every such range needs no walk.
@@ -3440,7 +3440,7 @@ impl File<'_> {
     /// every `typeof` type needs no walk. That matters because the walk from each link of `a.b.b ..` is as long as the
     /// rest of the chain.
     pub fn is_in_type_query(&self, mut node: Node) -> bool {
-        let places = self.lazy.cells.type_query_ranges.get_or_init(|| {
+        let query_ranges = self.lazy.cells.type_query_ranges.get_or_init(|| {
             let queries = self.types.iter();
             let queries = queries.filter(|node| matches!(node.kind, TypeNodeKind::Typeof { .. }));
             // A range whose end is unknown extends to the end of the file.
@@ -3451,7 +3451,7 @@ impl File<'_> {
             .into_boxed()
         });
         // A name's start isn't known without the text, but it's inside the node it names.
-        if places.is_empty() || !places.contain(self.start(node.row())) {
+        if query_ranges.is_empty() || !query_ranges.contain(self.start(node.row())) {
             return false;
         }
         loop {

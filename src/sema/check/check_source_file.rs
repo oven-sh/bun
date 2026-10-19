@@ -612,9 +612,9 @@ impl<'s> Checker<'_, 's> {
     fn check_erasable_type_assertion(&mut self, file: FileId, e: ExprId, operand: ExprId) {
         let hir = self.hir(file);
         let start = self.start_inside_parentheses(file, e);
-        let written = self.start_of(file, operand);
-        if start < written && self.should_check_erasable_syntax(file) {
-            let end = skip_trivia_back(&hir.text, written as usize) as u32;
+        let operand_start = self.start_of(file, operand);
+        if start < operand_start && self.should_check_erasable_syntax(file) {
+            let end = skip_trivia_back(&hir.text, operand_start as usize) as u32;
             self.error_at((file, start, end), 1294, &[]);
         }
     }
@@ -1142,13 +1142,14 @@ impl<'s> Checker<'_, 's> {
         let hir = self.hir(file);
         // `GetDeclarationOfKind(symbol, KindGetAccessor)`, `KindSetAccessor`
         let declarations = self.declarations_of_member(file, accessor);
-        let of_kind = |kind: Kind| {
+        let declaration_of_kind = |kind: Kind| {
             let mut here = declarations.iter().filter(|it| it.0 == file);
             here.find(|it| hir.kind(hir.node(it.1)) == kind)
         };
-        let (Some(&(_, getter)), Some(&(_, setter))) =
-            (of_kind(Kind::GetAccessor), of_kind(Kind::SetAccessor))
-        else {
+        let (Some(&(_, getter)), Some(&(_, setter))) = (
+            declaration_of_kind(Kind::GetAccessor),
+            declaration_of_kind(Kind::SetAccessor),
+        ) else {
             return;
         };
         // `ModifierFlags()`
@@ -1664,7 +1665,7 @@ impl<'s> Checker<'_, 's> {
                 if self.p.files.options.allow_unused_labels == Some(false)
                     && bound.unused_labels.contains(&s)
                 {
-                    self.error_at(self.place_of_token(file, hir[s].start), 7028, &[]);
+                    self.error_at(self.span_of_token(file, hir[s].start), 7028, &[]);
                 }
                 self.check_source_element(file, body);
             }

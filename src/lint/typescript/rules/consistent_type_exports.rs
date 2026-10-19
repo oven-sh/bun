@@ -317,7 +317,7 @@ impl ConsistentTypeExports {
             _ => MULTIPLE_EXPORTS_ARE_TYPES,
         };
         // oxlint points at the first of them.
-        let place = match report.type_based_specifiers.first().filter(|_| cx.language().is_oxlint) {
+        let report_span = match report.type_based_specifiers.first().filter(|_| cx.language().is_oxlint) {
             Some(specifier) => specifier.span(),
             None => node.span(),
         };
@@ -334,7 +334,7 @@ impl ConsistentTypeExports {
                 }
             }
         };
-        cx.report(place, message).data("exportNames", export_names).labels_with(labels).fix(|fixer| {
+        cx.report(report_span, message).data("exportNames", export_names).labels_with(labels).fix(|fixer| {
             if self.fix_mixed_exports_with_inline_type_specifier {
                 return Some(fix_add_type_specifier_to_named_exports(fixer, &report));
             }

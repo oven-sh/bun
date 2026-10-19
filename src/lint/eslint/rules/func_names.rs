@@ -37,11 +37,11 @@ type GuessedNames<'a> = AncestorMemo<'a, Option<Name<'a>>>;
 
 /// oxlint's `is_valid_identifier_name`.
 fn is_valid_identifier_name(name: &[u8]) -> bool {
-    const TAKEN: &[u8] = b"let static implements interface package private protected public await break case catch class \
+    const RESERVED_NAMES: &[u8] = b"let static implements interface package private protected public await break case catch class \
         const continue debugger default delete do else enum export extends false finally for function if import in \
         instanceof new null return super switch this throw true try typeof var void while with yield Infinity NaN \
         globalThis undefined arguments eval constructor async";
-    !strings::split(TAKEN, b" ").any(|it| it == name) && text::is_identifier_name(name)
+    !strings::split(RESERVED_NAMES, b" ").any(|it| it == name) && text::is_identifier_name(name)
 }
 
 /// oxlint's `guess_function_name`: the name from the first assignment, declarator, property or field around the

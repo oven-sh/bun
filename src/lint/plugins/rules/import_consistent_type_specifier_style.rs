@@ -81,16 +81,16 @@ impl Rule for ConsistentTypeSpecifierStyle {
         let fix = |fixer: Fixer<'a>| if is_oxlint { Some(reprint_as_two_imports(fixer, import)) } else { move_types_out(fixer, import) };
         // The plugin reports a statement once if it has only inline types. oxlint does that only in its own
         // `TopLevelIfOnlyTypeImports` mode.
-        let is_one_report =
+        let reports_whole_statement =
             if is_oxlint { mode == Mode::TopLevelIfOnlyTypeImports && !is_declaration_file_import } else { !has_values() };
-        if is_one_report {
+        if reports_whole_statement {
             cx.report(stmt, if is_oxlint { TOP_LEVEL_IF_ONLY_TYPE_IMPORTS } else { TOP_LEVEL }).fix(fix);
             return;
         }
         let message = if is_declaration_file_import { USE_TOP_LEVEL_FOR_DECLARATION_FILE_IMPORT } else { TOP_LEVEL };
-        let mut made = None;
+        let mut cached_fix = None;
         for item in named.iter().filter(|it| it.is_type_only()) {
-            cx.report(item, message).fix(|fixer| made.get_or_insert_with(|| fix(fixer)).clone());
+            cx.report(item, message).fix(|fixer| cached_fix.get_or_insert_with(|| fix(fixer)).clone());
         }
     }
 }

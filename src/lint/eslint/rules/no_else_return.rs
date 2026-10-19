@@ -126,17 +126,17 @@ fn fix<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Optio
 /// statements would merge, it adds a line break or a `;`.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>) -> Option<Fix> {
     let file = fixer.file();
-    let (kept, last) = match else_node.kind() {
+    let (moved_span, last) = match else_node.kind() {
         StmtKind::Fn(_) => return None,
         StmtKind::Block(body) => {
             let (scope, else_scope) = (else_node.parent().scope(), Node::Stmt(else_node).scope());
             // For oxc nothing declares `arguments`, and a `catch` parameter is in its block's scope.
-            let of_catch = scope.parent().filter(|it| it.kind() == ScopeKind::Catch);
+            let catch_scope = scope.parent().filter(|it| it.kind() == ScopeKind::Catch);
             let is_taken = |name: Name<'a>| {
                 scope
                     .get_name(name)
                     .is_some_and(|it| !it.is_implicit_arguments())
-                    || of_catch.is_some_and(|it| it.get_name(name).is_some())
+                    || catch_scope.is_some_and(|it| it.get_name(name).is_some())
             };
             if else_scope.node() == Node::Stmt(else_node)
                 && else_scope.symbols().any(|it| is_taken(it.name()))
@@ -161,7 +161,7 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>
         is_open && next.is_some_and(|it| !matches!(it, b'\n' | b'\r' | b'}' | b';'));
     let newline: &[u8] = if needs_newline { b"\n" } else { b"" };
     let semicolon: &[u8] = if needs_semicolon { b";" } else { b"" };
-    let text = [newline, file.slice(kept), semicolon];
+    let text = [newline, file.slice(moved_span), semicolon];
     Some(fixer.replace(Span::new(start, end), text.concat()))
 }
 

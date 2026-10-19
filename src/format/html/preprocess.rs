@@ -143,13 +143,13 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         node.kind == Kind::Element && node.namespace == b"svg" && &node.name[..] == b"foreignObject"
     }
 
-    /// Returns the edges of `id`. `around` is the parent's edges, or `None` if the parent isn't in a `<text>`.
-    fn svg_text_edges(&self, id: Id, around: Option<SvgTextEdges>) -> Option<SvgTextEdges> {
+    /// Returns the edges of `id`. `parent_edges` is `None` if the parent isn't in a `<text>`.
+    fn svg_text_edges(&self, id: Id, parent_edges: Option<SvgTextEdges>) -> Option<SvgTextEdges> {
         let node = &self.tree[id];
         if node.kind != Kind::Element || node.namespace != b"svg" {
             return None;
         }
-        let Some(around) = around else {
+        let Some(parent_edges) = parent_edges else {
             let is_ignored = matches!(
                 self.options.format.html_whitespace_sensitivity,
                 HtmlWhitespaceSensitivity::Ignore
@@ -161,9 +161,9 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         };
         Some(SvgTextEdges {
             start: !node.has(Flags::HAS_LEADING_SPACES)
-                && (self.tree.prev(id).is_some() || around.start),
+                && (self.tree.prev(id).is_some() || parent_edges.start),
             end: !node.has(Flags::HAS_TRAILING_SPACES)
-                && (self.tree.next(id).is_some() || around.end),
+                && (self.tree.next(id).is_some() || parent_edges.end),
         })
     }
 
@@ -495,7 +495,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
     /// that none is added. `first` is the first sibling. The siblings must already have the sensitivity flags that
     /// Prettier computes.
     fn keep_inline_content_joined_across_hidden_blocks(&mut self, first: Id) {
-        let is_other = |node: &Node<'_>| {
+        let can_be_space_sensitive = |node: &Node<'_>| {
             !matches!(node.kind, Kind::FrontMatter | Kind::AngularControlFlowBlock)
         };
         let mut next = Some(first);
@@ -516,8 +516,8 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             let trailing = Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES;
             if self.tree[start].flags & leading != Flags::IS_LEADING_SPACE_SENSITIVE
                 || self.tree[end].flags & trailing != Flags::IS_TRAILING_SPACE_SENSITIVE
-                || !before.is_none_or(|it| is_other(&self.tree[it]))
-                || !after.is_none_or(|it| is_other(&self.tree[it]))
+                || !before.is_none_or(|it| can_be_space_sensitive(&self.tree[it]))
+                || !after.is_none_or(|it| can_be_space_sensitive(&self.tree[it]))
             {
                 continue;
             }

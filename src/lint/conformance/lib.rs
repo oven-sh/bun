@@ -46,9 +46,9 @@ use std::sync::atomic::Ordering;
 
 /// The context a case's code is linted in.
 #[derive(Copy, Clone)]
-pub enum Place<'a> {
+pub enum LintContext<'a> {
     /// On its own.
-    Nowhere,
+    Standalone,
     /// As a file in the project in this directory, for a rule that looks at other files.
     Project(&'a [u8]),
     /// As a file in this `tsconfig.json`'s program, with types.
@@ -58,12 +58,13 @@ pub enum Place<'a> {
 /// One lint request.
 pub struct Case<'a> {
     pub code: &'a [u8],
-    /// Absolute unless `place` is `Nowhere`. The file doesn't have to exist, and if it does, `code` overrides its text.
+    /// Absolute unless `lint_context` is `Standalone`. The file doesn't have to exist, and if it does, `code` overrides
+    /// its text.
     pub path: &'a [u8],
     /// Enables exactly one rule.
     pub config: &'a ResolvedConfig,
-    pub place: Place<'a>,
-    /// Called with the file before it's linted. Only used when `place` is `Nowhere`.
+    pub lint_context: LintContext<'a>,
+    /// Called with the file before it's linted. Only used when `lint_context` is `Standalone`.
     pub prepare: Option<&'a dyn for<'f> Fn(&'f File<'f>)>,
 }
 
@@ -190,9 +191,9 @@ const PROJECTS: [&[u8]; 6] = [
 const PROJECT: &[u8] = b"/__project__";
 
 /// The `PROJECTS` directory that the cases for `plugin`'s rules belong to.
-fn project_of(plugin: Plugin, is_of_oxlint: bool) -> &'static [u8] {
+fn project_of(plugin: Plugin, is_oxlint_suite: bool) -> &'static [u8] {
     match plugin {
-        _ if is_of_oxlint => b"oxlint-import-project",
+        _ if is_oxlint_suite => b"oxlint-import-project",
         Plugin::Node => b"n-project",
         Plugin::Prettier => b"prettier-project",
         _ => b"import-project",
@@ -221,8 +222,8 @@ pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) ->
     let language_options = case.get(b"languageOptions").cloned().unwrap_or(Json::Null);
     // If the case is in one of the plugin's languages, `languageOptions` are that language's options.
     let language = string_of(case, b"language");
-    let dialect = language.and_then(|written| {
-        let name = &written[strings::last_index_of_char(written, b'/')? + 1..];
+    let dialect = language.and_then(|language_id| {
+        let name = &language_id[strings::last_index_of_char(language_id, b'/')? + 1..];
         let language = registry.language(entry.meta.plugin, name)?;
         let configured = language.configure(name, &language_options).ok()?;
         Some(Dialect {
@@ -326,7 +327,7 @@ enum Kind {
     Typed,
 }
 
-fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
+fn kind_of(entry: &RuleEntry, case: &Json, is_oxlint_suite: bool) -> Kind {
     let is_type_aware = case.get(b"typeAware").and_then(Json::as_bool) == Some(true);
     match string_of(case, b"skip") {
         Some(skip) if test_only_rules::is_known(skip) => Kind::WithTestOnlyRules,
@@ -337,7 +338,7 @@ fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
                 || entry.meta.plugin == Plugin::Prettier
                 || (entry.meta.plugin == Plugin::Node && !entry.meta.follows_oxlint)
                 // Some rules read the `package.json` files in the file's parent directories.
-                || (entry.meta.plugin == Plugin::Import && !is_of_oxlint) =>
+                || (entry.meta.plugin == Plugin::Import && !is_oxlint_suite) =>
         {
             Kind::InProject
         }
@@ -372,7 +373,7 @@ fn run_case(
     let entry = fixture.entry;
     let code = string_of(case, b"code").unwrap_or_default();
     let filename = string_of(case, b"filename").unwrap_or(b"file.js");
-    let config = match fixture.plugin_of_oxlint() {
+    let config = match fixture.oxlint_plugin_directory() {
         Some(directory) => {
             oxlint_config_of(host.registry(), directory, entry, case, filename).ok_or(())?
         }
@@ -391,31 +392,39 @@ fn run_case(
         Some(b'<' | b'/') => Some(filename.to_vec()),
         _ => Some([flags.projects?, b"/", directory, b"/", filename].concat()),
     };
-    let lint = |path: &[u8], place: Place, prepare: Option<&dyn for<'f> Fn(&'f File<'f>)>| {
-        host.lint(&Case {
-            code,
-            path,
-            config: &config,
-            place,
-            prepare,
-        })
-    };
+    let lint =
+        |path: &[u8], lint_context: LintContext, prepare: Option<&dyn for<'f> Fn(&'f File<'f>)>| {
+            host.lint(&Case {
+                code,
+                path,
+                config: &config,
+                lint_context,
+                prepare,
+            })
+        };
     let messages = match kind {
         Kind::Skipped => return Err(()),
         // Some oxlint rules depend on the file's parent directories.
-        Kind::Plain if fixture.plugin_of_oxlint().is_some() => {
+        Kind::Plain if fixture.oxlint_plugin_directory().is_some() => {
             let absolute = [b"/", filename.strip_prefix(b"/").unwrap_or(filename)].concat();
-            lint(&absolute, Place::Nowhere, None).ok_or(())?
+            lint(&absolute, LintContext::Standalone, None).ok_or(())?
         }
-        Kind::Plain => lint(filename, Place::Nowhere, None).ok_or(())?,
+        Kind::Plain => lint(filename, LintContext::Standalone, None).ok_or(())?,
         Kind::WithTestOnlyRules => {
             let rules = test_only_rules::Enabled::in_code(code);
-            let messages =
-                lint(filename, Place::Nowhere, Some(&|file| rules.prepare(file))).ok_or(())?;
+            let messages = lint(
+                filename,
+                LintContext::Standalone,
+                Some(&|file| rules.prepare(file)),
+            )
+            .ok_or(())?;
             rules.finish(messages)
         }
         Kind::InProject => {
-            let directory = project_of(entry.meta.plugin, fixture.plugin_of_oxlint().is_some());
+            let directory = project_of(
+                entry.meta.plugin,
+                fixture.oxlint_plugin_directory().is_some(),
+            );
             // A fixture that isn't in the bundle yet still has the file names as recorded.
             let project = match fixture.json.get(b"root").and_then(Json::as_str) {
                 Some(root) => root.to_vec(),
@@ -425,7 +434,7 @@ fn run_case(
                 Some(b'<' | b'/') => filename.to_vec(),
                 _ => [&project[..], b"/", filename].concat(),
             };
-            lint(&path, Place::Project(&project), None).ok_or(())?
+            lint(&path, LintContext::Project(&project), None).ok_or(())?
         }
         Kind::Typed => {
             let tsconfig = string_of(case, b"tsconfig").unwrap_or(b"tsconfig.json");
@@ -437,14 +446,14 @@ fn run_case(
             .concat();
             let path = in_directory(b"typescript-eslint-project").ok_or(())?;
             return Ok(problem_of(
-                lint(&path, Place::Program(&tsconfig), None)
+                lint(&path, LintContext::Program(&tsconfig), None)
                     .map(|it| Outcome::new(entry, code, &it)),
                 case,
                 counts,
             ));
         }
     };
-    if fixture.plugin_of_oxlint().is_some() {
+    if fixture.oxlint_plugin_directory().is_some() {
         return Ok(oxlint_problem(entry, code, &messages, case, counts));
     }
     Ok(problem_of(
@@ -506,7 +515,7 @@ impl Fixture {
     }
 
     /// The plugin's directory, if the fixture is compared against oxlint.
-    fn plugin_of_oxlint(&self) -> Option<&str> {
+    fn oxlint_plugin_directory(&self) -> Option<&str> {
         let rest = self.id.strip_prefix("oxlint/")?;
         rest.get(..rest.len().checked_sub(self.entry.meta.name.len() + 1)?)
     }
@@ -571,15 +580,15 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             }
             let id = format!("{directory}/{}", BStr::new(name));
             // oxlint calls `react-hooks/exhaustive-deps` `react/exhaustive-deps`.
-            let is_of_oxlint = directory.starts_with("oxlint/");
+            let is_oxlint_suite = directory.starts_with("oxlint/");
             let registry = host.registry();
-            let Some(entry) = registry.get_preferring(*plugin, name, is_of_oxlint) else {
+            let Some(entry) = registry.get_preferring(*plugin, name, is_oxlint_suite) else {
                 missing += 1;
                 continue;
             };
             let text = bundle.read(path).map(|text| match flags.projects {
                 Some(projects) if strings::contains(text, PROJECT) => {
-                    let project = [projects, b"/", project_of(*plugin, is_of_oxlint)].concat();
+                    let project = [projects, b"/", project_of(*plugin, is_oxlint_suite)].concat();
                     Cow::Owned(strings::replace_owned(text, PROJECT, &project))
                 }
                 _ => Cow::Borrowed(text),
@@ -600,12 +609,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     let (mut untyped, mut typed) = (0, 0);
     let mut chosen = Vec::new();
     for (fixture, it) in fixtures.iter_mut().enumerate() {
-        let is_of_oxlint = it.plugin_of_oxlint().is_some();
+        let is_oxlint_suite = it.oxlint_plugin_directory().is_some();
         let Fixture {
             entry, json, tally, ..
         } = it;
         for (index, case) in cases_of(json).iter().enumerate() {
-            let kind = kind_of(entry, case, is_of_oxlint);
+            let kind = kind_of(entry, case, is_oxlint_suite);
             if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
                 tally.skipped += 1;
                 continue;
@@ -698,7 +707,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         total.failed += tally.failed;
         total.skipped += tally.skipped;
     }
-    if fixtures.iter().any(|it| it.plugin_of_oxlint().is_some()) {
+    if fixtures
+        .iter()
+        .any(|it| it.oxlint_plugin_directory().is_some())
+    {
         output_line!(
             "\n{} messages lack the help that oxlint has",
             counts.missing_help.load(Ordering::Relaxed)

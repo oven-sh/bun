@@ -95,7 +95,7 @@ pub struct Environment<'e> {
     pub run_git: &'e (dyn Fn(&git::Command) -> Result<git::Finished, git::NotRun> + Sync),
     /// The command line of this process, without the executable.
     pub command_line: &'e [&'e [u8]],
-    /// Runs the rules written in JavaScript.
+    /// Runs the JavaScript rules.
     pub js_engine: &'e dyn Engine,
     /// Bun's version.
     pub version: &'e [u8],
@@ -181,9 +181,9 @@ struct Files<'f> {
     with_engine: &'f [&'f Target],
     plain: &'f [&'f Target],
     next_heavy: AtomicUsize,
-    /// `taken` counts the `with_engine` files handed out so far. `ends` counts how many of them came from the start and
-    /// how many from the end.
-    taken: AtomicUsize,
+    /// `handed_out` counts the `with_engine` files handed out so far. `ends` counts how many of them came from the
+    /// start and how many from the end.
+    handed_out: AtomicUsize,
     ends: [AtomicUsize; 2],
     next_plain: AtomicUsize,
     lint: &'f (dyn Fn(&Target) + Sync),
@@ -207,7 +207,7 @@ impl Work for Files<'_> {
     }
 
     fn light(&self, realm: usize) -> bool {
-        if self.taken.fetch_add(1, Ordering::Relaxed) >= self.with_engine.len() {
+        if self.handed_out.fetch_add(1, Ordering::Relaxed) >= self.with_engine.len() {
             return self.lint_plain();
         }
         // A VM never gives back the memory its largest file needed. So a few VMs work down from the largest files and the
@@ -224,7 +224,7 @@ impl Work for Files<'_> {
     }
 
     fn needs_realms(&self) -> bool {
-        self.taken.load(Ordering::Relaxed) < self.with_engine.len()
+        self.handed_out.load(Ordering::Relaxed) < self.with_engine.len()
     }
 }
 
@@ -349,7 +349,7 @@ struct Suppressed {
     has_unused: bool,
     /// There are errors from rules it doesn't list. Only oxlint reports that.
     has_new: bool,
-    /// Set if it was written. `Some(true)` if it already existed.
+    /// Set if this run saved it. `Some(true)` if it already existed.
     updated: Option<bool>,
 }
 
@@ -396,13 +396,13 @@ impl Run<'_> {
     }
 
     /// Prints a note that ESLint and oxlint both have a config for the same files, and which one is used.
-    fn note_ignored_config(&mut self, of_eslint: &[u8], of_oxlint: &[u8]) {
+    fn note_ignored_config(&mut self, eslint_path: &[u8], oxlint_path: &[u8]) {
         pretty!(
             &mut self.out.stderr,
             self.environment.stderr.colors,
             "<blue>note<r><d>:<r> Using {}. {} is ignored. Use --config to pick it.\n",
-            BStr::new(of_oxlint),
-            BStr::new(of_eslint)
+            BStr::new(oxlint_path),
+            BStr::new(eslint_path)
         );
     }
 
@@ -551,7 +551,7 @@ impl Run<'_> {
                 listed: None,
             });
         }
-        let shown = if path.ends_with(b"__placeholder__.js") {
+        let display_path = if path.ends_with(b"__placeholder__.js") {
             b"<text>".to_vec()
         } else {
             paths::to_native(path.clone())
@@ -559,7 +559,7 @@ impl Run<'_> {
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
         if let Some(framework) = loaded.framework(&path) {
             let result = context.verify_text_by(
-                shown,
+                display_path,
                 &path,
                 (text, false),
                 config,
@@ -578,7 +578,7 @@ impl Run<'_> {
         {
             let result = context.verify_processed_text(
                 &loaded,
-                shown,
+                display_path,
                 &path,
                 text,
                 config,
@@ -617,7 +617,13 @@ impl Run<'_> {
             }
         }
         Ok(Linted {
-            results: vec![context.verify_text(shown, &path, text, config, &on_circular_fixes)],
+            results: vec![context.verify_text(
+                display_path,
+                &path,
+                text,
+                config,
+                &on_circular_fixes,
+            )],
             files: 1,
             listed: None,
         })
@@ -723,7 +729,7 @@ impl Run<'_> {
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
         let mut results = Vec::with_capacity(supported.len());
         if let Some(inferred) = context.inferred {
-            let asking = supported.iter().filter(|it| match &it.status {
+            let files_inferring_globals = supported.iter().filter(|it| match &it.status {
                 Status::Matched(config) => {
                     let kind = ScriptKind::from_file_name(&it.path);
                     (config.language.infers_globals)
@@ -735,7 +741,7 @@ impl Run<'_> {
                 std::mem::take(&mut *loader.searched_from.lock()),
                 std::mem::take(&mut *loader.tsconfigs.lock()),
             );
-            inferred.files(asking.map(|it| it.path.clone()).collect());
+            inferred.files(files_inferring_globals.map(|it| it.path.clone()).collect());
         }
 
         // Files that need types go first. Any that turn out to be in no program are linted without types.
@@ -799,11 +805,11 @@ impl Run<'_> {
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         // Files that a rule may hand back to its package's JavaScript version.
-        let may_come =
+        let may_need_realm =
             (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
-        let count = with_engine.count() + may_come.clone().count();
+        let count = with_engine.count() + may_need_realm.clone().count();
         (context.js_plugins).expect(count, size, pool.threads());
-        (context.js_plugins).may_come(may_come.map(|it| it.size).sum());
+        (context.js_plugins).may_need_realm(may_need_realm.map(|it| it.size).sum());
         if !with_types.is_empty() {
             if !is_oxlint {
                 loader.advise_about_typescript();
@@ -842,7 +848,7 @@ impl Run<'_> {
             with_engine,
             plain,
             next_heavy: AtomicUsize::new(0),
-            taken: AtomicUsize::new(0),
+            handed_out: AtomicUsize::new(0),
             ends: Default::default(),
             next_plain: AtomicUsize::new(0),
             lint: &lint,
@@ -945,9 +951,11 @@ impl Run<'_> {
         .measuring(options.timing);
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
-        let is_told = !options.rules && !options.doctor && !options.silent;
-        if let Some((of_eslint, of_oxlint)) = loader.ignored_eslint_config().filter(|_| is_told) {
-            self.note_ignored_config(of_eslint, of_oxlint);
+        let prints_note = !options.rules && !options.doctor && !options.silent;
+        if let Some((eslint_path, oxlint_path)) =
+            loader.ignored_eslint_config().filter(|_| prints_note)
+        {
+            self.note_ignored_config(eslint_path, oxlint_path);
         }
         if options.init {
             return match loader.for_directory(&environment.cwd) {
@@ -977,15 +985,19 @@ impl Run<'_> {
         }
         let is_native = (cwd_config.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
         let store = bun_lint_graph::Store::new(&environment.cwd);
-        let store = if is_native { store.by_file() } else { store };
+        let store = if is_native {
+            store.with_nearest_tsconfig()
+        } else {
+            store
+        };
         let store = match &options.tsconfig {
             Some(path) => store.with_tsconfig(path),
             None => store,
         };
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let of_the_run = (&linter, environment, &js_plugins);
-            discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
+            let run_state = (&linter, environment, &js_plugins);
+            discover::list_as_eslint_8(run_state, &pool, patterns, extensions)
         }));
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
@@ -993,8 +1005,8 @@ impl Run<'_> {
         };
         let checks_types =
             options.type_check || cwd_config.as_ref().is_some_and(|it| it.checks_types);
-        let of_file = cwd_config.as_ref().and_then(|it| it.wants_types);
-        if checks_types && options.type_aware.or(of_file) != Some(true) {
+        let config_wants_types = cwd_config.as_ref().and_then(|it| it.wants_types);
+        if checks_types && options.type_aware.or(config_wants_types) != Some(true) {
             return self.fail(
                 b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.",
             );
@@ -1070,7 +1082,7 @@ impl Run<'_> {
             options,
             cwd: &environment.cwd,
             only: only.as_ref(),
-            of_oxlint: (cwd_config.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
+            oxlint_config: (cwd_config.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
             checks_types,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
@@ -1085,11 +1097,11 @@ impl Run<'_> {
             timing: &timing,
         };
         if let Some(file) = &options.print_config {
-            let named: &[u8] = match file.is_empty() {
+            let file_name: &[u8] = match file.is_empty() {
                 true => b"__placeholder__.js",
                 false => file,
             };
-            let path = paths::resolve(&environment.cwd, &paths::from_native(named));
+            let path = paths::resolve(&environment.cwd, &paths::from_native(file_name));
             loader.name(paths::dirname(&path));
             let config = match loader.for_directory(paths::dirname(&path)) {
                 Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
@@ -1143,8 +1155,8 @@ impl Run<'_> {
             self.warn(warning);
         }
         let ignored_eslint_config = loader.ignored_eslint_configs_below();
-        for (of_eslint, of_oxlint) in ignored_eslint_config.iter().filter(|_| !options.silent) {
-            self.note_ignored_config(of_eslint, of_oxlint);
+        for (eslint_path, oxlint_path) in ignored_eslint_config.iter().filter(|_| !options.silent) {
+            self.note_ignored_config(eslint_path, oxlint_path);
         }
         let without_types = js_plugins.rules_that_asked_for_types();
         if !without_types.is_empty() {
@@ -1200,14 +1212,14 @@ impl Run<'_> {
         if !incomplete.is_empty() {
             bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
             incomplete.dedup();
-            let shown: Vec<Vec<u8>> = (incomplete.iter().take(3))
+            let examples: Vec<Vec<u8>> = (incomplete.iter().take(3))
                 .map(|it| paths::relative_escaped(&environment.cwd, &paths::from_native(it)))
                 .collect();
             let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
             self.warn(
                 &[
                     b"The type checker ran out of stack in ",
-                    &shown.join(&b", "[..])[..],
+                    &examples.join(&b", "[..])[..],
                     more,
                     b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
                 ]
@@ -1264,7 +1276,7 @@ impl Run<'_> {
         }
         let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
         let mut not_built_in = NotBuiltIn::default();
-        in_comments.retain(|it| !not_built_in.takes(it));
+        in_comments.retain(|it| !not_built_in.record_formatting_rule(it));
         if !in_comments.is_empty() {
             bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
             let noun: &[u8] = match in_comments.len() {
@@ -1407,21 +1419,24 @@ impl Run<'_> {
         if options.fix {
             let portable = |it: &FileResult| paths::from_native(&it.path);
             let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
-            let (mut failures, mut written) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
-            let in_written = AtomicU64::new(0);
-            let once = fs::Written::default();
+            let (mut failures, mut written_paths) =
+                (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+            let fixes_written = AtomicU64::new(0);
+            let written_files = fs::WrittenFiles::default();
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
-                let done = match result.written() {
+                let done = match result.text_to_write() {
                     // Never write an empty file instead. Fixes that delete everything produce an empty text, which is
-                    // `Some` and gets written.
+                    // `Some` and gets saved.
                     None => Err(b"the fixed code was lost. This is a bug in Bun.".to_vec()),
-                    Some(text) => fs::write_atomically(&once, &environment.cwd, &result.path, text),
+                    Some(text) => {
+                        fs::write_atomically(&written_files, &environment.cwd, &result.path, text)
+                    }
                 };
                 match done {
                     Ok(()) => {
-                        written.lock().push(portable(result));
-                        in_written.fetch_add(result.fixes as u64, Ordering::Relaxed);
+                        written_paths.lock().push(portable(result));
+                        fixes_written.fetch_add(result.fixes as u64, Ordering::Relaxed);
                     }
                     Err(why) => {
                         let line = [b"Cannot write ", &result.path[..], b": ", &why].concat();
@@ -1433,18 +1448,18 @@ impl Run<'_> {
                 // See `Context::fixes_file`.
                 let is_fixable = |it: &LintMessage| it.fix.is_some() && context.should_fix(it);
                 let fixable = (results.iter()).filter(|it| it.messages.iter().any(is_fixable));
-                let mut refused: Vec<Vec<u8>> = (fixable.map(portable))
+                let mut partly_staged: Vec<Vec<u8>> = (fixable.map(portable))
                     .filter(|it| only.is_partly_staged(it))
                     .collect();
-                if !refused.is_empty() {
-                    not_staged.push(only.partly_staged_error(&mut refused, "fixed"));
+                if !partly_staged.is_empty() {
+                    not_staged.push(only.partly_staged_error(&mut partly_staged, "fixed"));
                 }
-                not_staged.extend(only.stage(written.get_mut()).err().map(|it| it.0));
+                not_staged.extend(only.stage(written_paths.get_mut()).err().map(|it| it.0));
             }
             not_written = std::mem::take(failures.get_mut());
             bun_lint::utils::sort::sort_unstable(&mut not_written);
             fixed = changed.len() - not_written.len();
-            fixes = in_written.into_inner() as usize;
+            fixes = fixes_written.into_inner() as usize;
         }
 
         let suppressed = match options.stdin {
@@ -1543,7 +1558,7 @@ impl Run<'_> {
                     .as_ref()
                     .filter(|_| is_oxlint && !loader.has_nested_configurations())
                     .map(|it| {
-                        let with_types = options.type_aware.or(of_file) == Some(true);
+                        let with_types = options.type_aware.or(config_wants_types) == Some(true);
                         it.config
                             .oxlint_number_of_rules(linter.registry(), with_types)
                     }),
@@ -1587,7 +1602,7 @@ impl Run<'_> {
             }
         } else if !output.is_empty() {
             self.out.stdout = output;
-            if !format.is_of_oxlint() {
+            if !format.is_oxlint_output() {
                 self.out.stdout.push(b'\n');
             }
         }
@@ -1667,7 +1682,7 @@ impl Run<'_> {
         self.out.exit_code = if options.exit_on_fatal_error && counts.fatal_errors > 0 {
             2
         } else if is_oxlint && options.suppress_all && !has_no_files {
-            // oxlint exits 0 once the suppressions file is written, even if problems remain.
+            // oxlint exits 0 once it has saved the suppressions file, even if problems remain.
             0
         } else {
             u8::from(
@@ -1813,7 +1828,7 @@ impl Run<'_> {
             "  fast parser: {} files",
             counts.parsed.load(Ordering::Relaxed)
         );
-        for (why, count) in bun_sema_parser::Refusal::ALL.iter().zip(&counts.refused) {
+        for (why, count) in bun_sema_parser::Rejection::ALL.iter().zip(&counts.refused) {
             match count.load(Ordering::Relaxed) {
                 0 => {}
                 count => _ = write!(self.out.stderr, ", fell back ({why:?}): {count}"),
@@ -1840,7 +1855,7 @@ struct NotBuiltIn {
 
 impl NotBuiltIn {
     /// Records the rule `id`, which a comment turns on, if it's such a rule. Returns whether it is.
-    fn takes(&mut self, id: &[u8]) -> bool {
+    fn record_formatting_rule(&mut self, id: &[u8]) -> bool {
         let rule = formatting_rule(id);
         self.about_layout.extend(rule.map(|it| it.0));
         rule.is_some()
@@ -1901,7 +1916,7 @@ fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2
     if paths.is_empty() {
         return;
     }
-    let is_one = paths.len() == 1;
+    let is_single = paths.len() == 1;
     // The extensions, most frequent first, and the first few files.
     let mut kinds: Vec<(&[u8], usize)> = Vec::new();
     for path in paths {
@@ -1914,16 +1929,20 @@ fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2
     }
     bun_lint::utils::sort::sort_by_key(&mut kinds, |it| std::cmp::Reverse(it.1));
     let kinds: Vec<Vec<u8>> = (kinds.iter())
-        .map(|it| [format!("{} *", it.1).as_bytes(), &paths::shown(it.0)].concat())
+        .map(|it| [format!("{} *", it.1).as_bytes(), &paths::escaped(it.0)].concat())
         .collect();
     let first: Vec<Vec<u8>> = (paths.iter().take(3))
         .map(|it| paths::relative_escaped(cwd, it))
         .collect();
     loader.add_unsupported(&[
         paths.len().to_string().as_bytes(),
-        if is_one { b" file was" } else { b" files were" },
+        if is_single {
+            b" file was"
+        } else {
+            b" files were"
+        },
         b" not linted because ",
-        because[usize::from(!is_one)],
+        because[usize::from(!is_single)],
         b" (",
         &kinds.join(&b", "[..]),
         b"): ",
@@ -1936,7 +1955,7 @@ fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2
 fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
     loader.warn(&[
         b"Circular fixes detected while fixing ",
-        &paths::shown(&paths::to_native(path.to_vec())),
+        &paths::escaped(&paths::to_native(path.to_vec())),
         b". It is likely that you have conflicting rules in your configuration.",
     ]);
 }

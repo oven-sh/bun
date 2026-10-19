@@ -194,8 +194,8 @@ impl Reader<'_> {
                 Some(_) => _ = self.digits(),
             }
         }
-        let written = self.text.get(start..self.at).unwrap_or_default();
-        let number = std::str::from_utf8(written)
+        let number_text = self.text.get(start..self.at).unwrap_or_default();
+        let number = std::str::from_utf8(number_text)
             .ok()
             .and_then(|it| it.parse::<f64>().ok());
         match number {
@@ -353,7 +353,14 @@ pub fn json_for_oxlint(path: &[u8], text: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
     let before = text.get(..end).unwrap_or_default();
     let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
     let line = 1 + strings::count_char(before, b'\n');
-    let place = format!(" at line {line} column {}", end - line_start);
+    let position_text = format!(" at line {line} column {}", end - line_start);
     let start: &[u8] = b"Failed to parse oxlint config ";
-    Err([start, path, b".\n", why.as_bytes(), place.as_bytes()].concat())
+    Err([
+        start,
+        path,
+        b".\n",
+        why.as_bytes(),
+        position_text.as_bytes(),
+    ]
+    .concat())
 }

@@ -64,11 +64,11 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         Some((id, Json::Array(setting.collect())))
     });
     let mut plugins = vec![text(b"@")];
-    let of_rules = config.configured().map(|it| it.entry.meta.plugin);
+    let rule_plugins = config.configured().map(|it| it.entry.meta.plugin);
     for prefix in config
         .plugins
         .clone()
-        .unwrap_or_else(|| of_rules.collect())
+        .unwrap_or_else(|| rule_plugins.collect())
         .iter()
         .map(|it| text(it.prefix().as_bytes()))
     {

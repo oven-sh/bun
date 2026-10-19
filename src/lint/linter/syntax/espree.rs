@@ -45,7 +45,7 @@ struct Checks<'a, 'c> {
     noticed: u32,
     /// True if the tree is complete because the parser reported nothing.
     is_whole: bool,
-    /// Report only what Prettier rejects. See [`babel_refusal`].
+    /// Report only what Prettier rejects. See [`babel_rejection`].
     is_babel: bool,
     /// Report only what oxc rejects. See [`Checks::oxc_early_errors`].
     is_oxc: bool,
@@ -198,7 +198,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
     }
     for it in file.exprs_of_kind(ExprTag::ImportMeta) {
         all.push(
-            SyntaxError::of_oxc(it.span(), "Unexpected import.meta expression")
+            SyntaxError::oxc_error(it.span(), "Unexpected import.meta expression")
                 .help("import.meta is only allowed in module code")
                 .stage(Stage::Parser),
         );
@@ -245,8 +245,11 @@ pub(super) fn module_syntax_in_commonjs<'a>(
 /// this only reports errors that Prettier is known to throw. It doesn't use the file's scopes.
 ///
 /// `finds_candidates` is `false` only in a test that checks it makes no difference.
-pub(super) fn babel_refusal<'a>(file: &'a File<'a>, finds_candidates: bool) -> Option<SyntaxError> {
-    let candidates = finds_candidates.then(|| Candidates::of(file));
+pub(super) fn babel_rejection<'a>(
+    file: &'a File<'a>,
+    finds_candidates: bool,
+) -> Option<SyntaxError> {
+    let candidates = finds_candidates.then(|| Candidates::scan(file));
     let mut checks = Checks {
         file,
         candidates: candidates.as_ref(),
@@ -275,11 +278,11 @@ struct Tops<'a> {
 }
 
 impl<'a> Tops<'a> {
-    /// Returns the outermost expression containing `of`, and that expression's parent, which isn't an expression.
-    fn top(&mut self, of: Expr<'a>) -> (Expr<'a>, Node<'a>) {
+    /// Returns the outermost expression containing `expr`, and that expression's parent, which isn't an expression.
+    fn top(&mut self, expr: Expr<'a>) -> (Expr<'a>, Node<'a>) {
         // Fast path: almost every chain is short and isn't worth caching.
         if self.known.is_empty() {
-            let mut at = of;
+            let mut at = expr;
             for _ in 0..CACHE_DEPTH {
                 match at.parent() {
                     Node::Expr(parent) => at = parent,
@@ -288,7 +291,7 @@ impl<'a> Tops<'a> {
             }
         }
         let mut passed = Vec::new();
-        let mut at = of;
+        let mut at = expr;
         let found = loop {
             if let Some(&top) = self.known.get(at) {
                 break (top, top.parent());
@@ -328,7 +331,7 @@ impl<'a> Tops<'a> {
 /// The nesting depth from which [`Tops`] caches the outermost expression.
 const CACHE_DEPTH: usize = 16;
 
-/// The expressions that [`babel_refusal`] needs to look at. Nothing else in `bun fmt` needs the file's expressions
+/// The expressions that [`babel_rejection`] needs to look at. Nothing else in `bun fmt` needs the file's expressions
 /// indexed by kind, and sorting all of them costs ten times as much as the checks.
 ///
 /// If a check starts looking at more expressions of a kind, add them HERE. `prettier-refusals.mjs` compares the results
@@ -357,7 +360,7 @@ impl Candidates {
         ExprTag::Yield,
     ];
 
-    fn of(file: &File) -> Candidates {
+    fn scan(file: &File) -> Candidates {
         use hir::ExprKind as Kind;
         let text = file.text();
         let has_private_names = strings::contains_char(text, b'#');
@@ -404,7 +407,7 @@ impl Candidates {
     /// Collects every expression whose kind is in `tags`, and nothing else. None of these kinds can be part of an
     /// optional chain. It scans the kinds the binder already recorded, which is nearly free. `tags` must be in
     /// `ExprTag` order so that the result is sorted.
-    fn of_kinds(file: &File, tags: &[ExprTag]) -> Candidates {
+    fn from_binder_kinds(file: &File, tags: &[ExprTag]) -> Candidates {
         let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
         // Same conditions as `runner::Exprs::from_binder`.
         if kinds.len() != file.hir.exprs.len()
@@ -412,7 +415,7 @@ impl Candidates {
             || !file.hir.import_attributes.is_empty()
             || !tags.is_sorted_by_key(|&tag| tag as u8)
         {
-            return Candidates::of(file);
+            return Candidates::scan(file);
         }
         let count_of = |tag: ExprTag| {
             counts
@@ -437,17 +440,17 @@ impl Candidates {
         Candidates { found }
     }
 
-    fn of_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
+    fn with_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
         let start = self.found.partition_point(|it| it.0 < 2 * tag as u8);
         let len = self.found[start..].partition_point(|it| it.0 < 2 * tag as u8 + 2);
         &self.found[start..start + len]
     }
 }
 
-/// `of_parser` is the error from TypeScript's parser, if any, and its offset.
+/// `parser_error` is the error from TypeScript's parser, if any, and its offset.
 pub(super) fn first_error<'a>(
     file: &'a File<'a>,
-    of_parser: Option<(Option<&'a Diagnostic>, u32)>,
+    parser_error: Option<(Option<&'a Diagnostic>, u32)>,
 ) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
@@ -456,13 +459,13 @@ pub(super) fn first_error<'a>(
         first: None,
         all: Vec::new(),
         noticed: 0,
-        is_whole: of_parser.is_none(),
+        is_whole: parser_error.is_none(),
         is_babel: false,
         is_oxc: false,
         only_parser: false,
         is_oxfmt: false,
     };
-    if let Some((diagnostic, at)) = of_parser {
+    if let Some((diagnostic, at)) = parser_error {
         checks.translate_parser_error(diagnostic, at);
         checks.at_sign_before(at);
     }
@@ -498,7 +501,7 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     }
     all.map(|it| {
         let message = "'using' declarations are not allowed at the top level of a script";
-        SyntaxError::of_oxc(it.span(), message).help("Wrap this code in a block or use a module")
+        SyntaxError::oxc_error(it.span(), message).help("Wrap this code in a block or use a module")
     })
     .collect()
 }
@@ -521,7 +524,7 @@ pub(super) fn export_assignment_with_other_exports<'a>(file: &'a File<'a>) -> Ve
     let error = |it: Stmt| {
         let message =
             "An export assignment cannot be used in a module with other exported elements";
-        SyntaxError::of_oxc(it.span(), message)
+        SyntaxError::oxc_error(it.span(), message)
             .code(2309)
             .help("If you want to use `export =`, remove other `export`s and put all of them to the right hand value of `export =`. If you want to use `export`s, remove `export =` statement.")
             .noticed_at(u32::MAX)
@@ -549,7 +552,7 @@ pub(super) fn for_await_outside_async<'a>(file: &'a File<'a>) -> Vec<SyntaxError
         match function {
             Some(func) if func.kind() == FnKind::StaticBlock => {
                 let message = b"Cannot use 'for await' in class static initialization block";
-                return Some(SyntaxError::of_oxc(span, message));
+                return Some(SyntaxError::oxc_error(span, message));
             }
             Some(func) if func.is_async() => return None,
             None if !is_script(file) => return None,
@@ -584,17 +587,17 @@ pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if file.hir.with_bodies.is_empty() {
         return Vec::new();
     }
-    let is_refused = |it: &Stmt<'a>| {
+    let is_rejected = |it: &Stmt<'a>| {
         matches!(it.kind(), StmtKind::With { .. })
             && (!file.is_javascript() || is_strict_mode(Node::Stmt(*it).scope(), file))
     };
-    let refused = file.stmts_of_kind(StmtTag::Block).filter(is_refused);
-    refused
+    let rejected = file.stmts_of_kind(StmtTag::Block).filter(is_rejected);
+    rejected
         .map(|it| {
             let start = it.span().start;
             let keyword = Span::new(start, start + "with".len() as u32);
             // oxc reports it when it leaves the statement.
-            SyntaxError::of_oxc(keyword, "'with' statements are not allowed")
+            SyntaxError::oxc_error(keyword, "'with' statements are not allowed")
                 .noticed_at(it.span().end)
         })
         .collect()
@@ -629,8 +632,8 @@ pub(super) fn oxc_errors<'a>(
     // `a.#b` and `delete a` belong to kinds that have many expressions.
     let common_kinds = hir::rare::ODD_PRIVATE_NAME | hir::rare::DELETES_A_NAME;
     let candidates = (!file.is_javascript()).then(|| match file.has_rare_syntax(common_kinds) {
-        true => Candidates::of(file),
-        false => Candidates::of_kinds(file, kinds),
+        true => Candidates::scan(file),
+        false => Candidates::from_binder_kinds(file, kinds),
     });
     let mut checks = oxc_checks(file, candidates.as_ref());
     (checks.only_parser, checks.is_oxfmt) = (only_parser, is_oxfmt);
@@ -664,9 +667,9 @@ impl<'a, 'c> Checks<'a, 'c> {
     fn exprs_of(&self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> + use<'a, 'c> {
         let file = self.file;
         let candidates = self.candidates.filter(|_| Candidates::KINDS.contains(&tag));
-        let of_file = candidates.is_none().then(|| file.exprs_of_kind(tag));
-        let found = candidates.map_or(&[][..], |it| it.of_kind(tag));
-        (of_file.into_iter().flatten())
+        let all_of_kind = candidates.is_none().then(|| file.exprs_of_kind(tag));
+        let found = candidates.map_or(&[][..], |it| it.with_kind(tag));
+        (all_of_kind.into_iter().flatten())
             .chain(found.iter().map(move |it| Expr::from_raw(file, it.1)))
     }
 
@@ -717,7 +720,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         let before = self.all.len();
         check(self);
         for it in self.all.iter_mut().skip(before) {
-            it.of_oxc.stage = Stage::Parser;
+            it.oxc_details.stage = Stage::Parser;
         }
     }
 
@@ -1337,7 +1340,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             ),
             _ => (deprecated, "for octal literals use the '0o' prefix instead"),
         };
-        self.report(SyntaxError::of_oxc(literal, message).help(help));
+        self.report(SyntaxError::oxc_error(literal, message).help(help));
     }
 
     /// Checks identifiers that are keywords in some contexts. Costs one comparison per identifier in the file.

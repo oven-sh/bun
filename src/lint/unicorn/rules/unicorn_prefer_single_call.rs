@@ -1,4 +1,4 @@
-use crate::unicorn::{may_have_side_effects, statements_around};
+use crate::unicorn::{may_have_side_effects, enclosing_statement_list};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -40,7 +40,7 @@ impl Rule for PreferSingleCall {
         let Some((curr_call, curr_info)) = self.classify_statement(curr_es) else {
             return;
         };
-        let Some(prev_es) = statements_around(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
+        let Some(prev_es) = enclosing_statement_list(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
             return;
         };
         let Some((prev_call, prev_info)) = self.classify_statement(prev_es) else {

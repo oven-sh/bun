@@ -140,8 +140,8 @@ fn file_imports<'a>(maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) 
 /// `namespace.has(undefined)`: true if upstream read the `name` of a node that has none, as in `export namespace A.B
 /// {}`. Here that key is stored as the text `undefined`.
 fn has_undefined_key<'a>(maps: &ExportMaps<'a>, export_map: ExportMap<'a>) -> bool {
-    let written = usize::from(maps.namespace_has(export_map, b"undefined"));
-    maps.namespace_names(export_map).iter().filter(|it| ***it == *b"undefined").count() > written
+    let explicit_count = usize::from(maps.namespace_has(export_map, b"undefined"));
+    maps.namespace_names(export_map).iter().filter(|it| ***it == *b"undefined").count() > explicit_count
 }
 
 impl<'a> FileImport<'a> {

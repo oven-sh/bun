@@ -137,7 +137,7 @@ enum FunctionName<'a> {
 }
 
 impl<'a> FunctionName<'a> {
-    fn of_pattern(pat: Pat<'a>, span: Span) -> FunctionName<'a> {
+    fn from_pattern(pat: Pat<'a>, span: Span) -> FunctionName<'a> {
         match pat.as_ident() {
             Some(name) => FunctionName::Ident(name, span),
             None => FunctionName::Other(span),
@@ -177,7 +177,7 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
         return None;
     };
     match e.parent() {
-        Node::VarDecl(declarator) => Some(FunctionName::of_pattern(
+        Node::VarDecl(declarator) => Some(FunctionName::from_pattern(
             declarator.pat(),
             declarator.binding_span(),
         )),
@@ -199,24 +199,30 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
                 _ => None,
             }
         }
-        Node::Param(param) => Some(FunctionName::of_pattern(param.pat(), param.binding_span())),
+        Node::Param(param) => Some(FunctionName::from_pattern(
+            param.pat(),
+            param.binding_span(),
+        )),
         Node::PatElem(element) => element
             .pat()
-            .map(|pat| FunctionName::of_pattern(pat, pat.span())),
-        Node::PatProp(prop) if prop.default() == Some(e) => {
-            Some(FunctionName::of_pattern(prop.value(), prop.value().span()))
-        }
+            .map(|pat| FunctionName::from_pattern(pat, pat.span())),
+        Node::PatProp(prop) if prop.default() == Some(e) => Some(FunctionName::from_pattern(
+            prop.value(),
+            prop.value().span(),
+        )),
         _ => None,
     }
 }
 
 fn is_inside_component_or_hook<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
-    let is_one = |it: Node<'a>| match it {
+    let is_component_or_hook_node = |it: Node<'a>| match it {
         Node::Func(func) => get_function_name(func).is_some_and(FunctionName::is_component_or_hook),
         Node::Expr(e) => is_forward_ref_or_memo_callback(e),
         _ => false,
     };
-    known.find(node, |it, _| is_one(it).then_some(())).is_some()
+    known
+        .find(node, |it, _| is_component_or_hook_node(it).then_some(()))
+        .is_some()
 }
 
 /// A set of text ranges that can answer how many of them contain an offset.
@@ -236,14 +242,14 @@ impl Ranges {
         Ranges { starts, ends }
     }
 
-    pub(crate) fn count_around(&self, at: u32) -> usize {
+    pub(crate) fn count_containing(&self, at: u32) -> usize {
         self.starts
             .partition_point(|it| *it <= at)
             .saturating_sub(self.ends.partition_point(|it| *it <= at))
     }
 
     pub(crate) fn contains(&self, at: u32) -> bool {
-        self.count_around(at) != 0
+        self.count_containing(at) != 0
     }
 }
 
@@ -259,7 +265,7 @@ pub(crate) struct Memo<'a> {
     /// Caches whether a node is a component or a hook, or is inside one.
     pub(crate) inside_component_or_hook: AncestorMemo<'a, ()>,
     /// oxlint only: caches a node's enclosing function.
-    pub(crate) function_around: AncestorMemo<'a, Func<'a>>,
+    pub(crate) enclosing_function: AncestorMemo<'a, Func<'a>>,
     /// oxlint only: caches whether a node is inside a `memo` or `forwardRef` call.
     pub(crate) in_memo_or_forward_ref: AncestorMemo<'a, ()>,
 }
@@ -489,7 +495,7 @@ impl<'a> Paths<'a> {
             cyclic_from: usize,
             /// The stack indices of the segments that paths from here have led back to. Only used when counting from
             /// the start.
-            met: BinaryHeap<usize>,
+            back_edge_targets: BinaryHeap<usize>,
             /// The groups in `zeros` that stay zero as long as this frame is on the stack.
             owned: Vec<usize>,
         }
@@ -509,7 +515,7 @@ impl<'a> Paths<'a> {
                     if let Some(top) = stack.last_mut() {
                         top.cyclic_from = top.cyclic_from.min(at + 1);
                         if direction == Direction::FromStart {
-                            top.met.push(at);
+                            top.back_edge_targets.push(at);
                         }
                     }
                     returned = Count::ZERO;
@@ -518,7 +524,7 @@ impl<'a> Paths<'a> {
                 } else if let Some((cyclic_from, owner)) = zeros.get(segment.id()) {
                     if let Some(top) = stack.last_mut() {
                         top.cyclic_from = top.cyclic_from.min(cyclic_from);
-                        top.met.push(owner);
+                        top.back_edge_targets.push(owner);
                     }
                     returned = Count::ZERO;
                 } else {
@@ -539,7 +545,7 @@ impl<'a> Paths<'a> {
                         neighbors,
                         next: 0,
                         cyclic_from: usize::MAX,
-                        met: BinaryHeap::new(),
+                        back_edge_targets: BinaryHeap::new(),
                         owned: Vec::new(),
                     });
                     returned = Count::ZERO;
@@ -568,14 +574,18 @@ impl<'a> Paths<'a> {
             }
             match direction {
                 Direction::FromStart => {
-                    while top.met.peek().is_some_and(|it| *it >= position) {
-                        top.met.pop();
+                    while top
+                        .back_edge_targets
+                        .peek()
+                        .is_some_and(|it| *it >= position)
+                    {
+                        top.back_edge_targets.pop();
                     }
                     // A reachable segment always has a path from the start, so a zero only means the count was
                     // requested from inside a cycle.
                     if segment.is_reachable() && sum.is_zero {
                         self.from_start.remove(&segment.id());
-                        match top.met.peek() {
+                        match top.back_edge_targets.peek() {
                             Some(&owner) => {
                                 let group =
                                     zeros.add(segment.id(), top.cyclic_from, owner, &top.owned);
@@ -590,7 +600,7 @@ impl<'a> Paths<'a> {
                         zeros.invalidate(&top.owned);
                     }
                     if let Some(below) = stack.last_mut() {
-                        below.met.append(&mut top.met);
+                        below.back_edge_targets.append(&mut top.back_edge_targets);
                     }
                 }
                 Direction::ToEnd => {
@@ -880,10 +890,10 @@ fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<
         .filter(|it| before.contains(it.span().start));
     for statement in earlier {
         steps += STEPS_FOR_EACH;
-        let mut around = Node::Stmt(statement).ancestors();
+        let mut enclosing_nodes = Node::Stmt(statement).ancestors();
         let root = loop {
             steps = steps.checked_sub(1)?;
-            match around.next() {
+            match enclosing_nodes.next() {
                 Some(it) if !bun_lint::code_path::starts_code_path(it) => {}
                 root => break root,
             }

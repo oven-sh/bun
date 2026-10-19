@@ -39,7 +39,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         && type_expected.tag() != ExprTag::Spread
     {
         let file = ctx.file;
-        let (expect, rest) = expect_call.around_first_argument(ctx.runner);
+        let (expect, rest) = expect_call.expect_prefix_and_suffix(ctx.runner);
         let mut code = [expect, b"(".as_slice(), file.slice(operand.outer_span()), rest].concat();
         for modifier in expect_call.modifiers() {
             let (open, close) = match modifier.element {

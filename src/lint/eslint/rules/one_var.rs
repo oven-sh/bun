@@ -103,8 +103,8 @@ struct Seen {
     required: bool,
 }
 
-/// True if ESLint calls `startFunction` for `node`, or with `of_blocks`, `startFunction` or `startBlock`.
-fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
+/// True if ESLint calls `startFunction` for `node`, or with `includes_blocks`, `startFunction` or `startBlock`.
+fn is_scope(node: Node<'_>, includes_blocks: bool, is_oxlint: bool) -> bool {
     match node {
         // A function's body block isn't a node here, so one scope replaces ESLint's two. The outer one is always empty.
         Node::File(_) => true,
@@ -112,7 +112,7 @@ fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
         Node::Stmt(statement) => match statement.tag() {
             // ESLint doesn't know about namespaces. oxlint treats a namespace as its own scope, even for `var`.
             StmtTag::Module => is_oxlint,
-            StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => of_blocks,
+            StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => includes_blocks,
             _ => false,
         },
         _ => false,
@@ -122,7 +122,7 @@ fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
 /// The function scopes, or the block scopes, that enclose the current statement and have declared something, innermost
 /// last.
 struct Scopes<'a> {
-    of_blocks: bool,
+    includes_blocks: bool,
     is_oxlint: bool,
     enclosing_scopes: AncestorMemo<'a, Node<'a>>,
     /// Each with its [`scope_id`] and its [`statements_span`].
@@ -148,9 +148,9 @@ fn statements_span(scope: Node<'_>) -> Span {
 }
 
 impl<'a> Scopes<'a> {
-    fn new(of_blocks: bool, is_oxlint: bool) -> Self {
+    fn new(includes_blocks: bool, is_oxlint: bool) -> Self {
         Scopes {
-            of_blocks,
+            includes_blocks,
             is_oxlint,
             enclosing_scopes: AncestorMemo::default(),
             open: Vec::new(),
@@ -160,12 +160,12 @@ impl<'a> Scopes<'a> {
     /// Returns what `statement`'s scope has declared so far, indexed by [`index`]. Statements have to come in order of
     /// their ends, so each comes after the statements nested in it.
     fn seen(&mut self, statement: Stmt<'a>) -> Option<&mut [Seen; 5]> {
-        let (of_blocks, is_oxlint) = (self.of_blocks, self.is_oxlint);
+        let (includes_blocks, is_oxlint) = (self.includes_blocks, self.is_oxlint);
         // The scope is nearly always the statement's parent.
         let parent = statement.parent();
-        let scope = match is_scope(parent, of_blocks, is_oxlint) {
+        let scope = match is_scope(parent, includes_blocks, is_oxlint) {
             true => parent,
-            false => self.enclosing_scopes.find(parent, |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?,
+            false => self.enclosing_scopes.find(parent, |_, it| is_scope(it, includes_blocks, is_oxlint).then_some(it))?,
         };
         let number = scope_id(scope);
         if self.open.last().is_none_or(|it| it.0 != number) {

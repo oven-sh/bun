@@ -557,7 +557,8 @@ fn format_in(
         with_pragma.extend_from_slice(&text[front_matter_end..]);
         text = &with_pragma;
     }
-    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    // Prettier's `coreFormat` trims what JavaScript counts as whitespace, so it turns a lone no-break space into an
+    // empty file. Here only ASCII whitespace counts, and the no-break space stays.
     if text.trim_ascii_start().is_empty() {
         return Ok(());
     }

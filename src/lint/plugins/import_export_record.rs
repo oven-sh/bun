@@ -451,9 +451,9 @@ impl<'a> Visitor<'a> {
                 FxHashMap::default();
             for stmt in file.body().iter().filter(|it| !it.is_exported()) {
                 let declare = |name: Name<'a>| {
-                    let of_name = declarations.entry(name).or_default();
-                    if of_name.last() != Some(&stmt) {
-                        of_name.push(stmt);
+                    let name_declarations = declarations.entry(name).or_default();
+                    if name_declarations.last() != Some(&stmt) {
+                        name_declarations.push(stmt);
                     }
                 };
                 match stmt.kind() {

@@ -459,7 +459,7 @@ impl<'a> Identifier<'a> {
         }
     }
 
-    fn of_key(key: Key<'a>, file: &'a File<'a>, node: TypedNode<'a>) -> Self {
+    fn from_key(key: Key<'a>, file: &'a File<'a>, node: TypedNode<'a>) -> Self {
         let span = key.inner_span(file);
         let name: &'a [u8] = match key.kind() {
             KeyKind::Ident(name)
@@ -862,7 +862,7 @@ impl NamingConvention {
         let id = match (key, member.constructor_keyword()) {
             // Upstream doesn't check whether an `AccessorProperty`'s key is computed.
             (Some(key), _) if key.is_computed() && selector != Selector::AutoAccessor => return,
-            (Some(key), _) => Identifier::of_key(key, cx.file(), TypedNode::Member(member)),
+            (Some(key), _) => Identifier::from_key(key, cx.file(), TypedNode::Member(member)),
             (None, Some(keyword)) => Identifier {
                 name: b"constructor",
                 span: keyword.span(),
@@ -908,7 +908,7 @@ impl NamingConvention {
         {
             return;
         }
-        let id = Identifier::of_key(key, cx.file(), TypedNode::Prop(property));
+        let id = Identifier::from_key(key, cx.file(), TypedNode::Prop(property));
         let mut modifiers = PUBLIC;
         if selector == Selector::ObjectLiteralMethod && function_value.is_some_and(Func::is_async) {
             modifiers |= ASYNC;
@@ -974,7 +974,7 @@ impl NamingConvention {
         let Some(key) = member.key() else {
             return;
         };
-        let id = Identifier::of_key(key, cx.file(), TypedNode::None);
+        let id = Identifier::from_key(key, cx.file(), TypedNode::None);
         let modifiers = if requires_quoting(id.name) { REQUIRES_QUOTES } else { 0 };
         self.validate(cx, Selector::EnumMember, id, modifiers);
     }

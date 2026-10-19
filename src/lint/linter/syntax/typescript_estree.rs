@@ -45,7 +45,7 @@ enum Kind {
 
 /// `node.parent`, reduced the same way.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Place {
+enum ParentKind {
     /// `ts.isClassLike`
     Class,
     /// `InterfaceDeclaration`, `TypeAliasDeclaration`
@@ -85,7 +85,7 @@ fn var_kind_text(kind: VarKind) -> &'static str {
 
 struct Checks<'a> {
     file: &'a File<'a>,
-    is_of_prettier: bool,
+    for_prettier: bool,
     /// The failed checks. `errors` has the matching error at the same index.
     candidates: Vec<Candidate>,
     errors: Vec<SyntaxError>,
@@ -93,11 +93,11 @@ struct Checks<'a> {
 
 const NO_SOURCE: &str = "'source' is not a valid meta-property for keyword 'import'.";
 
-/// `is_of_prettier` selects the version bundled with Prettier 3.9, which doesn't check the values of import attributes.
-pub(super) fn first_error<'a>(file: &'a File<'a>, is_of_prettier: bool) -> Option<SyntaxError> {
+/// `for_prettier` selects the version bundled with Prettier 3.9, which doesn't check the values of import attributes.
+pub(super) fn first_error<'a>(file: &'a File<'a>, for_prettier: bool) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
-        is_of_prettier,
+        for_prettier,
         candidates: Vec::new(),
         errors: Vec::new(),
     };
@@ -193,7 +193,7 @@ impl<'a> Checks<'a> {
     /// `checkModifiers`. `decorated` is `nodeCanBeDecorated(node)`, called only if there's a decorator.
     fn check_modifiers(
         &mut self,
-        owner: (Kind, Place, Span),
+        owner: (Kind, ParentKind, Span),
         modifiers: &[hir::Modifier],
         decorated: impl FnOnce(&Self) -> Decorated,
     ) {
@@ -204,7 +204,7 @@ impl<'a> Checks<'a> {
     /// them.
     fn check_modifiers_with(
         &mut self,
-        (kind, place, node): (Kind, Place, Span),
+        (kind, parent_kind, node): (Kind, ParentKind, Span),
         modifiers: &[hir::Modifier],
         decorated: impl FnOnce(&Self) -> Decorated,
         other: Option<(Flags, &str)>,
@@ -247,14 +247,17 @@ impl<'a> Checks<'a> {
                 on("cannot appear on a type member", modifier)
             } else if modifier != Flags::READONLY
                 && kind == Kind::IndexSignature
-                && (modifier != Flags::STATIC || place != Place::Class)
+                && (modifier != Flags::STATIC || parent_kind != ParentKind::Class)
             {
                 on("cannot appear on an index signature", modifier)
             } else if kind == Kind::TypeParameter && !is(Flags::IN | Flags::OUT | Flags::CONST) {
                 on("cannot appear on a type parameter", modifier)
             } else if is(Flags::IN | Flags::OUT)
                 && (kind != Kind::TypeParameter
-                    || !matches!(place, Place::Class | Place::InterfaceOrTypeAlias))
+                    || !matches!(
+                        parent_kind,
+                        ParentKind::Class | ParentKind::InterfaceOrTypeAlias
+                    ))
             {
                 on(
                     "can only appear on a type parameter of a class, interface or type alias",
@@ -274,7 +277,7 @@ impl<'a> Checks<'a> {
                     modifier,
                 )
             } else if modifier == Flags::AMBIENT
-                && place == Place::Class
+                && parent_kind == ParentKind::Class
                 && kind != Kind::PropertyDeclaration
             {
                 on("cannot appear on class elements of this kind.", modifier)
@@ -291,7 +294,7 @@ impl<'a> Checks<'a> {
                     "can only appear on a class, method, or property declaration.",
                     modifier,
                 )
-            } else if is(Flags::STATIC | ACCESSIBILITY) && place == Place::ModuleOrFile {
+            } else if is(Flags::STATIC | ACCESSIBILITY) && parent_kind == ParentKind::ModuleOrFile {
                 on("cannot appear on a module or namespace element.", modifier)
             } else if modifier == Flags::ACCESSOR && kind != Kind::PropertyDeclaration {
                 on("can only appear on a property declaration.", modifier)
@@ -311,7 +314,7 @@ impl<'a> Checks<'a> {
                 return self.fail(node, other.pos, "Accessibility modifier already seen.");
             } else if let Some((_, message)) = other.filter(|it| is(it.0)) {
                 message.to_owned()
-            } else if place == Place::ObjectLiteral
+            } else if parent_kind == ParentKind::ObjectLiteral
                 && (modifier != Flags::ASYNC || kind != Kind::MethodDeclaration)
             {
                 on("cannot be used here.", modifier)
@@ -322,10 +325,10 @@ impl<'a> Checks<'a> {
         }
     }
 
-    fn place_of_statement(&self, id: usize) -> Place {
+    fn statement_parent_kind(&self, id: usize) -> ParentKind {
         match self.file.bound.parent_of_stmt(hir::StmtId(id as u32)) {
-            Parent::File | Parent::Module(_) => Place::ModuleOrFile,
-            _ => Place::Other,
+            Parent::File | Parent::Module(_) => ParentKind::ModuleOrFile,
+            _ => ParentKind::Other,
         }
     }
 
@@ -374,7 +377,7 @@ impl<'a> Checks<'a> {
                     },
                     _ => None,
                 };
-                let owner = (kind, self.place_of_statement(i), node);
+                let owner = (kind, self.statement_parent_kind(i), node);
                 self.check_modifiers_with(
                     owner,
                     modifiers,
@@ -647,14 +650,14 @@ impl<'a> Checks<'a> {
             };
             let node = crate::ast::Class::from_raw(self.file, i as u32).span();
             let modifiers = self.modifiers(raw.modifiers);
-            let (kind, place) = match owner {
+            let (kind, parent_kind) = match owner {
                 ClassOwner::Stmt(statement) => (
                     Kind::ClassDeclaration,
-                    self.place_of_statement(statement.idx()),
+                    self.statement_parent_kind(statement.idx()),
                 ),
-                ClassOwner::Expr(_) => (Kind::ClassExpression, Place::Other),
+                ClassOwner::Expr(_) => (Kind::ClassExpression, ParentKind::Other),
             };
-            self.check_modifiers((kind, place, node), modifiers, |_| Decorated::Validly);
+            self.check_modifiers((kind, parent_kind, node), modifiers, |_| Decorated::Validly);
             let is_default_export =
                 has_keyword(modifiers, Flags::EXPORT) && has_keyword(modifiers, Flags::DEFAULT);
             if kind == Kind::ClassDeclaration && raw.name.is_none() && !is_default_export {
@@ -759,14 +762,14 @@ impl<'a> Checks<'a> {
                     _,
                 ) => continue,
             };
-            let place = if class.is_some() {
-                Place::Class
+            let parent_kind = if class.is_some() {
+                ParentKind::Class
             } else {
-                Place::Other
+                ParentKind::Other
             };
             let is_abstract = raw.flags.contains(Flags::ABSTRACT);
             self.check_modifiers(
-                (kind, place, node),
+                (kind, parent_kind, node),
                 self.modifiers(raw.modifiers),
                 |checks| match kind {
                     Kind::PropertyDeclaration => {
@@ -902,22 +905,22 @@ impl<'a> Checks<'a> {
                     },
                     _ => false,
                 };
-                let takes_decorators = matches!(
+                let allows_decorators = matches!(
                     function.kind,
                     FnKind::Constructor | FnKind::Method | FnKind::Setter
                 );
-                match has_body && takes_decorators && is_in_class_declaration {
+                match has_body && allows_decorators && is_in_class_declaration {
                     true => Decorated::Validly,
                     false => Decorated::Invalidly,
                 }
             };
-            let of_property = ACCESSIBILITY | Flags::READONLY | Flags::OVERRIDE;
-            let owner = (Kind::Parameter, Place::Other, node);
+            let property_modifiers = ACCESSIBILITY | Flags::READONLY | Flags::OVERRIDE;
+            let owner = (Kind::Parameter, ParentKind::Other, node);
             self.check_modifiers_with(
                 owner,
                 modifiers,
                 decorated,
-                as_property.map(|it| (of_property, it)),
+                as_property.map(|it| (property_modifiers, it)),
             );
         }
     }
@@ -930,21 +933,21 @@ impl<'a> Checks<'a> {
             {
                 continue;
             }
-            let place = match TypeParam::from_raw(self.file, i as u32).parent() {
-                Node::Class(_) => Place::Class,
+            let parent_kind = match TypeParam::from_raw(self.file, i as u32).parent() {
+                Node::Class(_) => ParentKind::Class,
                 Node::Stmt(it)
                     if matches!(
                         it.try_raw().map(|it| it.kind),
                         Some(StmtKind::Interface(_) | StmtKind::TypeAlias(_))
                     ) =>
                 {
-                    Place::InterfaceOrTypeAlias
+                    ParentKind::InterfaceOrTypeAlias
                 }
-                _ => Place::Other,
+                _ => ParentKind::Other,
             };
             let node = Span::new(raw.start, raw.end);
             self.check_modifiers(
-                (Kind::TypeParameter, place, node),
+                (Kind::TypeParameter, parent_kind, node),
                 self.modifiers(raw.modifiers),
                 |_| Decorated::Invalidly,
             );
@@ -1030,7 +1033,7 @@ impl<'a> Checks<'a> {
                 _ => Kind::PropertyAssignment,
             };
             self.check_modifiers(
-                (kind, Place::ObjectLiteral, prop.span()),
+                (kind, ParentKind::ObjectLiteral, prop.span()),
                 self.modifiers(list),
                 |_| Decorated::Invalidly,
             );
@@ -1091,7 +1094,7 @@ impl<'a> Checks<'a> {
 
     fn expressions(&mut self) {
         let file = self.file;
-        if !self.is_of_prettier {
+        if !self.for_prettier {
             let kinds = [
                 ExprTag::TaggedTemplate,
                 ExprTag::PrivateIdentifier,
@@ -1176,7 +1179,7 @@ impl<'a> Checks<'a> {
             }
             Some(hir::ExprKind::ImportCall { args }) => {
                 // `import.source()` parses because `bun fmt` parses every file in the Babel dialect, which allows it.
-                if self.is_of_prettier && it.import_call_phase().is_some() {
+                if self.for_prettier && it.import_call_phase().is_some() {
                     let dot = skip_trivia(file.text(), it.span().start + "import".len() as u32);
                     // The parser only accepts `defer` or `source` here. The first letter can be `\u0073` or `\u{73}`.
                     let is_source = match file
@@ -1294,7 +1297,7 @@ impl<'a> Checks<'a> {
                 self.fail(Span::new(raw.start, raw.end), raw.local_pos, message);
             }
         }
-        if !hir.import_attributes.is_empty() && !self.is_of_prettier {
+        if !hir.import_attributes.is_empty() && !self.for_prettier {
             self.import_attributes();
         }
     }

@@ -19,11 +19,11 @@ impl<'a> FormatDecorators<'a> {
         }
     }
 
-    pub(crate) fn of_param(param: Param<'a>) -> Self {
+    pub(crate) fn from_param(param: Param<'a>) -> Self {
         Self::new(param.decorators(), param.as_ast_nodes())
     }
 
-    pub(crate) fn of_member(member: Member<'a>) -> Self {
+    pub(crate) fn from_member(member: Member<'a>) -> Self {
         Self::new(member.decorators(), member.as_ast_nodes())
     }
 

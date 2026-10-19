@@ -368,7 +368,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.any_signature_while_arguments_are_checked();
         }
         if self.calls_to_resolve_afresh.is_some()
-            && let Some(resolved) = self.resolve_signature_afresh(file, call)
+            && let Some(resolved) = self.re_resolve_signature(file, call)
         {
             return resolved;
         }
@@ -426,15 +426,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let serial = self.work;
         if !is_in_progress {
-            // Drop what a resolution inside `resolve_signature_afresh` left behind.
+            // Drop what a resolution inside `re_resolve_signature` left behind.
             self.signatures_resolved_within
                 .retain(|r| !(r.0 == file && r.1 == call));
         }
-        let around = self.call_resolution_errors.take();
+        let outer_errors = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         let resolved = self.resolve_signature(file, call);
         self.is_call_re_resolved = is_re_resolved;
-        let reported = std::mem::replace(&mut self.call_resolution_errors, around);
+        let reported = std::mem::replace(&mut self.call_resolution_errors, outer_errors);
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
         let resolved = self.with_return_type(resolved);
@@ -486,7 +486,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if left.is_err()
                 && assigned_within.is_none()
-                && self.refused_at < serial
+                && self.rejected_at < serial
                 && !is_in_flow_loop(self)
             {
                 self.signatures_resolved_within.push((file, call, resolved));
@@ -518,7 +518,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// reported for the call stay unchanged. Returns `None` if `call` isn't one of them, or if it's requested while
     /// it's being resolved this way. Then the stored result is used.
     #[cold]
-    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+    fn re_resolve_signature(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
         let (of, start, end) = self.calls_to_resolve_afresh?;
         if of != file || !(start..end).contains(&self.hir(file)[call].pos) {
             return None;
@@ -533,9 +533,9 @@ impl<'p, 's> Checker<'p, 's> {
         let at = self.calls_resolved_afresh.len();
         self.calls_resolved_afresh.push((call, None));
         self.resolution_start = self.stack.len();
-        let around = self.call_resolution_errors.take();
+        let outer_errors = self.call_resolution_errors.take();
         let resolved = self.resolve_signature(file, call);
-        self.call_resolution_errors = around;
+        self.call_resolution_errors = outer_errors;
         self.resolution_start = resolution_start;
         self.resolved_meanwhile.push((file, call, resolved));
         let resolved = self.with_return_type(resolved);
@@ -748,8 +748,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
             // down to one that doesn't accept `void`.
             let required = &params[..Self::min_args(params)];
-            let asked = required.iter().skip(least.saturating_sub(1)).rev();
-            for param in rest.into_iter().chain(asked) {
+            let requested = required.iter().skip(least.saturating_sub(1)).rev();
+            for param in rest.into_iter().chain(requested) {
                 self.request_type_of_parameter(param);
             }
         }
@@ -1960,7 +1960,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !type_args.is_empty() {
             // `getTypeArgumentsFromNodes`: excess type arguments are dropped. A missing one is the
             // default of its type parameter, or its constraint, as declared.
-            let outer = self.mapper_around_sig(candidate);
+            let outer = self.outer_mapper_of_sig(candidate);
             let mut filled: Vec<TypeId> =
                 type_args.iter().copied().take(type_params.len()).collect();
             for &param in &type_params[filled.len()..] {
@@ -1970,7 +1970,7 @@ impl<'p, 's> Checker<'p, 's> {
                         .constraint_of_type_param(param)
                         .unwrap_or(TypeId::UNKNOWN),
                 };
-                filled.push(self.filled_in_around(param, ty, outer));
+                filled.push(self.with_outer_type_arguments(param, ty, outer));
             }
             let mapper = self.mapper_from(&type_params, &filled);
             return self.instantiate_sig(candidate, mapper);
@@ -2373,34 +2373,34 @@ impl<'p, 's> Checker<'p, 's> {
             [first, ..] => first,
         };
         let p = self.p;
-        let kept = p.candidate_orders.get_ref(&self.task, &first);
-        if let Some(kept) = kept
-            && let Some(ordered) = Self::cached_candidate_order(kept, sigs)
+        let cached = p.candidate_orders.get_ref(&self.task, &first);
+        if let Some(cached) = cached
+            && let Some(ordered) = Self::cached_candidate_order(cached, sigs)
         {
-            return List::Kept(ordered);
+            return List::Permanent(ordered);
         }
         let scope = self.begin_scope();
         let ordered = self.candidates_in_order_uncached(sigs);
         let ended = self.end_scope_by_counters(scope);
         // One list is cached per signature.
-        if kept.is_none()
+        if cached.is_none()
             && let Ok(stored) = ended
         {
             let both = self.list_of(sigs.iter().chain(&ordered).copied());
-            let kept = (p.candidate_orders)
+            let cached = (p.candidate_orders)
                 .insert_ref(&self.task, first, both, stored)
                 .1;
             // The entry that remains cached may be a different list with the same first signature.
-            if let Some(ordered) = Self::cached_candidate_order(kept, sigs) {
-                return List::Kept(ordered);
+            if let Some(ordered) = Self::cached_candidate_order(cached, sigs) {
+                return List::Permanent(ordered);
             }
         }
         List::Own(ordered.into_vec())
     }
 
     /// Returns the second half of an entry of `candidate_orders`, if the first half is `sigs`.
-    fn cached_candidate_order<'a>(kept: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
-        let (of, ordered) = kept.split_at(kept.len() / 2);
+    fn cached_candidate_order<'a>(cached: &'a [SigId], sigs: &[SigId]) -> Option<&'a [SigId]> {
+        let (of, ordered) = cached.split_at(cached.len() / 2);
         (of == sigs).then_some(ordered)
     }
 
@@ -2660,14 +2660,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns `ty`, the constraint or default of the type parameter `param`, instantiated with the
     /// outer type arguments of the signature `param` belongs to (`outer`). For a clone
     /// (`cloneTypeParameter`) that's already done.
-    pub(super) fn filled_in_around(
+    pub(super) fn with_outer_type_arguments(
         &mut self,
         param: TypeId,
         ty: TypeId,
         outer: MapperId,
     ) -> TypeId {
         match *self.data(param) {
-            TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY => ty,
+            TypeData::TypeParam(_, _, enclosing_mapper)
+                if enclosing_mapper != MapperId::IDENTITY =>
+            {
+                ty
+            }
             _ => self.instantiate(ty, outer),
         }
     }
@@ -2730,8 +2734,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getDefaultFromTypeParameter(param) != nil`
     pub(super) fn has_default(&mut self, param: TypeId) -> bool {
-        if let TypeData::TypeParam(file, tp, around) = *self.data(param)
-            && around != MapperId::IDENTITY
+        if let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param)
+            && enclosing_mapper != MapperId::IDENTITY
         {
             // A clone has one if the declared type parameter does. No instantiation is requested
             // for a default that doesn't reference a type parameter or is itself a type parameter.
@@ -3000,7 +3004,7 @@ impl<'p, 's> Checker<'p, 's> {
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> SigId {
         let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
-        inference.around_source = self.mapper_around_sig(expected);
+        inference.source_outer_mapper = self.outer_mapper_of_sig(expected);
         for (source, target) in self.parameter_type_pairs(expected, sig) {
             self.infer(&mut inference, source, target, 0);
         }
@@ -3034,23 +3038,27 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.
     pub fn type_param_name(&self, param: TypeId) -> Option<Atom> {
-        let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+        let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
             return None;
         };
         let declared = self.hir(file)[tp].name;
         Some(
-            self.new_type_param_name(declared, around)
+            self.new_type_param_name(declared, enclosing_mapper)
                 .unwrap_or(declared),
         )
     }
 
-    /// The name that the mapper `around` of a clone gives the type parameter declared as
-    /// `declared`. See `unique_type_params`.
-    pub(super) fn new_type_param_name(&self, declared: Atom, around: MapperId) -> Option<Atom> {
-        if around == MapperId::IDENTITY {
+    /// The name that a clone's `enclosing_mapper` gives the type parameter declared as `declared`.
+    /// See `unique_type_params`.
+    pub(super) fn new_type_param_name(
+        &self,
+        declared: Atom,
+        enclosing_mapper: MapperId,
+    ) -> Option<Atom> {
+        if enclosing_mapper == MapperId::IDENTITY {
             return None;
         }
-        let renamed = (self.types()).map(around, self.string_literal(declared, true))?;
+        let renamed = (self.types()).map(enclosing_mapper, self.string_literal(declared, true))?;
         match *self.data(renamed) {
             TypeData::StringLit { value, .. } => Some(value),
             _ => None,
@@ -3061,8 +3069,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`newSymbol(SymbolFlagsTypeParameter, name)`), and therefore none of the modifiers of the
     /// type parameter it was cloned from.
     pub(super) fn is_renamed_type_param(&self, param: TypeId) -> bool {
-        matches!(*self.data(param), TypeData::TypeParam(file, tp, around)
-            if self.new_type_param_name(self.hir(file)[tp].name, around).is_some())
+        matches!(*self.data(param), TypeData::TypeParam(file, tp, enclosing_mapper)
+            if self.new_type_param_name(self.hir(file)[tp].name, enclosing_mapper).is_some())
     }
 
     /// `newTypeParameter(newSymbol(SymbolFlagsTypeParameter, name))`. Type parameters without a
@@ -3075,11 +3083,11 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         serial: usize,
     ) -> Option<TypeId> {
-        let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+        let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
             return None;
         };
         let declared = self.string_literal(self.hir(file)[tp].name, true);
-        let mut pairs = self.types().mapping(around).to_vec();
+        let mut pairs = self.types().mapping(enclosing_mapper).to_vec();
         pairs.retain(|pair| pair.0 != declared);
         pairs.push((declared, self.string_literal(name, false)));
         let serial = self.number_literal(serial as f64, true);
@@ -3154,7 +3162,7 @@ impl<'p, 's> Checker<'p, 's> {
         // their siblings.
         let mut sibling_sets: Vec<(FileId, ScopeId, MapperId)> = Vec::with_capacity(own.len());
         for &param in own {
-            let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+            let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
                 return None;
             };
             let scope = self.bound(file).type_param_scope[tp.idx()];
@@ -3166,11 +3174,11 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return None;
             }
-            sibling_sets.push((file, scope, around));
+            sibling_sets.push((file, scope, enclosing_mapper));
         }
         let mut unique = Vec::with_capacity(own.len());
         for (i, &param) in own.iter().enumerate() {
-            let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
+            let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
                 return None;
             };
             let renames_of_siblings: SmallVec<[(TypeId, TypeId); 4]> = renames
@@ -3184,7 +3192,7 @@ impl<'p, 's> Checker<'p, 's> {
                 unique.push(param);
                 continue;
             }
-            let mut pairs = self.types().mapping(around).to_vec();
+            let mut pairs = self.types().mapping(enclosing_mapper).to_vec();
             pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
             pairs.extend(renames_of_siblings.iter().copied());
             let serial = self.number_literal(serial as f64, true);

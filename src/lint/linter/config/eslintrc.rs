@@ -248,14 +248,14 @@ fn migrate_options(defaults: &Json, id: &[u8], options: &[Json]) -> Vec<Json> {
     let Some(defaults) = defaults.get(id).and_then(Json::as_array) else {
         return options.to_vec();
     };
-    let written = |at: usize| match (id, options.get(at)?) {
+    let normalized_option = |at: usize| match (id, options.get(at)?) {
         (b"no-unused-vars" | b"@typescript-eslint/no-unused-vars", vars @ Json::String(_)) => {
             Some(object(vec![(b"vars", vars.clone())]))
         }
         (_, option) => Some(option.clone()),
     };
     (0..defaults.len().max(options.len()))
-        .filter_map(|at| match (defaults.get(at), written(at)) {
+        .filter_map(|at| match (defaults.get(at), normalized_option(at)) {
             (Some(default), Some(option)) => Some(with_default(default, &option)),
             (default, option) => option.or_else(|| default.cloned()),
         })
@@ -482,7 +482,7 @@ fn invalid(field: &[u8], message: &[u8], value: &Json) -> Vec<u8> {
 
 /// `#/definitions/stringOrStrings`, or `stringOrStringsRequired`, which has `minItems`: 1.
 fn string_or_strings(field: &[u8], value: &Json, min_items: usize) -> Vec<Vec<u8>> {
-    let of_list = match value {
+    let list_error = match value {
         Json::String(_) => return Vec::new(),
         Json::Array(items) if items.len() < min_items => {
             invalid(field, b"should NOT have fewer than 1 items", value)
@@ -499,7 +499,7 @@ fn string_or_strings(field: &[u8], value: &Json, min_items: usize) -> Vec<Vec<u8
     };
     vec![
         wrong_type(field, b"string", value),
-        of_list,
+        list_error,
         invalid(field, b"should match exactly one schema in oneOf", value),
     ]
 }
@@ -570,19 +570,19 @@ fn schema_errors(json: &Json, at: &[u8], own: &[(&[u8], Expected); 2]) -> Vec<Ve
             }
             continue;
         };
-        let of_type = |is_it: bool, name: &[u8]| match is_it {
+        let check_type = |has_type: bool, name: &[u8]| match has_type {
             true => Vec::new(),
             false => vec![wrong_type(&field, name, value)],
         };
         let problems = match expected {
-            Expected::Boolean => of_type(value.as_bool().is_some(), b"boolean"),
-            Expected::String => of_type(value.as_str().is_some(), b"string"),
-            Expected::StringOrNull => of_type(
+            Expected::Boolean => check_type(value.as_bool().is_some(), b"boolean"),
+            Expected::String => check_type(value.as_str().is_some(), b"string"),
+            Expected::StringOrNull => check_type(
                 value.as_str().is_some() || *value == Json::Null,
                 b"string/null",
             ),
-            Expected::Object => of_type(value.as_object().is_some(), b"object"),
-            Expected::Array => of_type(value.as_array().is_some(), b"array"),
+            Expected::Object => check_type(value.as_object().is_some(), b"object"),
+            Expected::Array => check_type(value.as_array().is_some(), b"array"),
             Expected::Strings => string_or_strings(&field, value, 0),
             Expected::StringsRequired => string_or_strings(&field, value, 1),
             Expected::Overrides => match value.as_array() {
@@ -690,13 +690,13 @@ fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Seve
         return Ok(severity);
     };
     // ESLint 8's message doesn't include the unexpected property.
-    let mut kept = Vec::with_capacity(lines.len());
+    let mut retained_lines = Vec::with_capacity(lines.len());
     for line in
         strings::split(&lines, b"\n").filter(|it| !it.is_empty() && !it.starts_with(b"\t\t"))
     {
-        kept.extend_from_slice(&[line, b"\n"].concat());
+        retained_lines.extend_from_slice(&[line, b"\n"].concat());
     }
-    fail(&kept)
+    fail(&retained_lines)
 }
 
 /// True if the plugin that ESLint calls `id` is built in, fully or partly, and the built-in rules replace it.
@@ -994,9 +994,9 @@ impl<'c> Legacy<'_, '_, 'c> {
         }
         let (from, entry) = (context.plugins_from, context.entry);
         let mut known = self.plugins.iter();
-        let is_it =
+        let is_same_request =
             |it: &LoadedPlugin| it.request == request && it.from == from && it.entry == entry;
-        let at = match known.position(is_it) {
+        let at = match known.position(is_same_request) {
             Some(at) => at,
             None => {
                 let answer = (self.load)(LegacyKind::Plugin, &request, &context.path, entry);
@@ -1361,10 +1361,10 @@ impl<'c> Legacy<'_, '_, 'c> {
             settings.any(super::flat::settings_have_unknown_resolver);
         let registry = self.reader.registry;
         for &NamedPlugin { ref id, at } in &named.0 {
-            let said = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
-            if let Some(name) = said(b"name").filter(|_| is_built_in_plugin(registry, id)) {
+            let answer_text = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
+            if let Some(name) = answer_text(b"name").filter(|_| is_built_in_plugin(registry, id)) {
                 // The answer has the version of typescript-eslint, which isn't loaded.
-                let name = match said(b"version") {
+                let name = match answer_text(b"version") {
                     Some(version) => [name, b"@", version].concat(),
                     None => name.to_vec(),
                 };
@@ -1432,16 +1432,16 @@ impl<'c> Legacy<'_, '_, 'c> {
                 .and_then(Json::as_object)
                 .unwrap_or_default()
             {
-                if Global::of_json(value).is_none() {
-                    let mut written = Vec::new();
-                    write_js_string(&mut written, value);
+                if Global::from_config_value(value).is_none() {
+                    let mut value_text = Vec::new();
+                    write_js_string(&mut value_text, value);
                     return Err(ConfigError::new(&[
                         b"ESLint configuration of global '",
                         id,
                         b"' in ",
                         name,
                         b" is invalid:\n'",
-                        &written,
+                        &value_text,
                         b"' is not a valid configuration for a global (use 'readonly', 'writable', or 'off')",
                     ]));
                 }
@@ -1754,9 +1754,12 @@ impl<'c> Legacy<'_, '_, 'c> {
             return Ok(());
         };
         let all = crate::json::parse(TYPESCRIPT_ESLINT_DEFAULTS).unwrap_or(Json::Null);
-        let of_version = all.get(if major <= 5 { b"5" } else { b"6" });
+        let version_defaults = all.get(if major <= 5 { b"5" } else { b"6" });
         let mut settings = Vec::new();
-        for (name, options) in of_version.and_then(Json::as_object).unwrap_or_default() {
+        for (name, options) in version_defaults
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
             let id = [b"@typescript-eslint/", &name[..]].concat();
             put(&mut self.defaults, &id, options.clone());
             settings.push((id, off_with(options)));
@@ -1785,10 +1788,10 @@ impl<'c> Legacy<'_, '_, 'c> {
     fn summary(&mut self, named: &Named) -> Result<(), ConfigError> {
         let mut environments = Vec::new();
         for &NamedPlugin { ref id, at } in &named.0 {
-            let of_plugin = self
+            let plugin_environments = self
                 .answer(at)
                 .and_then(|it| it.get(b"environments")?.as_object());
-            for (name, environment) in of_plugin.unwrap_or_default() {
+            for (name, environment) in plugin_environments.unwrap_or_default() {
                 environments.push(([&id[..], b"/", name].concat(), environment.clone()));
             }
         }
@@ -1963,8 +1966,8 @@ fn edition_of(options: &Json) -> Result<u32, Vec<u8>> {
 impl Eslint8 {
     /// `getEnv(name).parserOptions`
     fn environment_parser_options(&self, environment: &[u8]) -> Option<Json> {
-        if let Some(of_plugin) = self.environments.get(environment) {
-            return of_plugin.get(b"parserOptions").cloned();
+        if let Some(plugin_environment) = self.environments.get(environment) {
+            return plugin_environment.get(b"parserOptions").cloned();
         }
         if let Some(version) = environment_ecma_version(environment) {
             return Some(object(vec![(b"ecmaVersion", Json::Number(version))]));
@@ -1991,8 +1994,8 @@ impl Eslint8 {
     fn resolve_parser_options(&self, in_file: &[&[u8]]) -> Json {
         let mut options = Json::Object(Vec::new());
         for environment in self.enabled(in_file) {
-            if let Some(of_environment) = self.environment_parser_options(environment) {
-                super::merge::deep_merge_into(&mut options, &of_environment);
+            if let Some(environment_options) = self.environment_parser_options(environment) {
+                super::merge::deep_merge_into(&mut options, &environment_options);
             }
         }
         super::merge::deep_merge_into(&mut options, &self.parser_options);
@@ -2049,7 +2052,8 @@ impl Eslint8 {
             .get(name)
             .and_then(|it| it.get(b"globals"));
         let globals = globals.and_then(Json::as_object).unwrap_or_default();
-        (globals.iter()).filter_map(|(name, value)| Some((&name[..], Global::of_json(value)?)))
+        (globals.iter())
+            .filter_map(|(name, value)| Some((&name[..], Global::from_config_value(value)?)))
     }
 
     /// ESLint's message about a comment that starts with `label` when `noInlineConfig` is on.
@@ -2163,14 +2167,14 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
     // `resolveGlobals`. The built-in environments' variables are added where `$env` is read.
     let mut globals = Json::Null;
     for environment in eslint_8.enabled(&[]) {
-        if let Some(of_plugin) = eslint_8.environments.get(environment)
-            && let Some(variables) = of_plugin.get(b"globals")
+        if let Some(plugin_environment) = eslint_8.environments.get(environment)
+            && let Some(variables) = plugin_environment.get(b"globals")
         {
             super::merge::deep_merge_into(&mut globals, variables);
         }
     }
-    if let Some(written) = language_options.get(b"globals") {
-        super::merge::deep_merge_into(&mut globals, written);
+    if let Some(config_globals) = language_options.get(b"globals") {
+        super::merge::deep_merge_into(&mut globals, config_globals);
     }
     if globals != Json::Null {
         put(language_options, b"globals", globals);

@@ -148,7 +148,7 @@ Not checked:    other tools' configs, CI files, Git hooks
   test("notes that classes aren't sorted when sortTailwindcss is on but tailwindcss isn't installed", async () => {
     const inWeb = Object.entries(installed("tailwindcss")).map(([name, text]) => [`web/${name}`, text]);
     const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "web/a.js": ugly, "api/a.js": ugly };
-    const named = JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindPackageName: "@acme/tw" });
+    const renamed = JSON.stringify({ plugins: ["prettier-plugin-tailwindcss"], tailwindPackageName: "@acme/tw" });
     const notes = async (files: Record<string, string>) =>
       (await doctor(files)).stdout.split("\n").filter(line => line.startsWith("note: "));
     expect(
@@ -157,7 +157,7 @@ Not checked:    other tools' configs, CI files, Git hooks
         notes({ ...files, ...Object.fromEntries(inWeb) }),
         notes({ ...files, ...installed("tailwindcss") }),
         notes({ ...files, ".oxfmtrc.json": "{}\n" }),
-        notes({ ".prettierrc": named, "a.js": ugly }),
+        notes({ ".prettierrc": renamed, "a.js": ugly }),
       ]),
     ).toEqual([
       ["note: Tailwind CSS classes are not sorted (tailwindcss is not installed)"],

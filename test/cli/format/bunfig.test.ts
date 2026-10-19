@@ -305,13 +305,13 @@ preserveDuplicates = true
   test("sorts classes in clsx, cn, cva and similar calls by default, unless `functions` is set", async () => {
     const calls = ["clsx", "cn", "cva", "cx", "classNames", "classnames", "twMerge", "twJoin", "tv", "other"];
     const code = (classes: (name: string) => string) => calls.map(name => `${name}("${classes(name)}");\n`).join("");
-    const [byDefault, named, oxfmt] = await Promise.all([
+    const [byDefault, custom, oxfmt] = await Promise.all([
       format({ ...tailwind, ...bunfig("sortTailwindcss = true"), "a.js": code(() => "p-4 m-2") }),
       format({ ...tailwind, ...bunfig(`sortTailwindcss = { functions = ["other"] }`), "a.js": code(() => "p-4 m-2") }),
       format({ ...tailwind, ".oxfmtrc.json": `{ "sortTailwindcss": true }`, "a.js": code(() => "p-4 m-2") }),
     ]);
     expect(byDefault.files["a.js"]).toBe(code(name => (name === "other" ? "p-4 m-2" : "m-2 p-4")));
-    expect(named.files["a.js"]).toBe(code(name => (name === "other" ? "m-2 p-4" : "p-4 m-2")));
+    expect(custom.files["a.js"]).toBe(code(name => (name === "other" ? "m-2 p-4" : "p-4 m-2")));
     // oxfmt's default list is empty.
     expect(oxfmt.files["a.js"]).toBe(code(() => "p-4 m-2"));
   });
@@ -582,7 +582,7 @@ let a = 1;
       "src/b.js": "b;\n",
     };
     const untouched = { files: { "src/a.svelte": input, "src/b.js": "b;\n" } };
-    const [written, checked, named] = await Promise.all([
+    const [written, checked, byName] = await Promise.all([
       format(files, ["src"]),
       format(files, ["--check", "src"]),
       format(files, ["src/a.svelte"]),
@@ -592,7 +592,7 @@ let a = 1;
     // Same error as without the `parser`.
     const noParser = (cwd: string) =>
       `error: No parser could be inferred for file "${join(cwd, "src", "a.svelte")}".\n`;
-    expect(named).toMatchObject({ stderr: noParser(named.cwd), ...untouched, exitCode: 2 });
+    expect(byName).toMatchObject({ stderr: noParser(byName.cwd), ...untouched, exitCode: 2 });
 
     using dir = tempDir("bun-format-bunfig", files);
     await using proc = spawn({
@@ -662,7 +662,7 @@ let a = 1;
 
   test("takes precedence over a .prettierrc, like every key", async () => {
     const files = { "a.svelte": input };
-    const [without, on, named, off, other, otherOff] = await Promise.all([
+    const [without, on, listed, off, other, otherOff] = await Promise.all([
       format({ ".prettierrc": "{}\n", ...files }),
       format({ ".prettierrc": "{}\n", ...bunfig("svelte = true"), ...files }),
       format({ ...withPlugin, ...files }),
@@ -671,7 +671,7 @@ let a = 1;
       format({ ...withPlugin, ...installed("3.4.0"), ...files }),
       format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = false"), ...files }),
     ]);
-    const results = [without, on, named, off, other, otherOff];
+    const results = [without, on, listed, off, other, otherOff];
     expect(results.map(it => it.files["a.svelte"])).toEqual([input, formatted, formatted, input, formatted, input]);
     expect(results.map(it => [it.stderr, it.exitCode])).toEqual(results.map(() => ["", 0]));
     // In the .prettierrc itself it's still an unknown option.
@@ -863,15 +863,15 @@ describe.concurrent("TOML", () => {
   });
 
   test("is skipped under a Prettier config, because Prettier doesn't format TOML", async () => {
-    const [all, named, below] = await Promise.all([
+    const [all, byName, below] = await Promise.all([
       format({ ".prettierrc": "{}", "a.toml": input, "a.js": "a  ;\n" }),
       format({ ".prettierrc": "{}", "a.toml": input }, ["a.toml"]),
       format({ "sub/.prettierrc": "{}", "sub/a.toml": input, "a.toml": input }),
     ]);
     expect(all.files["a.toml"]).toBe(input);
     expect(all.exitCode).toBe(0);
-    expect(named.stderr).toContain("No parser could be inferred for file");
-    expect(named.exitCode).toBe(2);
+    expect(byName.stderr).toContain("No parser could be inferred for file");
+    expect(byName.exitCode).toBe(2);
     expect(below.files).toMatchObject({ "sub/a.toml": input, "a.toml": formatted });
   });
 

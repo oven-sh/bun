@@ -184,12 +184,12 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(super) fn is_every_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
-        let is_each = || self.every_type(ty, |c, member| c.flags(member) & kind != 0);
+        let every_member_matches = || self.every_type(ty, |c, member| c.flags(member) & kind != 0);
         // A type that is neither a union nor an intersection has exactly one flag, so every member matches `kind` if no
         // member has a flag outside `kind`. The exception is an enum member, which also has `ENUM_LITERAL`.
         let values = tf::STRING_LITERAL | tf::NUMBER_LITERAL;
         if kind & tf::ENUM_LITERAL != 0 && kind & values != values {
-            return is_each();
+            return every_member_matches();
         }
         let also_allowed = match kind & values {
             0 => 0,
@@ -205,11 +205,12 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(super) fn is_some_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
-        let is_one = || self.some_type(ty, |c, member| c.flags(member) & kind != 0);
+        let any_member_matches = || self.some_type(ty, |c, member| c.flags(member) & kind != 0);
 
         // `member_flags` also includes the flags of an intersection's constituents, which aren't members.
 
-        self.types().member_flags(ty) & kind != 0 && (!self.may_be_reduced(ty) || is_one())
+        self.types().member_flags(ty) & kind != 0
+            && (!self.may_be_reduced(ty) || any_member_matches())
     }
 
     /// True if `ty` is known not to be a fresh literal type and not to contain one.

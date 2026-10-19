@@ -462,9 +462,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             let value = match parser {
                 b"markdown" => {
                     // `.replace(/^[^\S\n]*\n/, "")`
-                    let blank = value.len() - strings::trim_js_whitespace_start(value).len();
+                    let whitespace_len =
+                        value.len() - strings::trim_js_whitespace_start(value).len();
                     let first_line_end =
-                        strings::index_of_char_usize(&value[..blank], b'\n').map_or(0, |at| at + 1);
+                        strings::index_of_char_usize(&value[..whitespace_len], b'\n')
+                            .map_or(0, |at| at + 1);
                     dedented = dedent_string(&value[first_line_end..]);
                     &dedented[..]
                 }

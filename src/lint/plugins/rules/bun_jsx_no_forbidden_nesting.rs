@@ -31,12 +31,12 @@ impl Rule for JsxNoForbiddenNesting {
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
-        let written = config.array("pairs").iter().filter_map(|it| {
+        let configured = config.array("pairs").iter().filter_map(|it| {
             let pair = Object::of(Some(it));
             Some((pair.str("outer")?.as_bytes().into(), pair.str("inner")?.as_bytes().into()))
         });
         let html = HTML.iter().map(|it| (it.0.as_bytes().into(), it.1.as_bytes().into()));
-        JsxNoForbiddenNesting { pairs: if config.has("pairs") { written.collect() } else { html.collect() } }
+        JsxNoForbiddenNesting { pairs: if config.has("pairs") { configured.collect() } else { html.collect() } }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {

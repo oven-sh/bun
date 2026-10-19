@@ -85,7 +85,7 @@ impl Store {
     }
 
     /// For a run without an ESLint or oxlint config. See `uses_nearest_tsconfig`.
-    pub fn by_file(self) -> Store {
+    pub fn with_nearest_tsconfig(self) -> Store {
         Store {
             uses_nearest_tsconfig: true,
             ..self
@@ -168,7 +168,7 @@ struct Caches<'h> {
 pub struct Graph<'h> {
     store: &'h Store,
     /// Created on first use, because most runs have no cross-file rule and the tables are large.
-    known: OnceLock<Box<Caches<'h>>>,
+    caches: OnceLock<Box<Caches<'h>>>,
     loading: Guarded<()>,
     recorded: Guarded<Vec<Recorded<'h>>>,
     record_maker: OnceLock<MakeRecord>,
@@ -253,12 +253,12 @@ impl Scope {
 
     fn new(project: &Project) -> Scope {
         let directory = directory_of(&project.config_path);
-        let absolute = |written: &[u8]| match written.strip_prefix(b"${configDir}") {
+        let absolute = |relative_path: &[u8]| match relative_path.strip_prefix(b"${configDir}") {
             Some(rest) => join(directory, rest.strip_prefix(b"/").unwrap_or(rest)),
-            None => join(directory, written),
+            None => join(directory, relative_path),
         };
-        let pattern = |written: &Vec<u8>| {
-            let mut path = absolute(written);
+        let pattern = |config_glob: &Vec<u8>| {
+            let mut path = absolute(config_glob);
             // A last segment without a `.` or a wildcard is treated as a directory.
             let last = &path[directory_of(&path).len()..];
             if !strings::contains_any(last, b".*?") {
@@ -269,10 +269,11 @@ impl Scope {
                 path.ends_with(b"*"),
             )
         };
-        let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
-        let written = &project.written;
+        let patterns =
+            |config_globs: &[Vec<u8>]| config_globs.iter().map(pattern).collect::<Vec<_>>();
+        let raw_config = &project.written;
         let everything = [b"**/*".to_vec()];
-        let include = match (&written.include, &written.files) {
+        let include = match (&raw_config.include, &raw_config.files) {
             (Some(include), _) => &include[..],
             (None, Some(_)) => &[],
             (None, None) => &everything[..],
@@ -284,11 +285,11 @@ impl Scope {
             base: (base_url.and_then(|it| it.1.as_str()))
                 .unwrap_or(directory)
                 .to_vec(),
-            files: (written.files.iter().flatten())
+            files: (raw_config.files.iter().flatten())
                 .map(|it| absolute(it))
                 .collect(),
             include: patterns(include),
-            exclude: (patterns(written.exclude.as_deref().unwrap_or_default()).into_iter())
+            exclude: (patterns(raw_config.exclude.as_deref().unwrap_or_default()).into_iter())
                 .map(|it| it.0)
                 .collect(),
             allows_js: allow_js.is_some_and(|it| it.1 == Json::Bool(true)),
@@ -335,7 +336,7 @@ impl<'h> Graph<'h> {
     pub fn new(store: &'h Store) -> Graph<'h> {
         Graph {
             store,
-            known: OnceLock::new(),
+            caches: OnceLock::new(),
             loading: Guarded::new(()),
             recorded: Guarded::new(Vec::new()),
             record_maker: OnceLock::new(),
@@ -352,8 +353,8 @@ impl<'h> Graph<'h> {
         let _ = self.lister.set(lister);
     }
 
-    fn known(&self) -> &Caches<'h> {
-        self.known.get_or_init(Box::default)
+    fn caches(&self) -> &Caches<'h> {
+        self.caches.get_or_init(Box::default)
     }
 
     /// Returns a module's path as stored here: in the checker's format, where a drive's root is `/C:`.
@@ -406,7 +407,7 @@ impl<'h> Graph<'h> {
     /// Returns the `tsconfig.json` in `directory`, if there is one, preceded by the configs it references, because
     /// oxlint checks those first. References of references aren't followed.
     fn scopes_in(&self, directory: &[u8]) -> &[Scope] {
-        match self.known().scopes.get_ref(directory) {
+        match self.caches().scopes.get_ref(directory) {
             Some(scopes) => scopes,
             None => self.load_scopes(directory, &join(directory, b"tsconfig.json")),
         }
@@ -414,16 +415,16 @@ impl<'h> Graph<'h> {
 
     /// The same for the config at `config`, whatever its file name.
     fn scopes_of(&self, config: &[u8]) -> &[Scope] {
-        match self.known().scopes.get_ref(config) {
+        match self.caches().scopes.get_ref(config) {
             Some(scopes) => scopes,
             None => self.load_scopes(config, config),
         }
     }
 
     fn load_scopes(&self, key: &[u8], config: &[u8]) -> &[Scope] {
-        let known = self.known();
+        let caches = self.caches();
         let _loading = self.loading.lock();
-        if let Some(scopes) = known.scopes.get_ref(key) {
+        if let Some(scopes) = caches.scopes.get_ref(key) {
             return scopes;
         }
         let disk = WithoutListings(self.store.disk());
@@ -441,7 +442,7 @@ impl<'h> Graph<'h> {
             let all: Option<Vec<Scope>> = referenced.chain([own]).collect();
             all.unwrap_or_else(|| vec![Scope::BROKEN])
         });
-        known.scopes.insert_ref(key.to_vec(), scopes)
+        caches.scopes.insert_ref(key.to_vec(), scopes)
     }
 
     /// Returns the `tsconfig.json`, or else the `jsconfig.json`, in `directory`.
@@ -454,7 +455,7 @@ impl<'h> Graph<'h> {
     /// eslint-import-resolver-typescript 4's `normalizeOptions`: returns the configs that its `project` option lists.
     fn listed_projects(&self, projects: &[&[u8]]) -> &[Vec<u8>] {
         let key = [&b"\0"[..], &projects.join(&b"\0"[..])[..]].concat();
-        if let Some(listed) = self.known().typescript_configs.get_ref(&key[..]) {
+        if let Some(listed) = self.caches().typescript_configs.get_ref(&key[..]) {
             return listed;
         }
         let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
@@ -486,7 +487,7 @@ impl<'h> Graph<'h> {
             false => self.config_in(&path),
         };
         let listed = named.into_iter().filter_map(try_file).collect();
-        self.known().typescript_configs.insert_ref(key, listed)
+        self.caches().typescript_configs.insert_ref(key, listed)
     }
 
     /// Returns the configs whose `paths` eslint-import-resolver-typescript 4 tries for `from`'s imports, in its order.
@@ -494,7 +495,7 @@ impl<'h> Graph<'h> {
     fn configs_of_typescript_resolver(&self, projects: &[&[u8]], from: &[u8]) -> &[Vec<u8>] {
         let directory = directory_of(from);
         let key = [directory, b"\0", &projects.join(&b"\0"[..])[..]].concat();
-        if let Some(configs) = self.known().typescript_configs.get_ref(&key[..]) {
+        if let Some(configs) = self.caches().typescript_configs.get_ref(&key[..]) {
             return configs;
         }
         let mut listed = self.listed_projects(projects).to_vec();
@@ -551,19 +552,19 @@ impl<'h> Graph<'h> {
         if configs.is_empty() {
             configs.push(Vec::new());
         }
-        self.known().typescript_configs.insert_ref(key, configs)
+        self.caches().typescript_configs.insert_ref(key, configs)
     }
 
     /// Returns the `tsconfig.json` that applies to the imports of the file `from`, or an empty path if there's none.
     fn config_of(&self, from: &[u8]) -> &[u8] {
         let directory = directory_of(from);
         if !self.flavor().resolves_as_node() {
-            let known = self.known();
-            return match known.configs.get_ref(directory) {
+            let caches = self.caches();
+            return match caches.configs.get_ref(directory) {
                 Some(config) => config,
                 None => {
                     let found = find_config(self.store.disk(), directory).unwrap_or_default();
-                    known.configs.insert_ref(directory.to_vec(), found)
+                    caches.configs.insert_ref(directory.to_vec(), found)
                 }
             };
         }
@@ -575,13 +576,13 @@ impl<'h> Graph<'h> {
             if referenced.is_empty() {
                 return &own.config;
             }
-            let known = self.known();
-            return match known.configs.get_ref(from) {
+            let caches = self.caches();
+            return match caches.configs.get_ref(from) {
                 Some(config) => config,
                 None => {
                     let file_scope = referenced.iter().find(|it| it.has(from)).unwrap_or(own);
                     let config = file_scope.config.clone();
-                    known.configs.insert_ref(from.to_vec(), config)
+                    caches.configs.insert_ref(from.to_vec(), config)
                 }
             };
         }
@@ -599,25 +600,25 @@ impl<'h> Graph<'h> {
     /// Returns the resolver for the files that the config at `config` applies to. An empty `config` means no config.
     /// `directory` is the directory of one of those files.
     fn resolver_of(&self, config: &[u8], directory: &[u8]) -> &ProjectResolver<'h> {
-        let known = self.known();
-        if let Some(resolver) = known.resolvers.get_ref(config) {
+        let caches = self.caches();
+        if let Some(resolver) = caches.resolvers.get_ref(config) {
             return resolver;
         }
         // One thread reads a config while the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = known.resolvers.get_ref(config) {
+        if let Some(resolver) = caches.resolvers.get_ref(config) {
             return resolver;
         }
         let store: &'h Store = self.store;
         let mut project = self.load_project(config, directory);
-        let written = |name: &[u8]| {
+        let raw_option = |name: &[u8]| {
             let mut options = project.raw_compiler_options.iter();
             options.find(|it| it.0 == name).map(|it| &it.1)
         };
-        let base_url = written(b"baseUrl")
+        let base_url = raw_option(b"baseUrl")
             .and_then(Json::as_str)
             .map(<[u8]>::to_vec);
-        let es_module_interop = written(b"esModuleInterop") == Some(&Json::Bool(true));
+        let es_module_interop = raw_option(b"esModuleInterop") == Some(&Json::Bool(true));
         if let Some(base_url) = &base_url {
             project.options.paths_base_dir.clone_from(base_url);
         }
@@ -628,31 +629,33 @@ impl<'h> Graph<'h> {
             base_url,
             es_module_interop,
         };
-        known.resolvers.insert_ref(config.to_vec(), resolver)
+        caches.resolvers.insert_ref(config.to_vec(), resolver)
     }
 
-    /// `written` is the `paths` option, whose entries are relative to the working directory.
+    /// `configured_paths` is the `paths` option, whose entries are relative to the working directory.
     fn resolve_as_require(
         &self,
         (specifier, from): (&[u8], &[u8]),
         extensions: &[&[u8]],
-        written: &[&[u8]],
+        configured_paths: &[&[u8]],
         module_directories: &[&[u8]],
     ) -> Option<Vec<u8>> {
         let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
         // `resolve`'s `loadpkg` walks up from where the file would be until it finds a `package.json`. On a relative
         // path it never gets past `.` and overflows the stack there, so nothing is found in that entry or in any later
         // one.
-        let terminates = |path: &[u8], as_written: &[u8]| {
+        let terminates = |path: &[u8], configured_path: &[u8]| {
             let candidate = join(path, specifier);
             let directory = directory_of(&candidate);
             let is_end = |it: &[u8]| {
                 it.ends_with(b"/node_modules") || disk.is_file(&join(it, b"package.json"))
             };
             let below = ancestors(directory).take_while(|it| !cwd.starts_with(it));
-            is_absolute(as_written) || !disk.is_dir(directory) || below.chain([cwd]).any(is_end)
+            is_absolute(configured_path)
+                || !disk.is_dir(directory)
+                || below.chain([cwd]).any(is_end)
         };
-        let paths = written.iter().map(|it| (join(cwd, it), *it));
+        let paths = configured_paths.iter().map(|it| (join(cwd, it), *it));
         let paths: SmallVec<[Vec<u8>; 2]> = (paths
             .take_while(|it| terminates(&it.0, it.1))
             .map(|it| it.0))
@@ -669,9 +672,9 @@ impl<'h> Graph<'h> {
         // No TypeScript config applies here.
         let plain = self.resolver_of(b"", cwd);
         let (found, at) = (plain.resolver).resolve_as_require(specifier, from, &how)?;
-        // `path.join(written, specifier)`
+        // `path.join(configured_paths, specifier)`
         let is_relative = at
-            .and_then(|at| written.get(at))
+            .and_then(|at| configured_paths.get(at))
             .is_some_and(|it| !is_absolute(it));
         Some(match is_relative {
             true => relative(cwd, &found),
@@ -773,13 +776,13 @@ impl<'h> Graph<'h> {
             specifier,
         ]
         .concat();
-        let found = match self.known().non_relative.get_ref(&key[..]) {
+        let found = match self.caches().non_relative.get_ref(&key[..]) {
             Some(found) => found,
             None => {
                 let found = self
                     .resolve_with_project(config, from, specifier, is_require)
                     .map(|it| (it.0.into_owned(), it.1));
-                self.known().non_relative.insert_ref(key, found)
+                self.caches().non_relative.insert_ref(key, found)
             }
         };
         found.as_ref().map(|it| (Cow::Owned(it.0.clone()), it.1))
@@ -797,9 +800,9 @@ impl<'h> Graph<'h> {
             (b".cjs", [b".cjs", b".cts"]),
         ];
         let found = match aliases.iter().find(|it| base.ends_with(it.0)) {
-            Some((written, tried)) => tried
-                .iter()
-                .find_map(|it| file([&base[..base.len() - written.len()], it].concat())),
+            Some((specifier_extension, tried)) => tried.iter().find_map(|it| {
+                file([&base[..base.len() - specifier_extension.len()], it].concat())
+            }),
             None => {
                 let as_file = || {
                     file(base.clone()).or_else(|| {
@@ -878,11 +881,11 @@ impl<'h> Graph<'h> {
 
     /// Returns `path` with symbolic links followed.
     fn real(&self, path: Vec<u8>) -> Vec<u8> {
-        match self.known().real_paths.get_ref(&path[..]) {
+        match self.caches().real_paths.get_ref(&path[..]) {
             Some(real) => real.clone(),
             None => {
                 let real = self.store.disk().realpath(&path);
-                self.known().real_paths.insert_ref(path, real).clone()
+                self.caches().real_paths.insert_ref(path, real).clone()
             }
         }
     }
@@ -904,7 +907,11 @@ impl<'h> Graph<'h> {
             let resolved = self
                 .resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?
                 .0;
-            (!(it.may_be_itself && *resolved == *path)).then_some((resolved, declaration, it.kind))
+            (!(it.may_reexport_itself && *resolved == *path)).then_some((
+                resolved,
+                declaration,
+                it.kind,
+            ))
         });
         let link = linted_as.as_deref().map(from_native);
         let found_from = |link: Vec<u8>| {
@@ -976,14 +983,14 @@ impl<'h> Graph<'h> {
     /// yet.
     fn cache_record<'a>(&self, path: Vec<u8>, file: &'a File<'a>) -> Option<&Record> {
         let make = self.record_maker.get()?;
-        let known = match self.known().records.get_ref(&path[..]) {
-            Some(known) => known,
+        let cached = match self.caches().records.get_ref(&path[..]) {
+            Some(cached) => cached,
             None => {
                 let record = (!self.is_unparsable(file)).then(|| make(file));
-                self.known().records.insert_ref(path, record)
+                self.caches().records.insert_ref(path, record)
             }
         };
-        known.as_ref()
+        cached.as_ref()
     }
 
     /// True if the file at `path`, which isn't linted, should be read.
@@ -1059,13 +1066,14 @@ impl<'h> Graph<'h> {
                     let declarations = imports.iter().flat_map(|it| &it.declarations);
                     declarations.filter(|it| it.is_only_importing_types).count()
                 };
-                let known = &all.imports[at];
-                let is_the_same = known.len() == imports.len()
-                    && known
+                let recorded_imports = &all.imports[at];
+                let is_the_same = recorded_imports.len() == imports.len()
+                    && recorded_imports
                         .iter()
                         .zip(&imports)
                         .all(|(a, b)| a.module == b.module);
-                if !is_the_same || type_import_count(&imports) < type_import_count(known) {
+                if !is_the_same || type_import_count(&imports) < type_import_count(recorded_imports)
+                {
                     all.imports[at] = imports;
                 }
             }
@@ -1113,8 +1121,8 @@ impl<'h> Graph<'h> {
 
 impl Complete {
     fn intern(&mut self, path: &[u8]) -> ModuleId {
-        if let Some(&known) = self.ids.get(path) {
-            return known;
+        if let Some(&existing_id) = self.ids.get(path) {
+            return existing_id;
         }
         let id = ModuleId(self.paths.len() as u32);
         self.ids.insert(path.to_vec(), id);
@@ -1219,7 +1227,7 @@ impl Modules for Graph<'_> {
     }
 
     fn record_of(&self, module: ModuleId) -> Option<&Record> {
-        let (path, records) = (self.stored_path(module), &self.known().records);
+        let (path, records) = (self.stored_path(module), &self.caches().records);
         // For a file with several scripts, oxlint uses the last one that can be parsed.
         let later_script_record = || records.get_ref(&[path, b"\0"].concat()[..])?.as_ref();
         let has_scripts = ScriptKind::from_file_name(path).is_none();
@@ -1362,16 +1370,16 @@ impl Modules for Graph<'_> {
         ];
         let edition = language.ecma_version.to_le_bytes();
         let key = [path, &how, &edition].concat();
-        let known = match self.known().facts.get_ref(&key[..]) {
-            Some(known) => known,
+        let cached = match self.caches().facts.get_ref(&key[..]) {
+            Some(cached) => cached,
             None => {
                 let text = self.store.disk().read(&from_native(path));
-                let text = text.filter(|it| (reader.wants)(it));
+                let text = text.filter(|it| (reader.should_parse)(it));
                 let made = text.and_then(|it| with_file(path, &it, language, None, reader.read));
-                self.known().facts.insert_ref(key, made)
+                self.caches().facts.insert_ref(key, made)
             }
         };
-        known.as_deref()
+        cached.as_deref()
     }
 
     fn es_module_interop(&self, directory: &[u8]) -> bool {
@@ -1381,7 +1389,7 @@ impl Modules for Graph<'_> {
     }
 
     fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool {
-        self.stored_path(module) == self.store.disk().as_written(&from_native(path))
+        self.stored_path(module) == self.store.disk().with_on_disk_casing(&from_native(path))
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {
@@ -1406,8 +1414,8 @@ impl Modules for Graph<'_> {
     fn package_json(&self, path: &[u8]) -> Option<&Json> {
         let path = from_native(path);
         let directory = directory_of(&path);
-        if let Some(known) = self.known().packages.get_ref(directory) {
-            return known.as_ref();
+        if let Some(cached) = self.caches().packages.get_ref(directory) {
+            return cached.as_ref();
         }
         let disk = self.store.disk();
         let found = ancestors(directory).find_map(|it| {
@@ -1415,7 +1423,7 @@ impl Modules for Graph<'_> {
             let text = disk.is_file(&file).then(|| disk.read(&file))??;
             bun_lint::json::parse(&text).filter(|it| it.as_object().is_some())
         });
-        (self.known().packages)
+        (self.caches().packages)
             .insert_ref(directory.to_vec(), found)
             .as_ref()
     }

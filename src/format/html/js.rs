@@ -17,7 +17,7 @@ use crate::tailwind::{Tailwind, Tidies};
 use crate::{format_args, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::linter::{TypesInJavaScript, refused_by_prettier_with};
+use bun_lint::linter::{TypesInJavaScript, rejected_by_prettier_with};
 
 /// Prettier's parsers for programs.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -124,7 +124,7 @@ impl<'p> Parse<'p> {
     }
 
     /// Returns the parser for the code in the HTML that `f` writes.
-    fn of(f: &Formatter<'p>) -> Option<Parse<'p>> {
+    fn from_formatter(f: &Formatter<'p>) -> Option<Parse<'p>> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
@@ -157,7 +157,7 @@ pub(crate) enum Piece {
 /// The outcome of parsing code one way.
 enum Attempt {
     /// It doesn't parse that way.
-    Refused,
+    ParseFailed,
     /// Nothing has been written. Parse this text instead.
     Sorted(Vec<u8>),
     /// The return value of `write`.
@@ -176,7 +176,7 @@ pub(crate) fn with_file(
     piece: Piece,
     write: Write<'_>,
 ) -> bool {
-    let Some(parse) = Parse::of(f) else {
+    let Some(parse) = Parse::from_formatter(f) else {
         return false;
     };
     let mut options = options_in_html(f.options(), in_html);
@@ -219,14 +219,14 @@ pub(crate) fn with_file(
     for path in paths {
         for &is_script in kinds {
             let mut attempt = |code: &[u8], sorts_text: Option<&SortImports>| {
-                let mut result = Attempt::Refused;
+                let mut result = Attempt::ParseFailed;
                 parse.call(path, code, is_script, &mut |file| {
                     if file.has_parse_errors()
-                        || refused_by_prettier_with(file, TypesInJavaScript::Refused)
+                        || rejected_by_prettier_with(file, TypesInJavaScript::Rejected)
                     {
                         return;
                     }
-                    let comments = comments::of_file(file, &options);
+                    let comments = comments::for_file(file, &options);
                     // Babel only treats `<!--` and `-->` as comments in code that's known to be a script.
                     let is_html_like = |comment: Comment<'_>| {
                         matches!(
@@ -297,7 +297,7 @@ struct ClassSorter<'t, 'a> {
     tailwind: &'t Tailwind,
     host: Host,
     /// Every `+` and template around the current node, outermost first.
-    around: Vec<Expr<'a>>,
+    enclosing: Vec<Expr<'a>>,
     /// Replacements, as a span and its new text, in source order.
     changes: Vec<(Span, Vec<u8>)>,
 }
@@ -305,9 +305,9 @@ struct ClassSorter<'t, 'a> {
 impl ClassSorter<'_, '_> {
     /// Returns how to sort the texts of the template or string at `whole`.
     fn how(&self, whole: Span) -> (Collapse, Tidies) {
-        let among = |rules| collapse_among(&self.around, whole, self.tailwind, rules);
+        let among = |rules| collapse_among(&self.enclosing, whole, self.tailwind, rules);
         match self.host {
-            Host::Angular => (among((true, Texts::AsWritten)), self.tailwind.tidies()),
+            Host::Angular => (among((true, Texts::Unsorted)), self.tailwind.tidies()),
             Host::Vue => (among((false, Texts::Unseen)), self.tailwind.tidies()),
             // `removeDuplicates: false, collapseWhitespace: false`
             Host::Svelte => (
@@ -322,10 +322,10 @@ impl ClassSorter<'_, '_> {
 
     /// `texts` has the texts of the template at `whole`, or the contents of the string there, each with its span.
     fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
-        let (around, tidies) = self.how(whole);
+        let (collapse, tidies) = self.how(whole);
         let count = texts.len();
         for (index, (text, span)) in texts.enumerate() {
-            let ends = ends_in_template(text, (index == 0, index + 1 == count), around);
+            let ends = ends_in_template(text, (index == 0, index + 1 == count), collapse);
             let sorted = self.tailwind.sorted_with(text, ends, tidies);
             if *sorted != *text {
                 self.changes.push((span, sorted.into_owned()));
@@ -342,7 +342,7 @@ impl ClassSorter<'_, '_> {
     }
 }
 
-fn is_around_classes(e: Expr<'_>) -> bool {
+fn is_concatenation(e: Expr<'_>) -> bool {
     matches!(
         e.kind(),
         ExprKind::Template(_) | ExprKind::Binary { op: BinOp::Add, .. }
@@ -368,8 +368,8 @@ impl<'a> Visitor<'a> for ClassSorter<'_, 'a> {
                     }
                     _ => {}
                 }
-                if is_around_classes(e) {
-                    self.around.push(e);
+                if is_concatenation(e) {
+                    self.enclosing.push(e);
                 }
             }
             Node::Prop(property) => {
@@ -385,8 +385,8 @@ impl<'a> Visitor<'a> for ClassSorter<'_, 'a> {
     }
 
     fn exit(&mut self, node: Node<'a>) {
-        if matches!(node, Node::Expr(e) if is_around_classes(e)) {
-            self.around.pop();
+        if matches!(node, Node::Expr(e) if is_concatenation(e)) {
+            self.enclosing.pop();
         }
     }
 }
@@ -412,7 +412,7 @@ pub(crate) fn with_sorted_classes(
                         true => Host::Angular,
                         false => Host::Vue,
                     },
-                    around: Vec::new(),
+                    enclosing: Vec::new(),
                     changes: Vec::new(),
                 };
                 walk(file, &mut sorter);
@@ -448,7 +448,7 @@ pub(crate) fn sorted_in_svelte<'a>(
     let mut sorter = ClassSorter {
         tailwind,
         host: Host::Svelte,
-        around: Vec::new(),
+        enclosing: Vec::new(),
         changes: Vec::new(),
     };
     walk(file, &mut sorter);
@@ -727,7 +727,7 @@ pub(crate) struct AngularExpression<'c> {
     /// `(`, the expression as TypeScript, a line break and `)`.
     pub(crate) code: &'c [u8],
     /// A copy of `code` with the same length, with the original names where TypeScript wouldn't accept them.
-    pub(crate) shown: Option<&'c [u8]>,
+    pub(crate) display_code: Option<&'c [u8]>,
     /// Written instead of the expression if it has a `prettier-ignore` comment.
     pub(crate) ignored: Option<&'c [u8]>,
 }
@@ -753,7 +753,7 @@ pub(crate) fn write_angular_expression(
     hug: Hug,
     write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
 ) -> bool {
-    let Some(parse) = Parse::of(f) else {
+    let Some(parse) = Parse::from_formatter(f) else {
         return false;
     };
     // The class-sorting plugin doesn't replace the Angular parsers.
@@ -766,10 +766,10 @@ pub(crate) fn write_angular_expression(
         let Some(e) = expression_of(file).filter(|_| !file.has_parse_errors()) else {
             return;
         };
-        let source = match expression.shown {
+        let source = match expression.display_code {
             None => file.text(),
-            Some(shown) => match file.extension(|| shown.to_vec()) {
-                Some(shown) => &shown[..],
+            Some(display_code) => match file.extension(|| display_code.to_vec()) {
+                Some(display_code) => &display_code[..],
                 None => return,
             },
         };

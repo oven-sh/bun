@@ -1,8 +1,7 @@
-//! Small independent checks: 2698, 2358 2359, 2491, 2414 2427 2431 2457, 2432 2473, 1344.
+//! Small independent checks: 2481, 2774 2801 2845, 2698, 2432 2473.
 //!
-//! Mirrors `isValidSpreadType`, `checkInstanceOfExpression` with `resolveInstanceofExpression`, `checkForInStatement`,
-//! `checkTypeNameIsReserved` and `checkEnumDeclaration` in TypeScript 7.0.2's checker.go, and
-//! `checkStrictModeLabeledStatement` in its binder.go.
+//! Mirrors `checkVarDeclaredNamesNotShadowed`, `checkTestingKnownTruthyCallableOrAwaitableOrEnumMemberType`,
+//! `getSymbolAtLocation`, `isValidSpreadType` and the end of `checkEnumDeclaration` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{
@@ -703,12 +702,12 @@ impl<'p> Checker<'p, '_> {
         if self.is_valid_spread_type(ty) {
             return;
         }
-        let at = self.place_of_spread(file, owner, p);
+        let at = self.span_of_spread(file, owner, p);
         self.error_at(at, 2698, &[]);
     }
 
     /// JSX reports on the spread expression, an object literal on the whole `SpreadAssignment`.
-    fn place_of_spread(&self, file: FileId, owner: ExprId, p: PropId) -> (FileId, u32, u32) {
+    fn span_of_spread(&self, file: FileId, owner: ExprId, p: PropId) -> (FileId, u32, u32) {
         let hir = self.hir(file);
         if matches!(hir[owner].kind, ExprKind::Jsx(_)) {
             return self.span_of_parenthesized_expr(file, hir[p].value);
@@ -721,7 +720,7 @@ impl<'p> Checker<'p, '_> {
     /// again without that mode, so what its frames report is dropped. The call only infers once, so the error is
     /// attached to the call.
     pub(super) fn report_spread_in_inference(&mut self, file: FileId, owner: ExprId, p: PropId) {
-        let at = self.place_of_spread(file, owner, p);
+        let at = self.span_of_spread(file, owner, p);
         let diagnostic = self.new_diagnostic(at, 2698, &[]);
         let is_call = |q: &&Query| matches!(q, Query::Call(..));
         let call = self.stack.iter().rev().find(is_call).copied();

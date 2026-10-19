@@ -186,7 +186,7 @@ impl<'p> Checker<'p, '_> {
     fn name_of_unread_property(&self, name: Atom) -> Vec<u8> {
         let bytes = self.atoms().bytes(name);
         let Some(symbol) = bytes.strip_prefix(crate::atom::SYMBOL_NAME_PREFIX) else {
-            return as_written(bytes).to_vec();
+            return unmangled_name(bytes).to_vec();
         };
         match strings::index_of_char_usize(symbol, b'@') {
             Some(at) => cat!(b"[", symbol[..at], b"]"),
@@ -223,7 +223,10 @@ impl<'p> Checker<'p, '_> {
                 let has_name = !matches!(property.kind, PropKind::Shorthand | PropKind::Spread);
                 let is_in_object_literal = owner.is_some()
                     && matches!(hir[owner].kind, ExprKind::Object(_))
-                    && !hir.import_attributes.iter().any(|kept| kept.1 == owner);
+                    && !hir
+                        .import_attributes
+                        .iter()
+                        .any(|attribute_list| attribute_list.1 == owner);
                 (property.pos, has_name && is_in_object_literal)
             });
         let elements = hir.pat_props.iter().map(|element| {
@@ -292,9 +295,9 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// Same as `place_of_expr`.
-    pub(super) fn place_inside_parentheses(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
-        self.place_of_expr(file, e)
+    /// Same as `span_of_expr`.
+    pub(super) fn span_inside_parentheses(&self, file: FileId, e: ExprId) -> (FileId, u32, u32) {
+        self.span_of_expr(file, e)
     }
 
     /// `getPropertyTypeForIndexType`: the `noImplicitAny` errors for `a[k]` at `e` when the lookup finds nothing: 2576
@@ -309,7 +312,7 @@ impl<'p> Checker<'p, '_> {
         let ExprKind::Index { obj, index, .. } = self.hir(file)[e].kind else {
             return;
         };
-        let at_access = self.place_inside_parentheses(file, e);
+        let at_access = self.span_inside_parentheses(file, e);
         let at_index = self.span_of_parenthesized_expr(file, index);
         let is_target = self.is_assignment_target(file, e);
         if let Some(name) = name
@@ -584,7 +587,7 @@ impl<'p> Checker<'p, '_> {
         access: Option<(FileId, ExprId)>,
         closest: bool,
     ) -> Option<Atom> {
-        let text = as_written(self.atoms().bytes(name));
+        let text = unmangled_name(self.atoms().bytes(name));
         let access = access.and_then(|(file, e)| match self.hir(file)[e].kind {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
@@ -599,7 +602,7 @@ impl<'p> Checker<'p, '_> {
                 break;
             };
             for prop in &members.shape().props {
-                let candidate = as_written(self.atoms().bytes(prop.name));
+                let candidate = unmangled_name(self.atoms().bytes(prop.name));
                 if candidate.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
                     || !is_close(text, candidate)
                     || self.is_union(object)
@@ -690,41 +693,43 @@ impl<'p> Checker<'p, '_> {
         Some((file, start, end))
     }
 
-    /// `getSymbolOfDeclaration(memberDecl).Declarations[0]` for the member `written` of an object literal.
+    /// `getSymbolOfDeclaration(memberDecl).Declarations[0]` for the member `literal_member` of an object literal.
     /// `combineSymbolTables`: the early bound symbol's declarations come first, so only a late bound member has to look
     /// up the merged symbol.
     pub(super) fn first_declaration_of_literal_member(
         &mut self,
         file: FileId,
-        written: PropId,
+        literal_member: PropId,
     ) -> PropId {
-        if !matches!(self.hir(file)[written].key, PropKey::Computed(_)) {
-            return self.bound(file).declarations_of_literal_member(written)[0];
+        if !matches!(self.hir(file)[literal_member].key, PropKey::Computed(_)) {
+            return self
+                .bound(file)
+                .declarations_of_literal_member(literal_member)[0];
         }
-        let declarations = self.declarations_of_member(file, Decl::Property(written));
+        let declarations = self.declarations_of_member(file, Decl::Property(literal_member));
         match declarations.first() {
             Some(&(_, Decl::Property(first))) => first,
-            _ => written,
+            _ => literal_member,
         }
     }
 
-    /// The position of `Declarations[0]` of the symbol of `written`, a member of an object literal.
+    /// The position of `Declarations[0]` of the symbol of `literal_member`, a member of an object literal.
     pub(super) fn first_declaration_pos_of_literal_property(
         &mut self,
         file: FileId,
-        written: PropId,
+        literal_member: PropId,
     ) -> u32 {
         let hir = self.hir(file);
         // `bindThisPropertyAssignment`: `this.name = value` in a member of the literal declares `name` among its
         // members.
         if hir.is_js
             && let Some(&(_, Decl::ThisProperty(first))) = self
-                .declarations_of_member(file, Decl::Property(written))
+                .declarations_of_member(file, Decl::Property(literal_member))
                 .first()
         {
             return hir[first].pos;
         }
-        let first = self.first_declaration_of_literal_member(file, written);
+        let first = self.first_declaration_of_literal_member(file, literal_member);
         hir[first].pos
     }
 
@@ -921,11 +926,12 @@ impl<'p> Checker<'p, '_> {
             .iter()
             .map(|frame| frame.drops_reported)
             .collect();
-        // Printing runs behind a boundary that no cycle crosses (`with_printer`). In tsgo printing closes cycles, and
-        // so does this call the first time. The error is rebuilt if it was dropped along with a result that wasn't
-        // cached, which tsgo never has to do.
+        // In tsgo printing a type can close a cycle, so the first time this message is built `with_printer` isn't a
+        // barrier for cycle detection. If the message was dropped along with a result that wasn't cached, it's built
+        // again here, which tsgo never has to do. That second time (`reprinting`) its types are printed behind the
+        // barrier and don't count as a serialization level.
         let reprinting = std::mem::replace(&mut self.reprinting, created.is_some());
-        let at = self.place_of_token(file, start);
+        let at = self.span_of_token(file, start);
         let missing = self.declaration_name_at(file, start);
         // The static side and the promised type are queried for a `#x` by its source text, which isn't any property's
         // name.
@@ -1110,8 +1116,8 @@ impl<'p> Checker<'p, '_> {
         let Some((code, prop)) = self.why_never_intersection(ty) else {
             return chain;
         };
-        let written = self.type_to_string_without_reduction(ty);
-        let args = [Arg::Bytes(&written), Arg::Prop(prop)];
+        let type_text = self.type_to_string_without_reduction(ty);
+        let args = [Arg::Bytes(&type_text), Arg::Prop(prop)];
         Some(self.new_diagnostic_chain(chain, at, code, &args))
     }
 
@@ -1133,7 +1139,11 @@ impl<'p> Checker<'p, '_> {
 
     /// Same as `enclosing_classes`, for a direct child of `parent`. `Parent::Expr(e)` represents `e` itself, so only
     /// what encloses it counts.
-    pub(super) fn classes_around(&self, file: FileId, parent: Parent) -> SmallVec<[ClassId; 4]> {
+    pub(super) fn enclosing_classes_of_parent(
+        &self,
+        file: FileId,
+        parent: Parent,
+    ) -> SmallVec<[ClassId; 4]> {
         let hir = self.hir(file);
         let innermost = match parent {
             Parent::Expr(e) => hir.get_containing_class(hir.node(e)),
@@ -1173,10 +1183,10 @@ impl<'p> Checker<'p, '_> {
                 .then_some(first);
         }
         let atoms = &self.atoms();
-        let written = as_written(atoms.bytes(name));
+        let source_name = unmangled_name(atoms.bytes(name));
         let members = self.members(ty)?;
         for prop in &members.shape().props {
-            if as_written(atoms.bytes(prop.name)) != written {
+            if unmangled_name(atoms.bytes(prop.name)) != source_name {
                 continue;
             }
             let Some((file, Decl::Member(m))) = self.value_declaration_of_prop(prop) else {
@@ -1187,9 +1197,9 @@ impl<'p> Checker<'p, '_> {
             };
             let member = &self.hir(file)[m];
             // Static private members aren't inherited.
-            let is_of_a_base = member.flags.contains(Flags::STATIC)
+            let is_inherited_static = member.flags.contains(Flags::STATIC)
                 && !matches!(self.data(ty), TypeData::Anon { origin: Origin::ClassStatic(sym), .. } if *sym == self.class_sym(file, c));
-            if matches!(member.key, PropKey::Private(_)) && !is_of_a_base {
+            if matches!(member.key, PropKey::Private(_)) && !is_inherited_static {
                 return Some((file, c));
             }
         }
@@ -1211,28 +1221,29 @@ impl<'p> Checker<'p, '_> {
             return false;
         };
         let hir = self.hir(file);
-        let at = self.place_of_token(file, start);
+        let at = self.span_of_token(file, start);
         let diag_name = self.declaration_name_at(file, start);
         // `FindAncestor(lexicalClass, n == typeClass)`
         if let Some((lexical_class, shadowing)) = lexical
             && declared_in == file
             && self
-                .classes_around_private_name(file, e)
+                .classes_enclosing_private_name(file, e)
                 .iter()
                 .skip_while(|&&class| class != lexical_class)
                 .any(|&class| class == type_class)
         {
             // Private names with the same source text get a distinct name per class.
             let atoms = &self.atoms();
-            let written = as_written(atoms.bytes(name));
+            let source_name = unmangled_name(atoms.bytes(name));
             let suggestion = hir[type_class].members.iter().find(|&m| {
-                matches!(hir[m].key, PropKey::Private(key) if as_written(atoms.bytes(key)) == written)
+                matches!(hir[m].key, PropKey::Private(key) if unmangled_name(atoms.bytes(key)) == source_name)
             });
             let args = [Arg::Bytes(&diag_name)];
-            let shadowing = self.place_of_token(file, hir[shadowing].name_pos);
+            let shadowing = self.span_of_token(file, hir[shadowing].name_pos);
             let shadowing = self.new_diagnostic(shadowing, 18017, &args);
-            let suggestion = suggestion.map(|m| self.place_of_token(file, hir[m].name_pos));
-            let suggestion = suggestion.map(|place| self.new_diagnostic(place, 18018, &args));
+            let suggestion = suggestion.map(|m| self.span_of_token(file, hir[m].name_pos));
+            let suggestion = suggestion
+                .map(|declaration_span| self.new_diagnostic(declaration_span, 18018, &args));
             let diagnostic = self.error_at(at, 18014, &[args[0], Arg::Type(left)]);
             diagnostic.add_related_info(shadowing);
             if let Some(suggestion) = suggestion {
@@ -1246,7 +1257,7 @@ impl<'p> Checker<'p, '_> {
     }
     /// `getContainingClassExcludingClassDecorators`, then `GetContainingClass` applied repeatedly: the classes in which
     /// the private name of `e`, an `a.#b`, is resolved.
-    pub(super) fn classes_around_private_name(
+    pub(super) fn classes_enclosing_private_name(
         &self,
         file: FileId,
         e: ExprId,
@@ -1279,12 +1290,12 @@ impl<'p> Checker<'p, '_> {
                         if self.files().flags(sym).intersects(SymFlags::ACCESSOR) =>
                     {
                         let declared = self.members_of_symbol(sym);
-                        let of_kind = |kind: MemberKind| {
+                        let accessor_of_kind = |kind: MemberKind| {
                             (declared.iter().copied()).find(|&(f, m)| self.hir(f)[m].kind == kind)
                         };
-                        let setter = of_kind(MemberKind::Setter).filter(|_| writing);
+                        let setter = accessor_of_kind(MemberKind::Setter).filter(|_| writing);
                         let (f, m) = setter
-                            .or_else(|| of_kind(MemberKind::Getter))
+                            .or_else(|| accessor_of_kind(MemberKind::Getter))
                             .unwrap_or((f, m));
                         self.hir(f)[m].flags
                     }
@@ -1414,7 +1425,7 @@ impl<'p> Checker<'p, '_> {
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // If they all share one declaration, its modifiers and its parent are used.
-        let declared = Self::with_value_declaration_of_all(constituents.iter().copied());
+        let declared = Self::prop_with_shared_value_declaration(constituents.iter().copied());
         let is_declared_once = parts.len() == 1 || declared.is_some();
         let first = declared.unwrap_or(first);
         let flags = if is_declared_once {
@@ -1480,7 +1491,7 @@ impl<'p> Checker<'p, '_> {
         }
         let classes = match at {
             Parent::Expr(e) if e.is_some() => self.enclosing_classes(file, e),
-            _ => self.classes_around(file, at),
+            _ => self.enclosing_classes_of_parent(file, at),
         };
         let enclosing: SmallVec<[Sym; 4]> = classes
             .into_iter()
@@ -1530,10 +1541,12 @@ impl<'p> Checker<'p, '_> {
             let sig = self.sig_of_fn(file, func);
             let this = match self.sig_this_type(sig) {
                 // The constraint, if the declared type is a type parameter.
-                Some(written) if matches!(self.data(written), TypeData::TypeParam(..)) => {
-                    self.constraint_of_type_param(written)
+                Some(declared_this)
+                    if matches!(self.data(declared_this), TypeData::TypeParam(..)) =>
+                {
+                    self.constraint_of_type_param(declared_this)
                 }
-                Some(written) => Some(written),
+                Some(declared_this) => Some(declared_this),
                 // `getContextualThisParameterType`
                 None => match self.bound(file).fns[func.idx()].owner {
                     FnOwner::Expr(owner) => self.contextual_this_parameter_type(file, func, owner),
@@ -1639,6 +1652,6 @@ fn is_private_constructor_name(text: &[u8], pos: u32) -> bool {
 }
 
 /// `SymbolName`: a `#x` as written in the source, without the part that distinguishes it from another class's `#x`.
-fn as_written(name: &[u8]) -> &[u8] {
+fn unmangled_name(name: &[u8]) -> &[u8] {
     crate::atom::written_name(name)
 }

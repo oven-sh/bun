@@ -20,7 +20,7 @@ mod ty;
 
 use crate::lexer::{Lexer, Mark};
 use crate::token::T;
-use crate::{Options, Parsed, Refusal, Refused, Scratch};
+use crate::{Options, Parsed, Rejected, Rejection, Scratch};
 use bun_sema::atom::{Atom, Intern, known};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
@@ -268,7 +268,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
     /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
     pub(crate) not_type_arguments: Vec<(u32, u32)>,
-    /// Number of `T?` types parsed so far that aren't known to be tuple elements. Anywhere else `T?` is an error.
+    /// Always 0, because nothing increments it. A `T?` type gets a `JSDocNullableType` node, which the checker reports.
     pub(crate) unclaimed_nullable_types: u32,
     /// The last `T?` node and its end.
     pub(crate) last_nullable_type: (TypeNodeId, u32),
@@ -335,9 +335,9 @@ pub(crate) fn run<'a>(
     options: Options,
     atoms: Option<&'a dyn Intern>,
     scratch: &'a mut Scratch,
-) -> Result<Parsed, Refused> {
+) -> Result<Parsed, Rejected> {
     if text.len() >= 1 << 30 {
-        return Err(Refused::new(Refusal::TooLarge));
+        return Err(Rejected::new(Rejection::TooLarge));
     }
     match (atoms, options.part) {
         (Some(atoms), _) => scratch.names.use_interner(atoms),
@@ -401,26 +401,26 @@ pub(crate) fn run<'a>(
         (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
         (false, false) => Parser::<false, false>::new(seed).parse_into(&mut f),
     };
-    let (refusal, refused_at) = (lx.refusal, lx.refused_at);
+    let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
     f.comments = lx.comments;
     scratch.stacks = stacks;
     scratch.declared = declared;
     scratch.html_opens = lx.html_opens;
     scratch.has_only_ambiguous_awaits = has_top_level_await && !has_plain_top_level_await;
-    if let Some(why) = refusal {
+    if let Some(why) = rejection {
         scratch.recycled = Some(f);
-        return Err(Refused {
+        return Err(Rejected {
             why,
-            at: refused_at.0,
-            by: refused_at.1,
-            after: lx.refused_after,
+            at: rejected_at.0,
+            by: rejected_at.1,
+            after: lx.rejected_after,
         });
     }
     f.comment_directives = comment_directives;
     let names = &mut scratch.names;
     let source = text;
-    let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(source, it), atoms);
+    let mut intern = |it: &[u8]| names.atom(crate::names::Text::not_in_source(source, it), atoms);
     let errors = f.diagnostics.len();
     if !crate::pragmas::process_pragmas_into_fields(
         text,
@@ -430,7 +430,7 @@ pub(crate) fn run<'a>(
         &mut f,
     ) {
         scratch.recycled = Some(f);
-        return Err(Refused::new(Refusal::Reported));
+        return Err(Rejected::new(Rejection::Reported));
     }
     if f.diagnostics.len() > errors {
         if options.dialect == Default::default() {
@@ -635,7 +635,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.drop_specifier_errors_in_misplaced_declarations();
         }
         if self.unclaimed_nullable_types > 0 {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         }
         if self.is_ecmascript && !self.is_flow() && !self.has_failed() {
             bun_sema::ecmascript::report_typescript_only_syntax(&mut self.f, self.lx.src);
@@ -709,7 +709,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline(always)]
     pub(crate) fn take_as_name(&mut self) {
         if GENERAL && self.lx.has_escape {
-            self.forget_escaped_keyword();
+            self.discard_escaped_keyword_error();
         }
     }
 
@@ -745,24 +745,24 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         // Recovery isn't implemented here yet. TypeScript continues even in a speculative parse, so give up on the
         // file.
         if self.recovers() {
-            return self.refuse(Refusal::Unsupported);
+            return self.reject(Rejection::Unsupported);
         }
         if !self.has_failed() {
             self.failed_at = (self.lx.token, self.lx.start);
         }
-        self.lx.refuse(Refusal::Syntax);
+        self.lx.reject(Rejection::Syntax);
     }
 
     /// Gives up on the file, even during a speculative parse.
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn refuse(&mut self, why: Refusal) {
+    pub(crate) fn reject(&mut self, why: Rejection) {
         // `Syntax` only ends a speculation, so `why` replaces it.
-        if self.lx.refusal == Some(Refusal::Syntax) {
-            self.lx.refusal = None;
+        if self.lx.rejection == Some(Rejection::Syntax) {
+            self.lx.rejection = None;
         }
-        self.lx.refuse(why);
+        self.lx.reject(why);
     }
 
     /// Called where TypeScript reports an error and continues. A speculative parse continues too, and its errors are
@@ -772,7 +772,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[track_caller]
     pub(crate) fn report(&mut self) {
         match self.speculations {
-            0 => self.refuse(Refusal::Reported),
+            0 => self.reject(Rejection::Reported),
             _ => self.has_reported = true,
         }
     }
@@ -790,13 +790,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// Turns `Lexer::flagged` into diagnostics.
     fn report_scanner_flagged_errors(&mut self) {
         for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
-            let written = self
+            let raw = self
                 .lx
                 .src
                 .get(start as usize..end as usize)
                 .unwrap_or_default();
-            let digits =
-                |from: usize| core::str::from_utf8(written.get(from..).unwrap_or_default());
+            let digits = |from: usize| core::str::from_utf8(raw.get(from..).unwrap_or_default());
             let octal = |from: usize| {
                 digits(from)
                     .ok()
@@ -806,9 +805,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 // `\1`
                 1487 => format!("\\x{:02x}", octal(1).unwrap_or(0)).into_bytes(),
                 // `\8`
-                1488 => written.to_vec(),
+                1488 => raw.to_vec(),
                 // `010`, `-010`
-                1121 => match written.first() {
+                1121 => match raw.first() {
                     Some(b'-') => format!("-0o{:o}", octal(1).unwrap_or(0)).into_bytes(),
                     _ => format!("0o{:o}", octal(0).unwrap_or(0)).into_bytes(),
                 },
@@ -832,7 +831,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     #[inline(always)]
     pub(crate) fn has_failed(&self) -> bool {
-        self.lx.refusal.is_some()
+        self.lx.rejection.is_some()
     }
 
     /// `parseOptional`
@@ -919,7 +918,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if self.lx.stack_check.is_safe_to_recurse() {
             return false;
         }
-        self.refuse(Refusal::TooDeep);
+        self.reject(Rejection::TooDeep);
         true
     }
 
@@ -954,10 +953,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline]
     pub(crate) fn look_ahead<R>(&mut self, test: impl FnOnce(&mut Self) -> R) -> R {
         let mark = self.lx.mark();
-        let had_failed = self.lx.refusal;
+        let had_failed = self.lx.rejection;
         let result = test(self);
         // Whatever the scanner rejects during lookahead, it rejects again when the parser gets there.
-        self.lx.refusal = had_failed;
+        self.lx.rejection = had_failed;
         self.lx.reset(mark);
         result
     }
@@ -1045,18 +1044,18 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.speculations += 1;
         let result = parse(self);
         self.speculations -= 1;
-        match self.lx.refusal {
+        match self.lx.rejection {
             None if result.is_some() => {
                 // The parse is kept, so the errors it reported count.
                 if self.has_reported && self.speculations == 0 {
                     self.has_reported = false;
-                    self.refuse(Refusal::Reported);
+                    self.reject(Rejection::Reported);
                 }
                 return result;
             }
             None => self.was_abandoned_at = None,
-            Some(Refusal::Syntax) => {
-                self.lx.refusal = None;
+            Some(Rejection::Syntax) => {
+                self.lx.rejection = None;
                 self.was_abandoned_at = Some(self.failed_at);
             }
             // The parser gave up on the file.
@@ -1078,10 +1077,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let result = test(self);
         self.speculations -= 1;
         self.has_reported = had_reported;
-        let result = match self.lx.refusal {
+        let result = match self.lx.rejection {
             None => result,
-            Some(Refusal::Syntax) => {
-                self.lx.refusal = None;
+            Some(Rejection::Syntax) => {
+                self.lx.rejection = None;
                 false
             }
             Some(_) => return false,
@@ -1194,7 +1193,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     pub(crate) fn atom(&mut self, text: &[u8]) -> Atom {
-        let text = crate::names::Text::elsewhere(self.lx.src, text);
+        let text = crate::names::Text::not_in_source(self.lx.src, text);
         self.lx.names.atom(text, self.lx.atoms)
     }
 

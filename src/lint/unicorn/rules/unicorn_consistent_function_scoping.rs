@@ -299,10 +299,10 @@ impl<'a> Captures<'a> {
         };
         // The scope chain from the global scope to the current one.
         let mut path: Vec<Scope<'a>> = Vec::new();
-        // `outermost` holds the scopes of checked functions that aren't nested in another checked function. `is_around`
-        // marks the scopes that directly contain them.
+        // `outermost` holds the scopes of checked functions that aren't nested in another checked function.
+        // `contains_checked_function` marks the scopes that directly contain them.
         let mut outermost: Vec<Scope<'a>> = Vec::new();
-        let mut is_around = vec![false; file.scopes().len()];
+        let mut contains_checked_function = vec![false; file.scopes().len()];
         // `file.scopes()` lists a scope before the scopes nested in it.
         for scope in file.scopes() {
             if outermost.last().is_some_and(|it| it.contains(scope)) {
@@ -317,8 +317,8 @@ impl<'a> Captures<'a> {
             }
             outermost.push(scope);
             for &it in path.iter().rev() {
-                if let Some(is_around) = is_around.get_mut(it.id().idx()) {
-                    *is_around = true;
+                if let Some(flag) = contains_checked_function.get_mut(it.id().idx()) {
+                    *flag = true;
                 }
                 if is_oxlint_scope(it) {
                     break;
@@ -346,7 +346,7 @@ impl<'a> Captures<'a> {
                 }
             } else if outermost.peek().is_none() {
                 break;
-            } else if is_around.get(scope.id().idx()) != Some(&true) {
+            } else if contains_checked_function.get(scope.id().idx()) != Some(&true) {
                 continue;
             }
             for reference in scope.references_with_names_of_patterns_first() {
@@ -536,7 +536,7 @@ fn oxlint_only_scopes<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Span>>
     }
     #[expect(
         clippy::iter_over_hash_type,
-        reason = "each list is put in order by itself"
+        reason = "each list is sorted independently"
     )]
     for spans in found.values_mut() {
         utils::sort::sort_unstable_by_key(spans, |it| it.start);
@@ -650,7 +650,7 @@ fn outermost_captures<'a>(
     scopes: &[Scope<'a>],
     regions: &IdMap<Scope<'a>, Region>,
 ) -> IdMap<Scope<'a>, Outermost<'a>> {
-    let mut of_functions = IdMap::new();
+    let mut captures_by_function = IdMap::new();
     // For a scope, the outside variables that its nested scopes refer to: all of them, and those in the function's
     // region.
     let mut from_inside: IdMap<Scope<'a>, (Outermost<'a>, Outermost<'a>)> = IdMap::new();
@@ -672,7 +672,7 @@ fn outermost_captures<'a>(
             }
         }
         if region.is_some() {
-            of_functions.insert(scope, in_region);
+            captures_by_function.insert(scope, in_region);
         }
         let Some(parent) = scope.parent().filter(|_| !all.is_empty()) else {
             continue;
@@ -689,7 +689,7 @@ fn outermost_captures<'a>(
             }
         }
     }
-    of_functions
+    captures_by_function
 }
 
 /// The scope where oxc puts `symbol`, which is `func`'s name or the variable it's assigned to. In sloppy JavaScript a
@@ -744,14 +744,14 @@ fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>, state: &mut State<'a
             .map_while(Stmt::directive)
             .any(|it| it == b"use strict")
     };
-    let mut passed: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
+    let mut visited_scopes: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
     let mut answer = false;
     for scope in scope.chain() {
         if let Some(&known) = state.is_strict.get(scope) {
             answer = known;
             break;
         }
-        passed.push(scope);
+        visited_scopes.push(scope);
         answer = match (scope.kind(), scope.node()) {
             (ScopeKind::Class, _) => true,
             (_, Node::Func(func)) => func.body_statements().is_some_and(has_use_strict),
@@ -764,7 +764,7 @@ fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>, state: &mut State<'a
     }
     state
         .is_strict
-        .extend(passed.into_iter().map(|it| (it, answer)));
+        .extend(visited_scopes.into_iter().map(|it| (it, answer)));
     answer
 }
 

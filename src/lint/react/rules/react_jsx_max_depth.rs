@@ -30,7 +30,7 @@ pub struct State<'a> {
     /// The identifiers in braces, each with the braces' `getDepth`.
     containers: Vec<(Expr<'a>, u32)>,
     /// True if an element that contains elements may be assigned to a variable.
-    is_any_written: bool,
+    may_assign_nested_jsx: bool,
     found: Vec<Found>,
 }
 
@@ -66,7 +66,7 @@ impl Rule for JsxMaxDepth {
         // `getDepth`. oxlint counts the enclosing elements, whatever is in between.
         let is_child = matches!(parent, Node::Expr(parent) if parent.tag() == ExprTag::Jsx);
         let depth = match cx.state.depths.last() {
-            Some(&around) if is_oxlint || is_child => around + 1,
+            Some(&enclosing_depth) if is_oxlint || is_child => enclosing_depth + 1,
             _ => 0,
         };
         cx.state.depths.push(depth);
@@ -81,7 +81,7 @@ impl Rule for JsxMaxDepth {
         if !jsx.children().iter().any(has_jsx) {
             // oxlint adds the depth of the variables inside it. Upstream looks into them separately.
             let inside = if is_oxlint {
-                Parts::of_element(jsx).depth(&mut cx.state.variables)
+                Parts::from_element(jsx).depth(&mut cx.state.variables)
             } else {
                 0
             };
@@ -95,7 +95,7 @@ impl Rule for JsxMaxDepth {
             }
         } else if !is_oxlint {
             // These parents are certainly not a reference's `writeExpr`.
-            cx.state.is_any_written |= match parent {
+            cx.state.may_assign_nested_jsx |= match parent {
                 Node::Func(_) | Node::Prop(_) => false,
                 Node::Stmt(it) => !matches!(it.tag(), StmtTag::Return | StmtTag::Expr),
                 Node::Expr(it) => it.tag() == ExprTag::Assign,
@@ -126,20 +126,24 @@ impl Rule for JsxMaxDepth {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut found = std::mem::take(&mut cx.state.found);
         // upstream's `JSXExpressionContainer`
-        if cx.state.is_any_written {
-            let (mut known, mut fine) = (Known::default(), FxHashMap::<u32, u32>::default());
+        if cx.state.may_assign_nested_jsx {
+            let (mut known, mut passing_depths) =
+                (Known::default(), FxHashMap::<u32, u32>::default());
             for (expression, base_depth) in std::mem::take(&mut cx.state.containers) {
                 let Some(element) = find_jsx_element_or_fragment(expression, &mut known) else {
                     continue;
                 };
                 let (start, before) = (element.opening_span().start, found.len());
                 // If an element is fine at some depth, it's also fine at any lower depth.
-                if fine.get(&start).is_some_and(|it| base_depth <= *it) {
+                if passing_depths
+                    .get(&start)
+                    .is_some_and(|it| base_depth <= *it)
+                {
                     continue;
                 }
                 self.check_descendant(expression.span().start, base_depth, element, &mut found);
                 if found.len() == before {
-                    fine.insert(start, base_depth);
+                    passing_depths.insert(start, base_depth);
                 }
             }
         }
@@ -234,7 +238,7 @@ struct Parts<'a> {
 }
 
 impl<'a> Parts<'a> {
-    fn of_element(jsx: Jsx<'a>) -> Self {
+    fn from_element(jsx: Jsx<'a>) -> Self {
         let mut parts = Parts::default();
         let mut pending: SmallVec<[(Jsx<'a>, u32); 8]> = smallvec![(jsx, 0)];
         while let Some((jsx, level)) = pending.pop() {
@@ -259,13 +263,13 @@ impl<'a> Parts<'a> {
     }
 
     /// `calculate_expression_jsx_depth` of `variable`'s initializer.
-    fn of_variable(variable: Symbol<'a>) -> Self {
+    fn from_variable(variable: Symbol<'a>) -> Self {
         let init = match variable.declarations().next().and_then(Declaration::node) {
             Some(Node::VarDecl(declarator)) => declarator.init(),
             _ => None,
         };
         match init.map(|it| (it, it.kind())) {
-            Some((_, ExprKind::Jsx(jsx))) => Parts::of_element(jsx),
+            Some((_, ExprKind::Jsx(jsx))) => Parts::from_element(jsx),
             Some((ident, ExprKind::Ident(_))) => Parts {
                 variables: ident.symbol().map(|it| (it, None)).into_iter().collect(),
                 ..Parts::default()
@@ -289,7 +293,7 @@ impl<'a> Parts<'a> {
                     0
                 });
                 if is_new {
-                    stack.push((Some(variable), Parts::of_variable(variable)));
+                    stack.push((Some(variable), Parts::from_variable(variable)));
                 }
                 continue;
             }
@@ -298,11 +302,11 @@ impl<'a> Parts<'a> {
                     .variables
                     .iter()
                     .fold(parts.elements_depth, |depth, (variable, level)| {
-                        let of_variable = known.get(*variable).copied().unwrap_or(0);
+                        let variable_depth = known.get(*variable).copied().unwrap_or(0);
                         depth.max(match level {
-                            Some(level) if of_variable > 0 => level + of_variable + 1,
+                            Some(level) if variable_depth > 0 => level + variable_depth + 1,
                             Some(_) => 0,
-                            None => of_variable,
+                            None => variable_depth,
                         })
                     });
             if let Some((Some(variable), _)) = stack.pop() {

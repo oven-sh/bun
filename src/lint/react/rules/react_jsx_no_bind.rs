@@ -116,7 +116,7 @@ impl Rule for JsxNoBind {
                     && function.has_body()
                     && let Some(name) = function.name().map(Ident::name)
                     && open.contains_key(&name)
-                    && let Some(block) = block_around(statement, &mut blocks)
+                    && let Some(block) = enclosing_block(statement, &mut blocks)
                 {
                     let declared = Some(Declared { block, violation: Violation::Func });
                     mentions.push(Mention { name, span: statement.span(), declared });
@@ -131,7 +131,7 @@ impl Rule for JsxNoBind {
                 if let Some(name) = declaration.pat().as_ident()
                     && open.contains_key(&name)
                     && let Some(violation) = declaration.init().and_then(|it| self.get_node_violation_type(it))
-                    && let Some(block) = block_around(statement, &mut blocks)
+                    && let Some(block) = enclosing_block(statement, &mut blocks)
                 {
                     let declared = Some(Declared { block, violation });
                     mentions.push(Mention { name, span: declaration.span(), declared });
@@ -202,7 +202,7 @@ fn is_member_called_bind(callee: Expr<'_>) -> bool {
 }
 
 /// The first of upstream's `getBlockStatementAncestors`.
-fn block_around<'a>(statement: Stmt<'a>, known: &mut AncestorMemo<'a, Span>) -> Option<Span> {
+fn enclosing_block<'a>(statement: Stmt<'a>, known: &mut AncestorMemo<'a, Span>) -> Option<Span> {
     known.find(Node::Stmt(statement), |child, parent| match parent {
         Node::Stmt(it) if it.tag() == StmtTag::Block => Some(it.span()),
         // The parameters aren't in the body. A static block isn't a `BlockStatement`.

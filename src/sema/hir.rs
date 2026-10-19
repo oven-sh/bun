@@ -355,7 +355,7 @@ pub trait Storage {
     /// A set that is empty in most files.
     type FewSet<K: 'static>;
     /// A list whose elements own memory on the regular heap.
-    type Kept<T: Clone + 'static>: Deref<Target = [T]>;
+    type Owning<T: Clone + 'static>: Deref<Target = [T]>;
     /// `FileIn::text`
     type Text: Deref<Target = [u8]> + Default;
     /// `FileIn::lazy`
@@ -375,7 +375,7 @@ impl Storage for Growable {
     type Map<K, V> = FxHashMap<K, V>;
     type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewSet<K: 'static> = FxHashSet<K>;
-    type Kept<T: Clone + 'static> = Vec<T>;
+    type Owning<T: Clone + 'static> = Vec<T>;
     type Text = Cow<'static, [u8]>;
     /// For `FileBuilder::lend`.
     type Lazy = LazyCells;
@@ -395,8 +395,8 @@ impl<'s> Storage for InArena<'s> {
     type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. A program's files are never dropped, so `Files::load` hands the list to
     /// `Session::keep` and borrows it from there.
-    type Kept<T: Clone + 'static> = Cow<'s, [T]>;
-    /// Same as `Kept`.
+    type Owning<T: Clone + 'static> = Cow<'s, [T]>;
+    /// Same as `Owning`.
     type Text = Cow<'s, [u8]>;
     type Lazy = Lazy<'s>;
 }
@@ -2327,7 +2327,7 @@ pub struct FileIn<S: Storage> {
     /// sets them, also for syntax that a speculative parse abandoned.
     pub rare_syntax: u32,
     /// Diagnostics produced while parsing the file.
-    pub diagnostics: S::Kept<Diagnostic>,
+    pub diagnostics: S::Owning<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks
     /// of reserved names then report nothing.
     pub has_parse_diagnostics: bool,
@@ -2426,10 +2426,10 @@ pub struct FileIn<S: Storage> {
     pub jsdoc_modifiers: S::Few<(ExprId, Flags)>,
     /// `reparseJSDocComment`: the comment of the `@property` or `@param` tag that a member of a
     /// type literal is synthesized from (`GetTextOfJSDocComment`). Sorted.
-    pub jsdoc_member_comments: S::Kept<(MemberId, Box<[u8]>)>,
+    pub jsdoc_member_comments: S::Owning<(MemberId, Box<[u8]>)>,
     /// `checkUnmatchedJSDocParameters`, the part that only needs syntax: the function and the diagnostic for the name
     /// in its `@param` tag. 8024 and 8032 apply unless the function references `arguments`. 8029 applies if it does.
-    pub jsdoc_param_errors: S::Kept<(FnId, Diagnostic)>,
+    pub jsdoc_param_errors: S::Owning<(FnId, Diagnostic)>,
     /// The functions whose JSDoc comment has a `@param` tag with a name. `checkUnmatchedJSDocParameters` calls
     /// `containsArgumentsReference` for each of them. The functions in `jsdoc_param_errors` are among them, in the same
     /// order.
@@ -2608,8 +2608,8 @@ impl<S: Storage> FileIn<S> {
     /// The type arguments of the import call whose arguments are `args`.
     pub fn type_args_of_import_call(&self, args: IdList<ExprId>) -> IdList<TypeNodeId> {
         let specifier = self.id_at(args, 0);
-        let mut written = self.import_call_type_args.iter();
-        written
+        let mut type_arg_lists = self.import_call_type_args.iter();
+        type_arg_lists
             .find(|of| of.0 == specifier)
             .map_or(IdList::EMPTY, |of| of.1)
     }
@@ -2922,9 +2922,10 @@ macro_rules! long_lists {
 }
 
 /// Builds a `File` from `$this`, a `FileBuilder` or a `File`. The macro arguments convert a list of nodes (`$long`), a
-/// list that's empty in most files (`$few`), a list whose elements own memory (`$kept`), and the text (`$taken`).
+/// list that's empty in most files (`$few`), a list whose elements own memory (`$owning`), and the text
+/// (`$source_text`).
 macro_rules! file_in_arena {
-    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $kept:ident, $taken:ident) => {
+    ($this:ident, $arena:ident, $session:ident, $cells:expr, $long:ident, $few:ident, $owning:ident, $source_text:ident) => {
         File {
             kind: $this.kind,
             is_js: $this.is_js,
@@ -2938,12 +2939,12 @@ macro_rules! file_in_arena {
             legacy_decorators: $this.legacy_decorators,
             may_bind_a_parameter_twice: $this.may_bind_a_parameter_twice,
             rare_syntax: $this.rare_syntax,
-            diagnostics: $kept!($this.diagnostics),
+            diagnostics: $owning!($this.diagnostics),
             has_parse_diagnostics: $this.has_parse_diagnostics,
             syntax_errors: $this.syntax_errors,
             error_pos: $this.error_pos,
             source_len: $this.source_len,
-            text: $taken!($this.text),
+            text: $source_text!($this.text),
             body: $this.body,
             references: $few!($this.references),
             comment_directives: $few!($this.comment_directives),
@@ -2975,8 +2976,8 @@ macro_rules! file_in_arena {
             jsdoc_hosts: $few!($this.jsdoc_hosts),
             jsdoc_types: $few!($this.jsdoc_types),
             jsdoc_modifiers: $few!($this.jsdoc_modifiers),
-            jsdoc_member_comments: $kept!($this.jsdoc_member_comments),
-            jsdoc_param_errors: $kept!($this.jsdoc_param_errors),
+            jsdoc_member_comments: $owning!($this.jsdoc_member_comments),
+            jsdoc_param_errors: $owning!($this.jsdoc_param_errors),
             functions_with_param_tags: $few!($this.functions_with_param_tags),
             unmatched_augments_tags: $few!($this.unmatched_augments_tags),
             ids: $long!($this.ids),
@@ -3022,7 +3023,7 @@ macro_rules! file_in_arena {
     };
 }
 
-/// `$few`, `$kept` and `$taken` for a `FileBuilder` that gives up its contents.
+/// `$few`, `$owning` and `$source_text` for a `FileBuilder` that gives up its contents.
 macro_rules! moved_lists {
     ($arena:ident) => {
         macro_rules! few {
@@ -3033,12 +3034,12 @@ macro_rules! moved_lists {
                 }
             };
         }
-        macro_rules! kept {
+        macro_rules! owning {
             ($list:expr) => {
                 Cow::Owned(std::mem::take(&mut $list))
             };
         }
-        macro_rules! taken {
+        macro_rules! source_text {
             ($it:expr) => {
                 std::mem::take(&mut $it)
             };
@@ -3074,7 +3075,16 @@ impl FileBuilder {
             }};
         }
         moved_lists!(arena);
-        let file = file_in_arena!(self, arena, session, cells, copied, few, kept, taken);
+        let file = file_in_arena!(
+            self,
+            arena,
+            session,
+            cells,
+            copied,
+            few,
+            owning,
+            source_text
+        );
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -3093,7 +3103,16 @@ impl FileBuilder {
             };
         }
         moved_lists!(arena);
-        file_in_arena!(self, arena, session, &self.lazy, lent, few, kept, taken)
+        file_in_arena!(
+            self,
+            arena,
+            session,
+            &self.lazy,
+            lent,
+            few,
+            owning,
+            source_text
+        )
     }
 }
 
@@ -3112,12 +3131,12 @@ impl File<'_> {
                 ArenaFew::from_iter_in($list.iter().cloned(), arena)
             };
         }
-        macro_rules! kept {
+        macro_rules! owning {
             ($list:expr) => {
                 Cow::Borrowed(&$list[..])
             };
         }
-        macro_rules! taken {
+        macro_rules! source_text {
             ($it:expr) => {
                 Cow::Borrowed(&$it[..])
             };
@@ -3129,8 +3148,8 @@ impl File<'_> {
             self.lazy.cells,
             shared,
             few,
-            kept,
-            taken
+            owning,
+            source_text
         )
     }
 }
@@ -3218,12 +3237,12 @@ pub fn is_private_name_at(hir: &File, pos: u32) -> bool {
 
 /// `IsBigIntLiteral` for the token at `pos`: a number that ends in `n`.
 pub fn is_bigint_literal_at(hir: &File, pos: u32) -> bool {
-    let written = hir.text.get(pos as usize..).unwrap_or_default();
-    let end = written
+    let token_text = hir.text.get(pos as usize..).unwrap_or_default();
+    let end = token_text
         .iter()
         .position(|b| !b.is_ascii_alphanumeric() && *b != b'_')
-        .unwrap_or(written.len());
-    written.first().is_some_and(u8::is_ascii_digit) && written[..end].ends_with(b"n")
+        .unwrap_or(token_text.len());
+    token_text.first().is_some_and(u8::is_ascii_digit) && token_text[..end].ends_with(b"n")
 }
 
 /// `GetFirstIdentifier`: `a` of `a.b.c`.

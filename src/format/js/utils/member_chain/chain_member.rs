@@ -89,7 +89,7 @@ fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
         [
             call.is_optional().then_some("?."),
             type_arguments(call.type_args(), Node::Expr(expression)),
-            FormatArguments::of_call(expression, call)
+            FormatArguments::from_call(expression, call)
         ]
     );
 }

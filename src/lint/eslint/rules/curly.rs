@@ -183,8 +183,8 @@ fn first_of_chain<'a>(body: Stmt<'a>, chains: &mut AncestorMemo<'a, Stmt<'a>>) -
     let link = link.filter(|it| it.tag() == StmtTag::If)?;
     chains.find(Node::Stmt(link), |link, parent| {
         let link = link.as_stmt()?;
-        let goes_on = parent.as_stmt().and_then(Stmt::as_if);
-        (!goes_on.is_some_and(|it| it.2 == Some(link))).then_some(link)
+        let outer_if = parent.as_stmt().and_then(Stmt::as_if);
+        (!outer_if.is_some_and(|it| it.2 == Some(link))).then_some(link)
     })
 }
 

@@ -74,7 +74,7 @@ impl<'s, 'a> Statement<'s, 'a> {
         })
     }
 
-    /// True for a custom property. Scripts read its value exactly as written, and `style()` queries compare it that
+    /// True for a custom property. Scripts read its value exactly as it is, and `style()` queries compare it that
     /// way. So its tokens are printed unchanged, spaces aren't added where there were none, and lines don't break after
     /// a comma that touches the next token. Prettier and oxfmt format it like any other value: `#FFF` becomes `#fff`,
     /// `.50` becomes `0.5`, `'a'` becomes `"a"`, `1,000` becomes `1, 000`, and in Prettier `16:9` becomes `16: 9`.
@@ -390,7 +390,7 @@ impl<'a> Printer<'a, '_> {
     pub(crate) fn print_root(&mut self, tree: &Tree, parsed: &mut Parsed) {
         let root = match self.context.convert(tree, 0, parsed) {
             Ok(root) => root,
-            Err(_) => return self.fail(self.context.refusal.reason()),
+            Err(_) => return self.fail(self.context.rejection.reason()),
         };
         let mut after = bun_core::strings::trim_js_whitespace(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
@@ -543,8 +543,8 @@ impl<'a> Printer<'a, '_> {
                 write_after(self);
             } else {
                 let raw = &tree.nodes[id as usize];
-                // If the unit is written twice, the node's parse results can be reused, as long as nothing else on the
-                // line overwrites `parsed`.
+                // If the unit's closure runs twice, the node's parse results can be reused, as long as nothing else on
+                // the line overwrites `parsed`.
                 let mut node = None;
                 let is_only_one_parsed = std::iter::successors(Some(raw.next_sibling), |&id| {
                     Some(tree.nodes[id as usize].next_sibling)
@@ -672,7 +672,7 @@ impl<'a> Printer<'a, '_> {
             *converted = self.context.convert(tree, id, parsed).ok();
         }
         let Some(node) = converted else {
-            return self.fail(self.context.refusal.reason());
+            return self.fail(self.context.rejection.reason());
         };
         let scope = Scope {
             node,
@@ -783,7 +783,7 @@ impl<'a> Printer<'a, '_> {
     fn print_declaration(&mut self, scope: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) {
         let node = scope.node;
         if let Value::Rule(tree) = &node.value {
-            // The whole declaration is one unit, but the block's lines are still written to the output one by one.
+            // This unit spans the whole block. The block's lines still go straight to the output, as nested units.
             return self.unit(false, |printer| {
                 let is_on_its_own_line = printer.print_name(scope);
                 printer.sink.token("{");
@@ -814,7 +814,9 @@ impl<'a> Printer<'a, '_> {
                         && !(node.scss_default || node.scss_global)
                         && has_non_value_syntax(printer.context.of(raw.value), printer.syntax()) =>
                 {
-                    printer.sink.text(printer.context.written(raw.value));
+                    printer
+                        .sink
+                        .text(printer.context.original_text_of(raw.value));
                 }
                 Value::Parsed(value) => {
                     // `hasComposesNode`
@@ -1530,9 +1532,9 @@ impl<'a> Printer<'a, '_> {
                         && (selectors.text((node.value.1, node.value.1 + 1)).first())
                             .is_some_and(|next| !next.is_ascii_whitespace())
                         && parent.is_some_and(|parent| {
-                            let around = selectors.node(selectors.node(parent).parent);
-                            match around.kind {
-                                SelectorKind::Pseudo => (selectors.text(around.value).get(..5))
+                            let container = selectors.node(selectors.node(parent).parent);
+                            match container.kind {
+                                SelectorKind::Pseudo => (selectors.text(container.value).get(..5))
                                     .is_some_and(|it| it.eq_ignore_ascii_case(b":nth-")),
                                 SelectorKind::Root => statement.is_in_keyframes(),
                                 _ => false,
@@ -1717,11 +1719,11 @@ impl<'a> Printer<'a, '_> {
                 self.print_child_value(statement, id, node.group);
             }
             ValueKind::Number => {
-                let as_written = match statement.is_custom_property() {
-                    true => (ValueRef { values, id }).number_as_written(),
+                let source_text = match statement.is_custom_property() {
+                    true => (ValueRef { values, id }).number_source_text(),
                     false => None,
                 };
-                match as_written {
+                match source_text {
                     Some(number) => self.sink.text(number),
                     None => {
                         self.scratch.clear();
@@ -1756,9 +1758,9 @@ impl<'a> Printer<'a, '_> {
                     .is_some_and(|it| it.ends_with(b"\\"));
                 self.sink.start_group(false);
                 self.sink.token(":");
-                let is_as_written = statement.is_custom_property()
+                let is_verbatim = statement.is_custom_property()
                     && (ValueRef { values, id }).whitespace_after() == 0;
-                if !(is_escaped || is_as_written || self.inside_value_function(values, b"url")) {
+                if !(is_escaped || is_verbatim || self.inside_value_function(values, b"url")) {
                     self.sink.line();
                 }
                 self.sink.end_group();

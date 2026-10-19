@@ -69,15 +69,15 @@ pub trait Engine: Sync {
 
     /// Announces that further files, `size` bytes in total, might need a realm. Whether each one does is only known
     /// when it's linted. Call it after [`Engine::expect`].
-    fn may_come(&self, _size: u64) {}
+    fn may_need_realm(&self, _size: u64) {}
 
-    /// One of the [`Engine::may_come`] files, of `size` bytes, is about to request a realm. With `--fix` that can
+    /// One of the [`Engine::may_need_realm`] files, of `size` bytes, is about to request a realm. With `--fix` that can
     /// happen several times.
-    fn comes(&self, _size: u64) {}
+    fn needs_realm(&self, _size: u64) {}
 
-    /// One of the [`Engine::may_come`] files, of `size` bytes, is done. `has_come` tells whether it needed a realm.
-    /// Called once per file.
-    fn has_shown(&self, _size: u64, _has_come: bool) {}
+    /// One of the [`Engine::may_need_realm`] files, of `size` bytes, is done. `needed_realm` tells whether it needed a
+    /// realm. Called once per file.
+    fn report_realm_need(&self, _size: u64, _needed_realm: bool) {}
 
     /// For `--timing`: the peak memory of all realms together, in bytes, and how many realms were freed because that
     /// was too much.
@@ -115,7 +115,7 @@ struct Remaining {
     /// The total size of the files that might need a realm and aren't done yet.
     possible: u64,
     /// The total size of such files that did need a realm, and of those that didn't.
-    shown: (u64, u64),
+    settled: (u64, u64),
     /// The maximum number of realms. 0 means it wasn't announced, and there's one realm.
     most: usize,
 }
@@ -135,23 +135,23 @@ impl Demand {
         };
     }
 
-    /// [`Engine::may_come`]
-    pub fn may_come(&self, size: u64) {
+    /// [`Engine::may_need_realm`]
+    pub fn may_need_realm(&self, size: u64) {
         self.0.lock().possible = size;
     }
 
-    /// [`Engine::comes`]
-    pub fn comes(&self, size: u64) {
+    /// [`Engine::needs_realm`]
+    pub fn needs_realm(&self, size: u64) {
         self.0.lock().bytes += size;
     }
 
-    /// [`Engine::has_shown`]
-    pub fn has_shown(&self, size: u64, has_come: bool) {
+    /// [`Engine::report_realm_need`]
+    pub fn report_realm_need(&self, size: u64, needed_realm: bool) {
         let mut left = self.0.lock();
         left.possible = left.possible.saturating_sub(size);
-        match has_come {
-            true => left.shown.0 += size,
-            false => left.shown.1 += size,
+        match needed_realm {
+            true => left.settled.0 += size,
+            false => left.settled.1 += size,
         }
     }
 
@@ -170,13 +170,14 @@ impl Demand {
     /// Compares how much sooner the run would end with what the realm costs. It's based on all the files of the run,
     /// not on the remaining ones, because how many remain when a thread happens to ask depends on timing.
     ///
-    /// `kept` is how many of the `realms` are busy with [`HEAVY`] files, which aren't counted among these files.
-    pub fn is_worth_another(&self, realms: usize, kept: usize) -> bool {
+    /// `busy_with_heavy` is how many of the `realms` are busy with [`HEAVY`] files, which aren't counted among these
+    /// files.
+    pub fn is_worth_another(&self, realms: usize, busy_with_heavy: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {
             return realms == 0;
         }
-        let realms = realms.saturating_sub(kept);
+        let realms = realms.saturating_sub(busy_with_heavy);
         if realms == 0 {
             return true;
         }
@@ -191,8 +192,8 @@ impl Remaining {
     /// such file is weak evidence, so the estimate starts as if `REALM_COST_IN_BYTES` bytes had already finished
     /// without needing one.
     fn expected_from_possible(&self) -> f64 {
-        let (come, not) = (self.shown.0 as f64, self.shown.1 as f64);
-        self.possible as f64 * come / (come + not + REALM_COST_IN_BYTES)
+        let (needed, not_needed) = (self.settled.0 as f64, self.settled.1 as f64);
+        self.possible as f64 * needed / (needed + not_needed + REALM_COST_IN_BYTES)
     }
 
     /// The estimated total size of the files still to come.
@@ -202,6 +203,6 @@ impl Remaining {
 
     /// The estimated total size of all the files in the run.
     fn all(&self) -> f64 {
-        (self.announced + self.shown.0) as f64 + self.expected_from_possible()
+        (self.announced + self.settled.0) as f64 + self.expected_from_possible()
     }
 }

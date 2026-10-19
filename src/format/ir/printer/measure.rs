@@ -30,7 +30,7 @@ pub(super) struct Measure<'d> {
     /// If true, measured groups are skipped using their [`Flat`].
     uses_flat: bool,
     /// Content that contains a group with an id has been skipped, so that group's mode hasn't been recorded.
-    has_passed_group_ids: bool,
+    has_skipped_group_ids: bool,
     elements: Elements<'d>,
     /// Number of runs left in the printer's queue. If it's one more than the queue's length, the extra one is the
     /// printer's current run, which comes first.
@@ -55,7 +55,7 @@ impl<'d> Measure<'d> {
             has_line_suffix: !printer.buffers.line_suffixes.is_empty(),
             must_be_flat: false,
             uses_flat,
-            has_passed_group_ids: false,
+            has_skipped_group_ids: false,
             elements: printer.elements.clone(),
             queue_len: printer.buffers.queue.len(),
             frames_len: printer.buffers.frames.len(),
@@ -210,14 +210,14 @@ impl<'d> Printer<'d> {
         let queue = &self.buffers.queue;
         let own = std::iter::once(measure.elements.run())
             .chain(self.buffers.measure_queue.iter().rev().copied());
-        let of_printer = (0..measure.queue_len).rev().map(|at| {
+        let printer_runs = (0..measure.queue_len).rev().map(|at| {
             queue
                 .get(at)
                 .copied()
                 .unwrap_or_else(|| self.elements.run())
         });
         let first = own
-            .chain(of_printer)
+            .chain(printer_runs)
             .find_map(|run| first_of(run, self.pool));
         matches!(first, Some(FormatElement::Tag(Tag::StartEntry)))
     }
@@ -260,13 +260,13 @@ impl<'d> Printer<'d> {
     /// Fails without changing anything unless the innermost frame's kind is `kind`.
     #[inline]
     fn measure_pop(&mut self, measure: &mut Measure<'d>, kind: FrameKind) -> PrintResult<()> {
-        let (own, of_printer) = (&mut self.buffers.measure_frames, &self.buffers.frames);
+        let (own, printer_frames) = (&mut self.buffers.measure_frames, &self.buffers.frames);
         match own.last() {
             Some(top) if top.kind == kind => {
                 own.pop();
             }
             None if measure.frames_len > 1
-                && of_printer
+                && printer_frames
                     .get(measure.frames_len - 1)
                     .is_some_and(|top| top.kind == kind) =>
             {
@@ -276,7 +276,7 @@ impl<'d> Printer<'d> {
         }
         let top = own
             .last()
-            .or_else(|| of_printer.get(measure.frames_len - 1));
+            .or_else(|| printer_frames.get(measure.frames_len - 1));
         measure.mode = top.map_or(PrintMode::Expanded, |top| top.mode);
         Ok(())
     }
@@ -409,7 +409,7 @@ impl<'d> Printer<'d> {
                 Tag::StartConditionalContent(condition) => {
                     let group_mode = match condition.group_id {
                         None => mode,
-                        Some(_) if measure.has_passed_group_ids => {
+                        Some(_) if measure.has_skipped_group_ids => {
                             return Err(PrintError::MeasureAgain);
                         }
                         // As in Prettier, this is the mode the group was printed in. A group that has only been
@@ -489,7 +489,7 @@ impl<'d> Printer<'d> {
         if flags.has(FlatFlags::HAS_LINE_SUFFIX_BOUNDARY) && measure.has_line_suffix {
             return Fits::No;
         }
-        measure.has_passed_group_ids |= flags.has(FlatFlags::HAS_GROUP_IDS);
+        measure.has_skipped_group_ids |= flags.has(FlatFlags::HAS_GROUP_IDS);
         let starts_with_space = flags.has(FlatFlags::STARTS_WITH_SPACE) && measure.line_width > 0;
         measure.pending_space |= starts_with_space || flags.has(FlatFlags::STARTS_WITH_LINE);
         measure.is_space_element_pending |= starts_with_space;

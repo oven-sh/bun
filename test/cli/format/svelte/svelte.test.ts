@@ -292,11 +292,11 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     });
     const files = { ".prettierrc": "{}", "a.svelte": input, "b.js": "b  ;\n" };
     expect((await format(files, ["a.svelte", "b.js"])).files).toEqual([input, "b;\n"]);
-    const named = { ".prettierrc": '{ "overrides": [{ "files": "*.svelte", "options": { "parser": "svelte" } }] }' };
-    const withParser = await format({ ...named, "a.svelte": input }, ["a.svelte"]);
+    const bare = { ".prettierrc": '{ "overrides": [{ "files": "*.svelte", "options": { "parser": "svelte" } }] }' };
+    const withParser = await format({ ...bare, "a.svelte": input }, ["a.svelte"]);
     expect(withParser.files).toEqual([input]);
     expect(withParser.exitCode).toBe(2);
-    const both = { ".prettierrc": JSON.stringify({ plugins, ...JSON.parse(named[".prettierrc"]) }) };
+    const both = { ".prettierrc": JSON.stringify({ plugins, ...JSON.parse(bare[".prettierrc"]) }) };
     expect((await format({ ...both, "a.svelte": input }, ["a.svelte"])).files).toEqual([output]);
   });
 
@@ -2310,14 +2310,14 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "<script>\n  let a = ;\n</script>\n\n<p   >{a}</p>\n",
       "<script>\n  let a = ;\n</script>\n\n<p>{a}</p>\n",
     ];
-    const said = warning("Expression expected.", [2, 11, "  let a = ;"]);
+    const warn = warning("Expression expected.", [2, 11, "  let a = ;"]);
 
     test("--check prints the warning too, for a formatted file and for an unformatted one", async () => {
       const checked = await format({ "a.svelte": after }, ["a.svelte"], ["--check"]);
-      expect(checked).toMatchObject({ stderr: said, files: [after], exitCode: 0 });
+      expect(checked).toMatchObject({ stderr: warn, files: [after], exitCode: 0 });
       const different = await format({ "a.svelte": before }, ["a.svelte"], ["--check"]);
       const summary = "1 file needs formatting. Run bun fmt to fix it.\n";
-      expect(different).toMatchObject({ stdout: "a.svelte\n", stderr: said + summary, files: [before], exitCode: 1 });
+      expect(different).toMatchObject({ stdout: "a.svelte\n", stderr: warn + summary, files: [before], exitCode: 1 });
     });
 
     test("a source line is only shown with the first warning about it", async () => {

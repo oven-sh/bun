@@ -366,7 +366,7 @@ impl<'a> Printer<'a, '_> {
                 .filter(|next| {
                     is_at_word_placeholder(*next) && i_node.is_number_right_before(*next)
                 })
-                .and_then(|_| i_node.number_as_written());
+                .and_then(|_| i_node.number_source_text());
             self.index_in_comma_group = i;
             match number_before_placeholder {
                 Some(number) => self.sink.text(number),
@@ -513,7 +513,9 @@ impl<'a> Printer<'a, '_> {
             if i_node.kind() == ValueKind::Number
                 && is_next_word
                 && i_node.whitespace_after() > 0
-                && i_node.number_as_written().is_some_and(ends_with_hex_escape)
+                && i_node
+                    .number_source_text()
+                    .is_some_and(ends_with_hex_escape)
             {
                 self.sink.token(match i_node.whitespace_after() {
                     1 => " ",

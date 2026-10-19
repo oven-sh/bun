@@ -42,10 +42,10 @@ describe.concurrent("bun fmt behaves like Prettier", () => {
         const after = readFileSync(join(String(dir), top, name), "utf8");
         return after === text || notCompared.test(name) ? [] : [[`${top}/${name}`, after]];
       });
-      const named = (stdout + stderr).split("\n").map(line => (line.startsWith("[warn] ") ? line.slice(7) : line));
+      const lines = (stdout + stderr).split("\n").map(line => (line.startsWith("[warn] ") ? line.slice(7) : line));
       expect({
         changed: Object.fromEntries(changed),
-        listed: it.listed && it.listed.filter(name => named.includes(name)),
+        listed: it.listed && it.listed.filter(name => lines.includes(name)),
         stdout: it.stdout === undefined ? undefined : stdout,
         exitCode,
       }).toEqual({

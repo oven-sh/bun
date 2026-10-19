@@ -54,7 +54,7 @@ impl IgnoreLines {
             Verdict::Ignored => {
                 !(self.is_oxlint && is_directory && self.rules.may_keep_inside(path))
             }
-            Verdict::Kept => false,
+            Verdict::Unignored => false,
             Verdict::Unmentioned => is_ignored,
         }
     }

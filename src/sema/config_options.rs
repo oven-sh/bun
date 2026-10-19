@@ -430,11 +430,11 @@ fn kind_of_root(name: &[u8]) -> Option<Kind> {
     })
 }
 
-/// Returns the errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object `written` in
+/// Returns the errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object `object` in
 /// `file`.
-pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<Problem> {
+pub fn problems(file: &TsConfigSourceFile, object: ExprId, within: In) -> Vec<Problem> {
     let mut out = Vec::new();
-    for (property, name) in file.properties(written) {
+    for (property, name) in file.properties(object) {
         let name = &name.to_vec();
         let value = &file.convert_property_value_to_json(file.initializer(property));
         let name_span = Some(file.name_span(property));

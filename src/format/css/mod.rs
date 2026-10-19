@@ -201,8 +201,8 @@ fn with_semicolons_after_each(text: &[u8]) -> Cow<'_, [u8]> {
                 depth = depth.saturating_sub(1);
                 if statement == Some(depth) {
                     statement = None;
-                    let blanks = text::leading_white_space_len(&rest[1..]);
-                    if rest.get(1 + blanks) != Some(&b';') {
+                    let whitespace_len = text::leading_white_space_len(&rest[1..]);
+                    if rest.get(1 + whitespace_len) != Some(&b';') {
                         missing.push(at + 1);
                     }
                     (at, last) = (at + 1, b';');
@@ -339,7 +339,7 @@ fn parse_and_print<'o>(
             extra: &tree.extra,
             syntax: parser,
             is_oxfmt: options.flavor.is_oxfmt(),
-            refusal: Default::default(),
+            rejection: Default::default(),
             stack: Stack::for_tree(),
             convertible_sets: Default::default(),
         },

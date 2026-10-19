@@ -67,10 +67,10 @@ impl Checker<'_, '_> {
         let resolves_to_import = match hir[first].kind {
             ExprKind::Ident(name) if files.options.verbatim_module_syntax => {
                 let scope = self.enclosing_scope_of_expr(file, first);
-                let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+                let lookup = &mut |table: SymbolTable, entry: Option<Sym>, meaning: SymFlags| {
                     // `excludeGlobals`
                     let is_global = matches!(table, SymbolTable::Globals);
-                    held.filter(|&held| !is_global && files.means(held, meaning))
+                    entry.filter(|&entry| !is_global && files.means(entry, meaning))
                 };
                 let found = files.resolve_with(file, scope, name, SymFlags::ALIAS, false, lookup);
                 matches!(found, Ok(Some(_)))
@@ -138,10 +138,10 @@ impl Checker<'_, '_> {
             // The table has a placeholder for a symbol that `mergeSymbol` rejected (`Files::redirect_name_to`).
             let is_local =
                 |part: &&Sym| part.file == file && bound.symbol(part.id).parent.is_none();
-            let refused = files.rejected_merges.iter();
-            let refused = refused.filter(|it| it.target == files.global_this_symbol);
-            let refused = refused.flat_map(|it| it.source_parts).find(is_local);
-            let symbol = refused.map_or(symbol, |part| part.id);
+            let rejected = files.rejected_merges.iter();
+            let rejected = rejected.filter(|it| it.target == files.global_this_symbol);
+            let rejected = rejected.flat_map(|it| it.source_parts).find(is_local);
+            let symbol = rejected.map_or(symbol, |part| part.id);
             for &decl in bound.symbol(symbol).decls.iter() {
                 report(self, decl, known::globalThis);
             }

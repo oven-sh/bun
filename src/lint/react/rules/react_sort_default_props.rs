@@ -114,8 +114,8 @@ impl<const OLD_NAME: bool> SortDefaultProps<OLD_NAME> {
                 prev = None;
                 continue;
             };
-            let written = file.slice(key.inner_span(file));
-            let name = if self.ignore_case { text::to_lower_case(written) } else { Cow::Borrowed(written) };
+            let key_text = file.slice(key.inner_span(file));
+            let name = if self.ignore_case { text::to_lower_case(key_text) } else { Cow::Borrowed(key_text) };
             if prev.as_ref().is_some_and(|prev| strings::order_utf16(&name, prev) == Ordering::Less) {
                 unsorted.push(curr);
             } else {

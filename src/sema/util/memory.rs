@@ -396,7 +396,7 @@ pub(crate) struct Segmented<'a, T, L: Length, A: Allocator + Clone = Global> {
     len: L,
     alloc: A,
     /// Borrow of the shared vector passed to `layer_over`.
-    below: PhantomData<&'a [T]>,
+    base_layer: PhantomData<&'a [T]>,
     owns: Owns<T>,
 }
 
@@ -424,7 +424,7 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
             limits,
             len: L::default(),
             alloc,
-            below: PhantomData,
+            base_layer: PhantomData,
             owns: PhantomData,
         }
     }
@@ -605,7 +605,7 @@ impl<T, L: Length, A: Allocator + Clone> Fill<T> for Segmented<'_, T, L, A> {
 /// replace them.
 pub(crate) struct Placeholders<'a> {
     /// Address of the `Segmented`. `Segmented::replace` checks it.
-    of: usize,
+    owner_addr: usize,
     next: u32,
     end: u32,
     borrowed: PhantomData<&'a ()>,
@@ -613,7 +613,7 @@ pub(crate) struct Placeholders<'a> {
 
 /// One placeholder taken from a `Placeholders`.
 pub(crate) struct Placeholder<'a> {
-    of: usize,
+    owner_addr: usize,
     index: u32,
     borrowed: PhantomData<&'a ()>,
 }
@@ -622,7 +622,7 @@ pub(crate) struct Placeholder<'a> {
 impl Default for Placeholders<'_> {
     fn default() -> Self {
         Placeholders {
-            of: 0,
+            owner_addr: 0,
             next: 0,
             end: 0,
             borrowed: PhantomData,
@@ -646,7 +646,7 @@ impl<'a> Placeholders<'a> {
         let index = self.first()?;
         self.next += 1;
         Some(Placeholder {
-            of: self.of,
+            owner_addr: self.owner_addr,
             index,
             borrowed: PhantomData,
         })
@@ -687,7 +687,7 @@ impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
             unsafe { self.write(index, new()) };
         }
         Placeholders {
-            of: std::ptr::from_ref(self).addr(),
+            owner_addr: std::ptr::from_ref(self).addr(),
             next,
             end: next + count,
             borrowed: PhantomData,
@@ -704,7 +704,7 @@ impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
     pub(crate) fn replace(&self, placeholder: Placeholder<'_>, value: T) -> &T {
         // The placeholder borrows its vector, so that vector can't have moved or been freed, and
         // its address still identifies it.
-        assert!(placeholder.of == std::ptr::from_ref(self).addr());
+        assert!(placeholder.owner_addr == std::ptr::from_ref(self).addr());
         // SAFETY: each index has exactly one `Placeholder`, and this call consumes it, so nothing
         // else writes to the element. Nothing reads the element yet (see `Placeholder::index`).
         unsafe { self.write(placeholder.index, value) };
@@ -806,7 +806,7 @@ trait WrittenPages<C: Zeroed> {
     fn words(&self) -> &[AtomicU64];
 
     #[inline(always)]
-    fn place(index: usize) -> (usize, u64) {
+    fn word_and_bit(index: usize) -> (usize, u64) {
         let page = index / (SMALLEST_PAGE / size_of::<C>());
         (page / 64, 1 << (page % 64))
     }
@@ -814,14 +814,14 @@ trait WrittenPages<C: Zeroed> {
     /// True if the page of cell `index` may have been written. Always true for a cell past the end of the bitmap.
     #[inline(always)]
     fn may_be_written(&self, index: usize) -> bool {
-        let (word, bit) = Self::place(index);
+        let (word, bit) = Self::word_and_bit(index);
         (self.words().get(word)).is_none_or(|word| word.load(Ordering::Relaxed) & bit != 0)
     }
 
     /// Marks the page of `cell` as written. Call this before writing to `cell`, which must be the cell at `index`.
     #[inline(always)]
     fn note_write(&self, index: usize, cell: &C) {
-        let (word, bit) = Self::place(index);
+        let (word, bit) = Self::word_and_bit(index);
         if let Some(word) = self.words().get(word)
             && word.load(Ordering::Relaxed) & bit == 0
         {
@@ -1462,19 +1462,19 @@ mod tests {
         let alive = AtomicUsize::new(0);
         let vec = AppendVec::<Counted>::new();
         // Each value's index plus one, published the way the checker's tables publish theirs.
-        let places: Vec<AtomicU32> = (0..THREADS * EACH).map(|_| AtomicU32::new(0)).collect();
+        let index_cells: Vec<AtomicU32> = (0..THREADS * EACH).map(|_| AtomicU32::new(0)).collect();
         std::thread::scope(|scope| {
             for thread in 0..THREADS {
-                let (vec, places, alive) = (&vec, &places, &alive);
+                let (vec, index_cells, alive) = (&vec, &index_cells, &alive);
                 scope.spawn(move || {
                     for i in 0..EACH {
                         let value = thread * EACH + i;
                         let index = vec.push(Counted::new(value, alive));
-                        places[value as usize].store(index + 1, Ordering::Release);
+                        index_cells[value as usize].store(index + 1, Ordering::Release);
                         let other = (value * 7 + 3) % (THREADS * EACH);
-                        match places[other as usize].load(Ordering::Acquire) {
+                        match index_cells[other as usize].load(Ordering::Acquire) {
                             0 => {}
-                            place => assert_eq!(vec.get(place - 1).0, other),
+                            index_plus_one => assert_eq!(vec.get(index_plus_one - 1).0, other),
                         }
                     }
                 });

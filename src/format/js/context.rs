@@ -75,7 +75,8 @@ impl<'a> JsFormatContext<'a> {
     /// For a document in another language. Nothing that writes it calls [`file`](JsFormatContext::file).
     pub(crate) fn without_file(options: FormatOptions, comments: &'a FileComments) -> Self {
         let tailwind = options.tailwind.as_deref();
-        let of_plugin = (tailwind.filter(|it| it.follows_plugin)).map(TailwindContext::of_plugin);
+        let plugin_context =
+            (tailwind.filter(|it| it.follows_plugin)).map(TailwindContext::for_plugin);
         Self {
             file: None,
             has_babel_tree: false,
@@ -84,7 +85,7 @@ impl<'a> JsFormatContext<'a> {
             skip_trailing_comments: false,
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
-            tailwind_contexts: of_plugin.into_iter().collect(),
+            tailwind_contexts: plugin_context.into_iter().collect(),
             is_quiet: false,
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),

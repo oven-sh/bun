@@ -111,7 +111,7 @@ fn class_named_like_type_parameter<'a>(
 }
 
 impl<'a> Variable<'a> {
-    fn new(symbol: Symbol<'a>, known: &mut Caches<'a>) -> Option<Self> {
+    fn new(symbol: Symbol<'a>, caches: &mut Caches<'a>) -> Option<Self> {
         let mut definition = symbol.declarations().find(|it| it.name_span().is_some())?;
         // A quoted enum member name isn't an identifier. oxlint goes by the symbol, so it counts.
         let is_oxlint = symbol.file().language().is_oxlint;
@@ -149,7 +149,7 @@ impl<'a> Variable<'a> {
                 false => identifier,
             },
             is_value: class.is_some()
-                || symbol.is_value_variable() && !known.is_namespace_of_types(symbol),
+                || symbol.is_value_variable() && !caches.is_namespace_of_types(symbol),
             is_duplicated_class_name: class.is_some(),
         })
     }
@@ -288,11 +288,11 @@ fn is_function_name_initializer_exception<'a>(
 fn oxlint_is_import_used_only_as_type<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
-    known: &mut IdMap<Symbol<'a>, bool>,
+    used_only_as_type: &mut IdMap<Symbol<'a>, bool>,
 ) -> bool {
     variable.is_value
         && import_of(shadowed.definition).is_some()
-        && *known.get_or_insert_with(shadowed.symbol, || {
+        && *used_only_as_type.get_or_insert_with(shadowed.symbol, || {
             let mut references = shadowed.symbol.references().peekable();
             let is_type = |it: Reference<'a>| {
                 it.is_type() && !it.is_value() || reference_contains_type_query(it)
@@ -599,17 +599,17 @@ impl Checker {
         symbol: Symbol<'a>,
         shadowed: Option<Symbol<'a>>,
         is_global_value: bool,
-        known: &mut Caches<'a>,
+        caches: &mut Caches<'a>,
     ) {
         let name = symbol.name();
         if name.is("this") || self.allow.iter().any(|it| **it == *name.bytes()) {
             return;
         }
-        let Some(variable) = Variable::new(symbol, known) else {
+        let Some(variable) = Variable::new(symbol, caches) else {
             return;
         };
         let shadowed = match shadowed {
-            Some(shadowed) => match Variable::new(shadowed, known) {
+            Some(shadowed) => match Variable::new(shadowed, caches) {
                 Some(shadowed) => Some(shadowed),
                 // `arguments` or a quoted enum member, which hides anything further out.
                 None => return,
@@ -617,7 +617,7 @@ impl Checker {
             None => None,
         };
         let file = cx.file();
-        if is_global_augmentation(variable.scope, &known.global_augmentations)
+        if is_global_augmentation(variable.scope, &caches.global_augmentations)
             || variable.is_duplicated_class_name
             || self.is_declare_in_dts_file(file, &variable)
             || self.is_type_value_shadow(&variable, shadowed.as_ref())
@@ -630,7 +630,7 @@ impl Checker {
                 && self.ignore_function_type_parameter_name_value_shadow
                 && is_declared_in_function_without_body(
                     &variable,
-                    known
+                    caches
                         .without_body
                         .get_or_insert_with(|| functions_without_body(file)),
                 )
@@ -648,7 +648,7 @@ impl Checker {
             || self.is_in_tdz(&variable, &shadowed)
             || self.is_external_declaration_merging(&variable, &shadowed)
             || file.language().is_oxlint
-                && oxlint_is_import_used_only_as_type(&variable, &shadowed, &mut known.only_types)
+                && oxlint_is_import_used_only_as_type(&variable, &shadowed, &mut caches.only_types)
         {
             return;
         }
@@ -685,7 +685,7 @@ impl Checker {
                     .filter(|it| is_scope_of_global_augmentation(*it)),
             );
         }
-        let mut known = Caches {
+        let mut caches = Caches {
             global_augmentations,
             without_body: None,
             only_types: IdMap::default(),
@@ -726,7 +726,7 @@ impl Checker {
                 };
                 if shadowed.is_some() || global.is_some() {
                     let is_global_value = global.is_none_or(|it| it.is_value);
-                    self.check_variable(cx, symbol, shadowed, is_global_value, &mut known);
+                    self.check_variable(cx, symbol, shadowed, is_global_value, &mut caches);
                 }
             }
         }

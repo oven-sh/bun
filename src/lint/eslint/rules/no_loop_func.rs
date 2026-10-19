@@ -176,8 +176,8 @@ impl<'a> Known<'a> {
 /// Returns where `statement` and its enclosing loops in the same function declare their variables: the `init` of a
 /// `for`, the `left` of a `for`-`in`. Each comes with whether the variables get a new value for the next iteration.
 fn heads<'a>(statement: Stmt<'a>) -> impl Iterator<Item = (Span, bool)> {
-    let around = Node::Stmt(statement).ancestors().take_while(|it| !matches!(it, Node::Func(_)));
-    std::iter::once(Node::Stmt(statement)).chain(around).filter_map(|it| match it.as_stmt()?.kind() {
+    let enclosing_nodes = Node::Stmt(statement).ancestors().take_while(|it| !matches!(it, Node::Func(_)));
+    std::iter::once(Node::Stmt(statement)).chain(enclosing_nodes).filter_map(|it| match it.as_stmt()?.kind() {
         StmtKind::For { init, update, .. } => Some((init?.span(), update.is_some())),
         StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some((left.span(), true)),
         _ => None,
@@ -191,7 +191,7 @@ fn is_unsafe_for_oxlint<'a>(loop_node: Stmt<'a>, variable: Symbol<'a>, known: &m
     let Some(first) = variable.declarations().next() else {
         return is_safe;
     };
-    let (Some(place), whole) = (first.name_span(), loop_node.span()) else {
+    let (Some(declaration_span), whole) = (first.name_span(), loop_node.span()) else {
         return is_safe;
     };
     let var_kind = match first.node() {
@@ -199,15 +199,15 @@ fn is_unsafe_for_oxlint<'a>(loop_node: Stmt<'a>, variable: Symbol<'a>, known: &m
         _ => None,
     };
     let is_in_head = |known: &Known<'a>, changing: bool| {
-        known.is_in_loop(place.start) && heads(loop_node).any(|(head, changes)| head.contains(place) && (changes || !changing))
+        known.is_in_loop(declaration_span.start) && heads(loop_node).any(|(head, changes)| head.contains(declaration_span) && (changes || !changing))
     };
     match (first.kind()?, var_kind) {
         (DeclarationKind::CatchClause, _) | (DeclarationKind::Variable, Some(VarKind::Let)) => {
-            (whole.contains(place) || is_in_head(known, false)).then_some(false)
+            (whole.contains(declaration_span) || is_in_head(known, false)).then_some(false)
         }
         // All iterations share it. Otherwise only assignments inside the loop count, and declarations don't.
         (DeclarationKind::Parameter, _) | (DeclarationKind::Variable, Some(VarKind::Var)) => {
-            if whole.contains(place) || is_in_head(known, true) {
+            if whole.contains(declaration_span) || is_in_head(known, true) {
                 return Some(true);
             }
             let assignments = known.assignments.entry(variable.key()).or_insert_with(|| {
@@ -296,31 +296,31 @@ fn check_in_loop<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Di
         return;
     }
     utils::sort::sort_by_key(&mut unsafe_refs, |it| it.ident().start());
-    let mut named = FxHashSet::default();
+    let mut listed_names = FxHashSet::default();
     let names = unsafe_refs.iter().map(|it| it.name());
     let mut var_names = Vec::new();
-    for name in names.filter(|name| dialect == Dialect::TypeScript || named.insert(*name)) {
+    for name in names.filter(|name| dialect == Dialect::TypeScript || listed_names.insert(*name)) {
         let separator: &[u8] = if var_names.is_empty() { b"'" } else { b"', '" };
         var_names.extend_from_slice(separator);
         var_names.extend_from_slice(name.bytes());
     }
     var_names.push(b'\'');
-    let mut place = func.estree_span();
+    let mut report_span = func.estree_span();
     if cx.language().is_oxlint {
         // oxlint looks at the functions directly in the loop, including everything nested in them. So it reports an
         // immediately invoked function once, and not the functions inside it.
         let (whole, mut at) = (loop_node.span(), func);
         while let Some(outer) = at.enclosing().filter(|it| whole.contains(it.span())) {
             if ast_utils::is_function_with_body(outer) {
-                place = outer.estree_span();
+                report_span = outer.estree_span();
             }
             at = outer;
         }
-        if !cx.state.reported_as_oxlint.insert(place.start) {
+        if !cx.state.reported_as_oxlint.insert(report_span.start) {
             return;
         }
     }
-    cx.report(place, UNSAFE_REFS).data("varNames", var_names);
+    cx.report(report_span, UNSAFE_REFS).data("varNames", var_names);
 }
 
 impl Rule for NoLoopFunc {

@@ -26,15 +26,17 @@ fn has_dangling_underscore(identifier: &[u8]) -> bool {
     identifier != b"_" && (identifier.starts_with(b"_") || identifier.ends_with(b"_"))
 }
 
-/// Fast check: true if the name at `written` may have a dangling underscore. It can be private, and an underscore can
+/// Fast check: true if the name at `name_span` may have a dangling underscore. It can be private, and an underscore can
 /// be written as an escape: `\u005f`, `\u{5f}`.
 #[inline]
-fn may_dangle(text: &[u8], written: Span) -> bool {
-    matches!(text.get(written.start as usize), Some(b'_' | b'#' | b'\\'))
-        || matches!(
-            text.get(written.end.wrapping_sub(1) as usize),
-            Some(b'_' | b'f' | b'F' | b'}')
-        )
+fn may_dangle(text: &[u8], name_span: Span) -> bool {
+    matches!(
+        text.get(name_span.start as usize),
+        Some(b'_' | b'#' | b'\\')
+    ) || matches!(
+        text.get(name_span.end.wrapping_sub(1) as usize),
+        Some(b'_' | b'f' | b'F' | b'}')
+    )
 }
 
 /// ESTree's `object` and `property.name` of a `MemberExpression`. In `a[b]` the name is `b`.
@@ -312,14 +314,14 @@ impl Rule for NoUnderscoreDangle {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let written = match e.member_name_start() {
+        let name_span = match e.member_name_start() {
             Some(start) => Span::new(start, e.span().end),
             None => match e.index() {
                 Some(index) if index.tag() == ExprTag::Ident => index.span(),
                 _ => return,
             },
         };
-        if may_dangle(cx.text(), written) {
+        if may_dangle(cx.text(), name_span) {
             self.check_member_expression(e, cx);
         }
     }

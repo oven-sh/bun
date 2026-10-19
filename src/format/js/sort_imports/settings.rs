@@ -26,7 +26,7 @@ pub struct Settings {
     entries: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
-const OF_TRIVAGO: [&[u8]; 8] = [
+const TRIVAGO_OPTIONS: [&[u8]; 8] = [
     b"importOrderSeparation",
     b"importOrderSortSpecifiers",
     b"importOrderGroupNamespaceSpecifiers",
@@ -37,7 +37,7 @@ const OF_TRIVAGO: [&[u8]; 8] = [
     b"importOrderExclude",
 ];
 
-const OF_IANVS: [&[u8]; 3] = [
+const IANVS_OPTIONS: [&[u8]; 3] = [
     b"importOrderTypeScriptVersion",
     b"importOrderCaseSensitive",
     b"importOrderSafeSideEffects",
@@ -47,7 +47,7 @@ const OF_IANVS: [&[u8]; 3] = [
 /// their forks.
 const SORT_IMPORTS: &[u8] = b"/prettier-plugin-sort-imports";
 const ORGANIZE_IMPORTS: &[u8] = b"prettier-plugin-organize-imports";
-const OF_BUN: &[u8] = b"bun.sortImports";
+const BUN_OPTION: &[u8] = b"bun.sortImports";
 
 fn invalid(name: &[u8], value: &[u8]) -> Vec<u8> {
     [b"Invalid ", name, b" value: ", value, b"."].concat()
@@ -63,7 +63,7 @@ impl Settings {
                 | b"importOrderParserPlugins"
                 | b"sortImports"
                 | b"experimentalSortImports"
-                | OF_BUN
+                | BUN_OPTION
         ) || name.starts_with(b"organizeImports")
             || matches!(
                 name,
@@ -72,8 +72,8 @@ impl Settings {
                     | b"tsconfig.jsxFragmentFactory"
                     | b"tsconfig.reactNamespace"
             )
-            || OF_TRIVAGO.contains(&name)
-            || OF_IANVS.contains(&name);
+            || TRIVAGO_OPTIONS.contains(&name)
+            || IANVS_OPTIONS.contains(&name);
         if is_known {
             self.entries.retain(|entry| &*entry.0 != name);
             self.entries.push((name.into(), value.into()));
@@ -156,8 +156,8 @@ impl Settings {
             return names(b"@ianvs/prettier-plugin-sort-imports");
         }
         let has_any = |names: &[&[u8]]| self.entries.iter().any(|entry| names.contains(&&*entry.0));
-        if has_any(&OF_IANVS) || has_any(&OF_TRIVAGO) {
-            return has_any(&OF_IANVS);
+        if has_any(&IANVS_OPTIONS) || has_any(&TRIVAGO_OPTIONS) {
+            return has_any(&IANVS_OPTIONS);
         }
         order
             .unwrap_or_default()
@@ -294,10 +294,13 @@ impl Settings {
     pub fn compile(&self) -> Result<Option<Arc<SortImports>>, Vec<u8>> {
         // The last one set wins.
         let is_sort_imports_option = |it: &&(Box<[u8]>, Box<[u8]>)| {
-            matches!(&*it.0, b"sortImports" | b"experimentalSortImports" | OF_BUN)
+            matches!(
+                &*it.0,
+                b"sortImports" | b"experimentalSortImports" | BUN_OPTION
+            )
         };
         if let Some((name, value)) = self.entries.iter().rfind(is_sort_imports_option) {
-            let is_native = **name == *OF_BUN;
+            let is_native = **name == *BUN_OPTION;
             return Ok(super::oxfmt::compile(value, is_native)?.map(|options| {
                 Arc::new(SortImports {
                     how: match is_native {

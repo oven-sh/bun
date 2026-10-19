@@ -19,9 +19,9 @@ fn check_unsafe_declaration<'a>(
     // oxlint compares a declaration with the name's first declaration, which is also what it points at.
     if cx.language().is_oxlint {
         if let Some(first) = variable.declarations().next().filter(|it| is_unsafe_kind(*it))
-            && let Some(place) = first.name_span()
+            && let Some(report_span) = first.name_span()
         {
-            cx.report(place, UNSAFE_MERGING).label(name, "");
+            cx.report(report_span, UNSAFE_MERGING).label(name, "");
         }
         return;
     }

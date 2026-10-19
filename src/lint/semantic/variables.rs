@@ -47,7 +47,7 @@ pub(crate) struct Variables {
     /// Sorted.
     declared_at: Vec<(u32, u32)>,
     /// For each pattern that's a name, the `list` index of the variable it declares.
-    of_pat: Vec<u32>,
+    pat_variables: Vec<u32>,
     names: NameTable,
     /// `list` indices grouped by name. Within a name they're sorted, and therefore ordered by scope.
     by_name: Vec<u32>,
@@ -158,7 +158,7 @@ impl NameTable {
 
 /// The ancestors recorded for a pattern that's far above a name.
 #[derive(Copy, Clone)]
-pub(crate) struct Above {
+pub(crate) struct PatternAncestors {
     /// The outermost enclosing pattern, or the pattern itself.
     pub(crate) top: hir::PatId,
     /// The nearest enclosing pattern, or the pattern itself, that's a property or element with a default value. `NONE`
@@ -170,7 +170,7 @@ pub(crate) struct Above {
 /// Empty in a file without such patterns.
 #[derive(Default)]
 pub(crate) struct DeepPatterns {
-    above: FxHashMap<u32, Above>,
+    above: FxHashMap<u32, PatternAncestors>,
 }
 
 /// Returns the pattern that `pat` is a property or element of, and `pat`'s default value there.
@@ -189,7 +189,7 @@ impl DeepPatterns {
     pub(crate) const PLAIN_STEPS: u32 = 8;
 
     #[inline]
-    pub(crate) fn get(&self, pat: hir::PatId) -> Option<Above> {
+    pub(crate) fn get(&self, pat: hir::PatId) -> Option<PatternAncestors> {
         self.above.get(&pat.0).copied()
     }
 
@@ -207,7 +207,7 @@ impl DeepPatterns {
             match outer_pattern(file, at) {
                 Some((outer, _)) => (at, steps) = (outer, steps + 1),
                 None => {
-                    break Above {
+                    break PatternAncestors {
                         top: at,
                         with_default: hir::PatId::NONE,
                     };
@@ -471,17 +471,19 @@ fn hoisted_function_scope<'a>(
     f: hir::FnId,
     here: u32,
 ) -> Option<u32> {
-    let around = tree.scopes.get(here as usize)?.variable_scope;
+    let enclosing_scope = tree.scopes.get(here as usize)?.variable_scope;
     let (raw, it) = (file.hir.fns.get(f.idx())?, entries.get(index)?);
     let not_plain = hir::Flags::ASYNC.union(hir::Flags::GENERATOR);
-    let is_moved = around != here
+    let is_moved = enclosing_scope != here
         && raw.kind == FnKind::Decl
         && !raw.flags.intersects(not_plain)
         && !scopes::is_strict_for_oxc(file, tree, here)
         && (entries.iter())
-            .filter(|other| other.name == it.name && other.scope == around && other.pos < it.pos)
+            .filter(|other| {
+                other.name == it.name && other.scope == enclosing_scope && other.pos < it.pos
+            })
             .all(|other| matches!(other.decl, Decl::Fn(_)) && tree.scope_at(other.pos) == here);
-    is_moved.then_some(around)
+    is_moved.then_some(enclosing_scope)
 }
 
 /// Finds the scope each entry is declared in, starting from the scope its name is written in. Entries that don't
@@ -536,14 +538,14 @@ fn assign_scopes<'a>(
                     let scope = bound
                         .param_fn
                         .get(param as usize)
-                        .and_then(|f| tree.of_fn.get(f.idx()));
+                        .and_then(|f| tree.scope_of_fn.get(f.idx()));
                     (scope.copied().unwrap_or(NONE), VALUE)
                 }
             },
             Decl::Fn(_) => (moved_to.unwrap_or(here), VALUE),
             Decl::Class(c) => match bound.class_owner.get(c.idx()) {
                 Some(ClassOwner::Expr(_)) => (
-                    tree.of_class.get(c.idx()).copied().unwrap_or(NONE),
+                    tree.scope_of_class.get(c.idx()).copied().unwrap_or(NONE),
                     VALUE | TYPE,
                 ),
                 _ => (here, VALUE | TYPE),
@@ -639,7 +641,7 @@ impl Variables {
             ),
             later: Vec::new(),
         };
-        let mut of_pat = vec![NONE; hir.pats.len()];
+        let mut pat_variables = vec![NONE; hir.pats.len()];
         // For each non-pattern declaration: the name's position, the entry's index and the variable it declares.
         let mut others: Vec<(u32, u32, u32)> = Vec::new();
         for (scope, data) in tree.scopes.iter().enumerate() {
@@ -670,7 +672,7 @@ impl Variables {
                 let declared = builder.declare(it, 1, data.body_start);
                 match it.decl {
                     Decl::Var(pat) | Decl::Param(pat) => {
-                        if let Some(slot) = of_pat.get_mut(pat.idx()) {
+                        if let Some(slot) = pat_variables.get_mut(pat.idx()) {
                             *slot = declared;
                         }
                     }
@@ -722,7 +724,7 @@ impl Variables {
             list,
             starts,
             declared_at,
-            of_pat,
+            pat_variables,
             names,
             by_name,
             declarations,
@@ -742,8 +744,11 @@ impl Variables {
 
     /// Returns the `list` index of the variable that the name `pat` declares.
     #[inline]
-    pub(crate) fn of_pat(&self, pat: hir::PatId) -> Option<u32> {
-        self.of_pat.get(pat.idx()).copied().filter(|it| *it != NONE)
+    pub(crate) fn variable_of_pat(&self, pat: hir::PatId) -> Option<u32> {
+        self.pat_variables
+            .get(pat.idx())
+            .copied()
+            .filter(|it| *it != NONE)
     }
 
     /// The number of distinct values `slot_of` can return.
@@ -815,14 +820,14 @@ impl Variables {
     }
 
     /// Returns what a reference to `name` at `pos`, in scope `from`, resolves to: ESLint's `Scope#__resolve`, scope by
-    /// scope. `wants` is `VALUE`, `TYPE` or both.
+    /// scope. `wanted_flags` is `VALUE`, `TYPE` or both.
     pub(crate) fn resolve(
         &self,
         tree: &ScopeTree,
         from: u32,
         name: Atom,
         pos: u32,
-        wants: u8,
+        wanted_flags: u8,
     ) -> Option<u32> {
         let named = self.named(name);
         if named.is_empty() {
@@ -834,7 +839,7 @@ impl Variables {
             // resolved to variables which are in their function body."
             let scope = &tree.scopes[it.scope as usize];
             let body_start = scope.body_start;
-            (it.flags & wants != 0)
+            (it.flags & wanted_flags != 0)
                 && !(pos < body_start && (it.first_pos >= body_start || Self::is_implicit(it)))
                 && scope.kind != ScopeKind::With
         };

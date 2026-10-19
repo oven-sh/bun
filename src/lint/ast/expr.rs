@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 handle! {
     /// An expression, excluding any parentheses around it.
-    Expr, ExprId, exprs, Expr, |file: &File, id| file.written_expr(id)
+    Expr, ExprId, exprs, Expr, |file: &File, id| file.unwrap_jsdoc_casts(id)
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -403,10 +403,10 @@ impl<'a> Expr<'a> {
         let mut id = self.id;
         loop {
             let first = parens.partition_point(|p| p.0.0 < id.0);
-            let around = parens[first..].iter().take_while(|p| p.0 == id);
-            all.extend(around.map(|p| Span::new(p.1, p.2)));
+            let own_parens = parens[first..].iter().take_while(|p| p.0 == id);
+            all.extend(own_parens.map(|p| Span::new(p.1, p.2)));
             // The HIR attaches the parentheses after a JSDoc cast to the cast.
-            match self.file.jsdoc_cast_around(id) {
+            match self.file.enclosing_jsdoc_cast(id) {
                 Some(cast) => id = cast,
                 None => return all.into_iter(),
             }
@@ -422,7 +422,7 @@ impl<'a> Expr<'a> {
     /// can't be inferred from its syntax.
     #[inline]
     pub fn has_jsdoc_cast(self) -> bool {
-        self.file.jsdoc_cast_around(self.id).is_some()
+        self.file.enclosing_jsdoc_cast(self.id).is_some()
     }
 
     /// TypeScript 7 and tsgolint treat JavaScript's `/** @type {T} */ (e)` as `(e as T)`. Given the `e`, this returns
@@ -504,14 +504,14 @@ impl<'a> Expr<'a> {
         match raw.kind {
             hir::ExprKind::String(text) => match file.hir.text.get(raw.pos as usize) {
                 Some(b'"' | b'\'') if file.hir.jsx.is_empty() => Some(file.name(text)),
-                _ => self.as_string_that_is_not_plainly_one(raw, text),
+                _ => self.as_string_slow(raw, text),
             },
             _ => None,
         }
     }
 
     #[inline(never)]
-    fn as_string_that_is_not_plainly_one(self, raw: &hir::Expr, text: Atom) -> Option<Name<'a>> {
+    fn as_string_slow(self, raw: &hir::Expr, text: Atom) -> Option<Name<'a>> {
         match self.kind_of_string(raw, text) {
             ExprKind::String(value) => Some(value),
             _ => None,
@@ -1728,14 +1728,14 @@ impl<'a> Jsx<'a> {
     }
 }
 
-/// [`Expr::jsx_text_value`] for the source text `written`.
-pub(crate) fn jsx_text_value_of(written: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
+/// [`Expr::jsx_text_value`] for the given `source_text`.
+pub(crate) fn jsx_text_value_of(source_text: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings;
-    if !is_espree || !strings::contains(written, b"\r\n") {
-        return super::entities::unescape(written, is_espree);
+    if !is_espree || !strings::contains(source_text, b"\r\n") {
+        return super::entities::unescape(source_text, is_espree);
     }
-    let mut normalized = Vec::with_capacity(written.len());
-    for (at, line) in strings::split(written, b"\r\n").enumerate() {
+    let mut normalized = Vec::with_capacity(source_text.len());
+    for (at, line) in strings::split(source_text, b"\r\n").enumerate() {
         if at > 0 {
             normalized.push(b'\n');
         }

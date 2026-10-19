@@ -2,7 +2,7 @@ use crate::react::{
     LifecycleWalk, callee_of_this_set_state, function_count_before_lifecycle_component, is_jsx,
     supports_unsafe_lifecycle_prefix,
 };
-use crate::util_make_no_method_set_state_rule::{Mode, Walks, method_around_set_state, should_be_noop};
+use crate::util_make_no_method_set_state_rule::{Mode, Walks, method_enclosing_set_state, should_be_noop};
 use crate::util_version::get_react_version_from_context;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -20,7 +20,7 @@ struct Method {
     /// upstream treats a private name like the plain name.
     private_names: &'static [&'static str],
     oxlint: Message,
-    oxlint_wants_jsx: bool,
+    oxlint_requires_jsx: bool,
 }
 
 const METHODS: [Method; 3] = [
@@ -29,21 +29,21 @@ const METHODS: [Method; 3] = [
         names: &["componentDidMount"],
         private_names: &["#componentDidMount"],
         oxlint: Message::new("", "Do not use `setState` in `componentDidMount`."),
-        oxlint_wants_jsx: true,
+        oxlint_requires_jsx: true,
     },
     Method {
         rule: "no-did-update-set-state",
         names: &["componentDidUpdate"],
         private_names: &["#componentDidUpdate"],
         oxlint: Message::new("", "Do not use `setState` in `componentDidUpdate`."),
-        oxlint_wants_jsx: false,
+        oxlint_requires_jsx: false,
     },
     Method {
         rule: "no-will-update-set-state",
         names: &["componentWillUpdate", "UNSAFE_componentWillUpdate"],
         private_names: &["#componentWillUpdate", "#UNSAFE_componentWillUpdate"],
         oxlint: Message::new("", "Do not use `setState` in `componentWillUpdate`."),
-        oxlint_wants_jsx: true,
+        oxlint_requires_jsx: true,
     },
 ];
 
@@ -71,7 +71,7 @@ impl<const METHOD: usize> Rule for NoMethodSetState<METHOD> {
         let method = &METHODS[METHOD];
         let is_oxlint = file.language().is_oxlint;
         let is_candidate = if is_oxlint {
-            (!method.oxlint_wants_jsx || is_jsx(file)) && file.mentions("setState") && file.mentions_any(method.names)
+            (!method.oxlint_requires_jsx || is_jsx(file)) && file.mentions("setState") && file.mentions_any(method.names)
         } else {
             file.mentions_any(&["setState", "#setState"])
                 && (file.mentions_any(method.names) || file.mentions_any(method.private_names))
@@ -94,7 +94,7 @@ impl<const METHOD: usize> Rule for NoMethodSetState<METHOD> {
         let names = cx.state.names;
         if !cx.language().is_oxlint {
             let name_matches = |name: &[u8]| names.iter().any(|it| it.as_bytes() == name);
-            if let Some(name) = method_around_set_state(e, &name_matches, self.mode, &mut cx.state.walks)
+            if let Some(name) = method_enclosing_set_state(e, &name_matches, self.mode, &mut cx.state.walks)
                 && let Some(callee) = e.callee()
             {
                 cx.report(callee, NO_SET_STATE).data("name", name);

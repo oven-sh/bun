@@ -169,15 +169,15 @@ pub fn parse_template_token(source: &[u8]) -> Vec<CharInfo> {
 
 /// Maps parts of the value of a string literal, or of a template without substitutions, to their
 /// source spans. It's for a pattern passed to `RegExp`.
-pub struct Written {
+pub struct LiteralSourceMap {
     /// The literal's start offset.
     start: u32,
     units: Vec<CharInfo>,
 }
 
-impl Written {
+impl LiteralSourceMap {
     /// `None` for any other expression.
-    pub fn new(literal: Expr<'_>) -> Option<Written> {
+    pub fn new(literal: Expr<'_>) -> Option<LiteralSourceMap> {
         let units = match literal.kind() {
             ExprKind::String(_) => parse_string_literal(literal.text()),
             ExprKind::Template(template) if template.exprs().is_empty() => {
@@ -185,7 +185,7 @@ impl Written {
             }
             _ => return None,
         };
-        Some(Written {
+        Some(LiteralSourceMap {
             start: literal.span().start,
             units,
         })

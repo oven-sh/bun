@@ -14,7 +14,7 @@ use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::html::Parser;
 use bun_format::tailwind::Tailwind;
-use bun_lint::formats::{Formats, Formatted, Like, Reason, Request};
+use bun_lint::formats::{Formats, Formatted, FormatterKind, Reason, Request};
 use bun_lint::options::Json;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::session::Session;
@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 /// One rule's options, plus the state that's read once and shared by every file checked with them.
 struct Set<'e> {
-    like: Like,
+    formatter_kind: FormatterKind,
     options: Option<Json>,
     uses_configuration: bool,
     file_info_options: Option<Json>,
@@ -54,7 +54,7 @@ fn plugin_names(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
 /// Builds the `bun fmt` command line equivalent to the rule's options. `defaults` supplies `bun fmt`'s own flags, which
 /// Prettier doesn't have.
 fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options, Reason> {
-    let defaults = defaults.filter(|_| request.like == Like::BunFormat);
+    let defaults = defaults.filter(|_| request.formatter_kind == FormatterKind::BunFormat);
     let mut options = defaults.cloned().unwrap_or_default();
     let file_info = |key: &[u8]| request.file_info_options.and_then(|it| it.get(key));
     // `resolveConfig(file, { editorconfig: true })`, or no config at all.
@@ -73,16 +73,18 @@ fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options
         ),
         Some(_) => return Err(Reason::Option),
         // The plugin passes `.prettierignore`, so `.gitignore` isn't read.
-        None if request.like == Like::InstalledPrettier => Some(vec![b".prettierignore".to_vec()]),
+        None if request.formatter_kind == FormatterKind::InstalledPrettier => {
+            Some(vec![b".prettierignore".to_vec()])
+        }
         None => options.ignore_path.take(),
     };
-    if request.like == Like::InstalledPrettier {
+    if request.formatter_kind == FormatterKind::InstalledPrettier {
         options.is_like_oxfmt = Some(false);
     }
-    if let Some(of_rule) = request.options {
-        let of_rule = config::as_flags(of_rule).ok_or(Reason::Option)?;
-        (options.format).retain(|default| !of_rule.iter().any(|it| it.0 == default.0));
-        options.format.extend(of_rule);
+    if let Some(rule_options) = request.options {
+        let rule_flags = config::as_flags(rule_options).ok_or(Reason::Option)?;
+        (options.format).retain(|default| !rule_flags.iter().any(|it| it.0 == default.0));
+        options.format.extend(rule_flags);
     }
     options.plugins = plugin_names(request.options)?;
     options
@@ -100,8 +102,8 @@ impl<'e> Set<'e> {
         let read = command_line(request, defaults).and_then(|options| {
             let configs = Configs::owning(options.clone(), environment);
             // Prettier doesn't read oxfmt's config files.
-            let is_oxfmt_config =
-                request.like == Like::InstalledPrettier && configs.flavor == Flavor::Oxfmt;
+            let is_oxfmt_config = request.formatter_kind == FormatterKind::InstalledPrettier
+                && configs.flavor == Flavor::Oxfmt;
             if is_oxfmt_config || configs.check().is_err() {
                 return Err(Reason::Configuration);
             }
@@ -115,11 +117,12 @@ impl<'e> Set<'e> {
                 .map_err(|_| Reason::Configuration)?,
                 configs,
                 with_node_modules: options.with_node_modules,
-                allows_unsupported: request.like == Like::BunFormat && options.allow_unsupported,
+                allows_unsupported: request.formatter_kind == FormatterKind::BunFormat
+                    && options.allow_unsupported,
             })
         });
         Set {
-            like: request.like,
+            formatter_kind: request.formatter_kind,
             options: request.options.cloned(),
             uses_configuration: request.uses_configuration,
             file_info_options: request.file_info_options.cloned(),
@@ -128,7 +131,7 @@ impl<'e> Set<'e> {
     }
 
     fn is_for(&self, request: &Request) -> bool {
-        self.like == request.like
+        self.formatter_kind == request.formatter_kind
             && self.uses_configuration == request.uses_configuration
             && self.options.as_ref() == request.options
             && self.file_info_options.as_ref() == request.file_info_options
@@ -203,7 +206,7 @@ impl<'e> ForRules<'e> {
     }
 
     fn format(&self, request: &Request) -> Result<Formatted, Reason> {
-        let is_prettier = request.like == Like::InstalledPrettier;
+        let is_prettier = request.formatter_kind == FormatterKind::InstalledPrettier;
         if is_prettier && request.follows_packages {
             let module = request.package_module;
             let mut packages = self.packages.lock();
@@ -292,7 +295,7 @@ impl<'e> ForRules<'e> {
             Ok((text, _)) if text == request.text => Ok(Formatted::Same),
             Ok((text, _)) => Ok(Formatted::Text(text)),
             Err(Failure::Syntax(_)) => Err(Reason::SyntaxError),
-            Err(Failure::Bug | Failure::Changed(_) | Failure::Unread(_)) => Err(Reason::Refused),
+            Err(Failure::Bug | Failure::Changed(_) | Failure::Unread(_)) => Err(Reason::Unverified),
         }
     }
 }

@@ -16,9 +16,9 @@ use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
-    Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
-    to_file_name_lower_case, to_path, typescript_path,
+    CachedConfig, Host, ModuleDetection, ParseOptions, Paths, Phase, PhaseTimer, ScriptKind,
+    ancestors, case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join,
+    root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -219,7 +219,7 @@ impl Listing {
 
     /// Returns the files and the directories, each sorted by name.
     fn sorted(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
-        let of_kind = |is_directory: bool| {
+        let names_of_kind = |is_directory: bool| {
             let entries = self
                 .entries
                 .iter()
@@ -228,7 +228,7 @@ impl Listing {
             names.shared_sort_unstable();
             names
         };
-        (of_kind(false), of_kind(true))
+        (names_of_kind(false), names_of_kind(true))
     }
 }
 
@@ -254,7 +254,7 @@ pub struct Disk {
     /// parallelism gains: 16 threads take six times as long for the same files as 4 do. So only a few readers are
     /// admitted at a time. `io_pool` already has few threads. This limits what the other threads read: `package.json`
     /// and configuration files.
-    reading: Option<bun_threading::Semaphore>,
+    reader_limit: Option<bun_threading::Semaphore>,
     /// `Host::io_pool`
     io_pool: Option<bun_threading::io_thread_pool::Ref>,
     /// Readers that aren't in use, least recently used first.
@@ -282,7 +282,7 @@ pub struct Disk {
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub(crate) before_read: Option<BeforeRead>,
     /// `Host::extended_config`. The projects of a build often extend the same file.
-    extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>,
+    extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
@@ -512,7 +512,7 @@ impl Disk {
             directories: ShardedMap::default(),
             working_directory: Vec::new(),
             real_directories: ShardedMap::default(),
-            reading: cfg!(target_os = "macos").then(|| {
+            reader_limit: cfg!(target_os = "macos").then(|| {
                 let read_slots = bun_threading::Semaphore::default();
                 for _ in 0..READERS {
                     read_slots.post();
@@ -695,7 +695,7 @@ impl Disk {
     }
 
     /// Returns `path` with every name in it spelled the way its directory lists it. Links aren't followed.
-    pub fn as_written(&self, path: &[u8]) -> Vec<u8> {
+    pub fn with_on_disk_casing(&self, path: &[u8]) -> Vec<u8> {
         if self.case_sensitive {
             return path.to_vec();
         }
@@ -710,7 +710,7 @@ impl Disk {
             names.push((parent, name));
             above = parent;
         }
-        let mut written = above.to_vec();
+        let mut spelled = above.to_vec();
         // Nothing inside a directory that doesn't exist is queried.
         let mut exists = true;
         for (parent, name) in names.into_iter().rev() {
@@ -722,12 +722,12 @@ impl Disk {
                 }
                 Some(Directory::Unreadable) | None => None,
             };
-            if !written.ends_with(b"/") {
-                written.push(b'/');
+            if !spelled.ends_with(b"/") {
+                spelled.push(b'/');
             }
-            written.extend_from_slice(found.unwrap_or(name));
+            spelled.extend_from_slice(found.unwrap_or(name));
         }
-        written
+        spelled
     }
 
     /// `path` must exist.
@@ -742,10 +742,10 @@ impl Disk {
         let Some(found) = self.find_in(listing, name) else {
             return Self::query_real_path(path);
         };
-        let Some((written, _)) = found else {
+        let Some((listed_name, _)) = found else {
             return path.to_vec();
         };
-        if matches!(listing.look_up(written), Found::Exact(it) if it.is_link) {
+        if matches!(listing.look_up(listed_name), Found::Exact(it) if it.is_link) {
             return Self::query_real_path(path);
         }
         let real_parent = match self.real_directories.get_ref(parent) {
@@ -764,9 +764,9 @@ impl Disk {
             }
         };
         if real_parent == b"/" {
-            [&b"/"[..], written].concat()
+            [&b"/"[..], listed_name].concat()
         } else {
-            inside(real_parent, written)
+            inside(real_parent, listed_name)
         }
     }
 }
@@ -1044,7 +1044,7 @@ fn unmarshal_map(
     value: &mut Vec<(Vec<u8>, Json)>,
 ) -> Option<Json> {
     let properties = object.properties();
-    let kept = value.len();
+    let existing_len = value.len();
     for (i, property) in properties.iter().enumerate() {
         let name = property.key.slice();
         let text = match &property.value {
@@ -1055,7 +1055,10 @@ fn unmarshal_map(
         let is_repeated =
             has_duplicates && properties[..i].iter().any(|seen| seen.key.slice() == name);
         if !is_repeated {
-            match value[..kept].iter_mut().find(|known| known.0 == name) {
+            match value[..existing_len]
+                .iter_mut()
+                .find(|known| known.0 == name)
+            {
                 Some(known) => {
                     if let Some(text) = text {
                         known.1 = Json::String(text.to_vec());
@@ -1203,13 +1206,13 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
         expected[at].1.unmarshal_json(data, is_map, has_duplicates);
     }
     for (name, field) in expected {
-        let (shown, value) = match field.valid {
+        let (first_value, value) = match field.valid {
             true => (field.value, None),
             false if matches!(field.actual, Some(Json::Object(_))) => (field.actual, None),
             false => (field.actual, field.value),
         };
-        let null = (field.null && shown != Some(Json::Null)).then_some(Json::Null);
-        let values = shown.into_iter().chain(null).chain(value);
+        let null = (field.null && first_value != Some(Json::Null)).then_some(Json::Null);
+        let values = first_value.into_iter().chain(null).chain(value);
         fields.extend(values.map(|it| (name.to_vec(), it)));
     }
     Some(Json::Object(fields))
@@ -1240,7 +1243,7 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
 #[derive(Copy, Clone)]
 pub(crate) struct UncachedDisk<'k> {
     /// `Host::extended_config`
-    pub(crate) extended: Option<&'k bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>>,
+    pub(crate) extended: Option<&'k bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>>,
     pub(crate) is_case_sensitive: bool,
     /// If false, every directory looks empty, so a configuration file's `include` finds nothing.
     pub(crate) lists: bool,
@@ -1265,10 +1268,10 @@ impl Host for UncachedDisk<'_> {
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         read_at(path, false)
     }
-    fn extended_config(&self, path: &[u8]) -> Option<Kept> {
+    fn extended_config(&self, path: &[u8]) -> Option<CachedConfig> {
         self.extended?.lock().get(path).cloned()
     }
-    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> CachedConfig) {
         if let Some(extended) = self.extended {
             extended.lock().insert(path.to_vec(), parsed());
         }
@@ -1337,18 +1340,18 @@ fn chunk_len_for(count: usize) -> usize {
 }
 
 impl Host for Disk {
-    fn extended_config(&self, path: &[u8]) -> Option<Kept> {
+    fn extended_config(&self, path: &[u8]) -> Option<CachedConfig> {
         self.extended_configs.lock().get(path).cloned()
     }
-    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+    fn cache_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> CachedConfig) {
         self.extended_configs.lock().insert(path.to_vec(), parsed());
     }
     fn shared_paths(&self, paths: Arc<Paths>) -> Arc<Paths> {
-        let mut kept = self.paths.lock();
-        if let Some(equal) = kept.get(&paths) {
+        let mut interned = self.paths.lock();
+        if let Some(equal) = interned.get(&paths) {
             return Arc::clone(equal);
         }
-        kept.insert(Arc::clone(&paths));
+        interned.insert(Arc::clone(&paths));
         paths
     }
     fn spent(&self, phase: Phase, time: Duration) {
@@ -1364,7 +1367,7 @@ impl Host for Disk {
         {
             return Some(Cow::Owned(text.clone()));
         }
-        let _reading = Spent::on(self, Phase::Read);
+        let _reading = PhaseTimer::on(self, Phase::Read);
         if is_bundled(path) {
             let (libs, name) = self.bundled(path)?;
             return (libs.read)(name);
@@ -1379,7 +1382,7 @@ impl Host for Disk {
         if name.is_empty() || Self::is_never_listed(parent) {
             return read_at(path, keeps_mark);
         }
-        let _turn = self.reading.as_ref().map(ReadSlot::wait_for);
+        let _turn = self.reader_limit.as_ref().map(ReadSlot::wait_for);
         let mut reader = self.take_reader(parent);
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a

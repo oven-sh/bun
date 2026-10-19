@@ -29,10 +29,10 @@ fn list_largest_tables(program: &bun_sema::check::Program) {
     tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
     for (name, footprint) in tables.iter().take(10) {
         error_line!(
-            "table {name}: {:.1} MB touched, {} entries, {} kept",
+            "table {name}: {:.1} MB touched, {} entries, {} out of line",
             footprint.touched as f64 / (1u64 << 20) as f64,
             footprint.entries,
-            footprint.kept
+            footprint.out_of_line_values
         );
     }
 }
@@ -162,7 +162,7 @@ fn run(args: &[String]) {
                 // A flag that isn't a compiler option is one of this tool's own flags, handled below.
                 if !matches!(rejected.error, bun_sema_driver::FlagError::Unknown) {
                     let flag = text(&rejected.flag);
-                    error_line!("{flag} is left out: it has no value that it accepts");
+                    error_line!("skipping {flag}: missing or invalid value");
                 }
             }
             let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
@@ -317,7 +317,7 @@ fn run(args: &[String]) {
                     (report.diagnostics.len(), started.elapsed())
                 });
                 error_line!(
-                    "repeat {round}: {errors} errors, {:.3} s to the report, {:.3} s with the memory given back, {} MB held",
+                    "repeat {round}: {errors} errors, {:.3} s until the report, {:.3} s including freeing memory, {} MB in use",
                     checked.as_secs_f64(),
                     started.elapsed().as_secs_f64(),
                     bun_sema_standalone::current_memory() >> 20
@@ -327,7 +327,7 @@ fn run(args: &[String]) {
                 // Memory that the allocator caches for future allocations isn't retained by the checks.
                 bun_alloc::mimalloc::mi_collect(true);
                 error_line!(
-                    "after the allocator gave back what is free: {} MB held",
+                    "after the allocator released free memory: {} MB in use",
                     bun_sema_standalone::current_memory() >> 20
                 );
             }
@@ -396,12 +396,12 @@ fn run(args: &[String]) {
                     let loading =
                         instructions_of_loading.load(std::sync::atomic::Ordering::Relaxed);
                     error_line!(
-                        "instructions of checking {:.2} G",
+                        "checking instructions {:.2} G",
                         instructions.saturating_sub(loading) as f64 / 1e9
                     );
                     let peak = peak_memory_of_loading.load(std::sync::atomic::Ordering::Relaxed);
                     error_line!(
-                        "peak of loading {:.2} GB",
+                        "peak while loading {:.2} GB",
                         peak as f64 / (1u64 << 30) as f64
                     );
                     let walks = bun_sema::check::INFERENCE_WALK_COUNTS.iter();
@@ -430,7 +430,7 @@ fn run(args: &[String]) {
                             "  summed over the tasks: waiting for the commit mutex {for_commits:.3} s, in commits {in_commits:.3}, waiting for claims {for_claims:.3}"
                         );
                         for (path, why) in &round.lost {
-                            error_line!("  lost to {why}: {}", text(path));
+                            error_line!("  discarded because of {why}: {}", text(path));
                         }
                         for (elapsed, files, path) in &round.slowest_tasks {
                             error_line!(

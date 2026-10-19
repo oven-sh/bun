@@ -32,7 +32,7 @@ use rustc_hash::FxHashMap;
 
 /// Why a function couldn't be converted.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Refusal {
+pub(crate) enum ConvertError {
     /// Not enough stack left on this thread.
     TooDeep,
     /// Upstream's lowering throws an error without a location for a `this` parameter, and the
@@ -42,7 +42,7 @@ pub(crate) enum Refusal {
     Using,
 }
 
-type Converts<T> = Result<T, Refusal>;
+type Converts<T> = Result<T, ConvertError>;
 
 pub(crate) enum Root {
     Function(G::Fn),
@@ -95,7 +95,7 @@ pub(crate) enum Recorded {
         tag: &'static str,
         /// `enum`, `plural` or `pronoun`
         name: &'static str,
-        places: Vec<Span>,
+        tag_spans: Vec<Span>,
     },
 }
 
@@ -107,7 +107,7 @@ struct FbtTags<'a> {
     tag: &'static str,
     /// Upstream searches for the name, which can also be an attribute's. oxc's fork only checks tags.
     also_attributes: bool,
-    places: [Vec<Span>; 3],
+    tag_spans: [Vec<Span>; 3],
 }
 
 impl FbtTags<'_> {
@@ -117,7 +117,7 @@ impl FbtTags<'_> {
             && let Some(at) =
                 (FBT_TAGS.iter()).position(|it| it.as_bytes() == self.file.slice(name))
         {
-            self.places[at].push(Span::new(namespace.start, name.end));
+            self.tag_spans[at].push(Span::new(namespace.start, name.end));
         }
     }
 }
@@ -256,7 +256,7 @@ impl<'a> Converter<'a, '_> {
     fn nested<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
         match self.stack.is_safe_to_recurse() {
             true => then(self),
-            false => Err(Refusal::TooDeep),
+            false => Err(ConvertError::TooDeep),
         }
     }
 
@@ -390,7 +390,7 @@ impl<'a> Converter<'a, '_> {
     fn args(&mut self, func: Func<'a>) -> Converts<(StoreSlice<G::Arg>, bool, AstVec<JsStmt>)> {
         // A `this` parameter is only a type, and oxc's lowering doesn't see it either. Upstream's rejects it.
         if self.flavor == Flavor::Eslint && func.this_param().is_some() {
-            return Err(Refusal::ThisParameter);
+            return Err(ConvertError::ThisParameter);
         }
         let params = func.params();
         let mut args: AstVec<G::Arg> = AstAlloc::vec_with_capacity(params.len());
@@ -1189,13 +1189,16 @@ impl<'a> Converter<'a, '_> {
                 file: self.file,
                 tag,
                 also_attributes: self.flavor == Flavor::Eslint,
-                places: Default::default(),
+                tag_spans: Default::default(),
             };
             walk_node(Node::Expr(whole), &mut found);
-            let duplicate = (FBT_TAGS.into_iter().zip(found.places)).find(|it| it.1.len() > 1);
-            if let Some((name, places)) = duplicate {
-                self.recorded
-                    .push(Recorded::DuplicateFbtTags { tag, name, places });
+            let duplicate = (FBT_TAGS.into_iter().zip(found.tag_spans)).find(|it| it.1.len() > 1);
+            if let Some((name, tag_spans)) = duplicate {
+                self.recorded.push(Recorded::DuplicateFbtTags {
+                    tag,
+                    name,
+                    tag_spans,
+                });
             }
         }
         let children = jsx.children();
@@ -1287,7 +1290,7 @@ impl<'a> Converter<'a, '_> {
             Some(VarKind::Var) | None => S::Kind::KVar,
             Some(VarKind::Let) => S::Kind::KLet,
             Some(VarKind::Const) => S::Kind::KConst,
-            Some(VarKind::Using | VarKind::AwaitUsing) => return Err(Refusal::Using),
+            Some(VarKind::Using | VarKind::AwaitUsing) => return Err(ConvertError::Using),
         };
         let mut converted: G::DeclList = AstAlloc::vec_with_capacity(decls.len());
         for decl in decls {
@@ -1585,12 +1588,12 @@ fn is_assigned(pat: Pat<'_>) -> bool {
 
 /// True if `pat`, a pattern in `stmt`, binds a variable that a function nested in `stmt` refers to.
 fn is_captured_pattern<'a>(pat: Pat<'a>, stmt: Stmt<'a>) -> bool {
-    let around = Node::Stmt(stmt).enclosing_function().map(Func::span);
+    let enclosing_fn_span = Node::Stmt(stmt).enclosing_function().map(Func::span);
     let mut is_captured = false;
     pat.for_each_binding(&mut |name| {
         is_captured |= (name.symbol().into_iter())
             .flat_map(Symbol::references)
-            .any(|it| it.node().enclosing_function().map(Func::span) != around);
+            .any(|it| it.node().enclosing_function().map(Func::span) != enclosing_fn_span);
     });
     is_captured
 }

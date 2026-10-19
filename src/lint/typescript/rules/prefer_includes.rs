@@ -140,7 +140,7 @@ fn parse_reg_exp(node: Expr, excluded_flags: &[u8]) -> Option<Vec<u8>> {
     if strings::index_of_any(flags, excluded_flags).is_some() {
         return None;
     }
-    let ast = parse_pattern(pattern, Mode::of_flags(flags), RegexOptions::default()).ok()?;
+    let ast = parse_pattern(pattern, Mode::from_flags(flags), RegexOptions::default()).ok()?;
     let RegexKind::Pattern { alternatives } = ast.pattern().kind() else {
         return None;
     };

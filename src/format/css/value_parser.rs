@@ -419,7 +419,7 @@ impl<'v> ValueRef<'v> {
     }
 
     /// Returns a number with its unit as written in the source, or `None` if either was changed after parsing.
-    pub(crate) fn number_as_written(self) -> Option<&'v [u8]> {
+    pub(crate) fn number_source_text(self) -> Option<&'v [u8]> {
         let (number, unit) = (self.node().value, self.node().unit);
         (number.1 == unit.0).then(|| self.values.text((number.0, unit.1)))
     }
@@ -825,11 +825,11 @@ impl ValuesParser<'_> {
                 let unit = &value[unit_start..];
                 // `value.replace(unit, "")` removes the first occurrence, wherever it is. The unit can only occur
                 // earlier if it starts with a character that can be part of a number.
-                let is_elsewhere = matches!(
+                let may_occur_earlier = matches!(
                     unit.first(),
                     Some(b'+' | b'-' | b'.' | b'e' | b'E' | b'0'..=b'9')
                 );
-                let number = match if is_elsewhere {
+                let number = match if may_occur_earlier {
                     bun_core::strings::index_of(value, unit)
                 } else {
                     None

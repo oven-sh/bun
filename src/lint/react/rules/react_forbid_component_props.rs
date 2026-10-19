@@ -14,7 +14,7 @@ type Names = Vec<Box<[u8]>>;
 
 /// A string from the options that can be a glob pattern.
 struct Glob {
-    written: Box<[u8]>,
+    pattern_text: Box<[u8]>,
     minimatch: Minimatch,
 }
 
@@ -79,7 +79,7 @@ impl Rule for ForbidComponentProps {
             let mut slot_by_key: FxHashMap<&[u8], usize> = FxHashMap::default();
             for (at, it) in forbid.iter().enumerate() {
                 let next = map.len();
-                let slot = *slot_by_key.entry(&it.key.written).or_insert(next);
+                let slot = *slot_by_key.entry(&it.key.pattern_text).or_insert(next);
                 match map.get_mut(slot) {
                     Some(last) => *last = at,
                     None => map.push(at),
@@ -134,7 +134,7 @@ impl Rule for ForbidComponentProps {
 
 impl ForbidComponentProps {
     fn get_prop_options(&self, prop: &[u8], is_oxlint: bool) -> Option<&ForbidOption> {
-        let is_named = |it: &&ForbidOption| *it.key.written == *prop;
+        let is_named = |it: &&ForbidOption| *it.key.pattern_text == *prop;
         let matches = |it: &&ForbidOption| it.is_pattern && it.key.matches(prop, is_oxlint);
         // For oxlint the first match wins, whether it's a name or a pattern.
         if is_oxlint {
@@ -146,13 +146,13 @@ impl ForbidComponentProps {
 }
 
 impl Glob {
-    fn new(written: &[u8]) -> Glob {
-        Glob { written: written.into(), minimatch: Minimatch::new(written) }
+    fn new(pattern_text: &[u8]) -> Glob {
+        Glob { pattern_text: pattern_text.into(), minimatch: Minimatch::new(pattern_text) }
     }
 
     fn matches(&self, name: &[u8], is_oxlint: bool) -> bool {
         // oxlint uses the `fast-glob` crate.
-        if is_oxlint { glob_match(&self.written, name) } else { self.minimatch.matches(name) }
+        if is_oxlint { glob_match(&self.pattern_text, name) } else { self.minimatch.matches(name) }
     }
 }
 

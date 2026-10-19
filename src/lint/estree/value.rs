@@ -327,24 +327,24 @@ impl<'a> Iterator for Nodes<'a> {
                 self.0 = Inner::Empty;
                 Some(node)
             }
-            Inner::Exprs(list) => VNode::of_expr(list.next()?),
-            Inner::Stmts(list) => Some(VNode::of_stmt(list.next()?)),
-            Inner::Types(list) => Some(VNode::of_type(list.next()?)),
+            Inner::Exprs(list) => VNode::from_expr(list.next()?),
+            Inner::Stmts(list) => Some(VNode::from_stmt(list.next()?)),
+            Inner::Types(list) => Some(VNode::from_type(list.next()?)),
             Inner::Heritage(list) => Some(VNode::new(list.next()?, Part::Heritage)),
             Inner::Props(list) => main(list.next()?.into()),
             Inner::Members(list) => main(list.next()?.into()),
             Inner::Params(this, list) => match this.take() {
-                Some(this) => Some(VNode::of_param(this)),
-                None => Some(VNode::of_param(list.next()?)),
+                Some(this) => Some(VNode::from_param(this)),
+                None => Some(VNode::from_param(list.next()?)),
             },
             Inner::TypeParams(list) => main(list.next()?.into()),
             Inner::VarDecls(list) => main(list.next()?.into()),
             Inner::Cases(list) => main(list.next()?.into()),
             Inner::EnumMembers(list) => main(list.next()?.into()),
             Inner::ExportSpecs(list) => main(list.next()?.into()),
-            Inner::TupleElems(list) => Some(VNode::of_tuple_elem(list.next()?)),
+            Inner::TupleElems(list) => Some(VNode::from_tuple_elem(list.next()?)),
             Inner::PatProps(list) => main(list.next()?.into()),
-            Inner::PatElems(list) => VNode::of_pat_elem(list.next()?),
+            Inner::PatElems(list) => VNode::from_pat_elem(list.next()?),
             Inner::ImportSpecifiers(statement, stage, named) => loop {
                 let StmtKind::Import(import) = statement.kind() else {
                     return None;
@@ -384,7 +384,7 @@ impl<'a> Iterator for Nodes<'a> {
                 outermost,
             } => {
                 if let Some(left) = innermost_left.take() {
-                    return Some(VNode::of_expr(left));
+                    return Some(VNode::from_expr(left));
                 }
                 let operator = (*at)?;
                 *at = match operator == *outermost {
@@ -392,12 +392,12 @@ impl<'a> Iterator for Nodes<'a> {
                     false => operator.parent().as_expr(),
                 };
                 match operator.kind() {
-                    ExprKind::Binary { right, .. } => VNode::of_expr(right),
+                    ExprKind::Binary { right, .. } => VNode::from_expr(right),
                     _ => return None,
                 }
             }
             Inner::JsxChildren(element, children) => match children.next()? {
-                JsxChild::Expr(child) => VNode::of_expr(child),
+                JsxChild::Expr(child) => VNode::from_expr(child),
                 JsxChild::Whitespace(span) => {
                     Some(VNode::new(*element, Part::Whitespace(span.start)))
                 }

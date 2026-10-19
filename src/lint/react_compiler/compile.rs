@@ -1,6 +1,6 @@
 //! Runs one function through the compiler.
 
-use crate::convert::{Converted, Recorded, Refusal, Root, WrappedDefault, convert};
+use crate::convert::{ConvertError, Converted, Recorded, Root, WrappedDefault, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
@@ -103,9 +103,9 @@ impl<'a> Compiler<'a> {
         let _scope = allocator.enter();
         let converted = match convert(self.file, arena, func, self.flavor) {
             Ok(converted) => converted,
-            Err(Refusal::Using) => return Ok(()),
-            Err(Refusal::ThisParameter) => return Err(Vec::new()),
-            Err(Refusal::TooDeep) => return Err(vec![too_deep()]),
+            Err(ConvertError::Using) => return Ok(()),
+            Err(ConvertError::ThisParameter) => return Err(Vec::new()),
+            Err(ConvertError::TooDeep) => return Err(vec![too_deep()]),
         };
         let host = LintHost::new(&converted, arena, self.file.text());
         let node = match &converted.root {
@@ -136,8 +136,8 @@ impl<'a> Compiler<'a> {
             Recorded::DuplicateFbtTags {
                 tag,
                 name,
-                ref places,
-            } => duplicate_fbt_tags(tag, name, places),
+                ref tag_spans,
+            } => duplicate_fbt_tags(tag, name, tag_spans),
             Recorded::ImplicitArguments(span) => implicit_arguments(span),
             Recorded::DynamicImport(span) => todo(
                 "(BuildHIR::lowerExpression) Handle Import expressions".to_owned(),
@@ -165,7 +165,7 @@ impl<'a> Compiler<'a> {
                 })
         };
         let file = self.file;
-        let said = |error| {
+        let lowering_findings = |error| {
             findings(&converted, error)
                 .filter(|it| !is_already_recorded(it))
                 .map(|it| with_estree_kind(file, it))
@@ -173,8 +173,8 @@ impl<'a> Compiler<'a> {
         let all: Vec<Finding> = match linted.result {
             Ok(()) if converted.recorded.is_empty() => return Ok(()),
             Ok(()) => recorded.collect(),
-            Err(error) if error.is_thrown => said(error).collect(),
-            Err(error) => recorded.chain(said(error)).collect(),
+            Err(error) if error.is_thrown => lowering_findings(error).collect(),
+            Err(error) => recorded.chain(lowering_findings(error)).collect(),
         };
         let wrapped = &converted.wrapped_defaults;
         Err((all.into_iter())
@@ -247,7 +247,7 @@ fn todo(reason: String, span: Span) -> Finding {
     }
 }
 
-fn duplicate_fbt_tags(tag: &str, name: &str, places: &[Span]) -> Finding {
+fn duplicate_fbt_tags(tag: &str, name: &str, tag_spans: &[Span]) -> Finding {
     let detail = |&span: &Span| Detail::Error {
         span: Some(span),
         message: Some(format!("Multiple `<{tag}:{name}>` tags found")),
@@ -258,7 +258,7 @@ fn duplicate_fbt_tags(tag: &str, name: &str, places: &[Span]) -> Finding {
         description: Some(format!(
             "Support `<{tag}>` tags with multiple `<{tag}:{name}>` values"
         )),
-        details: places.iter().map(detail).collect(),
+        details: tag_spans.iter().map(detail).collect(),
         suggestions: Vec::new(),
         is_error_detail: false,
         function_span: None,
@@ -303,9 +303,11 @@ fn suggestions(converted: &Converted, all: Option<Vec<CompilerSuggestion>>) -> V
 /// The description, with `Date.now` changed back to `Date` where the source has `new Date()`.
 fn description_of(converted: &Converted, it: &CompilerDiagnostic) -> Option<String> {
     let description = it.description.as_deref()?;
-    let place = span_of(converted, it.primary_location().copied());
+    let primary_span = span_of(converted, it.primary_location().copied());
     match description.strip_prefix("`Date.now`") {
-        Some(rest) if place.is_some_and(|it| converted.clock_reads.binary_search(&it).is_ok()) => {
+        Some(rest)
+            if primary_span.is_some_and(|it| converted.clock_reads.binary_search(&it).is_ok()) =>
+        {
             Some(format!("`Date`{rest}"))
         }
         _ => Some(description.to_owned()),

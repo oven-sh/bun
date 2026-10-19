@@ -346,8 +346,8 @@ impl Builtins {
             if self.ignores.iter().any(|it| **it == *name.as_bytes()) {
                 continue;
             }
-            let mut written_otherwise = data::WRITTEN_OTHERWISE.iter();
-            let supported = match written_otherwise.find(|it| it.0 == reference.info) {
+            let mut irregular_texts = data::WRITTEN_OTHERWISE.iter();
+            let supported = match irregular_texts.find(|it| it.0 == reference.info) {
                 Some(found) => found.1.to_owned(),
                 None => versions_to_string(versions(info.supported)),
             };

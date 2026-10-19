@@ -615,7 +615,7 @@ impl<'a> File<'a> {
         let bits = self.lazy.parenthesized.get_or_init(|| {
             let mut bits = vec![0u64; self.hir.exprs.len() / 64 + 1].into_boxed_slice();
             for &(id, ..) in self.hir.parens {
-                for id in [id, self.written_expr(id)] {
+                for id in [id, self.unwrap_jsdoc_casts(id)] {
                     if let Some(word) = bits.get_mut(id.idx() / 64) {
                         *word |= 1 << (id.idx() % 64);
                     }
@@ -662,8 +662,8 @@ impl<'a> File<'a> {
     fn unmangled_private_name(&'a self, atom: Atom) -> Name<'a> {
         let spelled = self.atoms.bytes(atom);
         match bun_sema::atom::written_name(spelled) {
-            written if written.len() == spelled.len() => self.name(atom),
-            written => self.intern(written),
+            unmangled if unmangled.len() == spelled.len() => self.name(atom),
+            unmangled => self.intern(unmangled),
         }
     }
 
@@ -721,7 +721,7 @@ impl<'a> File<'a> {
         };
         let parens = self.hir.parens;
         let after = parens.partition_point(|p| p.0.0 <= operand.0);
-        let place = match after.checked_sub(1).map(|last| parens[last]) {
+        let operand_range = match after.checked_sub(1).map(|last| parens[last]) {
             Some((of, start, end)) if of == operand => (start, end),
             _ => self
                 .hir
@@ -729,12 +729,12 @@ impl<'a> File<'a> {
                 .get(operand.idx())
                 .map(|it| (it.pos, it.end))?,
         };
-        (place == (cast.pos, cast.end)).then_some(operand)
+        (operand_range == (cast.pos, cast.end)).then_some(operand)
     }
 
     /// The cast synthesized from a JSDoc comment around the expression `id`, if any.
     #[inline]
-    pub(crate) fn jsdoc_cast_around(&self, id: hir::ExprId) -> Option<hir::ExprId> {
+    pub(crate) fn enclosing_jsdoc_cast(&self, id: hir::ExprId) -> Option<hir::ExprId> {
         if !self.hides_casts {
             return None;
         }
@@ -749,7 +749,7 @@ impl<'a> File<'a> {
     /// `id`, or the outermost JSDoc-synthesized cast around it.
     #[inline]
     pub(crate) fn with_jsdoc_casts(&self, mut id: hir::ExprId) -> hir::ExprId {
-        while let Some(cast) = self.jsdoc_cast_around(id) {
+        while let Some(cast) = self.enclosing_jsdoc_cast(id) {
             id = cast;
         }
         id
@@ -764,7 +764,7 @@ impl<'a> File<'a> {
 
     /// `id`, or its operand if it's a cast synthesized from a JSDoc comment.
     #[inline]
-    pub(crate) fn written_expr(&self, id: hir::ExprId) -> hir::ExprId {
+    pub(crate) fn unwrap_jsdoc_casts(&self, id: hir::ExprId) -> hir::ExprId {
         match self.hides_casts {
             true => self.without_jsdoc_casts(id),
             false => id,
@@ -780,15 +780,19 @@ impl<'a> File<'a> {
     }
 
     /// `flags` without the modifiers that come from JSDoc tags such as `@private`. Of those flags, it keeps only the
-    /// ones in `written`, the modifiers in the source.
+    /// ones in `source_modifiers`, the modifiers in the source.
     #[inline]
-    pub(crate) fn written_flags(&'a self, flags: Flags, written: List<'a, Modifier<'a>>) -> Flags {
+    pub(crate) fn source_flags(
+        &'a self,
+        flags: Flags,
+        source_modifiers: List<'a, Modifier<'a>>,
+    ) -> Flags {
         if !self.has_synthetic_nodes() {
             return flags;
         }
         let from_tags =
             Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE | Flags::READONLY | Flags::OVERRIDE;
-        let keywords = written
+        let keywords = source_modifiers
             .iter()
             .fold(Flags::empty(), |all, it| all | it.flag());
         (flags - from_tags) | (keywords & from_tags)
@@ -847,8 +851,8 @@ macro_rules! handle {
             $name, $id, $field, $raw, |_: &$crate::ast::File, id: ::bun_sema::hir::$id| id
         }
     };
-    // `$written` maps the file and a HIR id to the id of the node that's actually in the source.
-    ($(#[$doc:meta])* $name:ident, $id:ident, $field:ident, $raw:ident, $written:expr) => {
+    // `$to_source_id` maps the file and a HIR id to the id of the node that's actually in the source.
+    ($(#[$doc:meta])* $name:ident, $id:ident, $field:ident, $raw:ident, $to_source_id:expr) => {
         $(#[$doc])*
         #[derive(Copy, Clone)]
         pub struct $name<'a> {
@@ -859,7 +863,7 @@ macro_rules! handle {
         impl<'a> $name<'a> {
             #[inline]
             pub(crate) fn new(file: &'a $crate::ast::File<'a>, id: ::bun_sema::hir::$id) -> Self {
-                $name { file, id: ($written)(file, id) }
+                $name { file, id: ($to_source_id)(file, id) }
             }
 
             /// The node's index in the HIR, which is what the type checker's API takes.

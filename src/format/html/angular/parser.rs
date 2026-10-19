@@ -13,7 +13,7 @@
 //!   `11111`, and an escape sequence or a line break in a string becomes `_`.
 //!
 //! Names, numbers and strings are printed as they are in the source, not as they're parsed. The JavaScript formatter
-//! reads them from a second text, the `shown` field of `Code::TypeScript`.
+//! reads them from a second text, the `display_code` field of `Code::TypeScript`.
 
 use super::lexer::{Kind, Token, tokenize};
 use bun_core::strings;
@@ -34,7 +34,7 @@ pub(crate) enum Code {
         code: Vec<u8>,
         /// A copy of `code` with the same length, for code that prints or inspects the source text: every name is as
         /// written, and the added parentheses are spaces. `None` if it would equal `code`.
-        shown: Option<Vec<u8>>,
+        display_code: Option<Vec<u8>>,
     },
 }
 
@@ -75,10 +75,10 @@ pub(super) struct Operand {
 enum Change {
     /// Insert `)` before the byte, to end the arguments of a pipe.
     EndArguments,
-    /// Insert `)` before the byte. It's shown as a space, so code that looks at what follows an expression sees the
-    /// source text.
+    /// Insert `)` before the byte. It's a space in `display_code`, so code that looks at what follows an expression
+    /// sees the source text.
     Close,
-    /// Insert `(` before the byte. It's shown as a space.
+    /// Insert `(` before the byte. It's a space in `display_code`.
     Open,
     /// Replace the byte.
     Put(u8),
@@ -477,10 +477,11 @@ impl<'i> Parser<'i> {
             };
         }
         let (start, end) = (operand.start, operand.end);
-        let first_blank = self
+        let first_whitespace = self
             .angular_only_whitespace
             .partition_point(|at| *at < start);
-        for index in first_blank..self.angular_only_whitespace.partition_point(|at| *at < end) {
+        for index in first_whitespace..self.angular_only_whitespace.partition_point(|at| *at < end)
+        {
             self.edit(self.angular_only_whitespace[index], Change::Put(b' '));
         }
         crate::sort::sort_by_key(&mut self.edits[..], |edit| {
@@ -523,15 +524,15 @@ impl<'i> Parser<'i> {
         }
         code.extend_from_slice(self.input.get(from..end as usize).unwrap_or_default());
         code.extend_from_slice(b"\n)");
-        let shown = (!hidden.is_empty()).then(|| {
-            let mut shown = code.clone();
+        let display_code = (!hidden.is_empty()).then(|| {
+            let mut display_code = code.clone();
             for (at, byte) in hidden {
-                shown[at] = byte;
+                display_code[at] = byte;
             }
-            shown
+            display_code
         });
         Expression {
-            code: Code::TypeScript { code, shown },
+            code: Code::TypeScript { code, display_code },
             has_side_effect,
         }
     }
@@ -958,7 +959,7 @@ impl<'i> Parser<'i> {
 
     fn parse_regular_expression_literal(&mut self) -> Parsed<()> {
         // Angular accepts `//`, which starts a comment in TypeScript. An identifier works because it's also printed
-        // from `shown`.
+        // from `display_code`.
         let body = self.next();
         if body.end - body.start == 2 {
             self.edit(body.start, Change::Hide(b'_'));

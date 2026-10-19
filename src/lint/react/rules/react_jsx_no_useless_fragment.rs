@@ -55,9 +55,9 @@ impl Rule for JsxNoUselessFragment {
             false => is_fragment(it, cx.state.react, cx.state.fragment),
         };
         // oxlint also keeps a fragment that has a `ref`.
-        let is_kept = |name: Name| name.is("key") || (is_oxlint && name.is("ref"));
+        let requires_fragment = |name: Name| name.is("key") || (is_oxlint && name.is("ref"));
         if !jsx.is_fragment()
-            && (!is_fragment_element(jsx) || jsx.attrs().iter().filter_map(|it| it.key()?.name()).any(is_kept))
+            && (!is_fragment_element(jsx) || jsx.attrs().iter().filter_map(|it| it.key()?.name()).any(requires_fragment))
         {
             return;
         }
@@ -86,7 +86,7 @@ impl Rule for JsxNoUselessFragment {
                 parent.is_fragment() || is_html || is_fragment_element(parent)
             }
         };
-        let report = |message: Message, of_oxlint: Message| {
+        let report = |message: Message, oxlint_message: Message| {
             let fix = |fixer: Fixer<'a>| {
                 let inside =
                     jsx.closing_span().map_or(&b""[..], |closing| file.slice(jsx.opening_span().between(closing)));
@@ -94,8 +94,8 @@ impl Rule for JsxNoUselessFragment {
             };
             // oxlint reports the opening tag, and suggests what upstream fixes.
             match (is_oxlint, can_fix()) {
-                (true, true) => cx.report(jsx.opening_span(), of_oxlint).suggest(of_oxlint, fix),
-                (true, false) => cx.report(jsx.opening_span(), of_oxlint),
+                (true, true) => cx.report(jsx.opening_span(), oxlint_message).suggest(oxlint_message, fix),
+                (true, false) => cx.report(jsx.opening_span(), oxlint_message),
                 (false, true) => cx.report(e, message).fix(fix),
                 (false, false) => cx.report(e, message),
             };

@@ -991,10 +991,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             ModifierKind::Decorator(_) => false,
         };
-        let written = self.s.modifiers.get(first_modifier..).unwrap_or_default();
+        let own_modifiers = self.s.modifiers.get(first_modifier..).unwrap_or_default();
         if member.func.is_some()
             && member.kind != MemberKind::IndexSignature
-            && written.iter().any(is_variance)
+            && own_modifiers.iter().any(is_variance)
         {
             self.fail();
         }
@@ -1304,8 +1304,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// have decorators.
     pub(crate) fn flow_reject_decorators(&mut self, base: usize) {
         let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
-        let written = self.s.modifiers.get(base..).unwrap_or_default();
-        if written.iter().any(is_decorator) {
+        let own_modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+        if own_modifiers.iter().any(is_decorator) {
             self.fail();
         }
     }
@@ -1655,10 +1655,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 (FnBody::None, 0)
             }
         };
-        let kept = Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC;
+        let retained_flags = Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC;
         let func = self.f.add_fn(Func {
             kind: FnKind::Decl,
-            flags: flags & kept,
+            flags: flags & retained_flags,
             name,
             name_pos,
             type_params,
@@ -1846,7 +1846,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 kind:
                     ExprKind::Instantiation {
                         expr,
-                        type_args: written,
+                        type_args: instantiation_args,
                     },
                 ..
             }) = self.f.exprs.last()
@@ -1855,7 +1855,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return None;
             }
             self.pop_expr();
-            (constructor, type_args) = (expr, self.f.list_at(written));
+            (constructor, type_args) = (expr, self.f.list_at(instantiation_args));
         } else if !is_constructor(self, expression) {
             return None;
         }

@@ -419,10 +419,10 @@ fn merge_imports_fix<'a>(
     let (&first, rest) = decls.split_first()?;
     let mut newlines = [NextNewlines::default(), NextNewlines::default()];
     // oxlint only merges imports with the same written specifier and without attributes.
-    let is_other = |it: &Import<'a>| {
+    let is_unmergeable = |it: &Import<'a>| {
         it.spec() != first.spec() || it.attributes().is_some() || it.phase().is_some()
     };
-    if is_oxlint && decls.iter().any(is_other)
+    if is_oxlint && decls.iter().any(is_unmergeable)
         || first.namespace().is_some()
         || has_problematic_comments(first, &mut newlines, is_oxlint)
     {

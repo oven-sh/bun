@@ -45,10 +45,10 @@ pub fn to_native(mut path: Vec<u8>) -> Vec<u8> {
     path
 }
 
-/// Converts `written`, a path written in the file at `from` or in a file in the directory `from`. If `from` is a
+/// Converts `raw_path`, a path written in the file at `from` or in a file in the directory `from`. If `from` is a
 /// Windows path, `\` is also a separator.
-pub fn portable(from: &[u8], written: &[u8]) -> Vec<u8> {
-    from_node_path(Style::of(from), written)
+pub fn portable(from: &[u8], raw_path: &[u8]) -> Vec<u8> {
+    from_node_path(Style::of(from), raw_path)
 }
 
 /// Converts a result from `bun_node_path`, which uses `\` in Windows paths.
@@ -103,15 +103,15 @@ pub fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
 }
 
 /// Escapes `path` for display. A file name can contain a line break or a terminal escape sequence.
-pub fn shown(path: &[u8]) -> Vec<u8> {
+pub fn escaped(path: &[u8]) -> Vec<u8> {
     bun_core::fmt::escape_control_chars(path)
         .to_string()
         .into_bytes()
 }
 
-/// [`relative`], escaped by [`shown`].
+/// [`relative`], passed through [`escaped`].
 pub fn relative_escaped(base: &[u8], path: &[u8]) -> Vec<u8> {
-    shown(&relative(base, path))
+    escaped(&relative(base, path))
 }
 
 pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {

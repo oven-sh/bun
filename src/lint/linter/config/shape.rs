@@ -63,7 +63,7 @@ const CATEGORIES: &[&str] = &[
     "nursery",
 ];
 
-fn refusal(parts: &[&[u8]]) -> ConfigError {
+fn parse_error(parts: &[&[u8]]) -> ConfigError {
     ConfigError::new(&[
         b"Failed to parse config with error Error(\"",
         &parts.concat(),
@@ -71,8 +71,8 @@ fn refusal(parts: &[&[u8]]) -> ConfigError {
     ])
 }
 
-/// Like [`refusal`], for text that isn't escaped as a Rust string yet.
-fn refusal_from_text(text: &[u8]) -> ConfigError {
+/// Like [`parse_error`], for text that isn't escaped as a Rust string yet.
+fn parse_error_from_text(text: &[u8]) -> ConfigError {
     let mut message = b"Failed to parse config with error Error(".to_vec();
     write_debug(&mut message, text);
     message.extend_from_slice(b", line: 0, column: 0)");
@@ -80,7 +80,7 @@ fn refusal_from_text(text: &[u8]) -> ConfigError {
 }
 
 fn wrong_kind(found: &Json, expected: &str) -> ConfigError {
-    refusal_from_text(&wrong_type(found, expected.as_bytes()))
+    parse_error_from_text(&wrong_type(found, expected.as_bytes()))
 }
 
 type Entries = [(Vec<u8>, Json)];
@@ -109,7 +109,7 @@ fn global(json: &Json) -> Result<(), ConfigError> {
         Json::Bool(_) => Ok(()),
         Json::String(it) => match &it[..] {
             b"readonly" | b"readable" | b"writable" | b"writeable" | b"off" => Ok(()),
-            _ => Err(refusal(&[b"Invalid global value"])),
+            _ => Err(parse_error(&[b"Invalid global value"])),
         },
         _ => Err(wrong_kind(
             json,
@@ -134,7 +134,7 @@ fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), Confi
         return Ok(());
     };
     let known: Vec<String> = known.iter().map(|it| format!("`{it}`")).collect();
-    Err(refusal(&[
+    Err(parse_error(&[
         b"unknown ",
         what.as_bytes(),
         b" `",
@@ -144,9 +144,9 @@ fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), Confi
     ]))
 }
 
-/// The error that oxlint and oxfmt give for the pattern `written`. `None` if they accept it.
-pub fn glob_error(written: &[u8]) -> Option<Vec<u8>> {
-    let Unclosed { kind, at } = unclosed(written)?;
+/// The error that oxlint and oxfmt give for the pattern `glob`. `None` if they accept it.
+pub fn glob_error(glob: &[u8]) -> Option<Vec<u8>> {
+    let Unclosed { kind, at } = unclosed(glob)?;
     let (what, open, close) = match kind {
         UnclosedKind::Class => ("character class", '[', ']'),
         UnclosedKind::Braces => ("brace expansion", '{', '}'),
@@ -154,13 +154,13 @@ pub fn glob_error(written: &[u8]) -> Option<Vec<u8>> {
             let why = format!(
                 "`: trailing backslash at byte {at} has no character to escape (to match a literal '\\', use '\\\\')"
             );
-            return Some([b"Invalid glob pattern `", written, why.as_bytes()].concat());
+            return Some([b"Invalid glob pattern `", glob, why.as_bytes()].concat());
         }
     };
     let why = format!(
         "`: unclosed {what} at byte {at}; missing '{close}' (to match a literal '{open}', escape it as '\\{open}' or '[{open}]')"
     );
-    Some([b"Invalid glob pattern `", written, why.as_bytes()].concat())
+    Some([b"Invalid glob pattern `", glob, why.as_bytes()].concat())
 }
 
 /// Checks a value that both a file and an override can have.
@@ -171,7 +171,7 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
             strings(json)?;
             let patterns = json.as_array().unwrap_or_default().iter();
             match patterns.filter_map(Json::as_str).find_map(glob_error) {
-                Some(why) => Err(refusal(&[&bytes::replace_owned(&why, b"\\", b"\\\\")])),
+                Some(why) => Err(parse_error(&[&bytes::replace_owned(&why, b"\\", b"\\\\")])),
                 None => Ok(()),
             }
         }
@@ -252,7 +252,7 @@ fn severity(json: &Json) -> Result<(), ConfigError> {
             write_debug_of_value(&mut text, other);
         }
     }
-    Err(refusal_from_text(&text))
+    Err(parse_error_from_text(&text))
 }
 
 /// Checks a rule's setting: a severity, or a list that starts with one.
@@ -268,7 +268,7 @@ fn rule(json: &Json) -> Result<(), ConfigError> {
     let mut text = b"Failed to rule value ".to_vec();
     write_debug(&mut text, &compact(json));
     text.extend_from_slice(&[b" with error \"Type should be `", expected, b"`\""].concat());
-    Err(refusal_from_text(&text))
+    Err(parse_error_from_text(&text))
 }
 
 /// `settings.jest.version`: a number, or a string that starts with one.
@@ -295,12 +295,12 @@ fn jest_version(version: &Json) -> Result<(), ConfigError> {
             return Err(wrong_kind(version, expected));
         }
     }
-    Err(refusal_from_text(&why))
+    Err(parse_error_from_text(&why))
 }
 
 /// `settings.react.version` is up to three numbers separated by dots.
 fn settings(json: &Json) -> Result<(), ConfigError> {
-    check_as(SETTINGS, json).map_err(|why| refusal_from_text(&why))?;
+    check_as(SETTINGS, json).map_err(|why| parse_error_from_text(&why))?;
     if let Some(version) = json.get(b"jest").and_then(|it| it.get(b"version")) {
         jest_version(version)?;
     }
@@ -313,7 +313,7 @@ fn settings(json: &Json) -> Result<(), ConfigError> {
         return Err(wrong_kind(version, expected));
     };
     if text.is_empty() {
-        return Err(refusal(&[
+        return Err(parse_error(&[
             b"version string cannot be empty for settings.react.version",
         ]));
     }
@@ -322,7 +322,7 @@ fn settings(json: &Json) -> Result<(), ConfigError> {
     for (name, part) in ["major", "minor", "patch"].iter().zip(&mut parts) {
         if !is_number(part) {
             let name = name.as_bytes();
-            return Err(refusal(&[
+            return Err(parse_error(&[
                 b"invalid ",
                 name,
                 b" version in settings.react.version",
@@ -330,7 +330,7 @@ fn settings(json: &Json) -> Result<(), ConfigError> {
         }
     }
     match parts.next() {
-        Some(_) => Err(refusal(&[
+        Some(_) => Err(parse_error(&[
             b"version string in settings.react.version has too many components, expected major.minor.patch",
         ])),
         None => Ok(()),
@@ -347,7 +347,7 @@ fn check_override_list(items: &[Json]) -> Result<(), ConfigError> {
             None if matches!(*key, "files" | "env" | "globals") => {
                 let why =
                     format!("invalid length {at}, expected struct OxlintOverride with 7 elements");
-                return Err(refusal_from_text(why.as_bytes()));
+                return Err(parse_error_from_text(why.as_bytes()));
             }
             None => {}
         }
@@ -357,7 +357,7 @@ fn check_override_list(items: &[Json]) -> Result<(), ConfigError> {
             "invalid length {}, expected fewer elements in array",
             items.len()
         );
-        return Err(refusal_from_text(why.as_bytes()));
+        return Err(parse_error_from_text(why.as_bytes()));
     }
     Ok(())
 }
@@ -384,11 +384,11 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
             b"categories" => {
                 for entry in map(json, "a map")? {
                     known_keys(std::slice::from_ref(entry), CATEGORIES, "variant")?;
-                    check_as(b"A", &entry.1).map_err(|why| refusal_from_text(&why))?;
+                    check_as(b"A", &entry.1).map_err(|why| parse_error_from_text(&why))?;
                 }
             }
             b"settings" => settings(json)?,
-            b"options" => check_as(OPTIONS, json).map_err(|why| refusal_from_text(&why))?,
+            b"options" => check_as(OPTIONS, json).map_err(|why| parse_error_from_text(&why))?,
             b"extends" => {
                 let is_known = |it: &&Json| it.as_str().is_some() || it.as_object().is_some();
                 if let Some(other) = sequence(json)?.iter().find(|it| !is_known(it)) {
@@ -404,7 +404,7 @@ pub(super) fn check(json: &Json) -> Result<(), ConfigError> {
                     let entries = map(item, "struct OxlintOverride")?;
                     known_keys(entries, KEYS_OF_OVERRIDES, "field")?;
                     if item.get(b"files").is_none() {
-                        return Err(refusal(&[b"missing field `files`"]));
+                        return Err(parse_error(&[b"missing field `files`"]));
                     }
                     let mut entries =
                         (entries.iter()).filter(|it| is_present(it, NULLABLE_IN_OVERRIDES));

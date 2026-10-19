@@ -151,7 +151,7 @@ enum AwaitContext {
     /// `IsInTopLevelContext`, and not in an await context.
     TopLevel,
     /// In a function that isn't `async`, a property's initializer, an enum or a namespace.
-    Elsewhere,
+    Other,
 }
 
 // `nodeLinks.hasReportedStatementInAmbientContext`, next to those of errors_collisions.rs
@@ -207,7 +207,7 @@ impl Checker<'_, '_> {
                 return false;
             };
         // `grammarErrorOnFirstToken`
-        if !self.grammar_error_at(self.place_of_token(file, hir.start(node)), code, &[]) {
+        if !self.grammar_error_at(self.span_of_token(file, hir.start(node)), code, &[]) {
             return false;
         }
         *self.node_check_flags.entry(links).or_default() |= has_reported;
@@ -407,18 +407,19 @@ impl Checker<'_, '_> {
     /// checked.
     pub(super) fn check_empty_then_statement(&mut self, file: FileId, s: StmtId, then: StmtId) {
         let hir = self.hir(file);
-        let (text, written) = (&hir.text[..], hir[then].start);
-        let start = if written > hir[s].start && text.get(written as usize) == Some(&b';') {
-            written as usize
-        } else if let StmtKind::If { test, .. } = hir[s].kind
-            && let close = skip_trivia(text, self.end_of_expr(file, test) as usize)
-            && text.get(close) == Some(&b')')
-        {
-            // An empty statement may have no recorded position.
-            skip_trivia(text, close + 1)
-        } else {
-            return;
-        };
+        let (text, recorded_start) = (&hir.text[..], hir[then].start);
+        let start =
+            if recorded_start > hir[s].start && text.get(recorded_start as usize) == Some(&b';') {
+                recorded_start as usize
+            } else if let StmtKind::If { test, .. } = hir[s].kind
+                && let close = skip_trivia(text, self.end_of_expr(file, test) as usize)
+                && text.get(close) == Some(&b')')
+            {
+                // An empty statement may have no recorded position.
+                skip_trivia(text, close + 1)
+            } else {
+                return;
+            };
         if text.get(start) == Some(&b';') {
             self.error_at((file, start as u32, 0), 1313, &[]);
         }
@@ -457,7 +458,7 @@ impl Checker<'_, '_> {
                 AwaitContext::TopLevel => {
                     self.check_top_level_await(file, start, 1431, 1432);
                 }
-                AwaitContext::Elsewhere => {
+                AwaitContext::Other => {
                     let related = self.function_to_mark_async(file, hir.node(s), true);
                     let diagnostic = self.error_at((file, start, 0), 1103, &[]);
                     diagnostic.related_information.extend(related);
@@ -474,7 +475,7 @@ impl Checker<'_, '_> {
                     && !is_parenthesized(hir, target)
                     && matches!(
                         self.await_context_of(file, hir.node(s)),
-                        AwaitContext::TopLevel | AwaitContext::Elsewhere
+                        AwaitContext::TopLevel | AwaitContext::Other
                     )
                 {
                     self.grammar_error_on_node(file, target, 1106, &[]);
@@ -538,11 +539,11 @@ impl Checker<'_, '_> {
         };
         let start = self.start_after_modifiers(file, s);
         let at = (file, start, end);
-        let around = match bound.parent_of_stmt(s) {
+        let parent_statement_kind = match bound.parent_of_stmt(s) {
             Parent::Stmt(p) if p.is_some() => Some(hir[p].kind),
             _ => None,
         };
-        let codes = match around {
+        let codes = match parent_statement_kind {
             Some(StmtKind::ForIn { left, .. }) if left == s => Some([1493, 1494]),
             _ if hir[first].flags.contains(Flags::AMBIENT) => Some([1545, 1546]),
             // A clause's statements have the `switch` as their parent.
@@ -716,7 +717,7 @@ impl Checker<'_, '_> {
             }
             _ if has_parse_diagnostics(hir) => false,
             AwaitContext::TopLevel => self.check_top_level_await(file, start, codes[1], codes[2]),
-            AwaitContext::Elsewhere => {
+            AwaitContext::Other => {
                 let related = self.function_to_mark_async(file, node, false);
                 let diagnostic = self.error_at((file, start, 0), codes[3], &[]);
                 diagnostic.related_information.extend(related);
@@ -801,7 +802,7 @@ impl Checker<'_, '_> {
         } else if hir.is_in_top_level_context(node) {
             AwaitContext::TopLevel
         } else {
-            AwaitContext::Elsewhere
+            AwaitContext::Other
         }
     }
 
@@ -839,7 +840,7 @@ impl Checker<'_, '_> {
         let at = self.error_start_of(file, decl.init);
         // An anonymous function uses the variable's name.
         let at = if at == hir[decl.pat].pos {
-            self.place_of_token(file, at)
+            self.span_of_token(file, at)
         } else {
             (file, at, self.error_end_of(file, decl.init))
         };
@@ -963,7 +964,7 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // The statements in which `await` was parsed as an identifier, and whether the statement ended directly after
         // it.
-        let mut noted: Vec<(StmtId, bool)> = Vec::new();
+        let mut flagged: Vec<(StmtId, bool)> = Vec::new();
         if let Some(name) = self.atoms().lookup(b"await") {
             for &e in index.of(ExprTag::Ident) {
                 // `parsePropertyName` restores it, and to the parser `{ await }` is only a property name.
@@ -971,7 +972,7 @@ impl Checker<'_, '_> {
                     && !matches!(bound.parent_of_expr(e), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
                     && let Some(s) = self.statement_with_await_identifier(file, e)
                 {
-                    noted.push((s, false));
+                    flagged.push((s, false));
                 }
             }
             // `newIdentifier`: also after a dot.
@@ -979,7 +980,7 @@ impl Checker<'_, '_> {
                 if matches!(hir[e].kind, ExprKind::Dot { name: n, .. } if n == name)
                     && let Some(s) = self.statement_with_await_identifier(file, e)
                 {
-                    noted.push((s, false));
+                    flagged.push((s, false));
                 }
             }
         }
@@ -990,31 +991,31 @@ impl Checker<'_, '_> {
                 AfterAwait::Ends => true,
             };
             if let Some(s) = self.statement_with_await_identifier(file, e) {
-                noted.push((s, ends));
+                flagged.push((s, ends));
             }
         }
-        let mut again = Vec::new();
-        if noted.is_empty() {
-            return again;
+        let mut reparsed = Vec::new();
+        if flagged.is_empty() {
+            return reparsed;
         }
-        let is_noted = |s: StmtId| noted.iter().any(|n| n.0 == s);
+        let is_flagged = |s: StmtId| flagged.iter().any(|n| n.0 == s);
         let mut continues = false;
         let mut statements = hir.ids(hir.body).peekable();
         while let Some(s) = statements.next() {
-            let is_one = is_noted(s);
-            if is_one || continues {
-                again.push(s);
+            let is_flagged_here = is_flagged(s);
+            if is_flagged_here || continues {
+                reparsed.push(s);
             }
-            if is_one {
-                if noted.iter().any(|n| n.0 == s && n.1) {
+            if is_flagged_here {
+                if flagged.iter().any(|n| n.0 == s && n.1) {
                     continues = true;
-                } else if !statements.peek().is_some_and(|&next| is_noted(next)) {
+                } else if !statements.peek().is_some_and(|&next| is_flagged(next)) {
                     continues = false;
                 }
             }
         }
-        again.shared_sort_unstable();
-        again
+        reparsed.shared_sort_unstable();
+        reparsed
     }
 
     /// The statement of the file whose `statementHasAwaitIdentifier` is set by the identifier `await` at `e`. `None` if

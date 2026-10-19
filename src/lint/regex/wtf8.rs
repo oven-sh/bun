@@ -38,7 +38,7 @@ pub(crate) fn trail_surrogate(cp: u32) -> u32 {
 
 /// If `i` is between the two halves of a four-byte character, returns that character.
 #[inline]
-fn astral_around(s: &[u8], i: usize) -> Option<u32> {
+fn astral_split_at(s: &[u8], i: usize) -> Option<u32> {
     let start = i.checked_sub(2)?;
     let lead = *s.get(start)?;
     if lead < 0xF0 {
@@ -63,7 +63,7 @@ pub(crate) fn unit_at(s: &[u8], i: usize) -> (u32, usize) {
 /// Kept out of line so that the ASCII fast path in `unit_at` gets inlined.
 fn unit_outside_ascii_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
     if b & 0xC0 == 0x80 {
-        return match astral_around(s, i) {
+        return match astral_split_at(s, i) {
             Some(cp) => (trail_surrogate(cp), 2),
             None => (REPLACEMENT, 1),
         };

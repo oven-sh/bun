@@ -105,13 +105,13 @@ fn check<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUselessSpread>) {
         ExprKind::Object(properties) if properties.len() == 1 => false,
         _ => return,
     };
-    let around = match list.parent() {
+    let outer_list = match list.parent() {
         Node::Expr(outer) if outer.tag() == ExprTag::Spread && outer.jsx_container_span().is_none() => outer.parent(),
         Node::Prop(outer) if outer.kind() == PropKind::Spread && !outer.is_jsx_attribute() => outer.parent(),
         _ => Node::File(cx.file()),
     };
     // Then it's reported as `...list` instead.
-    if matches!(around, Node::Expr(around) if is_useless_spread_in_list(list.tag(), around.tag())) {
+    if matches!(outer_list, Node::Expr(outer_list) if is_useless_spread_in_list(list.tag(), outer_list.tag())) {
         return;
     }
     if !(is_array && check_useless_iterable_to_array(spread, cx)) {

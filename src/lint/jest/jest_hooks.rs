@@ -229,14 +229,14 @@ pub(crate) mod require_hook {
             });
         }
 
-        /// `around` is the program or the `describe` call that oxlint's rule is called with.
+        /// `enclosing` is the program or the `describe` call that oxlint's rule is called with.
         fn check_block_body<'a>(
             &self,
             statements: List<'a, Stmt<'a>>,
-            around: Node<'a>,
+            enclosing: Node<'a>,
             ctx: &Ctx<'a, '_>,
         ) {
-            let report = |at: Span| drop(ctx.report(at, USE_HOOK).called_with(around));
+            let report = |at: Span| drop(ctx.report(at, USE_HOOK).called_with(enclosing));
             for stmt in statements {
                 if let Some(expr) = stmt.as_expr() {
                     if let Some(call_expr) = expr.as_call()

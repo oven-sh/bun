@@ -98,8 +98,8 @@ fn oxlint_is_directive(comment: Token, value: &[u8]) -> bool {
         b"oxfmt-ignore",
     ];
     let rest = strings::trim_js_whitespace_start(value);
-    let may_be_named = matches!(rest.first(), Some(b'e' | b'o' | b'j' | b'i' | b'g' | b'p'));
-    if may_be_named && DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
+    let may_be_directive = matches!(rest.first(), Some(b'e' | b'o' | b'j' | b'i' | b'g' | b'p'));
+    if may_be_directive && DIRECTIVES.iter().any(|it| rest.starts_with(it)) || oxlint_is_url(rest) {
         return true;
     }
     let mut lines = strings::split(value, b"\n").map(|line| {

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// Selects the formatter whose output is produced.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Like {
+pub enum FormatterKind {
     /// The output of the `prettier` that `eslint-plugin-prettier` would load, for `prettier/prettier`. It has to be a
     /// version whose output `bun fmt` matches.
     InstalledPrettier,
@@ -22,7 +22,7 @@ pub enum Like {
 }
 
 pub struct Request<'r> {
-    pub like: Like,
+    pub formatter_kind: FormatterKind,
     /// ESLint's `physicalFilename`.
     pub path_on_disk: &'r [u8],
     /// ESLint's `filename`. It differs from `path_on_disk` for a block that a processor extracted from the file.
@@ -37,8 +37,8 @@ pub struct Request<'r> {
     pub file_info_options: Option<&'r Json>,
     /// [`File::package_module`]
     pub package_module: Option<&'r [u8]>,
-    /// Only used with [`Like::InstalledPrettier`]. If set, the output has to match the installed packages, so their versions
-    /// are checked. Otherwise nothing has to be installed.
+    /// Only used with [`FormatterKind::InstalledPrettier`]. If set, the output has to match the installed packages, so
+    /// their versions are checked. Otherwise nothing has to be installed.
     pub follows_packages: bool,
 }
 
@@ -62,7 +62,7 @@ pub enum Reason {
     /// `bun fmt` found a syntax error, and its message differs from Prettier's.
     SyntaxError,
     /// `bun fmt` couldn't verify its own output.
-    Refused,
+    Unverified,
     /// `sortTailwindcss` is on, and Tailwind CSS hasn't been queried about one of the classes.
     Classes,
     /// [`File::formatter`] is `None`.
@@ -81,7 +81,7 @@ impl Reason {
             Reason::Option => "bun fmt does not support one of the options",
             Reason::Configuration => "the Prettier config cannot be read",
             Reason::SyntaxError => "bun fmt found a syntax error",
-            Reason::Refused => "bun fmt could not verify its output",
+            Reason::Unverified => "bun fmt could not verify its output",
             Reason::Classes => "only bun fmt can sort Tailwind CSS classes",
             Reason::NoFormatter => "there is no formatter",
         }

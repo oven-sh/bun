@@ -152,7 +152,7 @@ pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)
     // `.split(/\s|,+/u)`
     let mut items: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
     // Each name's index in `items`, once there are many.
-    let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+    let mut index_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
     let mut at = 0;
     while at < collapsed.len() {
         let start = at;
@@ -170,18 +170,18 @@ pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)
         let mut parts = strings::split(name, b":");
         let key = parts.next().unwrap_or_default();
         let value = parts.next().map(<[u8]>::to_vec);
-        if items.len() == LINEAR_SEARCH_MAX && places.is_empty() {
-            places.extend(items.iter().enumerate().map(|(i, it)| (it.0.clone(), i)));
+        if items.len() == LINEAR_SEARCH_MAX && index_by_key.is_empty() {
+            index_by_key.extend(items.iter().enumerate().map(|(i, it)| (it.0.clone(), i)));
         }
-        let place = match items.len() {
+        let existing_index = match items.len() {
             0..LINEAR_SEARCH_MAX => items.iter().position(|it| it.0 == key),
-            _ => places.get(key).copied(),
+            _ => index_by_key.get(key).copied(),
         };
-        match place.and_then(|it| items.get_mut(it)) {
+        match existing_index.and_then(|it| items.get_mut(it)) {
             Some(item) => item.1 = value,
             None => {
                 if items.len() >= LINEAR_SEARCH_MAX {
-                    places.insert(key.to_vec(), items.len());
+                    index_by_key.insert(key.to_vec(), items.len());
                 }
                 items.push((key.to_vec(), value));
             }

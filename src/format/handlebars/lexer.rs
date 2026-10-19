@@ -1,7 +1,7 @@
 //! The lexer of `@handlebars/parser` (`src/handlebars.l`). In each state, the first rule that matches wins.
 
 use super::Error;
-use crate::syntax_error::{Message, Refusal};
+use crate::syntax_error::{Message, Rejection};
 use bun_collections::ByteSet;
 use bun_core::strings;
 
@@ -113,7 +113,7 @@ fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
 
 struct Lexer<'a> {
     text: &'a [u8],
-    refusal: &'a Refusal,
+    rejection: &'a Rejection,
     at: usize,
     states: Vec<State>,
     tokens: &'a mut Vec<Token>,
@@ -160,7 +160,7 @@ impl Lexer<'_> {
     /// Reports `message` at the lexer's position.
     #[cold]
     fn error(&self, message: Message) -> Error {
-        Error::Syntax(self.refusal.note(message, self.at as u32))
+        Error::Syntax(self.rejection.note(message, self.at as u32))
     }
 
     fn initial(&mut self) -> Result<(), Error> {
@@ -400,9 +400,9 @@ impl Lexer<'_> {
                     return Ok(());
                 }
                 if let Some(after) = rest.strip_prefix(b"as") {
-                    let blanks = crate::text::leading_white_space_len(after);
-                    if blanks > 0 && after.get(blanks) == Some(&b'|') {
-                        self.token(TokenKind::OpenBlockParams, 2 + blanks + 1);
+                    let whitespace_len = crate::text::leading_white_space_len(after);
+                    if whitespace_len > 0 && after.get(whitespace_len) == Some(&b'|') {
+                        self.token(TokenKind::OpenBlockParams, 2 + whitespace_len + 1);
                         return Ok(());
                     }
                 }
@@ -413,7 +413,7 @@ impl Lexer<'_> {
                         false => Message::UnexpectedCharacter,
                     };
                     return Err(Error::Syntax(
-                        self.refusal.note(message, (self.at + len) as u32),
+                        self.rejection.note(message, (self.at + len) as u32),
                     ));
                 }
                 self.token(TokenKind::Id, len);
@@ -447,10 +447,14 @@ fn number_len(text: &[u8]) -> Option<usize> {
 }
 
 /// Writes the tokens of `text` to `tokens`, which must be empty. The last one is `Eof`.
-pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, refusal: &Refusal) -> Result<(), Error> {
+pub(crate) fn lex(
+    text: &[u8],
+    tokens: &mut Vec<Token>,
+    rejection: &Rejection,
+) -> Result<(), Error> {
     let mut lexer = Lexer {
         text,
-        refusal,
+        rejection,
         at: 0,
         states: vec![State::Initial],
         tokens,

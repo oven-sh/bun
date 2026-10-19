@@ -104,11 +104,11 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
                 });
         }
     }
-    for alike in utils::sort::collect_sorted_by_key(member_expressions.values(), |it| {
+    for same_hash_group in utils::sort::collect_sorted_by_key(member_expressions.values(), |it| {
         it.first().map(|it| it.1.start)
     }) {
-        for (i, &(left, left_span)) in alike.iter().enumerate() {
-            for &(right, right_span) in alike.iter().skip(i + 1) {
+        for (i, &(left, left_span)) in same_hash_group.iter().enumerate() {
+            for &(right, right_span) in same_hash_group.iter().skip(i + 1) {
                 if is_same_member_expression(left, right) {
                     cx.report(left_span, MULTIPLE_MEMBER_EXPRESSIONS)
                         .data("member_name", left.text())

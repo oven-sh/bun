@@ -24,14 +24,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry;
 
-/// True if the string literal `written` contains a lone surrogate. In source text that can only be an escape.
-fn has_lone_surrogate(written: &[u8]) -> bool {
+/// True if the string literal `source` contains a lone surrogate. In source text that can only be an escape.
+fn has_lone_surrogate(source: &[u8]) -> bool {
     let (mut at, mut is_after_high) = (0, false);
-    while let Some(&byte) = written.get(at) {
+    while let Some(&byte) = source.get(at) {
         let (mut unit, mut len) = (None, 1);
         if byte == b'\\' {
             len = 2;
-            if let Some([b'u', rest @ ..]) = written.get(at + 1..) {
+            if let Some([b'u', rest @ ..]) = source.get(at + 1..) {
                 let digits = match rest {
                     [b'{', rest @ ..] => {
                         strings::index_of_char_usize(rest, b'}').map(|end| &rest[..end])
@@ -629,7 +629,9 @@ impl<'a> Checks<'a, '_> {
                         false => Stage::Semantic,
                     };
                     match self.is_oxc {
-                        true => self.report(SyntaxError::of_oxc(left.span(), message).stage(stage)),
+                        true => {
+                            self.report(SyntaxError::oxc_error(left.span(), message).stage(stage))
+                        }
                         false => self.when_read_to(left.span().end, |checks| {
                             checks.fail(left.span().start, message)
                         }),
@@ -756,7 +758,7 @@ impl<'a> Checks<'a, '_> {
             StmtKind::Class(class) if self.is_oxc => {
                 let head = crate::span::Span::new(start, class.body_span().start);
                 self.report(
-                    SyntaxError::of_oxc(head, "Invalid class declaration")
+                    SyntaxError::oxc_error(head, "Invalid class declaration")
                         .help("Classes can only be declared at top level or inside a block")
                         .stage(Stage::Parser),
                 );
@@ -771,7 +773,7 @@ impl<'a> Checks<'a, '_> {
                     false => "Generators can only be declared at the top level or inside a block",
                 };
                 let head = crate::span::Span::new(start, end);
-                self.report(SyntaxError::of_oxc(head, message).stage(Stage::Parser));
+                self.report(SyntaxError::oxc_error(head, message).stage(Stage::Parser));
             }
             StmtKind::Fn(func) => {
                 // Sloppy mode allows a function after `if (a)`, and after a label that isn't itself such a body.
@@ -810,7 +812,8 @@ impl<'a> Checks<'a, '_> {
                         }
                     };
                     self.report(
-                        SyntaxError::of_oxc(it.span(), "Invalid function declaration").help(help),
+                        SyntaxError::oxc_error(it.span(), "Invalid function declaration")
+                            .help(help),
                     );
                 } else if !is_allowed {
                     self.unexpected(start);
@@ -832,7 +835,7 @@ impl<'a> Checks<'a, '_> {
             false => "Lexical declaration cannot appear in a single-statement context",
         };
         self.report(
-            SyntaxError::of_oxc(it.span(), message)
+            SyntaxError::oxc_error(it.span(), message)
                 .help("Wrap this declaration in a block statement")
                 .stage(Stage::Parser),
         );
@@ -897,7 +900,7 @@ impl<'a> Checks<'a, '_> {
                     };
                     let message =
                         "The operand of a 'delete' operator cannot be a private identifier.";
-                    self.report(SyntaxError::of_oxc(label, message));
+                    self.report(SyntaxError::oxc_error(label, message));
                     continue;
                 }
                 self.when_read_to(it.span().end, |checks| {
@@ -915,14 +918,14 @@ impl<'a> Checks<'a, '_> {
         for it in self.exprs_of(ExprTag::ImportCall) {
             let name = self.after_token(self.after_token(it.span().start));
             // Prettier enables these proposals in Babel, which accepts them only as the proposals spell them.
-            let is_refused = match self.is_babel {
+            let is_rejected = match self.is_babel {
                 true => {
                     it.import_call_phase().is_some()
                         && !matches!(self.token_at(name), b"defer" | b"source")
                 }
                 false => it.is_deferred_import_call(),
             };
-            if is_refused {
+            if is_rejected {
                 self.fail(name, import_message);
             }
         }
@@ -987,7 +990,7 @@ impl<'a> Checks<'a, '_> {
             );
             if !is_target && self.is_oxc {
                 let message = "The only valid meta property for new is new.target";
-                self.report(SyntaxError::of_oxc(it.span(), message).stage(Stage::Fatal));
+                self.report(SyntaxError::oxc_error(it.span(), message).stage(Stage::Fatal));
                 continue;
             }
             if !is_target || self.is_babel && self.token_at(name) != b"target" {
@@ -997,7 +1000,7 @@ impl<'a> Checks<'a, '_> {
             if self.token_at(name) != b"target" && self.is_oxc {
                 let message = "Keywords cannot contain escape characters";
                 let name = self.token_span(name);
-                self.report(SyntaxError::of_oxc(name, message).stage(Stage::Parser));
+                self.report(SyntaxError::oxc_error(name, message).stage(Stage::Parser));
                 continue;
             }
             if self.token_at(name) != b"target" {
@@ -1013,7 +1016,7 @@ impl<'a> Checks<'a, '_> {
             if !is_allowed && self.source_type() != SourceType::CommonJs && self.is_oxc {
                 let help = "new.target is only allowed in constructors, functions, and class field initializers";
                 self.report(
-                    SyntaxError::of_oxc(it.span(), "Unexpected new.target expression")
+                    SyntaxError::oxc_error(it.span(), "Unexpected new.target expression")
                         .help(help)
                         .stage(Stage::Parser),
                 );
@@ -1050,7 +1053,7 @@ impl<'a> Checks<'a, '_> {
                 self.fail(at, "Invalid regular expression flag");
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
-                regex::Mode::of_flags(flags),
+                regex::Mode::from_flags(flags),
                 regex::Options::default(),
                 &mut regex::Ignore,
             ) {
@@ -1083,7 +1086,7 @@ impl<'a> Checks<'a, '_> {
         flags: &[u8],
     ) {
         use crate::span::Span;
-        // An unterminated regular expression has no flags. See `oxc::of_typescript`.
+        // An unterminated regular expression has no flags. See `oxc::translate_typescript_error`.
         let has_no_end = |it: &hir::Diagnostic| it.code == 1161 && it.start == literal.start;
         if self.file.hir.diagnostics.iter().any(has_no_end) {
             return;
@@ -1111,7 +1114,7 @@ impl<'a> Checks<'a, '_> {
                 continue;
             };
             self.report(
-                SyntaxError::of_oxc(Span::new(at, at + 1), message)
+                SyntaxError::oxc_error(Span::new(at, at + 1), message)
                     .help(help)
                     .stage(Stage::Parser)
                     .noticed_at(0),
@@ -1119,14 +1122,14 @@ impl<'a> Checks<'a, '_> {
         }
         if self.all.len() > before {
             return self
-                .report(SyntaxError::of_oxc(literal, "Unexpected token").stage(Stage::Fatal));
+                .report(SyntaxError::oxc_error(literal, "Unexpected token").stage(Stage::Fatal));
         }
         let both = strings::index_of_char_usize(flags, b'u')
             .zip(strings::index_of_char_usize(flags, b'v'));
         if let Some((u, v)) = both {
             let second = first_flag + u.max(v) as u32;
             self.report(
-                SyntaxError::of_oxc(
+                SyntaxError::oxc_error(
                     Span::new(second, second + 1),
                     "Invalid regular expression: Invalid unicode flags combination `u` and `v`",
                 )
@@ -1137,7 +1140,7 @@ impl<'a> Checks<'a, '_> {
             let message =
                 "The 'u' and 'v' regular expression flags cannot be enabled at the same time";
             return self.report(
-                SyntaxError::of_oxc(literal, message)
+                SyntaxError::oxc_error(literal, message)
                     .code(1502)
                     .help("v flag enables additional syntax over u flag")
                     .stage(Stage::Parser)
@@ -1146,21 +1149,21 @@ impl<'a> Checks<'a, '_> {
         }
         let validated = regex::validate_pattern(
             pattern,
-            regex::Mode::of_flags(flags),
+            regex::Mode::from_flags(flags),
             regex::Options::default(),
             &mut regex::Ignore,
         );
         // oxc accepts some patterns that our validator rejects.
-        let Some(said) = validated.err().and_then(|it| it.oxc) else {
+        let Some(regex_error) = validated.err().and_then(|it| it.oxc) else {
             return;
         };
         let start = literal.start + 1;
-        let message = format!("Invalid regular expression: {}", said.message);
-        let marked = Span::new(start + said.start, start + said.end);
-        let mut error = SyntaxError::of_oxc(marked, message)
-            .help(said.help)
+        let message = format!("Invalid regular expression: {}", regex_error.message);
+        let marked = Span::new(start + regex_error.start, start + regex_error.end);
+        let mut error = SyntaxError::oxc_error(marked, message)
+            .help(regex_error.help)
             .stage(Stage::Parser);
-        if let Some(also) = said.also {
+        if let Some(also) = regex_error.also {
             error = error.and(Span::new(start + also.0, start + also.1), "");
         }
         self.report(error);
@@ -1249,19 +1252,19 @@ impl<'a> Checks<'a, '_> {
             if it.is_deferred_import_call() && !self.is_babel {
                 continue;
             }
-            let written: SmallVec<[Expr<'a>; 4]> =
+            let provided: SmallVec<[Expr<'a>; 4]> =
                 args.iter().filter(|it| !it.is_missing()).collect();
-            if written.is_empty() {
+            if provided.is_empty() {
                 // Reported at the `)`.
                 self.unexpected(self.after_token(self.after_token(it.span().start)));
             }
-            if self.is_babel && !matches!(written.len(), 1 | 2) {
+            if self.is_babel && !matches!(provided.len(), 1 | 2) {
                 self.fail(
                     it.span().start,
                     "`import()` requires exactly one or two arguments",
                 );
             }
-            if let Some(spread) = written
+            if let Some(spread) = provided
                 .iter()
                 .take(2)
                 .find(|it| matches!(it.kind(), ExprKind::Spread(_)))
@@ -1271,7 +1274,7 @@ impl<'a> Checks<'a, '_> {
                     false => self.unexpected(spread.span().start),
                 }
             }
-            if let Some(third) = written.get(2) {
+            if let Some(third) = provided.get(2) {
                 self.unexpected(third.outer_span().start);
             }
         }
@@ -1331,18 +1334,19 @@ impl<'a> Checks<'a, '_> {
                     match (it.kind(), params.len()) {
                         (FnKind::Getter, _) => {
                             let message = "A 'get' accessor must not have any formal parameters.";
-                            SyntaxError::of_oxc(list, message).help("Remove these parameters here")
+                            SyntaxError::oxc_error(list, message)
+                                .help("Remove these parameters here")
                         }
                         (_, 1) => {
                             let rest = params.first().map_or(list, |it| it.span());
-                            SyntaxError::of_oxc(
+                            SyntaxError::oxc_error(
                                 rest,
                                 "A 'set' accessor cannot have rest parameter.",
                             )
                         }
                         (_, count) => {
                             let message = "A 'set' accessor must have exactly one parameter.";
-                            SyntaxError::of_oxc(list, message)
+                            SyntaxError::oxc_error(list, message)
                                 .code(1049)
                                 .help(match count {
                                     0 => "Add a parameter here",
@@ -1374,7 +1378,7 @@ impl<'a> Checks<'a, '_> {
                 "Illegal 'use strict' directive in function with non-simple parameter list";
             if let (true, Some(directive)) = (self.is_oxc, directive) {
                 let help = "Wrap this function with an IIFE with a 'use strict' directive that returns this function";
-                self.report(SyntaxError::of_oxc(directive.span(), message).help(help));
+                self.report(SyntaxError::oxc_error(directive.span(), message).help(help));
             } else if has_directive {
                 let body = it.body_span().map_or(0, |it| it.start);
                 self.when_read_to(body, |checks| checks.fail(it.estree_span().start, message));
@@ -1382,9 +1386,9 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `checkYieldAwaitInDefaultParams`. With `of_oxc`, reports in oxc's wording. oxc labels the whole expression, and
+    /// `checkYieldAwaitInDefaultParams`. With `for_oxc`, reports in oxc's wording. oxc labels the whole expression, and
     /// also reports a computed key in a parameter's type.
-    fn check_yield_await_in_default_params(&mut self, of_oxc: bool) {
+    fn check_yield_await_in_default_params(&mut self, for_oxc: bool) {
         if self.lacks(rare::SUSPENDS_IN_PARAMETERS) {
             return;
         }
@@ -1392,34 +1396,36 @@ impl<'a> Checks<'a, '_> {
             (ExprTag::Yield, "Yield", "yield"),
             (ExprTag::Await, "Await", "await"),
         ];
-        for (tag, of_acorn, word) in words {
+        for (tag, acorn_word, word) in words {
             for it in self.exprs_of(tag) {
                 // For oxc, neither `this` nor an index signature's key is a formal parameter, and a signature inside a
                 // parameter's type is still part of that parameter.
                 let first = self.tops.outward(Node::Expr(it)).find(|&it| match it {
                     Node::Param(param) => {
                         let function = param.func();
-                        !(of_oxc
+                        !(for_oxc
                             && function.is_some_and(|it| {
                                 it.kind() == FnKind::IndexSignature
                                     || it.this_param() == Some(param)
                             }))
                     }
                     // Inside a type, only signatures have no body.
-                    Node::Func(function) => !of_oxc || function.has_body(),
+                    Node::Func(function) => !for_oxc || function.has_body(),
                     _ => false,
                 });
                 if !matches!(first, Some(Node::Param(_))) {
                     continue;
                 }
                 let span = it.span();
-                match of_oxc {
+                match for_oxc {
                     true => {
                         let message = format!("{word} expression not allowed in formal parameter");
-                        self.report(SyntaxError::of_oxc(span, message.clone()).says(message));
+                        self.report(
+                            SyntaxError::oxc_error(span, message.clone()).label_text(message),
+                        );
                     }
                     false => {
-                        let message = format!("{of_acorn} expression cannot be a default value");
+                        let message = format!("{acorn_word} expression cannot be a default value");
                         self.fail(span.start, message);
                     }
                 }
@@ -1441,10 +1447,10 @@ impl<'a> Checks<'a, '_> {
             | FnKind::IndexSignature => true,
             // Only in an interface or a type literal. A class can also have these without a body.
             FnKind::Method | FnKind::Getter | FnKind::Setter => {
-                let mut around = Node::Func(*it).ancestors();
+                let mut enclosing = Node::Func(*it).ancestors();
                 !it.has_body()
                     && !matches!(
-                        around.find(|it| !matches!(it, Node::Member(_))),
+                        enclosing.find(|it| !matches!(it, Node::Member(_))),
                         Some(Node::Class(_))
                     )
             }
@@ -1463,7 +1469,7 @@ impl<'a> Checks<'a, '_> {
                 let keyword = crate::span::Span::new(start, start + 5);
                 let message = "Cannot use await in class static initialization block";
                 // oxc reports it after it has parsed the operand.
-                self.report(SyntaxError::of_oxc(keyword, message).noticed_at(it.span().end));
+                self.report(SyntaxError::oxc_error(keyword, message).noticed_at(it.span().end));
             }
         }
         for it in self.file.stmts_of_kind(StmtTag::Var) {
@@ -1521,8 +1527,8 @@ impl<'a> Checks<'a, '_> {
             let outside_constructor = "Super calls are not permitted outside constructors or in nested functions inside constructors.";
             if !allows_super && self.is_oxc {
                 self.report(match call {
-                    Some(call) => SyntaxError::of_oxc(call.span(), outside_constructor).code(2337),
-                    None => SyntaxError::of_oxc(
+                    Some(call) => SyntaxError::oxc_error(call.span(), outside_constructor).code(2337),
+                    None => SyntaxError::oxc_error(
                         it.span(),
                         "'super' can only be referenced in members of derived classes or object literal expressions.",
                     ),
@@ -1563,12 +1569,12 @@ impl<'a> Checks<'a, '_> {
                 self.report(match class_of_constructor {
                     Some(class) => {
                         let message = "'super' can only be referenced in a derived class.";
-                        SyntaxError::of_oxc(it.span(), message)
+                        SyntaxError::oxc_error(it.span(), message)
                             .and(class.estree_span(), "class does not have `extends`")
                             .help("either remove this super, or extend the class")
                             .noticed_at(start)
                     }
-                    None => SyntaxError::of_oxc(call.span(), outside_constructor).code(2337),
+                    None => SyntaxError::oxc_error(call.span(), outside_constructor).code(2337),
                 });
             } else if is_called && !is_in_constructor_of_subclass {
                 self.fail(start, "super() call outside constructor of a subclass");
@@ -1636,7 +1642,9 @@ impl<'a> Checks<'a, '_> {
                     }
                     (_, true) => {
                         let message = "Private fields cannot be accessed on super";
-                        self.report(SyntaxError::of_oxc(it.span(), message).stage(Stage::Parser));
+                        self.report(
+                            SyntaxError::oxc_error(it.span(), message).stage(Stage::Parser),
+                        );
                     }
                     _ => self.unexpected(name.start()),
                 }
@@ -1657,11 +1665,11 @@ impl<'a> Checks<'a, '_> {
                         name.bytes(),
                         b"' is not allowed outside class bodies",
                     ];
-                    self.report(SyntaxError::of_oxc(name.span(), message.concat()));
+                    self.report(SyntaxError::oxc_error(name.span(), message.concat()));
                     continue;
                 }
                 if self.is_oxc {
-                    let error = SyntaxError::of_oxc(name.span(), undeclared(name.bytes()));
+                    let error = SyntaxError::oxc_error(name.span(), undeclared(name.bytes()));
                     let help = self.similar_private_name_help(Node::Expr(it), name.bytes());
                     self.report(error.help(help));
                     continue;
@@ -1697,11 +1705,11 @@ impl<'a> Checks<'a, '_> {
                         name.bytes(),
                         b"' is not allowed outside class bodies",
                     ];
-                    self.report(SyntaxError::of_oxc(it.span(), message.concat()));
+                    self.report(SyntaxError::oxc_error(it.span(), message.concat()));
                     continue;
                 }
                 if is_oxc {
-                    let error = SyntaxError::of_oxc(it.span(), undeclared(name.bytes()));
+                    let error = SyntaxError::oxc_error(it.span(), undeclared(name.bytes()));
                     let help = self.similar_private_name_help(Node::Expr(it), name.bytes());
                     self.report(error.help(help));
                     continue;
@@ -1775,8 +1783,8 @@ impl<'a> Checks<'a, '_> {
                             let message = "Multiple constructor implementations are not allowed.";
                             let again = self.token_span(name);
                             self.report(
-                                SyntaxError::of_oxc(first_constructor, message)
-                                    .says("constructor has already been declared here")
+                                SyntaxError::oxc_error(first_constructor, message)
+                                    .label_text("constructor has already been declared here")
                                     .and(again, "it cannot be redeclared here"),
                             );
                         }
@@ -1801,8 +1809,8 @@ impl<'a> Checks<'a, '_> {
                 let half = matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
                     .then(|| (member.is_static(), member.kind()));
                 match private.entry(name.bytes()) {
-                    Entry::Vacant(place) => {
-                        place.insert(half);
+                    Entry::Vacant(vacant) => {
+                        vacant.insert(half);
                         first_private.insert(name.bytes(), (key.span(file), member.is_static()));
                     }
                     Entry::Occupied(mut seen) => {
@@ -1916,7 +1924,7 @@ impl<'a> Checks<'a, '_> {
                 continue;
             };
             let mut inside = Node::Expr(it);
-            let around = self.tops.outward(Node::Expr(it)).find(|&outer| {
+            let enclosing = self.tops.outward(Node::Expr(it)).find(|&outer| {
                 let from = std::mem::replace(&mut inside, outer);
                 match outer {
                     Node::Func(_) => true,
@@ -1926,7 +1934,7 @@ impl<'a> Checks<'a, '_> {
             });
             let is_module = file.language().source_type == SourceType::Module;
             let start = it.span().start;
-            match around {
+            match enclosing {
                 Some(Node::Func(func)) if func.is_async() => {}
                 Some(Node::Func(func)) if func.kind() == FnKind::StaticBlock => {
                     self.fail(
@@ -1996,7 +2004,7 @@ impl<'a> Checks<'a, '_> {
                 b"' is not allowed in property names",
             ];
             let key = crate::span::Span::new(at, at + name.len() as u32);
-            SyntaxError::of_oxc(key, message.concat()).stage(Stage::Parser)
+            SyntaxError::oxc_error(key, message.concat()).stage(Stage::Parser)
         };
         for (i, raw) in file.hir.props.iter().enumerate() {
             let is_default = raw.kind == PropKind::Shorthand
@@ -2033,10 +2041,13 @@ impl<'a> Checks<'a, '_> {
                 if let (true, Some(value)) = (self.is_oxc, prop.value()) {
                     let help = "Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.";
                     self.report(
-                        SyntaxError::of_oxc(value.span(), "Invalid assignment in object literal")
-                            .help(help)
-                            .stage(Stage::Parser)
-                            .noticed_at(u32::MAX),
+                        SyntaxError::oxc_error(
+                            value.span(),
+                            "Invalid assignment in object literal",
+                        )
+                        .help(help)
+                        .stage(Stage::Parser)
+                        .noticed_at(u32::MAX),
                     );
                     continue;
                 }
@@ -2235,7 +2246,7 @@ impl<'a> Checks<'a, '_> {
                     "A `continue` statement can only be used within an enclosing `for`, `while` or `do while` ",
                 ),
             };
-            return self.report(SyntaxError::of_oxc(it.span(), message).help(help));
+            return self.report(SyntaxError::oxc_error(it.span(), message).help(help));
         };
         let mut crosses_function = false;
         let target = Node::Stmt(it).ancestors().find_map(|outer| match outer {
@@ -2249,15 +2260,15 @@ impl<'a> Checks<'a, '_> {
             _ => None,
         });
         self.report(match target {
-            None => SyntaxError::of_oxc(label.span(), "Use of undefined label"),
+            None => SyntaxError::oxc_error(label.span(), "Use of undefined label"),
             Some(_) if crosses_function => {
-                SyntaxError::of_oxc(label.span(), "Jump target cannot cross function boundary.")
+                SyntaxError::oxc_error(label.span(), "Jump target cannot cross function boundary.")
             }
-            Some(target) => SyntaxError::of_oxc(
+            Some(target) => SyntaxError::oxc_error(
                 target.span(),
                 "A `continue` statement can only jump to a label of an enclosing `for`, `while` or `do while` statement.",
             )
-            .says("This is an non-iteration statement")
+            .label_text("This is an non-iteration statement")
             .and(label.span(), "for this label"),
         });
     }
@@ -2275,20 +2286,20 @@ impl<'a> Checks<'a, '_> {
         // Walking up from each label of `a: b: c: ..` to look for a duplicate name is quadratic. Instead, visit the
         // labels from the outermost in and track the open ones by name. Nested labels in the same function share an
         // outermost label, which is part of the key.
-        let mut from_outside: Vec<usize> = (0..labeled.len()).collect();
-        from_outside.sort_unstable_by_key(|&index| labeled[index].0.span().start);
-        let mut label_around: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::default();
+        let mut outermost_first: Vec<usize> = (0..labeled.len()).collect();
+        outermost_first.sort_unstable_by_key(|&index| labeled[index].0.span().start);
+        let mut enclosing_label: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::default();
         let mut outermost_of: FxHashMap<u32, u32> = FxHashMap::default();
         let mut open: FxHashMap<_, SmallVec<[usize; 1]>> = FxHashMap::default();
         let mut first_of: Vec<Option<Stmt<'a>>> = vec![None; labeled.len()];
-        for index in from_outside {
+        for index in outermost_first {
             let (it, label) = labeled[index];
-            let around = label_around.find(Node::Stmt(it), |_, parent| match parent {
+            let enclosing = enclosing_label.find(Node::Stmt(it), |_, parent| match parent {
                 Node::Func(_) => Some(None),
                 Node::Stmt(outer) if outer.tag() == StmtTag::Labeled => Some(Some(outer)),
                 _ => None,
             });
-            let outermost = (around.flatten())
+            let outermost = (enclosing.flatten())
                 .and_then(|outer| outermost_of.get(&outer.id().0).copied())
                 .unwrap_or_else(|| it.id().0);
             outermost_of.insert(it.id().0, outermost);

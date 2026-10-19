@@ -48,7 +48,7 @@ impl Rendered {
     }
 
     /// The first label's span.
-    fn place(&self) -> Option<Span> {
+    fn primary_span(&self) -> Option<Span> {
         self.labels.first().map(|label| label.span)
     }
 
@@ -74,7 +74,7 @@ impl Rendered {
     /// Adds a label, unless it would be at the same span as the first.
     fn also(&mut self, span: Option<Span>, text: impl Into<Text>) {
         if let Some(span) = span
-            && self.place() != Some(span)
+            && self.primary_span() != Some(span)
         {
             self.push(span, text);
         }
@@ -171,7 +171,7 @@ pub fn render_all<'a, 'f>(
     file: &'a File<'a>,
     findings: impl IntoIterator<Item = &'f Finding>,
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
-    let mut said = FxHashSet::default();
+    let mut seen_labels = FxHashSet::default();
     findings.into_iter().filter_map(move |finding| {
         if is_about_callback_capture(file, finding) {
             return None;
@@ -183,7 +183,7 @@ pub fn render_all<'a, 'f>(
                 .iter()
                 .map(|label| (label.span, label.text.clone()))
         };
-        let is_new = !is_reported_once(finding) || said.insert(labels().collect::<Vec<_>>());
+        let is_new = !is_reported_once(finding) || seen_labels.insert(labels().collect::<Vec<_>>());
         is_new.then_some((finding, rendered))
     })
 }
@@ -357,7 +357,7 @@ fn parameter_at<'a>(file: &'a File<'a>, span: Span) -> Option<Param<'a>> {
 }
 
 /// The pattern or object literal property that contains `span`.
-pub(crate) fn property_around<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
+pub(crate) fn enclosing_property<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     let innermost = get_node_by_range_index(file, span.start);
     std::iter::once(innermost)
         .chain(innermost.ancestors())
@@ -470,7 +470,7 @@ fn called(call: Call) -> Option<Name> {
 }
 
 /// The `object.name` or `object["name"]` whose object is `object`, possibly as `object!`.
-fn member_around(mut object: Expr) -> Option<Expr> {
+fn enclosing_member(mut object: Expr) -> Option<Expr> {
     loop {
         let parent = object.parent().as_expr()?;
         match parent.kind() {
@@ -489,7 +489,9 @@ fn member_around(mut object: Expr) -> Option<Expr> {
 /// The span of `member`'s property name, if the name is `name`.
 fn property_named(member: Expr, name: &[u8]) -> Option<Span> {
     match member.kind() {
-        ExprKind::Dot { name: written, .. } => (written.bytes() == name).then(|| written.span()),
+        ExprKind::Dot {
+            name: member_name, ..
+        } => (member_name.bytes() == name).then(|| member_name.span()),
         ExprKind::Index { index, .. } => {
             let is_same = match index.kind() {
                 ExprKind::String(value) => value.bytes() == name,
@@ -518,7 +520,7 @@ fn call_with_callback(func: Func) -> Option<Call> {
 }
 
 /// The `useEffect`-like call whose callback directly contains `span`, not through a nested function.
-fn effect_around<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
+fn enclosing_effect<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
     let call = call_with_callback(enclosing_function(file, span)?)?;
     called(call)?
         .is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
@@ -536,7 +538,7 @@ fn memo_call_at<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
 
 /// Narrows the first label to the head of the function it's at.
 fn narrow_to_function_head<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    let head = out.place().and_then(|at| function_at(file, at));
+    let head = out.primary_span().and_then(|at| function_at(file, at));
     out.move_to(head.map(function_head));
 }
 
@@ -566,7 +568,7 @@ fn hooks<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             "Call a statically known Hook instead of selecting a Hook dynamically",
         );
         out.relabel("This Hook may change between renders");
-        let origin = out.place().and_then(|at| declaration_of(file, at));
+        let origin = out.primary_span().and_then(|at| declaration_of(file, at));
         out.also(origin, "This dynamic Hook value originates here");
     } else if reason.starts_with("Hooks must be called at the top level") {
         // `hook_in_function_expression`
@@ -574,7 +576,9 @@ fn hooks<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             "Hooks must be called at the top level of a function component or custom Hook",
         );
         out.relabel("This Hook is called inside a nested function");
-        let nested = out.place().and_then(|at| enclosing_function(file, at));
+        let nested = out
+            .primary_span()
+            .and_then(|at| enclosing_function(file, at));
         out.also(nested.map(function_head), "This is the nested function");
     }
 }
@@ -596,7 +600,7 @@ fn capitalized_calls<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Render
     ));
     out.relabel(format!("`{name}` may be a component"));
     let callee = out
-        .place()
+        .primary_span()
         .and_then(|at| find(file, at, |node| node.as_expr()?.callee()));
     out.move_to(callee.map(called_name));
 }
@@ -630,7 +634,7 @@ fn use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         }
         // `use_memo_callback_parameters`
         "useMemo() callbacks may not accept parameters" => {
-            if let Some(param) = out.place().and_then(|at| parameter_at(file, at)) {
+            if let Some(param) = out.primary_span().and_then(|at| parameter_at(file, at)) {
                 match parameter_span(param) {
                     Some(span) => out.move_to(Some(span)),
                     None => out.labels.clear(),
@@ -643,7 +647,7 @@ fn use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         }
         // `use_memo_reassigns_outer_variable`
         "useMemo() callbacks may not reassign variables declared outside of the callback" => {
-            let origin = out.place().and_then(|at| declaration_of(file, at));
+            let origin = out.primary_span().and_then(|at| declaration_of(file, at));
             out.also(
                 origin,
                 "This variable is captured from outside the callback",
@@ -669,7 +673,7 @@ fn void_use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) 
 }
 
 fn preserve_manual_memo<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    let call = out.place().and_then(|at| memo_call_at(file, at));
+    let call = out.primary_span().and_then(|at| memo_call_at(file, at));
     match out.text() {
         // `preserve_memo_unmemoized`
         "Could not preserve existing memoization" => {
@@ -721,17 +725,18 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
 
     let callback = call.args().first()?;
     let (func, whole) = (callback.as_fn()?, callback.span());
-    let is_one_scope = called(call)?.is("useCallback");
+    let is_single_scope = called(call)?.is("useCallback");
     let symbol = callback.parent().scope().resolve_bytes(variable)?;
     let (mut first, mut barren) = (None, Span::default());
     for reference in symbol.references().filter(|it| whole.contains(it.span())) {
-        let Some((read, place)) = reference.expr().and_then(|it| read_of(it, &path)) else {
+        let Some((read, dependency_span)) = reference.expr().and_then(|it| read_of(it, &path))
+        else {
             continue;
         };
-        if is_one_scope || is_in_reactive_scope(read, func, &mut barren) {
-            return Some(place);
+        if is_single_scope || is_in_reactive_scope(read, func, &mut barren) {
+            return Some(dependency_span);
         }
-        first.get_or_insert(place);
+        first.get_or_insert(dependency_span);
     }
     first
 }
@@ -739,15 +744,15 @@ fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
 /// With the path `a`, `b`, returns the `variable.a.b` read from `variable` and the span of the `b`. With an empty path,
 /// returns the longest member chain read from `variable` and its span.
 fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
-    let (mut read, mut place) = (variable, None);
+    let (mut read, mut property_span) = (variable, None);
     for name in path {
-        read = member_around(read)?;
-        place = Some(property_named(read, name)?);
+        read = enclosing_member(read)?;
+        property_span = Some(property_named(read, name)?);
     }
-    if let Some(place) = place {
-        return Some((read, place));
+    if let Some(property_span) = property_span {
+        return Some((read, property_span));
     }
-    while let Some(member) = member_around(read) {
+    while let Some(member) = enclosing_member(read) {
         read = member;
     }
     Some((read, read.span()))
@@ -844,7 +849,7 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             {
                 let text = format!("{variable} originates here");
                 let origin = out
-                    .place()
+                    .primary_span()
                     .and_then(|at| declaration_named(file, at, variable));
                 out.also(origin, text);
             }
@@ -893,7 +898,7 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
 fn declared_here<'a>(file: &'a File<'a>, variable: Option<&str>, out: &mut Rendered) {
     if let Some(variable) = variable {
         let declaration = out
-            .place()
+            .primary_span()
             .and_then(|at| declaration_named(file, at, variable));
         out.also(declaration, format!("{variable} is declared here"));
     }
@@ -906,7 +911,7 @@ fn known_mutable_function<'a>(file: &'a File<'a>, out: &mut Rendered) {
         .into_iter()
         .partition(|label| label.text.starts_with("This modifies "));
     out.labels = modified;
-    let modified = out.place();
+    let modified = out.primary_span();
     for mut function in functions {
         if let Some(func) = function_of_value(file, function.span) {
             function.span = function_head(func);
@@ -940,13 +945,13 @@ fn refs<'a>(file: &'a File<'a>, out: &mut Rendered) {
         // `function_accesses_ref`. The compiler reports the location of the function's first error:
         // `RefFnType::ref_access_span`.
         "This function accesses a ref value" => {
-            let place = out.place();
+            let primary_span = out.primary_span();
             if let Some(access) = out.labels.get_mut(1) {
                 if access.text == "The ref is updated here" {
                     access.span = updated_part(file, access.span).map_or(access.span, |it| it.0);
                 }
                 access.text = Cow::Borrowed("The ref is accessed here");
-                if Some(access.span) == place {
+                if Some(access.span) == primary_span {
                     out.labels.truncate(1);
                 }
             }
@@ -967,7 +972,7 @@ fn updated_part<'a>(file: &'a File<'a>, whole: Span) -> Option<(Span, Span)> {
 
 fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.relabel("Cannot update ref value during render");
-    let Some(whole) = out.place() else {
+    let Some(whole) = out.primary_span() else {
         return;
     };
     let Some((value, object)) = updated_part(file, whole) else {
@@ -987,7 +992,7 @@ fn set_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
          another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it \
          from the event that caused the change. Use an effect only when synchronizing with an external system.",
     );
-    let effect = out.place().and_then(|at| effect_around(file, at));
+    let effect = out.primary_span().and_then(|at| enclosing_effect(file, at));
     out.also(
         effect.map(|call| call.callee().span()),
         "This is the containing effect",
@@ -1001,7 +1006,7 @@ fn derived_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
         "Values derived from props and state should be calculated during render, not in an effect",
     );
     out.relabel("This state update stores a value that can be calculated during render");
-    let effect = out.place().and_then(|at| effect_around(file, at));
+    let effect = out.primary_span().and_then(|at| enclosing_effect(file, at));
     let dependencies = effect.and_then(|call| match call.args().get(1)?.kind() {
         ExprKind::Array(elements) => Some(elements),
         _ => None,
@@ -1039,7 +1044,7 @@ fn jsx_in_try<'a>(file: &'a File<'a>, out: &mut Rendered) {
         "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the \
          try/catch. Wrap the component in an error boundary instead",
     );
-    let name = out.place().and_then(|at| {
+    let name = out.primary_span().and_then(|at| {
         find(file, at, |node| match node.as_expr()?.kind() {
             ExprKind::Jsx(jsx) => Some(jsx.tag().map_or_else(|| jsx.opening_span(), Expr::span)),
             _ => None,
@@ -1090,7 +1095,7 @@ fn set_state_in_render(finding: &Finding, out: &mut Rendered) {
 
 /// The tree given to the compiler has `useVirtualizer` in place of `useWindowVirtualizer`.
 fn incompatible_library<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    if (out.place()).is_some_and(|at| file.slice(at) == b"useWindowVirtualizer")
+    if (out.primary_span()).is_some_and(|at| file.slice(at) == b"useWindowVirtualizer")
         && let Some(rest) = (out.text()).strip_prefix("TanStack Virtual's `useVirtualizer()`")
     {
         let text = format!("TanStack Virtual's `useWindowVirtualizer()`{rest}");
@@ -1114,7 +1119,7 @@ fn invariant(finding: &Finding, out: &mut Rendered) {
 fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     let reason = finding.reason.as_str();
     let between = |prefix: &str, suffix: &str| reason.strip_prefix(prefix)?.strip_suffix(suffix);
-    let place = out.place();
+    let primary_span = out.primary_span();
     if reason == "(BuildHIR::lowerStatement) Handle TryStatement without a catch clause" {
         // `todo_build_hir_lower_statement_handle_try_statement_without_catch_clause`
         out.say(
@@ -1123,8 +1128,8 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
              warning if this function should remain uncompiled",
         );
         out.relabel("Unsupported `try` starts here");
-        out.move_to(place.map(|at| start_of(at, 3)));
-        let finally = place.and_then(|at| {
+        out.move_to(primary_span.map(|at| start_of(at, 3)));
+        let finally = primary_span.and_then(|at| {
             find(file, at, |node| match node.as_stmt()?.kind() {
                 StmtKind::Try {
                     block,
@@ -1141,7 +1146,7 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     } else if reason
         == "(BuildHIR::lowerStatement) Handle TryStatement with a finalizer ('finally') clause"
     {
-        out.move_to(place.and_then(|at| {
+        out.move_to(primary_span.and_then(|at| {
             find(file, at, |node| match node.as_stmt()?.kind() {
                 StmtKind::Try {
                     handler: Some(handler),
@@ -1152,14 +1157,14 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             })
         }));
     } else if reason == "(BuildHIR::lowerStatement) Handle for-await loops" {
-        out.move_to(place.and_then(|at| {
+        out.move_to(primary_span.and_then(|at| {
             find(file, at, |node| match node.as_stmt()?.kind() {
                 StmtKind::ForOf { left, .. } => Some(Span::before(at.start, left.span())),
                 _ => None,
             })
         }));
     } else if reason == "(BuildHIR::lowerExpression) Handle ClassExpression expressions" {
-        out.move_to(place.map(|at| {
+        out.move_to(primary_span.map(|at| {
             let name = find(file, at, |node| node.as_expr()?.as_class()?.name());
             name.map_or_else(
                 || start_of(at, 5),
@@ -1168,14 +1173,14 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         }));
     } else if reason == "(BuildHIR::lowerAssignment) Handle computed properties in ObjectPattern" {
         // The compiler marks the key here, oxc the whole property.
-        out.move_to(place.and_then(|at| property_around(file, at)));
+        out.move_to(primary_span.and_then(|at| enclosing_property(file, at)));
     } else if let Some(kind) = between(
         "(BuildHIR::lowerExpression) Handle ",
         " functions in ObjectExpression",
     ) {
         // `unsupported_object_method`
         out.relabel(format!("Unsupported {kind} function"));
-        out.move_to(place.map(|at| start_of(at, kind.len() as u32)));
+        out.move_to(primary_span.map(|at| start_of(at, kind.len() as u32)));
     } else if let Some(kind) = between(
         "(BuildHIR::lowerAssignment) Handle ",
         " rest element in ObjectPattern",
@@ -1188,18 +1193,18 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     ) {
         // `unsafe_reorderable_expression`
         out.relabel(format!("`{kind}` cannot be safely reordered"));
-        let func = place.and_then(|at| function_at(file, at));
+        let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
     } else if reason
         == "Support functions with unreachable code that may contain hoisted declarations"
     {
-        let func = place.and_then(|at| function_at(file, at));
+        let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
     } else if reason
         == "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global"
     {
         // oxc treats a variable of a function that encloses the compiled one as captured.
-        let variable = place.and_then(|at| {
+        let variable = primary_span.and_then(|at| {
             find(file, at, |node| match node.as_expr()?.kind() {
                 ExprKind::Unary { operand, .. } => operand.symbol(),
                 _ => None,
@@ -1213,7 +1218,7 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     } else if reason == LOCAL_FBT {
         // `local_fbt_variable`, which is passed the variable's declaration.
         out.relabel("Local variables named `fbt` are not supported");
-        out.move_to(place.and_then(|at| declaration_of(file, at)));
+        out.move_to(primary_span.and_then(|at| declaration_of(file, at)));
     } else if reason == "[hoisting] EnterSSA: Expected identifier to be defined before being used" {
         // `undefined_ssa_identifier`
         let description = finding.description.as_deref().unwrap_or_default();
@@ -1233,7 +1238,9 @@ fn syntax<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
                 return;
             };
             out.relabel(format!("Cannot reassign {name}"));
-            if let Some(declaration) = out.place().and_then(|at| declaration_named(file, at, name))
+            if let Some(declaration) = out
+                .primary_span()
+                .and_then(|at| declaration_named(file, at, name))
             {
                 out.push(declaration, format!("{name} is declared here"));
             }

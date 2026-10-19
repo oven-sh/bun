@@ -98,7 +98,7 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
 }
 
 /// oxlint points at the earlier one. For a function that's its name.
-fn place(member: Span, before: Span, cx: &Cx<'_, AdjacentOverloadSignatures>) -> Span {
+fn report_span(member: Span, before: Span, cx: &Cx<'_, AdjacentOverloadSignatures>) -> Span {
     if cx.language().is_oxlint { before } else { member }
 }
 
@@ -111,7 +111,7 @@ fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOver
                 StmtKind::Fn(func) => func.name().map_or_else(|| it.span(), |name| name.span()),
                 _ => it.span(),
             };
-            cx.report(place(statement.span(), name_of(before), cx), ADJACENT_SIGNATURE)
+            cx.report(report_span(statement.span(), name_of(before), cx), ADJACENT_SIGNATURE)
                 .data("name", *name)
                 .labels_with(|labels| labels.push(name_of(statement), ""));
         },
@@ -134,7 +134,7 @@ fn oxlint_span_of(member: Member, is_in_class: bool) -> Span {
 fn check_members<'a>(members: List<'a, Member<'a>>, is_in_class: bool, cx: &Cx<'a, AdjacentOverloadSignatures>) {
     check_body_for_overload_methods(members, get_member_method, |member, method, before| {
         let prefix: &[u8] = if method.is_static == Some(true) { b"static " } else { b"" };
-        cx.report(place(member.span(), oxlint_span_of(before, is_in_class), cx), ADJACENT_SIGNATURE)
+        cx.report(report_span(member.span(), oxlint_span_of(before, is_in_class), cx), ADJACENT_SIGNATURE)
             .data("name", [prefix, &method.name.name[..]].concat())
             .labels_with(|labels| labels.push(oxlint_span_of(member, is_in_class), ""));
     });

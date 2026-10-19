@@ -3,7 +3,7 @@
 use super::declared::Declares;
 use super::stmt::Start;
 use super::{ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -115,7 +115,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             if self.recovers() && self.options.dialect.oxc {
                 return self.error_at_token(1109, &[]);
             }
-            return self.refuse(Refusal::Reported);
+            return self.reject(Rejection::Reported);
         }
         let at = self.pos();
         let declarations = (self.f.imports.len(), self.f.exports.len());
@@ -181,12 +181,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let has_declarations = declarations != (self.f.imports.len(), self.f.exports.len());
         // If an `await` here is a name, `reparseTopLevelAwait` reparses the import's names too.
         let top_level = ctx::TOP_LEVEL | ctx::AWAIT;
-        let written = (from as usize)..(self.prev_end() as usize);
-        let written = self.lx.src.get(written).unwrap_or_default();
-        let has_await =
-            self.context & top_level == top_level && bun_core::strings::contains(written, b"await");
+        let source_text = (from as usize)..(self.prev_end() as usize);
+        let source_text = self.lx.src.get(source_text).unwrap_or_default();
+        let has_await = self.context & top_level == top_level
+            && bun_core::strings::contains(source_text, b"await");
         if has_declarations || has_await {
-            self.refuse(Refusal::Unsupported);
+            self.reject(Rejection::Unsupported);
         }
     }
 
@@ -307,7 +307,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             match self.is_ecmascript {
                 // The linter reports it with oxc's message.
                 true if self.options.dialect.oxc => {}
-                true => self.refuse(Refusal::Reported),
+                true => self.reject(Rejection::Reported),
                 false if is_in_type => {}
                 false => self.check_expressions_of_declaration(open, declarations),
             }
@@ -488,7 +488,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn report_locals_of_export(&mut self, base: usize, has_module_specifier: bool) {
         if !has_module_specifier && self.parses_like_acorn_or_babel() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         } else if !has_module_specifier {
             for index in (base..self.s.ids.len()).step_by(2) {
                 let start = self.s.ids.get(index).copied();
@@ -653,7 +653,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         let (spec, mode) = self.module_specifier(kind, false, type_only);
         self.semicolon();
-        // The reference notes the names in this order.
         for index in specs..self.s.import_specs.len() {
             let ImportSpec { local, pos, .. } = self.s.import_specs[index];
             self.note_identifier(local, pos);
@@ -739,8 +738,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 };
                 self.s.names.push(part);
             }
-            let written = self.s.names.get(names..).unwrap_or_default();
-            let entity = self.f.entity_name(written.iter().copied());
+            let entity_parts = self.s.names.get(names..).unwrap_or_default();
+            let entity = self.f.entity_name(entity_parts.iter().copied());
             self.s.names.truncate(names);
             ImportEqualsTarget::Entity(entity)
         };
@@ -771,7 +770,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn expression_as_required_module(&mut self) -> ExprId {
         if self.parses_like_acorn_or_babel() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return ExprId::NONE;
         }
         let at = self.pos();

@@ -44,11 +44,11 @@ impl<const ENDS: usize> Grouped<ENDS> {
     fn new(tags: impl FnOnce(&mut Vec<u8>)) -> Self {
         let mut kinds = Vec::new();
         tags(&mut kinds);
-        Grouped::of_kinds(0..kinds.len() as u32, &kinds)
+        Grouped::from_kinds(0..kinds.len() as u32, &kinds)
     }
 
     /// `kind_of(id)` returns the kind of node `id`, which is one of `all`, or `None` to skip it.
-    fn of_ids(
+    fn from_ids(
         all: impl ExactSizeIterator<Item = u32> + Clone,
         kind_of: impl Fn(u32) -> Option<usize>,
     ) -> Self {
@@ -59,14 +59,14 @@ impl<const ENDS: usize> Grouped<ENDS> {
             .clone()
             .map(|id| kind_of(id).map_or(NOT_IN_TREE, |kind| kind as u8))
             .collect();
-        Grouped::of_kinds(all, &kinds)
+        Grouped::from_kinds(all, &kinds)
     }
 
     /// `kinds` has the kind of each of `all`, or `NOT_IN_TREE` to skip it.
-    fn of_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
+    fn from_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
         let mut counts = [0u32; ENDS];
         counts.copy_from_slice(&count_kinds(kinds)[..ENDS]);
-        Grouped::of_counted_kinds(all, kinds.iter().copied(), &counts)
+        Grouped::from_counted_kinds(all, kinds.iter().copied(), &counts)
     }
 
     /// One bit per kind that has a node, if there are at most 64 kinds. `counts` is as below.
@@ -78,7 +78,7 @@ impl<const ENDS: usize> Grouped<ENDS> {
     }
 
     /// `counts` has, at `kind + 1`, how many of `kinds` are `kind`.
-    fn of_counted_kinds(
+    fn from_counted_kinds(
         all: impl Iterator<Item = u32>,
         kinds: impl Iterator<Item = u8>,
         counts: &[u32; ENDS],
@@ -94,8 +94,8 @@ impl<const ENDS: usize> Grouped<ENDS> {
         let mut ids = vec![0u32; starts[Self::KINDS] as usize];
         for (id, kind) in all.zip(kinds) {
             let at = &mut next[kind as usize];
-            if let Some(place) = ids.get_mut(*at as usize) {
-                *place = id;
+            if let Some(id_slot) = ids.get_mut(*at as usize) {
+                *id_slot = id;
                 *at += 1;
             }
         }
@@ -167,7 +167,7 @@ impl Exprs {
         let mut counts = [0u32; 2 * ExprTag::COUNT + 1];
         counts.get_mut(1..=counted.len())?.copy_from_slice(counted);
         let mut grouped: Grouped<{ 2 * ExprTag::COUNT + 1 }> =
-            Grouped::of_counted_kinds(0..kinds.len() as u32, kinds.iter().copied(), &counts);
+            Grouped::from_counted_kinds(0..kinds.len() as u32, kinds.iter().copied(), &counts);
         if bun_core::strings::contains_char(file.text(), b'`') {
             let (strings, templates) =
                 (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
@@ -236,7 +236,7 @@ impl Exprs {
             kind
         });
         Exprs {
-            grouped: Grouped::of_counted_kinds(
+            grouped: Grouped::from_counted_kinds(
                 0..kinds.len() as u32,
                 kinds.iter().copied(),
                 &counts,
@@ -256,8 +256,8 @@ pub(crate) struct ByName {
     /// Each one's group, in the order of the list of all of them (`File::exprs_of`).
     groups: Vec<u8>,
     /// Indexes into that list, group by group, ascending within each.
-    places: Vec<u32>,
-    /// For each non-empty group: its start in `places`, and its size.
+    list_indexes: Vec<u32>,
+    /// For each non-empty group: its start in `list_indexes`, and its size.
     starts: [u32; ByName::GROUPS],
     counts: [u32; ByName::GROUPS],
     /// One bit per non-empty group.
@@ -308,7 +308,7 @@ impl<'a> Classes<'a> {
 
     /// The group of a `Dot` with this name, whose name starts at `pos`.
     #[inline]
-    fn of_member(&mut self, name: Atom, pos: u32) -> u8 {
+    fn member_group(&mut self, name: Atom, pos: u32) -> u8 {
         match self.file.text().get(pos as usize) {
             Some(b'#') => ByName::OTHERS as u8,
             _ => self.of(name),
@@ -340,38 +340,38 @@ impl ByName {
             });
         }
         let mut next = starts;
-        let mut places = vec![0u32; groups.len()];
-        for (place, &group) in (0u32..).zip(&groups) {
+        let mut list_indexes = vec![0u32; groups.len()];
+        for (list_index, &group) in (0u32..).zip(&groups) {
             if let Some(at) = next.get_mut(group as usize)
-                && let Some(slot) = places.get_mut(*at as usize)
+                && let Some(slot) = list_indexes.get_mut(*at as usize)
             {
-                *slot = place;
+                *slot = list_index;
                 *at += 1;
             }
         }
         ByName {
             groups,
-            places,
+            list_indexes,
             starts,
             counts,
             present,
         }
     }
 
-    fn of_calls<'a>(file: &'a File<'a>) -> ByName {
+    fn from_calls<'a>(file: &'a File<'a>) -> ByName {
         let (hir, mut classes) = (&file.hir, Classes::new(file));
         let group_of = |&id: &u32| {
             let callee = match hir.exprs.get(id as usize).map(|it| &it.kind) {
                 Some(&hir::ExprKind::Call(call)) => hir.calls.get(call.idx()),
                 _ => None,
             };
-            let callee = callee.map(|it| file.written_expr(it.callee));
+            let callee = callee.map(|it| file.unwrap_jsdoc_casts(it.callee));
             match callee
                 .and_then(|it| hir.exprs.get(it.idx()))
                 .map(|it| &it.kind)
             {
                 Some(&hir::ExprKind::Dot { name, .. }) => {
-                    classes.of_member(name, hir.name_pos(callee.unwrap_or_default()))
+                    classes.member_group(name, hir.name_pos(callee.unwrap_or_default()))
                 }
                 Some(&hir::ExprKind::Ident(name)) => {
                     (ByName::FUNCTIONS + classes.of(name) as usize % (NAME_CLASSES / 2)) as u8
@@ -382,11 +382,11 @@ impl ByName {
         ByName::new(file.exprs_of(ExprTag::Call).iter().map(group_of).collect())
     }
 
-    fn of_members<'a>(file: &'a File<'a>) -> ByName {
+    fn from_members<'a>(file: &'a File<'a>) -> ByName {
         let mut classes = Classes::new(file);
         let group_of = |&id: &u32| match file.hir.exprs.get(id as usize).map(|it| &it.kind) {
             Some(&hir::ExprKind::Dot { name, .. }) => {
-                classes.of_member(name, file.hir.name_pos(hir::ExprId(id)))
+                classes.member_group(name, file.hir.name_pos(hir::ExprId(id)))
             }
             _ => ByName::OTHERS as u8,
         };
@@ -417,17 +417,19 @@ impl ByName {
         for (word, (wanted, present)) in groups.iter().zip(&self.present).enumerate() {
             each_bit(wanted & present, |bit| {
                 let (start, count) = (self.starts[64 * word + bit], self.counts[64 * word + bit]);
-                let places = self.places.get(start as usize..(start + count) as usize);
-                for &place in places.unwrap_or_default() {
-                    found.push(place);
+                let group_indexes = self
+                    .list_indexes
+                    .get(start as usize..(start + count) as usize);
+                for &list_index in group_indexes.unwrap_or_default() {
+                    found.push(list_index);
                 }
             });
         }
         if count > 1 {
             found.sort_unstable();
         }
-        for place in found.iter_mut() {
-            *place = all.get(*place as usize).map_or(u32::MAX, |&id| id);
+        for found_item in found.iter_mut() {
+            *found_item = all.get(*found_item as usize).map_or(u32::MAX, |&id| id);
         }
         debug_assert!(self.filter_by_group(groups, all).eq(found.iter().copied()));
     }
@@ -556,7 +558,7 @@ impl File<'_> {
                         debug_assert_eq!(StmtTag::of(&it.kind) as u8, it.kind.tag() as u8);
                         StmtTag::of(&it.kind) as u8
                     });
-                    let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                    let grouped = Grouped::from_counted_kinds(0.., kinds, &counts);
                     debug_assert!(
                         grouped.is_same_as(&Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)))
                     );
@@ -579,7 +581,7 @@ impl File<'_> {
                     debug_assert_eq!(TypeTag::of(&it.kind) as u8, it.kind.tag() as u8);
                     TypeTag::of(&it.kind) as u8
                 });
-                let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                let grouped = Grouped::from_counted_kinds(0.., kinds, &counts);
                 debug_assert!(
                     grouped.is_same_as(&Grouped::new(|kinds| self.type_tags_in_tree(kinds)))
                 );
@@ -601,7 +603,7 @@ impl File<'_> {
     #[inline]
     fn binaries(&self) -> &Grouped<{ BinOp::Comma as usize + 2 }> {
         self.by_kind().binaries.get_or_init(|| {
-            Grouped::of_ids(
+            Grouped::from_ids(
                 self.exprs_of(ExprTag::Binary).iter().copied(),
                 |id| match self.hir.exprs.get(id as usize)?.kind {
                     hir::ExprKind::Binary { op, .. } => Some(op as usize),
@@ -620,7 +622,7 @@ impl File<'_> {
     #[inline]
     fn unaries(&self) -> &Grouped<{ UnOp::PostDec as usize + 2 }> {
         self.by_kind().unaries.get_or_init(|| {
-            Grouped::of_ids(
+            Grouped::from_ids(
                 self.exprs_of(ExprTag::Unary).iter().copied(),
                 |id| match self.hir.exprs.get(id as usize)?.kind {
                     hir::ExprKind::Unary { op, .. } => Some(op as usize),
@@ -663,7 +665,7 @@ impl File<'_> {
                         tag => tag as u8,
                     }
                 });
-                let grouped = Grouped::of_counted_kinds(0.., kinds, &counts);
+                let grouped = Grouped::from_counted_kinds(0.., kinds, &counts);
                 debug_assert!(
                     grouped.is_same_as(&Grouped::new(|kinds| self.pat_tags_in_tree(kinds)))
                 );
@@ -821,11 +823,10 @@ impl<'a> File<'a> {
     fn by_name(&'a self, kind: ExprTag) -> &'a ByName {
         let made = match kind {
             ExprTag::Call => {
-                (self.by_kind().calls_by_name).get_or_init(|| Box::new(ByName::of_calls(self)))
+                (self.by_kind().calls_by_name).get_or_init(|| Box::new(ByName::from_calls(self)))
             }
-            _ => {
-                (self.by_kind().members_by_name).get_or_init(|| Box::new(ByName::of_members(self)))
-            }
+            _ => (self.by_kind().members_by_name)
+                .get_or_init(|| Box::new(ByName::from_members(self))),
         };
         debug_assert!(
             made.filter_by_group([0, 0, 0, 1], self.exprs_of(kind))
@@ -1117,7 +1118,7 @@ pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<L
             meta: &R::META,
             rule: start.rule,
             severity: start.severity,
-            said_by_oxlint: OnceCell::new(),
+            oxlint_rule_messages: OnceCell::new(),
         },
     };
     call_unordered(rule, file, &on, &mut cx);
@@ -1443,7 +1444,7 @@ pub(crate) fn in_walk_order(
 ) -> Vec<u64> {
     let mut order: Vec<u64> = starts
         .zip(0u64..)
-        .map(|(start, place)| u64::from(start) << 32 | place)
+        .map(|(start, list_index)| u64::from(start) << 32 | list_index)
         .collect();
     order.sort();
     let mut together: Vec<u128> = Vec::new();
@@ -1666,30 +1667,38 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
         .collect();
     order.sort_unstable();
     let mut same_start: Vec<u128> = Vec::new();
-    for places in order.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
-        if places.len() < 2 {
+    for tied in order.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
+        if tied.len() < 2 {
             continue;
         }
         same_start.clear();
-        same_start.extend(places.iter().filter_map(|&place| {
-            let it = diagnostics.get(place as u32 as usize)?;
-            Some((u128::from(within_start(it)) << 32) | u128::from(place as u32))
+        same_start.extend(tied.iter().filter_map(|&packed_index| {
+            let it = diagnostics.get(packed_index as u32 as usize)?;
+            Some((u128::from(within_start(it)) << 32) | u128::from(packed_index as u32))
         }));
         same_start.sort();
-        for (place, sorted) in places.iter_mut().zip(&same_start) {
-            *place = u64::from(*sorted as u32);
+        for (packed_index, sorted) in tied.iter_mut().zip(&same_start) {
+            *packed_index = u64::from(*sorted as u32);
         }
     }
-    order.into_iter().map(|place| place as u32).collect()
+    order
+        .into_iter()
+        .map(|packed_index| packed_index as u32)
+        .collect()
 }
 
 /// One bit per row of [`On::ROWS`].
 type Rows = [u64; On::ROWS.div_ceil(64)];
 
-/// The rows of [`On::ROWS`] that `file` has something for. `wants(sort)` returns true if any row of `On::KINDS[sort]`
-/// matters, and a sort's nodes are only grouped in that case. `wants_chains` is the same for the optional chains row.
+/// The rows of [`On::ROWS`] that `file` has something for. `is_sort_needed(sort)` returns true if any row of
+/// `On::KINDS[sort]` matters, and a sort's nodes are only grouped in that case. `needs_chains` is the same for the
+/// optional chains row.
 #[inline]
-fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: bool) -> Rows {
+fn rows_of<'a>(
+    file: &'a File<'a>,
+    is_sort_needed: impl Fn(usize) -> bool,
+    needs_chains: bool,
+) -> Rows {
     let mut rows: Rows = [0; _];
     // `bits` covers the rows from `first` on.
     let mut add = |first: usize, bits: u64| {
@@ -1701,7 +1710,7 @@ fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: 
     add(On::ALWAYS, 1);
     macro_rules! kinds {
         ($($sort:literal $present:ident;)*) => {
-            $(if wants($sort) {
+            $(if is_sort_needed($sort) {
                 add(On::KINDS[$sort].0, file.$present());
             })*
         };
@@ -1716,7 +1725,7 @@ fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: 
     }
     add(
         On::SORTS,
-        u64::from(wants_chains && file.present_chained() != 0),
+        u64::from(needs_chains && file.present_chained() != 0),
     );
     // After `optional_chains`, in the order of `On`'s bits.
     macro_rules! sorts {
@@ -1778,8 +1787,8 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
     all
 }
 
-/// [`RuleSet::LISTENS`] for a config's rules. In a row, a rule's bit is its place among them, so a row is only as long
-/// as the number of rules, and the results come out in their order.
+/// [`RuleSet::LISTENS`] for a config's rules. In a row, a rule's bit is its position among them, so a row is only as
+/// long as the number of rules, and the results come out in their order.
 #[derive(Clone)]
 pub(crate) struct Listeners {
     /// Number of words per row.
@@ -1787,34 +1796,34 @@ pub(crate) struct Listeners {
     /// All rows, one after the other.
     rows: Box<[u64]>,
     /// For each of `On::KINDS`: true if one of its rows has a rule.
-    wants: [bool; On::KINDS.len()],
-    wants_chains: bool,
+    needed_sorts: [bool; On::KINDS.len()],
+    needs_chains: bool,
 }
 
-/// A bit set of places, i.e. indexes into a config's rules.
-pub(crate) type Places = SmallVec<[u64; 16]>;
+/// A bit set of positions, i.e. indexes into a config's rules.
+pub(crate) type PositionBits = SmallVec<[u64; 16]>;
 
 impl Listeners {
     /// `numbers` has the rules' numbers in `S`, in the config's order. A number can appear several times.
     pub(crate) fn new<S: RuleSet>(numbers: &[u16]) -> Listeners {
         let words = numbers.len().div_ceil(64);
-        // The last place with each number, and for each place the previous one with the same number.
+        // The last position with each number, and for each position the previous one with the same number.
         let (mut last, mut before) = (vec![None; NUMBERS], vec![None; numbers.len()]);
         let mut on = RuleBits::EMPTY;
-        for (place, &number) in numbers.iter().enumerate() {
+        for (position, &number) in numbers.iter().enumerate() {
             if let Some(last) = last.get_mut(number as usize) {
-                before[place] = last.replace(place);
+                before[position] = last.replace(position);
                 on.insert(number);
             }
         }
         let mut rows = vec![0u64; words * On::ROWS].into_boxed_slice();
-        for (row, of_all) in S::LISTENS.iter().enumerate() {
-            for (word, (listening, on)) in of_all.0.iter().zip(&on.0).enumerate() {
+        for (row, full_row) in S::LISTENS.iter().enumerate() {
+            for (word, (listening, on)) in full_row.0.iter().zip(&on.0).enumerate() {
                 each_bit(listening & on, |bit| {
                     let mut next = last[64 * word + bit];
-                    while let Some(place) = next {
-                        rows[row * words + place / 64] |= 1 << (place % 64);
-                        next = before[place];
+                    while let Some(position) = next {
+                        rows[row * words + position / 64] |= 1 << (position % 64);
+                        next = before[position];
                     }
                 });
             }
@@ -1823,25 +1832,25 @@ impl Listeners {
             |first: usize, end: usize| rows[first * words..end * words].iter().any(|&it| it != 0);
         Listeners {
             words,
-            wants: On::KINDS.map(|(first, end)| has_any(first, end)),
-            wants_chains: has_any(On::SORTS, On::SORTS + 1),
+            needed_sorts: On::KINDS.map(|(first, end)| has_any(first, end)),
+            needs_chains: has_any(On::SORTS, On::SORTS + 1),
             rows,
         }
     }
 
-    /// The places of the rules that `file` has something for. None of the others would be started.
-    pub(crate) fn of<'a>(&self, file: &'a File<'a>) -> Places {
+    /// The positions of the rules that `file` has something for. None of the others would be started.
+    pub(crate) fn of<'a>(&self, file: &'a File<'a>) -> PositionBits {
         if self.words == 0 {
-            return Places::new();
+            return PositionBits::new();
         }
-        let rows = rows_of(file, |sort| self.wants[sort], self.wants_chains);
+        let rows = rows_of(file, |sort| self.needed_sorts[sort], self.needs_chains);
         match self.words {
             1 => self.joined::<1>(&rows),
             2 => self.joined::<2>(&rows),
             3 => self.joined::<3>(&rows),
             4 => self.joined::<4>(&rows),
             words => {
-                let mut all = Places::from_elem(0, words);
+                let mut all = PositionBits::from_elem(0, words);
                 each_row(&rows, |row| {
                     let row = self.rows.get(row * words..(row + 1) * words);
                     for (to, from) in all.iter_mut().zip(row.unwrap_or_default()) {
@@ -1854,7 +1863,7 @@ impl Listeners {
     }
 
     /// The union of the rows in `rows`, where a row has `WORDS` words.
-    fn joined<const WORDS: usize>(&self, rows: &Rows) -> Places {
+    fn joined<const WORDS: usize>(&self, rows: &Rows) -> PositionBits {
         let (all_rows, _) = self.rows.as_chunks::<WORDS>();
         let mut all = [0; WORDS];
         each_row(rows, |row| {
@@ -1864,7 +1873,7 @@ impl Listeners {
                 }
             }
         });
-        Places::from_slice(&all)
+        PositionBits::from_slice(&all)
     }
 }
 

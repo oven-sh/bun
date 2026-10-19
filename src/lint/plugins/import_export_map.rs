@@ -59,19 +59,19 @@ impl Table {
     /// `is_set` decides whether a `set` call is executed. Its second argument tells whether the `Map` already has the
     /// key.
     fn new<T: Keyed>(sets: &[T], is_set: &dyn Fn(&T, bool) -> bool) -> Table {
-        let mut places: FxHashMap<Key<'_>, usize> = FxHashMap::default();
+        let mut index_of_key: FxHashMap<Key<'_>, usize> = FxHashMap::default();
         let mut in_order: Vec<u32> = Vec::new();
         for (index, it) in sets.iter().enumerate() {
-            let place = places.get(&it.key()).copied();
-            if !is_set(it, place.is_some()) {
+            let existing = index_of_key.get(&it.key()).copied();
+            if !is_set(it, existing.is_some()) {
                 continue;
             }
-            let Some(place) = place else {
-                places.insert(it.key(), in_order.len());
+            let Some(existing) = existing else {
+                index_of_key.insert(it.key(), in_order.len());
                 in_order.push(index as u32);
                 continue;
             };
-            if let Some(value) = in_order.get_mut(place) {
+            if let Some(value) = in_order.get_mut(existing) {
                 *value = index as u32;
             }
         }
@@ -121,7 +121,7 @@ fn read_boxed<'f>(file: &'f File<'f>) -> Box<dyn Any + Send + Sync> {
 }
 
 const READER: Reader = Reader {
-    wants: import_export_record::may_be_module,
+    should_parse: import_export_record::may_be_module,
     read: read_boxed,
 };
 
@@ -251,15 +251,15 @@ type Dependencies<'a> = Rc<[Option<ExportMap<'a>>]>;
 #[derive(Default)]
 struct Rest<'a> {
     dependencies: Dependencies<'a>,
-    asked: usize,
+    next_index: usize,
 }
 
 impl<'a> Iterator for Rest<'a> {
     type Item = Option<ExportMap<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let dep = self.dependencies.get(self.asked).copied();
-        self.asked += 1;
+        let dep = self.dependencies.get(self.next_index).copied();
+        self.next_index += 1;
         dep
     }
 }
@@ -413,7 +413,7 @@ impl<'a> ExportMaps<'a> {
     fn rest_of(&self, map: ExportMap<'a>) -> Rest<'a> {
         Rest {
             dependencies: self.dependencies_of(map),
-            asked: 0,
+            next_index: 0,
         }
     }
 
@@ -459,13 +459,13 @@ impl<'a> ExportMaps<'a> {
         let (interop, name) = (self.is_es_module_interop(), Some(name));
         // A stack of pending calls, with the next one on top.
         let mut pending: SmallVec<[ExportMap<'a>; 8]> = smallvec![map];
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some(this) = pending.pop() {
             if this.entry(interop, name).is_some() || this.reexport(name).is_some() {
                 return true;
             }
             // "default exports must be explicitly re-exported (#328)"
-            if name != Some(DEFAULT) && asked.insert(this.id()) {
+            if name != Some(DEFAULT) && visited.insert(this.id()) {
                 let dependencies = self.dependencies_of(this);
                 pending.extend(dependencies.iter().rev().flatten().copied());
             }
@@ -484,7 +484,7 @@ impl<'a> ExportMaps<'a> {
     pub(crate) fn has_deep(&self, map: ExportMap<'a>, name: &[u8]) -> (bool, Vec<ExportMap<'a>>) {
         let interop = self.is_es_module_interop();
         let mut running: Vec<HasDeep<'a, '_>> = Vec::new();
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         let mut call = Some((map, Some(name)));
         loop {
             if let Some((this, name)) = call.take() {
@@ -493,7 +493,7 @@ impl<'a> ExportMaps<'a> {
                 if this.entry(interop, name).is_some() {
                     return (true, HasDeep::path_of(&running));
                 }
-                let is_new = asked.insert((this.id(), name));
+                let is_new = visited.insert((this.id(), name));
                 if let Some(reexports) = this.reexport(name) {
                     // "if import is ignored, return explicit 'null'"
                     let Some(imported) = self.resolve_import(this, &reexports.source) else {
@@ -542,12 +542,12 @@ impl<'a> ExportMaps<'a> {
         let interop = self.is_es_module_interop();
         // A stack of pending calls, with the next one on top. The result is the first one that isn't `undefined`.
         let mut pending: SmallVec<[(ExportMap<'a>, Key<'_>); 8]> = smallvec![(map, name)];
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some((this, name)) = pending.pop() {
             if let Some(entry) = this.entry(interop, name) {
                 return Got::Meta(Exported { map: this, entry });
             }
-            if !asked.insert((this.id(), name)) {
+            if !visited.insert((this.id(), name)) {
                 continue;
             }
             if let Some(reexports) = this.reexport(name) {
@@ -586,18 +586,18 @@ impl<'a> ExportMaps<'a> {
         let interop = self.is_es_module_interop();
         // A stack of pending calls, with the next one on top.
         let mut pending: SmallVec<[ExportMap<'a>; 8]> = smallvec![map];
-        let mut asked = FxHashSet::default();
+        let mut visited = FxHashSet::default();
         while let Some(this) = pending.pop() {
-            if !asked.insert(this.id()) {
+            if !visited.insert(this.id()) {
                 continue;
             }
             // For a dependency, upstream checks `n !== 'default'`.
-            let is_passed = |n: Key<'_>| this.is(map) || n != Some(DEFAULT);
-            for entry in this.entries(interop).filter(|it| is_passed(it.key())) {
+            let is_forwarded = |n: Key<'_>| this.is(map) || n != Some(DEFAULT);
+            for entry in this.entries(interop).filter(|it| is_forwarded(it.key())) {
                 let v = Exported { map: this, entry };
                 callback(Some(v), entry.key().unwrap_or(UNDEFINED));
             }
-            for reexports in this.reexports().filter(|it| is_passed(it.key())) {
+            for reexports in this.reexports().filter(|it| is_forwarded(it.key())) {
                 // "can't look up meta for ignored re-exports (#348)"
                 let reexported = self.resolve_import(this, &reexports.source);
                 let v = match reexported.map(|it| self.get_key(it, reexports.local.as_deref())) {
@@ -668,18 +668,18 @@ impl<'a> ExportMaps<'a> {
 
     /// `imports`: each path as the resolver returns it, with its `declarations`.
     pub(crate) fn imports(&self, map: ExportMap<'a>) -> Vec<(Vec<u8>, Vec<&'a Dependency>)> {
-        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut index_of_path: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let mut imports: Vec<(Vec<u8>, Vec<&'a Dependency>)> = Vec::new();
         for declaration in &map.facts.record.imports {
             let Some(p) = self.remote_path(map, &declaration.specifier) else {
                 continue;
             };
-            let Some(place) = places.get(&p).copied() else {
-                places.insert(p.clone(), imports.len());
+            let Some(existing) = index_of_path.get(&p).copied() else {
+                index_of_path.insert(p.clone(), imports.len());
                 imports.push((p, vec![declaration]));
                 continue;
             };
-            if let Some((_, declarations)) = imports.get_mut(place) {
+            if let Some((_, declarations)) = imports.get_mut(existing) {
                 if declaration.is_dynamic {
                     declarations.clear();
                 }

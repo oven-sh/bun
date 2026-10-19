@@ -323,31 +323,31 @@ impl<'a, 'v> Variable<'a, 'v> {
         let mut next: SmallVec<[u32; 8]> = smallvec![NONE; self.assignments.len()];
         let get = |index: u32| self.assignments.get(index as usize);
         let expression = |index: u32| get(index).and_then(|it| it.expression).unwrap_or_default();
-        // `around` has the assignments whose expression contains the current position, outermost first. `ahead` has
+        // `enclosing` has the assignments whose expression contains the current position, outermost first. `ahead` has
         // those whose expression hasn't started yet, the last to start first: `[x, y = (x = 1)] = z`.
-        let (mut around, mut ahead): (SmallVec<[u32; 4]>, SmallVec<[u32; 4]>) = Default::default();
+        let (mut enclosing, mut ahead): (SmallVec<[u32; 4]>, SmallVec<[u32; 4]>) = Default::default();
         for in_segment in self.in_segments.chunk_by(|a, b| a.0 == b.0) {
-            around.clear();
+            enclosing.clear();
             ahead.clear();
             for (at, &(_, index)) in in_segment.iter().enumerate() {
                 let (Some(target), Some(found)) = (get(index), next.get_mut(index as usize)) else {
                     continue;
                 };
                 let identifier = target.identifier;
-                while around
+                while enclosing
                     .last()
                     .is_some_and(|&it| expression(it).end < identifier.end)
                 {
-                    around.pop();
+                    enclosing.pop();
                 }
                 let started = ahead.partition_point(|&it| expression(it).start > identifier.start);
-                around.extend(
+                enclosing.extend(
                     ahead
                         .drain(started..)
                         .filter(|&it| expression(it).end >= identifier.end),
                 );
                 // `x = (x = 1)`
-                if let Some(&outermost) = around.first() {
+                if let Some(&outermost) = enclosing.first() {
                     *found = outermost.min(*found);
                 }
                 if target.expression.is_some() {
@@ -516,7 +516,7 @@ impl<'a> Flow<'a> {
 }
 
 /// An assignment as the rule sees it.
-struct Written<'a> {
+struct WriteSite<'a> {
     identifier: Reference<'a>,
     /// The expression that's evaluated before the assignment.
     expression: Option<Span>,
@@ -524,15 +524,15 @@ struct Written<'a> {
     node: Node<'a>,
 }
 
-/// `Written::node` and `Written::expression` of the assignment that a node is a target of.
+/// `WriteSite::node` and `WriteSite::expression` of the assignment that a node is a target of.
 type Writer<'a> = Option<(Node<'a>, Option<Span>)>;
 
 /// Returns the assignment that a write reference is part of, or `None` if the rule doesn't treat it as one: the head of
 /// a `for`-`in`, a parameter's default value.
-fn written_by<'a>(
+fn write_site_of<'a>(
     reference: Reference<'a>,
     writers: &mut AncestorMemo<'a, Writer<'a>>,
-) -> Option<Written<'a>> {
+) -> Option<WriteSite<'a>> {
     let identifier = reference
         .expr()
         .map_or_else(|| reference.node(), Node::Expr);
@@ -540,7 +540,7 @@ fn written_by<'a>(
     if let Node::Pat(pat) = identifier
         && let Node::VarDecl(declarator) = pat.parent()
     {
-        return Some(Written {
+        return Some(WriteSite {
             identifier: reference,
             expression: Some(declarator.init()?.span()),
             node: Node::VarDecl(declarator),
@@ -563,27 +563,27 @@ fn written_by<'a>(
         _ => Some(None),
     });
     let (node, expression) = writer??;
-    Some(Written {
+    Some(WriteSite {
         identifier: reference,
         expression,
         node,
     })
 }
 
-/// Calls [`is_read_after_declarator`] if `written`, the only assignment to `variable` in its code path, is a
+/// Calls [`is_read_after_declarator`] if `write_reference`, the only assignment to `variable` in its code path, is a
 /// declarator's initializer.
 fn is_read_after_declaration<'a>(
     variable: Symbol<'a>,
-    written: Reference<'a>,
+    write_reference: Reference<'a>,
     (writers, evaluated_in): (
         &mut AncestorMemo<'a, Writer<'a>>,
         &mut AncestorMemo<'a, Option<Stmt<'a>>>,
     ),
 ) -> bool {
-    written.expr().is_none()
+    write_reference.expr().is_none()
         && variable.declaration_count() == 1
         && matches!(
-            written_by(written, writers).map(|it| it.node),
+            write_site_of(write_reference, writers).map(|it| it.node),
             Some(Node::VarDecl(declarator)) if is_read_after_declarator(variable, declarator, evaluated_in)
         )
 }
@@ -604,7 +604,7 @@ fn is_read_after_declarator<'a>(
     };
     let is_in_list = match declaration.parent() {
         Node::Func(_) | Node::File(_) => true,
-        Node::Stmt(around) => around.tag() == StmtTag::Module || around.as_block().is_some(),
+        Node::Stmt(container) => container.tag() == StmtTag::Module || container.as_block().is_some(),
         _ => false,
     };
     if !is_in_list {
@@ -684,7 +684,7 @@ struct Uses<'a> {
     all: Vec<Reference<'a>>,
     /// Shared by all variables: maps a node to the innermost `a ? b : c` in its statement that has the node in its `b`.
     conditions: AncestorMemo<'a, Option<Expr<'a>>>,
-    /// Shared by all variables: the memo for `written_by`.
+    /// Shared by all variables: the memo for `write_site_of`.
     writers: AncestorMemo<'a, Writer<'a>>,
     /// The loops whose body has already been walked from its start.
     loops: IdSet<Stmt<'a>>,
@@ -729,13 +729,13 @@ impl<'a> Uses<'a> {
             .filter(|it| start_of(it) < span.end)
     }
 
-    /// True if the only uses in `span` are `written` and reads in the expression it evaluates first.
-    fn is_only_use_in(&self, written: &Written<'a>, span: Span) -> bool {
-        let identifier = start_of(&written.identifier);
+    /// True if the only uses in `span` are `write` and reads in the expression it evaluates first.
+    fn is_only_use_in(&self, write: &WriteSite<'a>, span: Span) -> bool {
+        let identifier = start_of(&write.identifier);
         self.within(span).iter().all(|it| {
             start_of(it) == identifier
                 || !it.is_write()
-                    && written
+                    && write
                         .expression
                         .is_some_and(|expression| expression.contains_offset(start_of(it)))
         })
@@ -795,7 +795,7 @@ impl<'a> Uses<'a> {
                 };
             }
             // `x = f(x)`
-            let evaluated_first = written_by(next, &mut self.writers).and_then(|it| it.expression);
+            let evaluated_first = write_site_of(next, &mut self.writers).and_then(|it| it.expression);
             if evaluated_first
                 .and_then(|it| self.first_within(it))
                 .is_some_and(|it| it.is_read())
@@ -853,14 +853,14 @@ impl<'a> Uses<'a> {
         let (mut decided, is_false) = (logical, is_and(logical)?);
         while self.spend_step() {
             match decided.parent() {
-                Node::Expr(around) => match (is_and(around), around.right()) {
+                Node::Expr(outer_operator) => match (is_and(outer_operator), outer_operator.right()) {
                     (Some(skips_if_false), Some(right)) => {
                         if right != decided && skips_if_false != is_false {
                             return Some((decided.span().end, right.span().start + 1));
                         }
-                        decided = around;
+                        decided = outer_operator;
                     }
-                    _ if around.as_cond().is_some_and(|it| it.0 == decided) => return None,
+                    _ if outer_operator.as_cond().is_some_and(|it| it.0 == decided) => return None,
                     _ => return Some((decided.span().end, floor)),
                 },
                 Node::Stmt(it)
@@ -909,8 +909,8 @@ impl<'a> Uses<'a> {
 
     /// Walks `list` from the end of `after`, one of its statements, or from its start.
     fn statements(&mut self, list: List<'a, Stmt<'a>>, after: Option<Stmt<'a>>) -> Flow<'a> {
-        // `passed` is the end of the last statement walked. `offset` is where the search for uses resumes.
-        let (mut passed, mut offset) = match after {
+        // `walked_end` is the end of the last statement walked. `offset` is where the search for uses resumes.
+        let (mut walked_end, mut offset) = match after {
             Some(after) => (after.span().end, after.span().end),
             None => match list.first() {
                 Some(first) => (0, first.span().start),
@@ -927,7 +927,7 @@ impl<'a> Uses<'a> {
             let next = self.first_from(offset).map(|it| start_of(&it));
             let Some((statement, previous)) = next.and_then(|next| list.around_with_previous(next))
             else {
-                let Some(last) = list.last().filter(|it| it.span().end > passed) else {
+                let Some(last) = list.last().filter(|it| it.span().end > walked_end) else {
                     return Flow::Through;
                 };
                 return match last.tag() {
@@ -941,7 +941,7 @@ impl<'a> Uses<'a> {
                 return Flow::Unknown;
             }
             match self.statement_with_uses(statement) {
-                Flow::Through => (passed, offset) = (statement.span().end, statement.span().end),
+                Flow::Through => (walked_end, offset) = (statement.span().end, statement.span().end),
                 flow => return flow,
             }
         }
@@ -1260,7 +1260,7 @@ impl<'a> Uses<'a> {
             self.budget = budget;
             let parent = statement.parent();
             // The parent's statement list, or the parent itself if it's a statement without one.
-            let (list, around) = match parent {
+            let (list, parent_statement) = match parent {
                 Node::Func(func) => (func.body_statements(), None),
                 Node::File(file) => (Some(file.body()), None),
                 Node::Case(case) => (Some(case.body()), None),
@@ -1272,7 +1272,7 @@ impl<'a> Uses<'a> {
             };
             if let Some(list) = list {
                 let mut flow = self.statements(list, Some(statement));
-                let mut around = parent;
+                let mut container = parent;
                 if let (Node::Case(case), Node::Stmt(switch)) = (parent, parent.parent())
                     && let StmtKind::Switch { cases, .. } = switch.kind()
                 {
@@ -1288,17 +1288,17 @@ impl<'a> Uses<'a> {
                         self.budget = budget;
                         flow = self.statements(next.body(), None);
                     }
-                    around = Node::Stmt(switch);
+                    container = Node::Stmt(switch);
                 }
-                match (flow, around) {
+                match (flow, container) {
                     (Flow::Read, _) => return true,
                     (Flow::Jumps(jump), _) => return self.is_read_after_jump(jump),
-                    (Flow::Through, Node::Stmt(around)) => statement = around,
+                    (Flow::Through, Node::Stmt(container)) => statement = container,
                     _ => return false,
                 }
                 continue;
             }
-            let Some((parent, kind)) = around else {
+            let Some((parent, kind)) = parent_statement else {
                 return false;
             };
             match kind {
@@ -1339,11 +1339,11 @@ impl<'a> Uses<'a> {
         }
     }
 
-    /// True if the statements alone prove that `written` isn't reported.
-    fn is_known_to_be_read(&mut self, written: &Written<'a>) -> bool {
+    /// True if the statements alone prove that `write` isn't reported.
+    fn is_known_to_be_read(&mut self, write: &WriteSite<'a>) -> bool {
         self.loops.clear();
         self.budget = 200;
-        let statement = match written.node {
+        let statement = match write.node {
             Node::VarDecl(declarator) => Some(declarator.parent()),
             // Stop at a function, so an arrow function's expression body doesn't find the statement around the
             // function.
@@ -1370,7 +1370,7 @@ impl<'a> Uses<'a> {
             StmtKind::Switch { expr, .. }
             | StmtKind::ForIn { expr, .. }
             | StmtKind::ForOf { expr, .. }
-                if expr.span().contains_offset(start_of(&written.identifier)) =>
+                if expr.span().contains_offset(start_of(&write.identifier)) =>
             {
                 expr.span()
             }
@@ -1382,7 +1382,7 @@ impl<'a> Uses<'a> {
                     test.map(Expr::span),
                     update.map(Expr::span),
                 ];
-                let identifier = written.identifier.span();
+                let identifier = write.identifier.span();
                 match parts
                     .into_iter()
                     .flatten()
@@ -1394,12 +1394,12 @@ impl<'a> Uses<'a> {
             }
             _ => return false,
         };
-        if !self.is_only_use_in(written, written.node.span()) {
+        if !self.is_only_use_in(write, write.node.span()) {
             return false;
         }
         match self.part(
-            Some(written.node),
-            (written.node.span().end, part.end),
+            Some(write.node),
+            (write.node.span().end, part.end),
             &|_| false,
         ) {
             Flow::Read => return true,
@@ -1490,17 +1490,17 @@ impl NoUselessAssignment {
                 && code_path_scope(it.scope()) != code_path_scope(variable.scope())
         };
         // Assignments that a nested function makes to an outer variable aren't checked.
-        let (mut writes, mut written) = (0, None);
+        let (mut writes, mut only_write) = (0, None);
         for reference in variable.symbol.references() {
             if reference.is_write() && variable.has(reference) && !is_in_other_code_path(reference) {
                 writes += 1;
-                written = Some(reference);
+                only_write = Some(reference);
             }
         }
-        if let (1, None, Some(written)) = (writes, variable.class, written)
+        if let (1, None, Some(only_write)) = (writes, variable.class, only_write)
             && is_read_after_declaration(
                 variable.symbol,
-                written,
+                only_write,
                 (&mut uses.writers, evaluated_in),
             )
         {
@@ -1529,10 +1529,10 @@ impl NoUselessAssignment {
             };
             at += 1;
             if reference.is_write()
-                && written_by(reference, &mut uses.writers).is_some_and(|written| {
-                    let is_in_another = written.node.span().end <= end;
-                    end = end.max(written.node.span().end);
-                    is_in_another || !uses.is_known_to_be_read(&written)
+                && write_site_of(reference, &mut uses.writers).is_some_and(|write| {
+                    let is_in_another = write.node.span().end <= end;
+                    end = end.max(write.node.span().end);
+                    is_in_another || !uses.is_known_to_be_read(&write)
                 })
                 && code_path_scope(reference.scope())
                     == *scope.get_or_insert_with(|| code_path_scope(variable.scope()))
@@ -1628,14 +1628,14 @@ impl NoUselessAssignment {
                 else {
                     return false;
                 };
-                let written =
+                let assignment_after_loop =
                     assignments.get(assignments.partition_point(|it| it.identifier.start < end));
                 reads
                     .get(reads.partition_point(|it| it.start < end))
                     .is_some_and(|read| {
-                        written.is_none_or(|written| {
-                            read.start < written.identifier.start
-                                || written
+                        assignment_after_loop.is_none_or(|assignment_after_loop| {
+                            read.start < assignment_after_loop.identifier.start
+                                || assignment_after_loop
                                     .expression
                                     .is_some_and(|it| it.start <= read.start && read.end <= it.end)
                         })
@@ -1834,7 +1834,7 @@ impl NoUselessAssignment {
                         pat.span()
                     };
                     // In the block of `catch (e)`, `var e = 1` assigns to the parameter.
-                    let written = match declarator.var_kind() {
+                    let assigned_symbol = match declarator.var_kind() {
                         VarKind::Var => cx
                             .file()
                             .reference_at(pat.span().start)
@@ -1842,7 +1842,7 @@ impl NoUselessAssignment {
                         _ => None,
                     };
                     let variable =
-                        written
+                        assigned_symbol
                             .or_else(|| pat.symbol())
                             .map(Binding::outer)
                             .filter(|it| {

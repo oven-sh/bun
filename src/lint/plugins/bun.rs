@@ -47,9 +47,9 @@ pub(crate) fn runs_while_module_is_evaluated<'a>(
 /// The strings in the option `key` of the first options object, or `default` if the key is missing.
 pub(crate) fn list_option(options: &Options, key: &str, default: &[&str]) -> Box<[Box<[u8]>]> {
     let config = options.object(0);
-    let written = config.strings(key);
+    let configured = config.strings(key);
     let names = if config.has(key) {
-        &written[..]
+        &configured[..]
     } else {
         default
     };
@@ -178,19 +178,19 @@ pub(crate) fn can_launch(file: &File) -> bool {
 
 /// The calls that start a process: those of `node:child_process`, `Bun.spawn()` and `Bun.spawnSync()`.
 pub(crate) fn launches<'a>(file: &'a File<'a>) -> Vec<(Call<'a>, Starter)> {
-    let of_node = match CHILD_PROCESS.names.iter().any(|it| file.mentions(it)) {
+    let node_calls = match CHILD_PROCESS.names.iter().any(|it| file.mentions(it)) {
         true => module_calls(file, &CHILD_PROCESS),
         false => Vec::new(),
     };
-    let of_node = of_node.into_iter().map(|(e, name)| match name {
+    let node_calls = node_calls.into_iter().map(|(e, name)| match name {
         "exec" | "execSync" => (e, Starter::Shell),
         _ => (e, Starter::File),
     });
-    let of_bun = bun_calls(file, &["spawn", "spawnSync"])
+    let bun_spawn_calls = bun_calls(file, &["spawn", "spawnSync"])
         .into_iter()
         .map(|(e, _)| (e, Starter::Bun));
-    of_node
-        .chain(of_bun)
+    node_calls
+        .chain(bun_spawn_calls)
         .filter_map(|(e, starter)| Some((e.as_call()?, starter)))
         .collect()
 }
@@ -199,7 +199,7 @@ pub(crate) fn launches<'a>(file: &'a File<'a>) -> Vec<(Call<'a>, Starter)> {
 pub(crate) enum LaunchOptions<'a> {
     None,
     /// An object literal in which nothing is spread.
-    Written(List<'a, Prop<'a>>),
+    Literal(List<'a, Prop<'a>>),
     /// The options can't be determined from the call.
     Unknown,
 }
@@ -218,7 +218,7 @@ impl<'a> LaunchOptions<'a> {
                 ExprKind::Object(properties)
                     if properties.iter().all(|it| it.kind() != PropKind::Spread) =>
                 {
-                    return LaunchOptions::Written(properties);
+                    return LaunchOptions::Literal(properties);
                 }
                 _ => return LaunchOptions::Unknown,
             }
@@ -228,7 +228,7 @@ impl<'a> LaunchOptions<'a> {
 
     fn property(&self, name: &str) -> Option<Prop<'a>> {
         match self {
-            LaunchOptions::Written(properties) => properties
+            LaunchOptions::Literal(properties) => properties
                 .iter()
                 .find(|it| it.key().is_some_and(|key| key.is(name))),
             _ => None,

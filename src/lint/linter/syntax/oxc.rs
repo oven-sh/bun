@@ -41,10 +41,10 @@ fn is_keyword(modifier: &Modifier, flag: Flags) -> bool {
 }
 
 /// Each `await` outside an async function and each `yield` outside a generator. oxc's parser reports these, so our
-/// parser records them in `noted`.
-fn misplaced_await_and_yield<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<SyntaxError> {
+/// parser records them in `recorded`.
+fn misplaced_await_and_yield<'a>(file: &'a File<'a>, recorded: &[Diagnostic]) -> Vec<SyntaxError> {
     let hir = &file.hir;
-    if noted.is_empty() {
+    if recorded.is_empty() {
         return Vec::new();
     }
     let is_in_body = |at: u32| {
@@ -69,9 +69,9 @@ fn misplaced_await_and_yield<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Ve
     // Only the first `await` of `await await a` is reported.
     let follows_await = |at: u32| {
         let before = file.token_before(Span::empty(at)).map(|it| it.span().start);
-        before.is_some_and(|before| noted.iter().any(|it| is_await(it) && it.start == before))
+        before.is_some_and(|before| recorded.iter().any(|it| is_await(it) && it.start == before))
     };
-    let misplaced = noted.iter().filter(|it| {
+    let misplaced = recorded.iter().filter(|it| {
         it.kind == DiagnosticKind::Grammar
             && match it.code {
                 1163 => true,
@@ -130,7 +130,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let unexpected = |at: Span| {
         let error = match RESERVED.binary_search(&file.slice(at)).is_ok() {
             true => reserved_word(at, file.slice(at)),
-            false => SyntaxError::of_oxc(at, "Unexpected token"),
+            false => SyntaxError::oxc_error(at, "Unexpected token"),
         };
         error.stage(Stage::Fatal)
     };
@@ -162,7 +162,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             matches!(left.kind, StmtKind::Var(list) if list.len() != 1).then(|| {
                 let message =
                     format!("Only a single declaration is allowed in a `for...{word}` statement");
-                SyntaxError::of_oxc(Span::new(left.start, left.loc.end), message)
+                SyntaxError::oxc_error(Span::new(left.start, left.loc.end), message)
                     .stage(Stage::Parser)
             })
         })
@@ -195,7 +195,7 @@ fn class_without_name<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 _ => start,
             };
             let keyword = Span::new(start, start + "class".len() as u32);
-            SyntaxError::of_oxc(keyword, "A class name is required.")
+            SyntaxError::oxc_error(keyword, "A class name is required.")
         })
         .collect()
 }
@@ -245,7 +245,7 @@ fn declarations_without_initializer<'a>(
                 _ if is_pattern(it) => "Missing initializer in destructuring declaration",
                 _ => "Missing initializer in const declaration",
             };
-            let error = SyntaxError::of_oxc(Pat::new(file, it.pat).span(), message)
+            let error = SyntaxError::oxc_error(Pat::new(file, it.pat).span(), message)
                 .help("Add an initializer (e.g. ` = undefined`) here")
                 .stage(Stage::Parser);
             // By then oxc has read the whole pattern, and in a `for` head it's at the `;`.
@@ -340,8 +340,8 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         _ => false,
     };
     let declared = (0..hir.stmts.len()).filter_map(|i| {
-        let written = hir.stmt_modifiers(StmtId(i as u32));
-        let first = hir.modifiers.get(written.range())?.first()?;
+        let modifier_range = hir.stmt_modifiers(StmtId(i as u32));
+        let first = hir.modifiers.get(modifier_range.range())?.first()?;
         let is_in_tree = !matches!(file.bound.parent_of_stmt(StmtId(i as u32)), Parent::None);
         let statement = Node::Stmt(Stmt::from_raw(file, i as u32));
         (is_keyword(first, Flags::AMBIENT) && is_in_tree && statement.ancestors().any(is_ambient))
@@ -351,7 +351,7 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         .map(|at| {
             let keyword = Span::new(at, at + "declare".len() as u32);
             let message = "A 'declare' modifier cannot be used in an already ambient context.";
-            SyntaxError::of_oxc(keyword, message)
+            SyntaxError::oxc_error(keyword, message)
                 .code(1038)
                 .stage(Stage::Parser)
         })
@@ -359,13 +359,13 @@ fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
 }
 
 /// `import.defer` that isn't called. TypeScript's parser records a grammar error for it, positioned after the word.
-fn import_phase_without_call<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Vec<SyntaxError> {
-    let is_one = |it: &&Diagnostic| {
+fn import_phase_without_call<'a>(file: &'a File<'a>, recorded: &[Diagnostic]) -> Vec<SyntaxError> {
+    let is_missing_call = |it: &&Diagnostic| {
         it.kind == DiagnosticKind::Grammar
             && it.code == 1005
             && it.args.first().is_some_and(|it| **it == *b"(")
     };
-    (noted.iter().filter(is_one))
+    (recorded.iter().filter(is_missing_call))
         .map(|it| expected(file, "(", token_after(file, Span::empty(it.start))).stage(Stage::Fatal))
         .collect()
 }
@@ -373,7 +373,7 @@ fn import_phase_without_call<'a>(file: &'a File<'a>, noted: &[Diagnostic]) -> Ve
 /// `import defer a from "b"`, `import defer { a } from "b"`: only a namespace can be deferred.
 fn deferred_imports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let deferred = file.hir.imports.iter().filter(|it| it.is_deferred);
-    let refused = deferred.filter_map(|it| {
+    let rejected = deferred.filter_map(|it| {
         // `import source a from "b"` also has `is_deferred` set.
         let clause = file.text().get(it.clause_start as usize..)?;
         let (message, code) = match clause.starts_with(b"defer") {
@@ -388,12 +388,12 @@ fn deferred_imports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         };
         let keyword = Span::new(it.clause_start, it.clause_start + "defer".len() as u32);
         Some(
-            SyntaxError::of_oxc(keyword, message)
+            SyntaxError::oxc_error(keyword, message)
                 .code(code)
                 .stage(Stage::Parser),
         )
     });
-    refused.collect()
+    rejected.collect()
 }
 
 /// True if oxc adds a label at the `{` at `open` when the file ends before its `}`. It does for a block, for the body
@@ -419,10 +419,10 @@ fn labels_opener_at_eof<'a>(file: &'a File<'a>, open: Span) -> bool {
         second = before.next().unwrap_or_default();
     }
     let third = before.next().unwrap_or_default();
-    let is_of_module = |word: &[u8]| matches!(word, b"import" | b"export");
-    let is_list_of_names = is_of_module(first)
-        || first == b"type" && is_of_module(second)
-        || first == b"," && (is_of_module(third) || third == b"type");
+    let is_module_keyword = |word: &[u8]| matches!(word, b"import" | b"export");
+    let is_list_of_names = is_module_keyword(first)
+        || first == b"type" && is_module_keyword(second)
+        || first == b"," && (is_module_keyword(third) || third == b"type");
     !is_list_of_names
         && !matches!(first, [b'"' | b'\'', ..] | b"global")
         && !matches!(second, b"enum" | b"namespace" | b"module")
@@ -639,7 +639,7 @@ pub(super) fn name_of_token(text: &[u8]) -> String {
 
 fn reserved_word(at: Span, word: &[u8]) -> SyntaxError {
     let rest = b"' is a reserved word that cannot be used here.";
-    SyntaxError::of_oxc(at, [b"Identifier expected. '", word, rest].concat())
+    SyntaxError::oxc_error(at, [b"Identifier expected. '", word, rest].concat())
 }
 
 /// "Expected `wanted` but found `..`", at the token `at`.
@@ -696,12 +696,12 @@ pub(super) fn private_name_as_operand<'a>(file: &'a File<'a>, name: Span) -> Opt
     let next = token_after(file, name);
     let error = match operator {
         b"!" | b"~" | b"typeof" | b"void" | b"delete" | b"await" | b"++" | b"--" => {
-            SyntaxError::of_oxc(name, "Unexpected token")
+            SyntaxError::oxc_error(name, "Unexpected token")
         }
-        b"+" | b"-" if !follows_operand() => SyntaxError::of_oxc(name, "Unexpected token"),
+        b"+" | b"-" if !follows_operand() => SyntaxError::oxc_error(name, "Unexpected token"),
         b"+" | b"-" | b"*" | b"/" | b"%" | b"**" | b"<<" | b">>" | b">>>" | b"<" | b">" | b"<="
         | b">=" | b"instanceof" | b"in" => {
-            SyntaxError::of_oxc(name, "Unexpected private identifier")
+            SyntaxError::oxc_error(name, "Unexpected private identifier")
         }
         _ if file.slice(next) != b"in" => expected(file, "in", next),
         _ => return None,
@@ -714,8 +714,8 @@ pub(super) fn private_name_as_operand<'a>(file: &'a File<'a>, name: Span) -> Opt
 fn wrong_closing_tag<'a>(file: &'a File<'a>, closing: Span, opening: Span) -> SyntaxError {
     let name = bstr::BStr::new(file.slice(opening));
     let message = format!("Expected corresponding JSX closing tag for '{name}'.");
-    SyntaxError::of_oxc(closing, message)
-        .says(format!("Expected `</{name}>`"))
+    SyntaxError::oxc_error(closing, message)
+        .label_text(format!("Expected `</{name}>`"))
         .and(opening, "Opened here")
         .noticed_at(closing.start)
 }
@@ -740,7 +740,7 @@ fn translate_jsx_error<'a>(
     // The JSX text that runs to the end of the file.
     let to_the_end = || {
         let last = bun_core::strings::last_index_of_any(text, b">}").map_or(0, |it| it + 1);
-        SyntaxError::of_oxc(
+        SyntaxError::oxc_error(
             Span::new(last as u32, text.len() as u32),
             "Unexpected token",
         )
@@ -750,11 +750,11 @@ fn translate_jsx_error<'a>(
         17015 => {
             let fragment = hir.jsx.iter().find(|it| it.close_pos + 2 == label.start)?;
             let opening = Span::new(fragment.opening_end.checked_sub(2)?, fragment.opening_end);
-            SyntaxError::of_oxc(
+            SyntaxError::oxc_error(
                 label,
                 "Expected corresponding closing tag for JSX fragment.",
             )
-            .says("Expected `</>`")
+            .label_text("Expected `</>`")
             .and(opening, "Opened here")
             .noticed_at(label.start)
         }
@@ -788,7 +788,7 @@ fn translate_jsx_error<'a>(
                 bun_sema::messages::message(it.code)?.1,
                 &it.args,
             );
-            SyntaxError::of_oxc(Span::empty(it.start), message)
+            SyntaxError::oxc_error(Span::empty(it.start), message)
         }
         2657 => {
             let is_first = |e: &&bun_sema::hir::Expr| {
@@ -796,7 +796,7 @@ fn translate_jsx_error<'a>(
             };
             let first = hir.exprs.iter().filter(is_first).map(|it| it.end).min()?;
             let next = skip_trivia(text, first);
-            SyntaxError::of_oxc(
+            SyntaxError::oxc_error(
                 Span::new(next, next + 1),
                 "Adjacent JSX elements must be wrapped in an enclosing tag.",
             )
@@ -815,7 +815,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
     let before = |at: Span| file.token_before(at).map(|it| it.span());
     let text_before = |at: Span| before(at).map_or(&b""[..], slice);
     let after = |at: Span| token_after(file, at);
-    let unexpected = |at: Span| SyntaxError::of_oxc(at, "Unexpected token");
+    let unexpected = |at: Span| SyntaxError::oxc_error(at, "Unexpected token");
     let semicolon = SyntaxError::semicolon_after;
     let wanted = it.args.first().map_or(&b""[..], |it| &it[..]);
     let lacks_semicolon = matches!(it.code, 1434 | 1442) || it.code == 1005 && wanted == b";";
@@ -845,7 +845,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
         && touches_number()
     {
         let first = Span::new(label.start, label.start + 1);
-        return Some(SyntaxError::of_oxc(
+        return Some(SyntaxError::oxc_error(
             first,
             "Invalid characters after number",
         ));
@@ -877,7 +877,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
         let modifiers = modifiers.take_while(|it| is_modifier(it.text()));
         let start = modifiers.last().map_or(open.start, |it| it.span().start);
         let message = "An index signature must have a type annotation.";
-        return Some(SyntaxError::of_oxc(Span::new(start, close.end), message).code(1021));
+        return Some(SyntaxError::oxc_error(Span::new(start, close.end), message).code(1021));
     }
     // After a class member that isn't a method, oxc expects a `;`, a line break or the `}`.
     if lacks_semicolon
@@ -902,13 +902,13 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
         let mut modifiers = (file.tokens_before(name)).take_while(|it| is_modifier(it.text()));
         if modifiers.any(|it| it.text() == b"static") {
             let message = "Classes can't have a field named 'constructor'";
-            return Some(SyntaxError::of_oxc(name, message));
+            return Some(SyntaxError::oxc_error(name, message));
         }
     }
     // `let { ...{ a } } = b`, `let { ...[a] } = b`, `let { ...1 } = b`. TypeScript's parser parses the last two as a
     // key.
     let invalid_rest = |target: Span| {
-        SyntaxError::of_oxc(
+        SyntaxError::oxc_error(
             target,
             "Invalid rest element target in destructuring pattern",
         )
@@ -948,7 +948,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
             slice(label),
             b"' is a reserved word that cannot be used here.",
         ];
-        return Some(SyntaxError::of_oxc(label, message.concat()));
+        return Some(SyntaxError::oxc_error(label, message.concat()));
     }
     // `yield` as the name of a TypeScript declaration in a generator.
     if slice(label) == b"yield"
@@ -956,12 +956,12 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
             || it.code == 1003 && text_before(label) == b"enum")
     {
         let message = "Cannot use `yield` as an identifier in a generator context";
-        return Some(SyntaxError::of_oxc(label, message));
+        return Some(SyntaxError::oxc_error(label, message));
     }
     match it.code {
         1132 if slice(label).starts_with(b"`") => {
             let message = "Computed property names are not allowed in enums.";
-            return Some(SyntaxError::of_oxc(label, message).code(1164));
+            return Some(SyntaxError::oxc_error(label, message).code(1164));
         }
         1132 => return Some(unexpected(label)),
         // `a[]`
@@ -971,8 +971,8 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
     if !is_unexpected {
         // `({ a: b.c }) => 1`: these can't be parameters, so oxc parses a parenthesized expression, which `=>` can't
         // follow.
-        let goes_on = it.code == 1005 && matches!(slice(label), b"." | b"(" | b"[");
-        let head = head_of_arrow(label.start).filter(|_| goes_on && wanted != b";");
+        let continues_expression = it.code == 1005 && matches!(slice(label), b"." | b"(" | b"[");
+        let head = head_of_arrow(label.start).filter(|_| continues_expression && wanted != b";");
         return head.map(|(_, close)| semicolon(close.end));
     }
     // `catch (a = 1)`
@@ -1004,7 +1004,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
     {
         let message = "JSX attributes must only be assigned a non-empty 'expression'.";
         let braces = Span::new(open.start, label.end);
-        return Some(SyntaxError::of_oxc(braces, message).code(17000));
+        return Some(SyntaxError::oxc_error(braces, message).code(17000));
     }
     // `typeof a.#b`, `A.#b`: TypeScript's parser reports these after the name.
     if label.is_empty()
@@ -1028,7 +1028,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
         && head_of_arrow(label.start).is_some()
     {
         let message = "Cannot use `await` as an identifier in an async context";
-        return Some(SyntaxError::of_oxc(name, message));
+        return Some(SyntaxError::oxc_error(name, message));
     }
     // `({ a: 1 }) => 1`, `({ a: 1 } = 1) => 1`
     if it.code == 1003
@@ -1038,7 +1038,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
         let pattern = opener(file, label.start, (b'{', b'}'));
         let pattern = pattern.and_then(|it| closer(file, it, (b'{', b'}')));
         return Some(match pattern.map(|it| slice(after(it))) {
-            Some(b"=") => SyntaxError::of_oxc(label, "Cannot assign to this expression"),
+            Some(b"=") => SyntaxError::oxc_error(label, "Cannot assign to this expression"),
             _ => semicolon(close.end),
         });
     }
@@ -1050,7 +1050,7 @@ fn translate_by_shape<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> O
 
 /// The context of an unterminated regular expression. As oxc's parser unwinds, it fails again at the end of the file,
 /// and each new error replaces the previous one.
-enum Around {
+enum RegexContext {
     Nothing,
     /// Brackets of any kind, or the head of a class or interface. The lexer's error survives.
     Brackets,
@@ -1060,10 +1060,10 @@ enum Around {
 }
 
 #[optimize(size)]
-fn around_unterminated<'a>(file: &'a File<'a>, at: u32) -> Around {
-    let (mut closed, mut around) = (0, Around::Nothing);
+fn unterminated_regex_context<'a>(file: &'a File<'a>, at: u32) -> RegexContext {
+    let (mut closed, mut regex_context) = (0, RegexContext::Nothing);
     if question_mark(file, at).is_some() {
-        return Around::Head;
+        return RegexContext::Head;
     }
     // `class A extends /`, `interface A extends B, /`
     let is_in_name =
@@ -1073,7 +1073,7 @@ fn around_unterminated<'a>(file: &'a File<'a>, at: u32) -> Around {
         .find(|it| !is_in_name(it))
         .is_some_and(|it| it == b"extends")
     {
-        around = Around::Brackets;
+        regex_context = RegexContext::Brackets;
     }
     let is_object = |open: Span| {
         let mut all = file.hir.exprs.iter();
@@ -1096,22 +1096,22 @@ fn around_unterminated<'a>(file: &'a File<'a>, at: u32) -> Around {
             b"(" | b"[" | b"{" if closed > 0 => closed -= 1,
             b"(" => match before.map_or(&b""[..], |it| it.text()) {
                 b"while" if before.is_some_and(|it| ends_do(it.span())) => {
-                    (around, may_be_key) = (Around::Brackets, false);
+                    (regex_context, may_be_key) = (RegexContext::Brackets, false);
                 }
-                b"if" | b"while" | b"for" | b"with" | b"await" => return Around::Head,
+                b"if" | b"while" | b"for" | b"with" | b"await" => return RegexContext::Head,
                 b"import" => may_be_key = false,
-                _ => (around, may_be_key) = (Around::Brackets, false),
+                _ => (regex_context, may_be_key) = (RegexContext::Brackets, false),
             },
             b"[" => {
                 may_be_key = matches!(before.map(|it| it.text()), Some(b"{" | b","));
-                around = Around::Brackets;
+                regex_context = RegexContext::Brackets;
             }
-            b"{" if may_be_key && is_object(it.span()) => return Around::Head,
-            b"{" => (around, may_be_key) = (Around::Brackets, false),
+            b"{" if may_be_key && is_object(it.span()) => return RegexContext::Head,
+            b"{" => (regex_context, may_be_key) = (RegexContext::Brackets, false),
             _ => {}
         }
     }
-    around
+    regex_context
 }
 
 /// The offset just past the first line break after `from`, or the end of `text`.
@@ -1133,8 +1133,8 @@ fn translate_scanner_error<'a>(
 ) -> Option<SyntaxError> {
     let text = file.text();
     let end_of_text = text.len() as u32;
-    let goes_on = |error: SyntaxError| error.stage(Stage::Parser).noticed_at(0);
-    let gives_up = |error: SyntaxError| error.stage(Stage::Fatal);
+    let as_recoverable = |error: SyntaxError| error.stage(Stage::Parser).noticed_at(0);
+    let as_fatal = |error: SyntaxError| error.stage(Stage::Fatal);
     let end_of_line = |from: u32| end_of_line(text, from);
     let character_at = |at: u32| {
         let rest = text.get(at as usize..).unwrap_or_default();
@@ -1144,10 +1144,14 @@ fn translate_scanner_error<'a>(
     };
     let invalid_character = |at: u32, len: u32| {
         let message = [b"Invalid Character `", character_at(at), b"`"].concat();
-        gives_up(SyntaxError::of_oxc(Span::new(at, at + len), message))
+        as_fatal(SyntaxError::oxc_error(Span::new(at, at + len), message))
     };
-    let after_number =
-        |at: Span| gives_up(SyntaxError::of_oxc(at, "Invalid characters after number"));
+    let after_number = |at: Span| {
+        as_fatal(SyntaxError::oxc_error(
+            at,
+            "Invalid characters after number",
+        ))
+    };
     // The `\` of the escape that's invalid at `at`.
     let escape_before = |at: u32| {
         let before = text.get(..at as usize).unwrap_or_default();
@@ -1188,7 +1192,7 @@ fn translate_scanner_error<'a>(
             let last = file.token_before(Span::empty(end_of_text));
             let open = not_closed(last.map_or(0, |it| it.span().end as usize));
             let comment = Span::new(open.or_else(|| not_closed(0))? as u32, end_of_text);
-            goes_on(SyntaxError::of_oxc(
+            as_recoverable(SyntaxError::oxc_error(
                 comment,
                 "Unterminated multiline comment",
             ))
@@ -1204,7 +1208,7 @@ fn translate_scanner_error<'a>(
                 start => start,
             };
             let string = Span::new(start, end_of_line(it.start));
-            gives_up(SyntaxError::of_oxc(string, "Unterminated string"))
+            as_fatal(SyntaxError::oxc_error(string, "Unterminated string"))
         }
         1160 => {
             let is_open = |it: &&bun_sema::hir::Expr| {
@@ -1217,14 +1221,14 @@ fn translate_scanner_error<'a>(
                 .filter(is_open)
                 .map(|it| it.pos)
                 .max()?;
-            gives_up(SyntaxError::of_oxc(
+            as_fatal(SyntaxError::oxc_error(
                 Span::new(template, end_of_text),
                 "Unterminated string",
             ))
         }
         1125 | 1198 | 1199 if escape.is_some() => {
             let escape = Span::new(escape?, label.end.max(it.start));
-            goes_on(SyntaxError::of_oxc(escape, "Invalid escape sequence"))
+            as_recoverable(SyntaxError::oxc_error(escape, "Invalid escape sequence"))
         }
         1124 | 1125 | 1177 | 1178 => invalid_character(it.start, 0),
         6189 => invalid_character(it.start, 0),
@@ -1318,15 +1322,15 @@ fn escape_in_name<'a>(file: &'a File<'a>, at: u32) -> Vec<SyntaxError> {
     }
     if let Some(character) = character.filter(|_| hash.is_none()) {
         let message = format!("Invalid Character `{character}`");
-        return vec![SyntaxError::of_oxc(Span::empty(end), message).stage(Stage::Fatal)];
+        return vec![SyntaxError::oxc_error(Span::empty(end), message).stage(Stage::Fatal)];
     }
-    let escape = SyntaxError::of_oxc(Span::new(start, end), "Invalid Unicode escape sequence");
+    let escape = SyntaxError::oxc_error(Span::new(start, end), "Invalid Unicode escape sequence");
     let mut all = vec![escape.stage(Stage::Parser).noticed_at(0)];
     // The following characters continue the identifier, which leaves the `}`.
     let after = end_of_name(text, end);
     if rest.starts_with(b"u{") && text.get(after as usize) == Some(&b'}') {
         let brace = Span::new(after, after + 1);
-        all.push(SyntaxError::of_oxc(brace, "Unexpected token").stage(Stage::Fatal));
+        all.push(SyntaxError::oxc_error(brace, "Unexpected token").stage(Stage::Fatal));
     }
     // The parser sees an identifier there. An operand before or after it on the same line is a separate statement.
     let semicolon = SyntaxError::semicolon_after;
@@ -1407,7 +1411,10 @@ fn crossed_closing_tags<'a>(file: &'a File<'a>, it: &Diagnostic) -> Option<Vec<S
 /// Translates an error from TypeScript's parser into oxc's wording. Returns an empty list if oxc's wording isn't known.
 /// For some errors oxc reports two.
 #[optimize(size)]
-pub(super) fn of_typescript<'a>(file: &'a File<'a>, it: &Diagnostic) -> Vec<SyntaxError> {
+pub(super) fn translate_typescript_error<'a>(
+    file: &'a File<'a>,
+    it: &Diagnostic,
+) -> Vec<SyntaxError> {
     let rest = file.text().get(it.start as usize..).unwrap_or_default();
     let label = Span::new(
         it.start,
@@ -1421,12 +1428,14 @@ pub(super) fn of_typescript<'a>(file: &'a File<'a>, it: &Diagnostic) -> Vec<Synt
     if it.code == 1161 {
         let line = Span::new(it.start, end_of_line(file.text(), it.start));
         let rest = Span::new(it.start, file.text().len() as u32);
-        let of_lexer = SyntaxError::of_oxc(line, "Unterminated regular expression");
-        let of_parser = SyntaxError::of_oxc(rest, "Unexpected token").stage(Stage::Fatal);
-        return match around_unterminated(file, it.start) {
-            Around::Nothing => vec![of_lexer.stage(Stage::Parser).noticed_at(0), of_parser],
-            Around::Brackets => vec![of_lexer.stage(Stage::Fatal)],
-            Around::Head => vec![of_parser],
+        let lexer_error = SyntaxError::oxc_error(line, "Unterminated regular expression");
+        let parser_error = SyntaxError::oxc_error(rest, "Unexpected token").stage(Stage::Fatal);
+        return match unterminated_regex_context(file, it.start) {
+            RegexContext::Nothing => {
+                vec![lexer_error.stage(Stage::Parser).noticed_at(0), parser_error]
+            }
+            RegexContext::Brackets => vec![lexer_error.stage(Stage::Fatal)],
+            RegexContext::Head => vec![parser_error],
         };
     }
     // The diagnostic is at a backslash, or at the `#` before one.
@@ -1445,20 +1454,25 @@ pub(super) fn of_typescript<'a>(file: &'a File<'a>, it: &Diagnostic) -> Vec<Synt
     {
         return both;
     }
-    let one = translate_scanner_error(file, it, label).or_else(|| of_parser(file, it, label));
+    let one = translate_scanner_error(file, it, label)
+        .or_else(|| translate_parser_error(file, it, label));
     one.into_iter().collect()
 }
 
-/// Translates an error from TypeScript's parser into oxc's wording. oxc's parser gives up there unless the error's
-/// stage says otherwise. Returns `None` if oxc's wording isn't known.
+/// Translates an error from TypeScript's parser into oxc's wording. oxc's parser gives up there unless the error has a
+/// different stage. Returns `None` if oxc's wording isn't known.
 #[optimize(size)]
-fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<SyntaxError> {
+fn translate_parser_error<'a>(
+    file: &'a File<'a>,
+    it: &Diagnostic,
+    label: Span,
+) -> Option<SyntaxError> {
     let semicolon = SyntaxError::semicolon_after;
     let before = |at: Span| file.token_before(at).map_or(&b""[..], |it| it.text());
     let args: SmallVec<[&[u8]; 3]> = it.args.iter().map(|it| &**it).collect();
     let text = |it: &[u8]| bstr::BStr::new(it).to_string();
     if let Some(error) = translate_jsx_error(file, it, label) {
-        return Some(match error.of_oxc.stage {
+        return Some(match error.oxc_details.stage {
             Stage::Semantic => error.stage(Stage::Fatal),
             _ => error,
         });
@@ -1481,17 +1495,17 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 && !matches!(before(label), b")" | b"else" | b"do")
                 && file.hir.stmts.iter().any(|it| it.start == label.start) =>
         {
-            SyntaxError::of_oxc(token_after(file, label), "Unexpected token")
+            SyntaxError::oxc_error(token_after(file, label), "Unexpected token")
         }
         (1131 | 1434 | 1440, _) => semicolon(label.end),
-        (1209, _) => SyntaxError::of_oxc(label, "Invalid optional chain from new expression."),
+        (1209, _) => SyntaxError::oxc_error(label, "Invalid optional chain from new expression."),
         // oxc still treats the word as the keyword.
         (1260, _) => {
-            let error = SyntaxError::of_oxc(label, "Keywords cannot contain escape characters");
+            let error = SyntaxError::oxc_error(label, "Keywords cannot contain escape characters");
             return Some(error.stage(Stage::Parser));
         }
         (1109, _) if file.slice(label) == b"<!--" => {
-            SyntaxError::of_oxc(label, "HTML comments are not allowed in modules")
+            SyntaxError::oxc_error(label, "HTML comments are not allowed in modules")
         }
         (1359, _) if matches!(before(label), b"function" | b"*") => {
             expected(file, "Identifier", label)
@@ -1504,7 +1518,7 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
             let keyword = file.token_before(label).map_or(label, |it| it.span());
             let message = "'super' can only be used with function calls or in property accesses";
             return Some(
-                SyntaxError::of_oxc(keyword, message)
+                SyntaxError::oxc_error(keyword, message)
                     .help("Replace with `super()` or `super.prop` or `super[prop]`")
                     .stage(Stage::Parser),
             );
@@ -1515,24 +1529,24 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 text(operator)
             );
             return Some(
-                SyntaxError::of_oxc(label, message)
+                SyntaxError::oxc_error(label, message)
                     .help("Wrap the unary expression in parentheses to make the precedence explicit")
                     .stage(Stage::Parser),
             );
         }
         (1144, _) => semicolon(file.end_of_token_before(it.start)),
-        (1005, [b"try" | b"export", ..]) => SyntaxError::of_oxc(label, "Unexpected token"),
+        (1005, [b"try" | b"export", ..]) => SyntaxError::oxc_error(label, "Unexpected token"),
         (1351, _) => {
             let first = Span::new(label.start, label.start + 1);
-            SyntaxError::of_oxc(first, "Invalid characters after number")
+            SyntaxError::oxc_error(first, "Invalid characters after number")
         }
-        (1130, _) => SyntaxError::of_oxc(label, "Expected switch clause")
-            .says("`case` or `default` clause expected here")
+        (1130, _) => SyntaxError::oxc_error(label, "Expected switch clause")
+            .label_text("`case` or `default` clause expected here")
             .help("If this is intended to be the condition for the switch statement, add `case` before it."),
         (1472, _) => {
             let after = file.end_of_token_before(it.start);
             return Some(
-                SyntaxError::of_oxc(Span::new(after, after), "Missing catch or finally clause")
+                SyntaxError::oxc_error(Span::new(after, after), "Missing catch or finally clause")
                     .help("Either unwrap this try block or add catch / finally clause")
                     .stage(Stage::Parser),
             );
@@ -1540,13 +1554,13 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
         // oxc continues with the parameters.
         (1003, _) if matches!(before(label), b"function" | b"*") && file.slice(label) == b"(" => {
             let help = "Function name is required in function declaration or named export";
-            let error = SyntaxError::of_oxc(label, "Expected function name").help(help);
+            let error = SyntaxError::oxc_error(label, "Expected function name").help(help);
             return Some(error.stage(Stage::Parser));
         }
         (1003, _) if matches!(before(label), b"function" | b"*") => expected(file, "(", label),
         (1003, _) if before(label) == b"?." => {
             let chain = file.token_before(label).map_or(label, |it| it.span());
-            SyntaxError::of_oxc(chain, "Identifier expected after '?.'")
+            SyntaxError::oxc_error(chain, "Identifier expected after '?.'")
                 .help("Add an identifier after '?.'")
         }
         (1128, _) if file.slice(label) == b"export" => {
@@ -1563,7 +1577,7 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
             while !file.is_javascript() && is_modifier(file.slice(next)) && is_before_word(next) {
                 next = token_after(file, next);
             }
-            SyntaxError::of_oxc(next, "Unexpected token")
+            SyntaxError::oxc_error(next, "Unexpected token")
         }
         (1005, [expected, found, ..]) => {
             let pair = match *args.get(2).unwrap_or(expected) {
@@ -1602,7 +1616,7 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
                 let end = file.token_before(label).map_or(label.start, |it| it.span().end);
                 let message = "Dynamic imports can only accept a module specifier and an optional set of attributes as arguments";
                 let call = Span::new(import.span().start, end);
-                return Some(SyntaxError::of_oxc(call, message).stage(Stage::Fatal));
+                return Some(SyntaxError::oxc_error(call, message).stage(Stage::Fatal));
             }
             let has_opener = match *found {
                 b"EOF" => *expected == b"}" && opened.is_some_and(|it| labels_opener_at_eof(file, it)),
@@ -1623,7 +1637,7 @@ fn of_parser<'a>(file: &'a File<'a>, it: &Diagnostic, label: Span) -> Option<Syn
         (1003 | 1109 | 1110 | 1128 | 1134 | 1137 | 1138 | 1145 | 1478 | 18029, _)
             if label.end > label.start =>
         {
-            SyntaxError::of_oxc(label, "Unexpected token")
+            SyntaxError::oxc_error(label, "Unexpected token")
         }
         _ => return None,
     };
@@ -1651,7 +1665,7 @@ fn module_attributes<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 && !matches!(text.get(value.start as usize), Some(b'"' | b'\''))
             {
                 let message = "Only string literals are allowed as module attribute values.";
-                let error = SyntaxError::of_oxc(next_token(text, value.start), message);
+                let error = SyntaxError::oxc_error(next_token(text, value.start), message);
                 all.push(error.help("Wrap this with quotes").stage(Stage::Fatal));
             } else if let Some(after) = value
                 .map(|it| (it, next_token(text, next_token(text, it.start).end)))
@@ -1741,9 +1755,9 @@ fn reparsed_statements<'a>(file: &'a File<'a>) -> Vec<Span> {
             },
         }
     }
-    let mut again = Vec::new();
+    let mut reparsed = Vec::new();
     for it in file.body() {
-        let is_of_module = matches!(
+        let is_module_statement = matches!(
             it.tag(),
             StmtTag::Import
                 | StmtTag::ExportNamed
@@ -1752,14 +1766,14 @@ fn reparsed_statements<'a>(file: &'a File<'a>) -> Vec<Span> {
                 | StmtTag::ExportAssign
                 | StmtTag::ExportAsNamespace
         );
-        if is_of_module || it.is_exported() {
+        if is_module_statement || it.is_exported() {
             break;
         }
         let span = it.span();
         if references.iter().any(|at| span.contains_offset(*at))
             || second_readings(file).any(|it| it.start == span.start)
         {
-            again.push(span);
+            reparsed.push(span);
         }
         let first = it.as_var().and_then(|it| it.first());
         if marks.iter().any(|at| span.contains_offset(*at))
@@ -1768,7 +1782,7 @@ fn reparsed_statements<'a>(file: &'a File<'a>) -> Vec<Span> {
             break;
         }
     }
-    again
+    reparsed
 }
 
 /// The statements that parse with `await` as an identifier but not with `await` as the operator.
@@ -1780,20 +1794,22 @@ fn second_readings<'a>(file: &'a File<'a>) -> impl Iterator<Item = &'a Diagnosti
 /// oxc's errors for a statement that it reparses. `errors` are our parser's errors from the reparse.
 #[optimize(size)]
 fn second_reading<'a>(file: &'a File<'a>, errors: &[Diagnostic]) -> Vec<SyntaxError> {
-    let (mut said, stop) = super::to_oxc_errors(file, errors);
+    let (mut translated, stop) = super::to_oxc_errors(file, errors);
     // A diagnostic the parser recorded in oxc's wording comes before the TypeScript parser error for the same problem.
     let before = errors.get(..stop.map_or(errors.len(), |it| it.0));
-    let mut noted = before.unwrap_or_default().iter();
-    let noted = noted.find(|it| it.kind == DiagnosticKind::OxcFatal);
-    if let Some(noted) = noted.and_then(|it| oxc_typescript::of_parser(file, it)) {
-        said.pop();
-        said.push(noted);
+    let mut recorded_fatal = before.unwrap_or_default().iter();
+    let recorded_fatal = recorded_fatal.find(|it| it.kind == DiagnosticKind::OxcFatal);
+    if let Some(recorded_fatal) =
+        recorded_fatal.and_then(|it| oxc_typescript::decode_recorded_error(file, it))
+    {
+        translated.pop();
+        translated.push(recorded_fatal);
     }
-    said
+    translated
 }
 
 fn is_discardable(it: &SyntaxError) -> bool {
-    it.of_oxc.stage == Stage::Parser && !matches!(it.order(), 0 | u32::MAX)
+    it.oxc_details.stage == Stage::Parser && !matches!(it.order(), 0 | u32::MAX)
 }
 
 /// When oxc's parser goes back to a statement ([`reparsed_statements`]), it discards the errors it has reported since
@@ -1808,53 +1824,56 @@ fn discard_errors_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
 #[cold]
 #[optimize(size)]
 fn reparse_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
-    let again = reparsed_statements(file);
-    let Some(first) = again.first().map(|it| it.start) else {
+    let reparsed = reparsed_statements(file);
+    let Some(first) = reparsed.first().map(|it| it.start) else {
         return;
     };
     // oxc doesn't go back after a fatal error.
-    if all.iter().any(|it| it.of_oxc.stage == Stage::Fatal) {
+    if all.iter().any(|it| it.oxc_details.stage == Stage::Fatal) {
         return;
     }
     const AWAIT: &[u8] = b"Cannot use `await` as an identifier in an async context";
     const YIELD: &[u8] = b"Cannot use `yield` as an identifier in a generator context";
-    let mut kept = Vec::new();
+    let mut retained = Vec::new();
     // If oxc gives up during a reparse, it still reparses the next statement, and discards that fatal error with the
     // others. Its tree then has nothing for the failed statement.
-    let (mut last_reparse_errors, mut given_up) = (Vec::new(), Vec::new());
-    for span in &again {
+    let (mut last_reparse_errors, mut failed_reparses) = (Vec::new(), Vec::new());
+    for span in &reparsed {
         // oxc truncates the error list to the length it had when it first reached the statement.
         let is_from_first_reading = |it: &&SyntaxError| {
             is_discardable(it) && it.message != AWAIT && (first..span.start).contains(&it.at)
         };
-        kept.truncate(all.iter().filter(is_from_first_reading).count());
+        retained.truncate(all.iter().filter(is_from_first_reading).count());
         let second = second_readings(file).find(|it| it.start == span.start);
         last_reparse_errors = second.map_or_else(Vec::new, |it| second_reading(file, &it.related));
         let read_to = match (second, last_reparse_errors.last()) {
             (Some(_), Some(last)) => {
-                given_up.push(*span);
+                failed_reparses.push(*span);
                 last.at
             }
             _ => span.end,
         };
         // oxc reports only once that statements aren't allowed in a declaration file.
-        let is_said_again = |it: &SyntaxError| {
+        let is_repeated = |it: &SyntaxError| {
             is_discardable(it)
                 && (span.start..read_to).contains(&it.at)
-                && (it.of_oxc.code != 1036 || it.at != span.start)
+                && (it.oxc_details.code != 1036 || it.at != span.start)
                 && (second.is_none() || it.message != AWAIT)
         };
-        let inside = all.iter().enumerate().filter(|it| is_said_again(it.1));
-        kept.extend(inside.map(|it| it.0));
+        let inside = all.iter().enumerate().filter(|it| is_repeated(it.1));
+        retained.extend(inside.map(|it| it.0));
     }
     let mut index = 0;
     all.retain_mut(|it| {
         index += 1;
-        if kept.contains(&(index - 1)) {
+        if retained.contains(&(index - 1)) {
             return true;
         }
-        if given_up.iter().any(|span| span.contains_offset(it.at)) {
-            return matches!(it.order(), 0 | u32::MAX) && it.of_oxc.stage == Stage::Parser;
+        if failed_reparses
+            .iter()
+            .any(|span| span.contains_offset(it.at))
+        {
+            return matches!(it.order(), 0 | u32::MAX) && it.oxc_details.stage == Stage::Parser;
         }
         if !is_discardable(it) || it.at < first {
             return true;
@@ -1866,7 +1885,7 @@ fn reparse_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
             _ => return false,
         };
         let label = Span::new(it.at, it.end);
-        *it = SyntaxError::of_oxc(label, ["The keyword '", word, "' is reserved"].concat());
+        *it = SyntaxError::oxc_error(label, ["The keyword '", word, "' is reserved"].concat());
         true
     });
     if !last_reparse_errors.is_empty() {
@@ -1877,7 +1896,7 @@ fn reparse_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
 
 /// The errors oxlint rejects a file for, in the order it prints them.
 ///
-/// - `of_typescript`: the errors from TypeScript's parser, in oxc's wording.
+/// - `typescript_errors`: the errors from TypeScript's parser, in oxc's wording.
 /// - `is_oxfmt`: return the errors oxfmt rejects the file for instead. oxfmt only runs oxc's parser, and doesn't have
 ///   it parse regular expressions. Such a file has no symbols.
 /// - `stop`: the index in the file's diagnostics of the one where oxc's parser gives up. Diagnostics are in the order
@@ -1886,20 +1905,20 @@ fn reparse_like_oxc<'a>(file: &'a File<'a>, all: &mut Vec<SyntaxError>) {
 /// Each check may return its errors in any order.
 pub(super) fn errors<'a>(
     file: &'a File<'a>,
-    of_typescript: Vec<SyntaxError>,
+    typescript_errors: Vec<SyntaxError>,
     stop: Option<usize>,
     is_oxfmt: bool,
 ) -> Vec<SyntaxError> {
     // If TypeScript's parser has an error, the tree has holes. oxc's parser has an error too, so the semantic pass's
     // errors aren't printed. We don't compute them, and never use the scopes of such a tree.
-    let has_holes = !of_typescript.is_empty();
+    let has_holes = !typescript_errors.is_empty();
     let is_whole = !has_holes && !is_oxfmt;
     // A diagnostic the parser recorded in oxc's wording comes before a TypeScript parser error at the same offset.
     let mut all = match has_holes {
-        true => oxc_typescript::noted(file, stop),
+        true => oxc_typescript::recorded_errors(file, stop),
         false => oxc_typescript::errors(file, !is_oxfmt),
     };
-    all.extend(of_typescript);
+    all.extend(typescript_errors);
     all.extend(module_attributes(file));
     // JavaScript has no `declare`.
     if !file.is_javascript() {
@@ -1913,10 +1932,12 @@ pub(super) fn errors<'a>(
         [.., b'.', b'c', b't', b's'] => all.extend(espree::module_syntax_in_commonjs(file, true)),
         _ => {}
     }
-    let noted = file.hir.diagnostics;
-    let noted = stop.and_then(|stop| noted.get(..=stop)).unwrap_or(noted);
-    all.extend(misplaced_await_and_yield(file, noted));
-    all.extend(import_phase_without_call(file, noted));
+    let recorded = file.hir.diagnostics;
+    let recorded = stop
+        .and_then(|stop| recorded.get(..=stop))
+        .unwrap_or(recorded);
+    all.extend(misplaced_await_and_yield(file, recorded));
+    all.extend(import_phase_without_call(file, recorded));
     all.extend(espree::oxc_errors(file, !is_whole, is_oxfmt));
     all.extend(targets::errors(file));
     // oxc reports the first four after it has finished the file, in this order.
@@ -1944,11 +1965,14 @@ pub(super) fn errors<'a>(
     // The sort is stable, so errors with the same key stay in the order of the checks above.
     crate::utils::sort::sort_by_key(&mut all, SyntaxError::order);
     discard_errors_like_oxc(file, &mut all);
-    if !is_whole || all.iter().any(|it| it.of_oxc.stage != Stage::Semantic) {
-        all.retain(|it| it.of_oxc.stage != Stage::Semantic);
+    if !is_whole || all.iter().any(|it| it.oxc_details.stage != Stage::Semantic) {
+        all.retain(|it| it.oxc_details.stage != Stage::Semantic);
     }
     all.dedup_by(|a, b| a.at == b.at && a.order() == b.order() && a.message == b.message);
-    if let Some(fatal) = all.iter().position(|it| it.of_oxc.stage == Stage::Fatal) {
+    if let Some(fatal) = all
+        .iter()
+        .position(|it| it.oxc_details.stage == Stage::Fatal)
+    {
         // How far the parser has read. If it's missing a token, it has already lexed the next one, which may have a
         // lexer error.
         let read = match all[fatal].end {

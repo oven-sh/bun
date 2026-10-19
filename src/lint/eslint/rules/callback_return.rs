@@ -39,7 +39,7 @@ fn is_callback_expression<'a>(call: Expr<'a>, statement: Option<Stmt<'a>>) -> bo
 
 /// The enclosing node that decides whether the calls inside it are fine.
 #[derive(Copy, Clone)]
-enum Around<'a> {
+enum Enclosing<'a> {
     /// A `return`, or an arrow function.
     Returned,
     /// The closest block, and whether it's a function body.
@@ -48,7 +48,7 @@ enum Around<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
-    around: AncestorMemo<'a, Around<'a>>,
+    enclosing: AncestorMemo<'a, Enclosing<'a>>,
     /// ESLint's `getUpperFunction`.
     functions: AncestorMemo<'a, Func<'a>>,
 }
@@ -96,23 +96,23 @@ impl Rule for CallbackReturn {
             return;
         }
 
-        let around = cx.state.around.find(Node::Expr(e), |child, ancestor| match ancestor {
+        let enclosing = cx.state.enclosing.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Stmt(statement) => match statement.kind() {
-                StmtKind::Return(_) => Some(Around::Returned),
-                StmtKind::Block(body) => Some(Around::Block(body, false)),
+                StmtKind::Return(_) => Some(Enclosing::Returned),
+                StmtKind::Block(body) => Some(Enclosing::Block(body, false)),
                 _ => None,
             },
             Node::Func(func) => match (child, func.body_statements()) {
-                (Node::Stmt(_), Some(body)) if func.kind() != FnKind::StaticBlock => Some(Around::Block(body, true)),
-                _ if func.is_arrow() => Some(Around::Returned),
+                (Node::Stmt(_), Some(body)) if func.kind() != FnKind::StaticBlock => Some(Enclosing::Block(body, true)),
+                _ if func.is_arrow() => Some(Enclosing::Returned),
                 _ => None,
             },
             _ => None,
         });
-        if matches!(around, Some(Around::Returned)) {
+        if matches!(enclosing, Some(Enclosing::Returned)) {
             return;
         }
-        if let Some(Around::Block(body, is_function_body)) = around {
+        if let Some(Enclosing::Block(body, is_function_body)) = enclosing {
             let mut from_last = body.iter().rev();
             let (last, before_last) = (from_last.next(), from_last.next());
             if is_function_body && is_callback_expression(e, last) {

@@ -2,11 +2,11 @@
 //! text up front and finds where names, indentation and the plain parts of strings end ([`ScannerStops`]). Anything
 //! that isn't ASCII takes a slow path.
 //!
-//! It rejects text it can't scan ([`Lexer::refuse`]). From then on every token is the end of the file, so the parser
+//! It rejects text it can't scan ([`Lexer::reject`]). From then on every token is the end of the file, so the parser
 //! unwinds without having to check for failure. With `Options::recovers` it reports an error and continues like
 //! TypeScript's scanner ([`Lexer::error`]), where that's implemented.
 
-use crate::Refusal;
+use crate::Rejection;
 use crate::names::{Names, Text};
 use crate::token::T;
 use bun_core::lexer::{
@@ -39,11 +39,11 @@ pub(crate) struct Lexer<'a> {
     pub(crate) number: f64,
     /// The start of the last string whose contents are only printable ASCII, with no backslash.
     plain_string: u32,
-    pub(crate) refusal: Option<Refusal>,
+    pub(crate) rejection: Option<Rejection>,
     /// Where the text was rejected, and by which line of this crate.
-    pub(crate) refused_at: (u32, &'static core::panic::Location<'static>),
+    pub(crate) rejected_at: (u32, &'static core::panic::Location<'static>),
     /// `full_start` at that point.
-    pub(crate) refused_after: u32,
+    pub(crate) rejected_after: u32,
     /// `</` is one token.
     pub(crate) is_jsx: bool,
     /// `Dialect::ecmascript`, in a JavaScript file.
@@ -272,9 +272,9 @@ impl<'a> Lexer<'a> {
             atom: Atom::NONE,
             number: 0.0,
             plain_string: u32::MAX,
-            refusal: None,
-            refused_at: (0, core::panic::Location::caller()),
-            refused_after: 0,
+            rejection: None,
+            rejected_at: (0, core::panic::Location::caller()),
+            rejected_after: 0,
             is_jsx: false,
             is_ecmascript: false,
             is_script: false,
@@ -335,23 +335,23 @@ impl<'a> Lexer<'a> {
             .last()
             .is_some_and(|last| last.pos >= mark.end)
         {
-            self.forget_comments_from(mark.end);
+            self.discard_comments_from(mark.end);
         }
         if self.flagged.last().is_some_and(|last| last.1 >= mark.end) {
-            self.forget_flagged_from(mark.end);
+            self.discard_flagged_from(mark.end);
         }
         if !self.errors.is_empty() {
-            self.forget_errors_from(mark.start.saturating_add(1));
+            self.discard_errors_from(mark.start.saturating_add(1));
         }
     }
 
     /// Drops the errors from scans that began at `pos` or later, because those scans will run again.
     #[cold]
     #[inline(never)]
-    fn forget_errors_from(&mut self, pos: u32) {
-        let kept = self.origins.partition_point(|&origin| origin < pos);
-        self.errors.truncate(kept);
-        self.origins.truncate(kept);
+    fn discard_errors_from(&mut self, pos: u32) {
+        let keep_len = self.origins.partition_point(|&origin| origin < pos);
+        self.errors.truncate(keep_len);
+        self.origins.truncate(keep_len);
     }
 
     /// `s.errorAt(message, pos, length)`: reports message `code` with `args`, from `start` to `end`. Returns true if
@@ -362,13 +362,13 @@ impl<'a> Lexer<'a> {
     #[track_caller]
     pub(crate) fn error(
         &mut self,
-        why: Refusal,
+        why: Rejection,
         code: u32,
         (start, end): (usize, usize),
         args: &[&[u8]],
     ) -> bool {
         if !self.recovers {
-            self.refuse(why);
+            self.reject(why);
             return false;
         }
         let at = match start == end {
@@ -393,32 +393,33 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn take_errors(&mut self) -> Vec<Diagnostic> {
-        let mut taken = std::mem::take(&mut self.errors);
-        let is_waiting = (taken.last()).is_some_and(|it| it.code == 1260 && it.start == self.start);
-        if is_waiting && let Some(waiting) = taken.pop() {
+        let mut drained = std::mem::take(&mut self.errors);
+        let is_pending =
+            (drained.last()).is_some_and(|it| it.code == 1260 && it.start == self.start);
+        if is_pending && let Some(pending) = drained.pop() {
             let origin = self
                 .origins
-                .get(taken.len())
+                .get(drained.len())
                 .copied()
                 .unwrap_or(self.full_start);
             self.origins.clear();
             self.origins.push(origin);
-            self.errors.push(waiting);
+            self.errors.push(pending);
         }
-        taken
+        drained
     }
 
     /// `nextTokenWithoutCheck`: the token is used as a name, so that error about it is dropped. Returns true if the
     /// error was still here.
     #[cold]
     #[inline(never)]
-    pub(crate) fn forget_escaped_keyword(&mut self) -> bool {
-        let is_waiting =
+    pub(crate) fn discard_escaped_keyword_error(&mut self) -> bool {
+        let is_pending =
             (self.errors.last()).is_some_and(|it| it.code == 1260 && it.start == self.start);
-        if is_waiting {
+        if is_pending {
             self.errors.pop();
         }
-        is_waiting
+        is_pending
     }
 
     /// [`Lexer::error`], for code that only runs with recovery.
@@ -426,14 +427,14 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     #[track_caller]
     fn report(&mut self, code: u32, at: (usize, usize), args: &[&[u8]]) {
-        self.error(Refusal::Unsupported, code, at, args);
+        self.error(Rejection::Unsupported, code, at, args);
     }
 
     #[cold]
     #[inline(never)]
-    fn forget_flagged_from(&mut self, pos: u32) {
-        let kept = self.flagged.partition_point(|it| it.1 < pos);
-        self.flagged.truncate(kept);
+    fn discard_flagged_from(&mut self, pos: u32) {
+        let keep_len = self.flagged.partition_point(|it| it.1 < pos);
+        self.flagged.truncate(keep_len);
     }
 
     /// Adds an entry to `flagged`. Returns false if the caller has to reject the text instead.
@@ -448,9 +449,9 @@ impl<'a> Lexer<'a> {
     /// Drops the comments from `pos` on. That text is scanned again, possibly as something else.
     #[cold]
     #[inline(never)]
-    fn forget_comments_from(&mut self, pos: u32) {
-        let kept = self.comments.partition_point(|comment| comment.pos < pos);
-        self.comments.truncate(kept);
+    fn discard_comments_from(&mut self, pos: u32) {
+        let keep_len = self.comments.partition_point(|comment| comment.pos < pos);
+        self.comments.truncate(keep_len);
     }
 
     /// Returns the text of `atom`, which came from a token of this file. Empty for `Atom::NONE`.
@@ -466,11 +467,11 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn refuse(&mut self, why: Refusal) {
-        if self.refusal.is_none() {
-            self.refusal = Some(why);
-            self.refused_at = (self.start, core::panic::Location::caller());
-            self.refused_after = self.full_start;
+    pub(crate) fn reject(&mut self, why: Rejection) {
+        if self.rejection.is_none() {
+            self.rejection = Some(why);
+            self.rejected_at = (self.start, core::panic::Location::caller());
+            self.rejected_after = self.full_start;
         }
         self.token = T::Eof;
         self.start = self.src.len() as u32;
@@ -687,7 +688,9 @@ impl<'a> Lexer<'a> {
                 First::Hash => return self.hash(pos),
                 First::Backslash => return self.name_slow(pos, pos),
                 First::NotAscii => return self.scan_after_comments(pos),
-                First::Invalid => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
+                First::Invalid => {
+                    return self.invalid_character(Rejection::UnexpectedCharacter, pos);
+                }
             }
             return;
         }
@@ -716,7 +719,7 @@ impl<'a> Lexer<'a> {
         if self.stack_check.is_safe_to_recurse() {
             return false;
         }
-        self.refuse(Refusal::TooDeep);
+        self.reject(Rejection::TooDeep);
         true
     }
 
@@ -724,9 +727,9 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     #[track_caller]
-    fn invalid_character(&mut self, why: Refusal, pos: usize) {
+    fn invalid_character(&mut self, why: Rejection, pos: usize) {
         if !self.recovers {
-            return self.refuse(why);
+            return self.reject(why);
         }
         let src = self.src;
         match decode(src.get(pos..).unwrap_or_default()) {
@@ -844,7 +847,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn not_ascii(&mut self, pos: usize) -> Option<usize> {
         let Some((c, len)) = decode(&self.src[pos..]) else {
-            self.invalid_character(Refusal::NotUtf8, pos);
+            self.invalid_character(Rejection::NotUtf8, pos);
             return None;
         };
         if c == 0x2028 || c == 0x2029 {
@@ -917,7 +920,7 @@ impl<'a> Lexer<'a> {
     fn scan_at_possible_conflict_marker(&mut self, pos: usize) {
         if self.is_conflict_marker(pos) {
             if !self.recovers {
-                return self.refuse(Refusal::ConflictMarker);
+                return self.reject(Rejection::ConflictMarker);
             }
             let end = self.conflict_marker(pos);
             return self.scan_after_comments(end);
@@ -991,7 +994,7 @@ impl<'a> Lexer<'a> {
         if after >= 0x80 || after == b'\\' {
             return self.name_slow(start, start + len);
         }
-        let text = Text::of_source(src, start, start + len);
+        let text = Text::from_source(src, start, start + len);
         self.atom = self.names.long(text, self.atoms);
         // No keyword is that long.
         self.set(T::Identifier, start, start + len);
@@ -1007,7 +1010,7 @@ impl<'a> Lexer<'a> {
             return self.name_slow(start, end);
         }
         let text = src.get(start..end).unwrap_or_default();
-        self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
+        self.atom = (self.names).atom(Text::from_source(src, start, end), self.atoms);
         self.set(crate::token::keyword(text), start, end);
     }
 
@@ -1032,7 +1035,7 @@ impl<'a> Lexer<'a> {
                     None if self.recovers => break,
                     None => {
                         self.buffer = text;
-                        return self.refuse(Refusal::InvalidEscape);
+                        return self.reject(Rejection::InvalidEscape);
                     }
                 },
                 Some(_) => match decode(&src[pos..]) {
@@ -1040,12 +1043,12 @@ impl<'a> Lexer<'a> {
                     None if self.recovers => break,
                     None => {
                         self.buffer = text;
-                        return self.refuse(Refusal::NotUtf8);
+                        return self.reject(Rejection::NotUtf8);
                     }
                 },
                 None => break,
             };
-            let belongs = match text.len() == usize::from(is_private) {
+            let is_name_char = match text.len() == usize::from(is_private) {
                 true => {
                     is_identifier_start(c)
                         || self.is_ecmascript
@@ -1059,16 +1062,16 @@ impl<'a> Lexer<'a> {
                 }
             };
             let is_escape = src[pos] == b'\\';
-            if !belongs {
+            if !is_name_char {
                 if is_escape && !self.recovers {
                     self.buffer = text;
-                    return self.refuse(Refusal::InvalidEscape);
+                    return self.reject(Rejection::InvalidEscape);
                 }
                 break;
             }
             let Some(c) = char::from_u32(c) else {
                 self.buffer = text;
-                return self.refuse(Refusal::InvalidEscape);
+                return self.reject(Rejection::InvalidEscape);
             };
             self.has_escape |= is_escape;
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
@@ -1078,10 +1081,10 @@ impl<'a> Lexer<'a> {
             self.buffer = text;
             return match is_private {
                 true => self.hash_without_name(start),
-                false => self.invalid_character(Refusal::UnexpectedCharacter, start),
+                false => self.invalid_character(Rejection::UnexpectedCharacter, start),
             };
         }
-        self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
+        self.atom = (self.names).atom(Text::not_in_source(src, &text), self.atoms);
         let mut kind = crate::token::keyword(&text);
         self.buffer = text;
         if is_private {
@@ -1095,14 +1098,14 @@ impl<'a> Lexer<'a> {
                 return self.set(kind, start, pos);
             }
             if matches!(kind, T::Await | T::Yield | T::Async) {
-                return self.refuse(Refusal::EscapedKeyword);
+                return self.reject(Rejection::EscapedKeyword);
             }
             // It's an error wherever it's parsed as the keyword. TypeScript parses a contextual keyword as the keyword
             // wherever it can.
             kind = match kind.is_reserved_word() {
                 true => T::EscapedReservedWord,
                 false if self.is_ecmascript => T::Identifier,
-                false => return self.refuse(Refusal::EscapedKeyword),
+                false => return self.reject(Rejection::EscapedKeyword),
             };
         }
         self.set(kind, start, pos);
@@ -1165,7 +1168,7 @@ impl<'a> Lexer<'a> {
             return self.name_slow(start, end);
         }
         self.has_escape = false;
-        self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
+        self.atom = (self.names).atom(Text::from_source(src, start, end), self.atoms);
         self.note_private_name(start);
         self.set(T::PrivateIdentifier, start, end);
     }
@@ -1187,7 +1190,7 @@ impl<'a> Lexer<'a> {
     #[track_caller]
     fn hash_without_name(&mut self, start: usize) {
         if !self.recovers {
-            return self.refuse(Refusal::UnexpectedCharacter);
+            return self.reject(Rejection::UnexpectedCharacter);
         }
         // "'#!' can only be used at the start of a file."
         if self.at(start + 1) == b'!' {
@@ -1196,7 +1199,7 @@ impl<'a> Lexer<'a> {
         }
         self.report(1127, (start, start + 1), &[]);
         self.has_escape = false;
-        let text = Text::of_source(self.src, start, start + 1);
+        let text = Text::from_source(self.src, start, start + 1);
         self.atom = self.names.atom(text, self.atoms);
         self.set(T::PrivateIdentifier, start, start + 1);
     }
@@ -1308,7 +1311,7 @@ impl<'a> Lexer<'a> {
         let end = match len {
             Some(len) => start + 2 + len + 2,
             // "'*/' expected.", at the end of the text. The comment ends there.
-            None if self.error(Refusal::Unterminated, 1010, (src.len(), src.len()), &[]) => {
+            None if self.error(Rejection::Unterminated, 1010, (src.len(), src.len()), &[]) => {
                 src.len()
             }
             None => return None,
@@ -1409,7 +1412,7 @@ impl<'a> Lexer<'a> {
     /// Returns the atom of the text from `start` to `end`, which contains no zero byte.
     #[inline]
     fn atom_of_source(&mut self, start: usize, end: usize) -> Atom {
-        let text = Text::of_source(self.src, start, end);
+        let text = Text::from_source(self.src, start, end);
         let len = end.saturating_sub(start);
         if len >= 16 {
             return match len {
@@ -1555,7 +1558,7 @@ impl<'a> Lexer<'a> {
             match src.get(pos) {
                 None | Some(b'\n' | b'\r') => {
                     // "Unterminated string literal." The string ends there.
-                    if !self.error(Refusal::Unterminated, 1002, (pos, pos), &[]) {
+                    if !self.error(Rejection::Unterminated, 1002, (pos, pos), &[]) {
                         self.buffer = text;
                         return;
                     }
@@ -1574,15 +1577,15 @@ impl<'a> Lexer<'a> {
                         None if self.recovers => pos = self.invalid_escape(pos, &mut text, true),
                         None => {
                             self.buffer = text;
-                            return self.refuse(Refusal::InvalidEscape);
+                            return self.reject(Rejection::InvalidEscape);
                         }
                     },
                 },
                 Some(_) => {
                     let end = self.end_of_run_before(pos + 1, [quote, b'\\', b'\n', b'\r']);
-                    let written = src.get(pos..end).unwrap_or_default();
-                    is_ascii &= written.is_ascii();
-                    text.extend_from_slice(written);
+                    let raw = src.get(pos..end).unwrap_or_default();
+                    is_ascii &= raw.is_ascii();
+                    text.extend_from_slice(raw);
                     pos = end;
                 }
             }
@@ -1590,9 +1593,9 @@ impl<'a> Lexer<'a> {
         // TypeScript's scanner accepts the bytes as they are.
         if !is_ascii && !self.recovers && !is_utf8(&src[start + 1..pos]) {
             self.buffer = text;
-            return self.refuse(Refusal::NotUtf8);
+            return self.reject(Rejection::NotUtf8);
         }
-        self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
+        self.atom = (self.names).atom(Text::not_in_source(src, &text), self.atoms);
         self.buffer = text;
         self.set(T::String, start, pos + usize::from(has_end));
     }
@@ -1604,36 +1607,36 @@ impl<'a> Lexer<'a> {
     fn invalid_escape(&mut self, pos: usize, text: &mut Vec<u8>, reports: bool) -> usize {
         let src = self.src;
         let end = self.end_of_invalid_escape(pos);
-        let written = src.get(pos..end).unwrap_or_default();
+        let raw = src.get(pos..end).unwrap_or_default();
         let Some(&c) = src.get(pos + 1) else {
             // "Unexpected end of text." The escape has no value.
-            self.error(Refusal::Unterminated, 1126, (end, end), &[]);
+            self.error(Rejection::Unterminated, 1126, (end, end), &[]);
             return end;
         };
         if !reports {
-            text.extend_from_slice(written);
+            text.extend_from_slice(raw);
             return end;
         }
         match c {
             b'0'..=b'7' => {
-                let digits = written.iter().skip(1);
+                let digits = raw.iter().skip(1);
                 let code = digits.fold(0, |code, &digit| code * 8 + u32::from(digit - b'0'));
                 let syntax = format!("\\x{code:02x}");
                 self.report(1487, (pos, end), &[syntax.as_bytes()]);
                 push_codepoint_wtf8_joined(text, code);
             }
             b'8' | b'9' => {
-                self.report(1488, (pos, end), &[written]);
+                self.report(1488, (pos, end), &[raw]);
                 text.push(c);
             }
             // "Hexadecimal digit expected."
             b'x' => {
                 self.report(1125, (end, end), &[]);
-                text.extend_from_slice(written);
+                text.extend_from_slice(raw);
             }
             b'u' => {
                 self.report_invalid_unicode_escape(pos, end);
-                text.extend_from_slice(written);
+                text.extend_from_slice(raw);
             }
             // `escape` decodes the others.
             _ => return pos + 1,
@@ -1695,7 +1698,7 @@ impl<'a> Lexer<'a> {
             match src.get(pos) {
                 None => {
                     // "Unterminated template literal." The template ends there.
-                    if !self.error(Refusal::Unterminated, 1160, (pos, pos), &[]) {
+                    if !self.error(Rejection::Unterminated, 1160, (pos, pos), &[]) {
                         self.buffer = text;
                         return;
                     }
@@ -1728,18 +1731,18 @@ impl<'a> Lexer<'a> {
                 }
                 Some(_) => {
                     let end = self.end_of_run_before(pos + 1, *b"`$\\\r");
-                    let written = src.get(pos..end).unwrap_or_default();
-                    is_ascii &= written.is_ascii();
-                    text.extend_from_slice(written);
+                    let raw = src.get(pos..end).unwrap_or_default();
+                    is_ascii &= raw.is_ascii();
+                    text.extend_from_slice(raw);
                     pos = end;
                 }
             }
         };
         if !is_ascii && !self.recovers && !is_utf8(&src[start + 1..pos]) {
             self.buffer = text;
-            return self.refuse(Refusal::NotUtf8);
+            return self.reject(Rejection::NotUtf8);
         }
-        self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
+        self.atom = (self.names).atom(Text::not_in_source(src, &text), self.atoms);
         self.buffer = text;
         self.set(token, start, end);
     }
@@ -1755,10 +1758,10 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     pub(crate) fn rescan_template_without_tag(&mut self) {
         if !self.recovers {
-            return self.refuse(Refusal::Reported);
+            return self.reject(Rejection::Reported);
         }
         // TypeScript only scans the text after a `}` once.
-        self.forget_errors_from(self.start.saturating_add(1));
+        self.discard_errors_from(self.start.saturating_add(1));
         let start = self.start as usize;
         self.template_piece(start, self.at(start) == b'`', true);
     }
@@ -1922,7 +1925,7 @@ impl<'a> Lexer<'a> {
                 10 => text.clone(),
                 _ => decimal_digits(&text[2..], radix),
             };
-            self.atom = (self.names).atom(Text::elsewhere(self.src, &decimal), self.atoms);
+            self.atom = (self.names).atom(Text::not_in_source(self.src, &decimal), self.atoms);
             T::BigInt
         } else {
             self.number = match radix {
@@ -1987,7 +1990,7 @@ impl<'a> Lexer<'a> {
     #[track_caller]
     fn invalid_number(&mut self, start: usize) {
         if !self.recovers {
-            return self.refuse(Refusal::UnusualNumber);
+            return self.reject(Rejection::UnusualNumber);
         }
         let mut digits = std::mem::take(&mut self.buffer);
         digits.clear();
@@ -2019,7 +2022,7 @@ impl<'a> Lexer<'a> {
             // `scanBigIntSuffix`. Whatever follows is the next token.
             if self.at(end) == b'n' {
                 let decimal = decimal_digits(digits, radix);
-                self.atom = (self.names).atom(Text::elsewhere(src, &decimal), self.atoms);
+                self.atom = (self.names).atom(Text::not_in_source(src, &decimal), self.atoms);
                 return (T::BigInt, end + 1);
             }
             self.number = number_from_digits(digits, radix);
@@ -2094,7 +2097,7 @@ impl<'a> Lexer<'a> {
             let zeros = digits.iter().take_while(|&&c| c == b'0').count();
             let zeros = zeros.min(digits.len().saturating_sub(1));
             let decimal = digits.get(zeros..).unwrap_or_default();
-            self.atom = (self.names).atom(Text::elsewhere(src, decimal), self.atoms);
+            self.atom = (self.names).atom(Text::not_in_source(src, decimal), self.atoms);
             token = T::BigInt;
             end += 1;
         }
@@ -2181,13 +2184,13 @@ impl<'a> Lexer<'a> {
                     Some((c, len)) if is_identifier_part(c) => pos += len,
                     Some(_) => break,
                     None if self.recovers => break,
-                    None => return self.refuse(Refusal::NotUtf8),
+                    None => return self.reject(Rejection::NotUtf8),
                 },
                 _ => break,
             }
         }
         if core::str::from_utf8(&src[start..pos]).is_err() && !self.recovers {
-            return self.refuse(Refusal::NotUtf8);
+            return self.reject(Rejection::NotUtf8);
         }
         self.set(T::Regex, start, pos);
     }
@@ -2198,7 +2201,7 @@ impl<'a> Lexer<'a> {
     #[track_caller]
     fn unterminated_regex(&mut self, end_of_line: usize) {
         if !self.recovers {
-            return self.refuse(Refusal::Unterminated);
+            return self.reject(Rejection::Unterminated);
         }
         let src = self.src;
         let start = self.start as usize;
@@ -2252,9 +2255,9 @@ impl Lexer<'_> {
                 end += 1;
             }
             if matches!(src.get(end), Some(b'\\' | 0x80..)) {
-                return self.refuse(Refusal::Unsupported);
+                return self.reject(Rejection::Unsupported);
             }
-            let text = Text::of_source(src, self.start as usize, end);
+            let text = Text::from_source(src, self.start as usize, end);
             self.atom = self.names.atom(text, self.atoms);
             self.end = end as u32;
         }
@@ -2266,11 +2269,11 @@ impl Lexer<'_> {
     pub(crate) fn scan_jsx_attribute_value(&mut self) {
         let before = self.end as usize;
         // `next` scans a JavaScript string, so it rejects one that contains a line break.
-        let had_refused = self.refusal;
+        let saved_rejection = self.rejection;
         let first_comment = self.comments.len();
         self.next();
         let src = self.src;
-        let start = match self.refusal == had_refused {
+        let start = match self.rejection == saved_rejection {
             true if self.token != T::String => return,
             // The string reads the same in JSX as in JavaScript.
             true if self.plain_string == self.start
@@ -2283,7 +2286,7 @@ impl Lexer<'_> {
             false if self.recovers => return,
             // Rescan it from the quote.
             false => {
-                self.refusal = had_refused;
+                self.rejection = saved_rejection;
                 let mut pos = before;
                 loop {
                     match (src.get(pos), src.get(pos + 1)) {
@@ -2302,11 +2305,11 @@ impl Lexer<'_> {
                     }
                 }
                 if !matches!(src.get(pos), Some(b'"' | b'\'')) {
-                    return self.refuse(Refusal::Unsupported);
+                    return self.reject(Rejection::Unsupported);
                 }
                 // TypeScript 5 scans a JavaScript string there, and rejects it as one.
                 if pos > before && self.scans_jsx_strings_as_typescript_5() {
-                    return self.refuse(Refusal::Unterminated);
+                    return self.reject(Rejection::Unterminated);
                 }
                 // The rejected string wasn't a token. The next token is the string at `pos`.
                 for comment in self.comments.iter_mut().skip(first_comment) {
@@ -2316,7 +2319,7 @@ impl Lexer<'_> {
             }
         };
         // What looked like an escape isn't one in JSX.
-        self.forget_flagged_from(start as u32);
+        self.discard_flagged_from(start as u32);
         if !self.errors.is_empty() && self.is_javascript_string(before, start) {
             return;
         }
@@ -2326,7 +2329,7 @@ impl Lexer<'_> {
         };
         let text = &src[start + 1..start + 1 + len];
         if core::str::from_utf8(text).is_err() && !self.recovers {
-            return self.refuse(Refusal::NotUtf8);
+            return self.reject(Rejection::NotUtf8);
         }
         if start != before
             && bun_core::strings::contains_char(text, b'\\')
@@ -2334,7 +2337,7 @@ impl Lexer<'_> {
         {
             return;
         }
-        let text = Text::of_source(src, start + 1, start + 1 + len);
+        let text = Text::from_source(src, start + 1, start + 1 + len);
         self.atom = self.names.atom(text, self.atoms);
         self.set(T::String, start, start + len + 2);
     }
@@ -2345,7 +2348,7 @@ impl Lexer<'_> {
     #[track_caller]
     fn is_string_with_escapes(&mut self, before: usize, start: usize) -> bool {
         if !self.recovers {
-            self.refuse(Refusal::Unsupported);
+            self.reject(Rejection::Unsupported);
             return true;
         }
         self.is_javascript_string(before, start)
@@ -2378,7 +2381,7 @@ impl Lexer<'_> {
         {
             return true;
         }
-        self.forget_errors_from(before as u32);
+        self.discard_errors_from(before as u32);
         false
     }
 
@@ -2389,14 +2392,14 @@ impl Lexer<'_> {
     fn unterminated_jsx_string(&mut self, before: usize, start: usize) {
         let src = self.src;
         let end = src.len();
-        if !self.error(Refusal::Unterminated, 1002, (end, end), &[]) {
+        if !self.error(Rejection::Unterminated, 1002, (end, end), &[]) {
             return;
         }
         // The error belongs to the scan that began at `before`, so resetting to a mark at the string must keep it.
         if let Some(origin) = self.origins.last_mut() {
             *origin = before as u32;
         }
-        let text = Text::of_source(src, start + 1, end);
+        let text = Text::from_source(src, start + 1, end);
         self.atom = self.names.atom(text, self.atoms);
         self.set(T::String, start, end);
     }
@@ -2436,13 +2439,13 @@ impl Lexer<'_> {
                 has_line_break |= matches!(c, b'\n' | b'\r');
                 end += 1;
             }
-            let is_all = match src.get(end) {
+            let is_only_whitespace = match src.get(end) {
                 None | Some(b'{') => true,
                 // `<<` may start a conflict marker.
                 Some(b'<') => src.get(end + 1) != Some(&b'<'),
                 Some(_) => false,
             };
-            if is_all && has_line_break {
+            if is_only_whitespace && has_line_break {
                 debug_assert!(
                     core::str::from_utf8(&src[start..end])
                         .is_ok_and(|it| fix_whitespace_and_decode_jsx_entities(it).is_empty())
@@ -2471,7 +2474,7 @@ impl Lexer<'_> {
                 .iter()
                 .any(|&c| matches!(c, b'&' | b'\n' | b'\r' | 0x80..));
             if !needs_fixing {
-                let text = Text::of_source(src, start, start + len);
+                let text = Text::from_source(src, start, start + len);
                 self.atom = self.names.atom(text, self.atoms);
                 return self.set(T::JsxText, start, start + len);
             }
@@ -2481,7 +2484,7 @@ impl Lexer<'_> {
                 start += len;
                 continue;
             }
-            self.atom = (self.names).atom(Text::elsewhere(src, &fixed), self.atoms);
+            self.atom = (self.names).atom(Text::not_in_source(src, &fixed), self.atoms);
             return self.set(T::JsxText, start, start + len);
         }
     }
@@ -2492,7 +2495,7 @@ impl Lexer<'_> {
     #[track_caller]
     fn closers_in_jsx_text(&mut self, start: usize, text: &[u8]) -> bool {
         if !self.recovers {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return false;
         }
         for (at, &c) in text.iter().enumerate() {
@@ -2516,7 +2519,7 @@ impl Lexer<'_> {
             return false;
         }
         if !self.recovers {
-            self.refuse(Refusal::ConflictMarker);
+            self.reject(Rejection::ConflictMarker);
             return true;
         }
         let end = self.conflict_marker(pos);
@@ -2531,11 +2534,11 @@ impl Lexer<'_> {
     #[track_caller]
     fn jsx_text_with_invalid_utf8(&mut self, start: usize, text: &[u8]) {
         if !self.recovers {
-            return self.refuse(Refusal::NotUtf8);
+            return self.reject(Rejection::NotUtf8);
         }
         let read = with_replacement_characters(text);
         let fixed = fix_whitespace_and_decode_jsx_entities(&read);
-        self.atom = (self.names).atom(Text::elsewhere(self.src, &fixed), self.atoms);
+        self.atom = (self.names).atom(Text::not_in_source(self.src, &fixed), self.atoms);
         self.set(T::JsxText, start, start + text.len());
     }
 }

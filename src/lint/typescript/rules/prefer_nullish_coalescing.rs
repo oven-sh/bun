@@ -600,9 +600,9 @@ impl PreferNullishCoalescing {
                     fixes.push(fixer.insert_after(right, ")"));
                 }
                 // tsgolint also parenthesizes an operand that's a logical expression.
-                for (it, is_looked_at) in [(left, !is_in_logical_or), (right, true)] {
+                for (it, is_checked) in [(left, !is_in_logical_or), (right, true)] {
                     if is_oxlint
-                        && is_looked_at
+                        && is_checked
                         && equals.is_empty()
                         && !it.is_parenthesized()
                         && matches!(it.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish))

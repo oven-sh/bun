@@ -239,7 +239,7 @@ fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, is_or
 
 /// Returns a comparison between a number and something else. `42 < x` is normalized to `x > 42`.
 fn comparison_to_const(e: Expr<'_>) -> Option<ComparisonToConst<'_>> {
-    let op = CmpOp::of(e.binary_op()?)?;
+    let op = CmpOp::from_binary_op(e.binary_op()?)?;
     let (left, right) = (e.left()?, e.right()?);
     let (left_literal, right_literal) = (get_inner_expression(left), get_inner_expression(right));
     if let Some(constant) = left_literal.as_number() {
@@ -312,7 +312,7 @@ enum CmpOp {
 }
 
 impl CmpOp {
-    fn of(op: BinOp) -> Option<CmpOp> {
+    fn from_binary_op(op: BinOp) -> Option<CmpOp> {
         match op {
             BinOp::Lt => Some(CmpOp::Lt),
             BinOp::Le => Some(CmpOp::Le),

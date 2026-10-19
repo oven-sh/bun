@@ -103,7 +103,7 @@ fn replace_in_bytes(text: &[u8], what: &[u8], with: &[u8]) -> Vec<u8> {
 }
 
 /// Offsets of the non-overlapping occurrences of `what` in `text`.
-fn places<'a>(text: &'a [u8], what: &'a [u8]) -> impl Iterator<Item = usize> + 'a {
+fn occurrences<'a>(text: &'a [u8], what: &'a [u8]) -> impl Iterator<Item = usize> + 'a {
     let mut from = 0;
     std::iter::from_fn(move || {
         let at = from + strings::index_of(&text[from..], what)?;
@@ -412,8 +412,8 @@ impl Host for Virtual {
         let followed = self.followed(path);
         let key = self.key(&followed);
         match (self.files.get(&key), self.directories.get(&key)) {
-            (Some((written, _)), _) => written.clone(),
-            (_, Some(written)) => written.clone(),
+            (Some((original_path, _)), _) => original_path.clone(),
+            (_, Some(original_path)) => original_path.clone(),
             _ => followed,
         }
     }
@@ -435,17 +435,17 @@ impl Host for Virtual {
             [&self.key(&dir)[..], b"/"].concat()
         };
         let mut names = BTreeSet::new();
-        let written = self
+        let original_paths = self
             .files
             .iter()
-            .map(|(key, (written, _))| (key, written))
+            .map(|(key, (original_path, _))| (key, original_path))
             .chain(self.directories.iter());
-        for (key, written) in written {
+        for (key, original_path) in original_paths {
             if let Some(rest) = key.strip_prefix(&prefix[..])
                 && !rest.is_empty()
                 && !bun_core::strings::contains_char(rest, b'/')
             {
-                names.insert(written[written.len() - rest.len()..].to_vec());
+                names.insert(original_path[original_path.len() - rest.len()..].to_vec());
             }
         }
         for key in self.links.keys() {
@@ -1099,14 +1099,14 @@ fn type_or_symbol_baseline(
                 type_lines.extend_from_slice(b"\r\n");
             }
             next_to_write = line + 1;
-            let written = [
+            let result_line = [
                 b">",
                 &source_text[..],
                 b" : ",
                 type_or_symbol.as_bytes(),
                 b"\r\n",
             ];
-            type_lines.extend_from_slice(&written.concat());
+            type_lines.extend_from_slice(&result_line.concat());
         }
         if next_to_write < code_lines.len() {
             if !follows_directly(next_to_write) {
@@ -1138,7 +1138,7 @@ fn declarations_part<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u8]>
     .min();
     let end = end.unwrap_or(js_code.len());
     // `jsCode.WriteString("\r\n\r\n")` precedes the first file.
-    let first = places(&js_code[..end], b"\r\n\r\n//// [").find(|&at| {
+    let first = occurrences(&js_code[..end], b"\r\n\r\n//// [").find(|&at| {
         let name = &js_code[at + 10..end];
         let name = strings::index_of_any(name, b"]\r\n").map(|end| (&name[..end], &name[end..]));
         name.is_some_and(|(name, rest)| {
@@ -1146,7 +1146,7 @@ fn declarations_part<'a>(baseline: &'a [u8], ts_code: &[u8]) -> Option<&'a [u8]>
         })
     });
     // `compareResultFileSets` runs for the declaration files before the JavaScript files.
-    let about_javascript = places(&js_code[end..], b"\r\n\r\n!!!! File ").find(|&at| {
+    let about_javascript = occurrences(&js_code[end..], b"\r\n\r\n!!!! File ").find(|&at| {
         let name = &js_code[end + at + 14..];
         let name = &name[..strings::index_of_char_usize(name, b' ').unwrap_or(name.len())];
         !bun_sema::resolve::is_declaration_file_name(name)
@@ -1233,14 +1233,14 @@ fn first_difference(ours: &[u8], expected: &[u8]) -> Option<String> {
     loop {
         let (a, b) = (ours.next(), expected.next());
         if a != b || a.is_none() {
-            let shown = |it: Option<&[u8]>| match it {
+            let quoted = |it: Option<&[u8]>| match it {
                 Some(it) => format!("{:?}", bstr::BStr::new(&it[..it.len().min(160)])),
                 None => "the end".to_owned(),
             };
             return Some(format!(
                 "line {line}: expected {}, got {}",
-                shown(b),
-                shown(a)
+                quoted(b),
+                quoted(a)
             ));
         }
         line += 1;
@@ -1561,7 +1561,7 @@ fn run_one(
         None => {
             let last = units.last().unwrap();
             let refers = |needle: &[u8]| strings::contains(&last.content, needle);
-            let has_reference = places(&last.content, b"reference").any(|at| {
+            let has_reference = occurrences(&last.content, b"reference").any(|at| {
                 let rest = &last.content[at + 9..];
                 rest.first().is_some_and(u8::is_ascii_whitespace) && rest[1..].starts_with(b"path")
             });
@@ -1766,11 +1766,11 @@ fn run_one(
         let looked_up = bun_sema::resolve::output_declaration_file_name(&looked_up, None);
         // Ordered like the program's files.
         let order = files.order;
-        let place = order
+        let source_index = order
             .iter()
             .position(|&it| it == file)
             .unwrap_or(order.len());
-        let Some(written) = checker.emit_declaration_file(file) else {
+        let Some(emitted) = checker.emit_declaration_file(file) else {
             return;
         };
         let mut text: Vec<u8> = match emit_bom {
@@ -1778,16 +1778,16 @@ fn run_one(
             false => Vec::new(),
         };
         // The harness requests `\r\n`.
-        for line in written.split_inclusive(|&b| b == b'\n') {
+        for line in emitted.split_inclusive(|&b| b == b'\n') {
             match line.strip_suffix(b"\n") {
                 Some(line) => text.extend_from_slice(&[line, b"\r\n"].concat()),
                 None => text.extend_from_slice(line),
             }
         }
         let is_found = looked_up.as_ref() == Some(&output);
-        let mut written = dts.lock();
-        written.retain(|it| it.0 != place as u32);
-        written.push((place as u32, is_found, output, text));
+        let mut emitted_files = dts.lock();
+        emitted_files.retain(|it| it.0 != source_index as u32);
+        emitted_files.push((source_index as u32, is_found, output, text));
     };
     type AfterFile<'a> =
         &'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync);
@@ -2306,7 +2306,9 @@ impl Watched {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     for (name, since) in IN_PROGRESS.lock().iter().flatten() {
                         if since.elapsed() > std::time::Duration::from_secs(600) {
-                            error_line!("STUCK: {name} has been under way for ten minutes. The run ends here.");
+                            error_line!(
+                                "STUCK: {name} has been running for ten minutes. Aborting the run."
+                            );
                             std::process::abort();
                         }
                     }
@@ -2404,9 +2406,12 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
     let percent = |n: usize| n as f64 * 100.0 / all.len().max(1) as f64;
     output_line!("{} tests (each configuration counts)", all.len());
     for (level, what) in [
-        (Level::Codes, "the same errors at the same places"),
-        (Level::Words, "and in the same words"),
-        (Level::Spans, "and as long: all but the related information"),
+        (Level::Codes, "the same error codes at the same positions"),
+        (Level::Words, "and the same message text"),
+        (
+            Level::Spans,
+            "and the same spans: everything but the related information",
+        ),
     ] {
         let n = at_least(level);
         output_line!("{n:>6} {:>6.2}%  {what}", percent(n));
@@ -2427,7 +2432,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             outcome.note
         );
     }
-    let mut are_the_others_the_same = true;
+    let mut others_all_match = true;
     for kind in Kind::ALL {
         let compared: Vec<(&Outcome, &Option<String>)> = (all.iter())
             .filter_map(|o| Some((o, &o.others.iter().find(|it| it.0 == kind)?.1)))
@@ -2436,7 +2441,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             continue;
         }
         let same = compared.iter().filter(|it| it.1.is_none()).count();
-        are_the_others_the_same &= same == compared.len();
+        others_all_match &= same == compared.len();
         output_line!(
             "{same:>6} {:>6.2}%  of {} {kind:?}, byte for byte",
             same as f64 * 100.0 / compared.len() as f64,
@@ -2469,5 +2474,5 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
             return false;
         }
     }
-    !all.is_empty() && failed.is_empty() && are_the_others_the_same
+    !all.is_empty() && failed.is_empty() && others_all_match
 }

@@ -21,7 +21,7 @@ const BRACKET_LOCATION: Message =
     Message::new("bracketLocation", "The closing bracket must be {{location}}{{details}}");
 
 impl Location {
-    fn of(option: &Json) -> Option<Location> {
+    fn from_option(option: &Json) -> Option<Location> {
         match option.as_str()? {
             b"after-props" => Some(Location::AfterProps),
             b"props-aligned" => Some(Location::PropsAligned),
@@ -53,11 +53,11 @@ impl Rule for JsxClosingBracketLocation {
         let (config, mut both) = (options.object(0), Some(Location::TagAligned));
         // `"tag-aligned"` is short for `{ location: "tag-aligned" }`.
         if let Some(location) = options.get(0).filter(|it| it.as_str().is_some()).or_else(|| config.get("location")) {
-            both = Location::of(location);
+            both = Location::from_option(location);
         }
         JsxClosingBracketLocation {
-            non_empty: config.get("nonEmpty").map_or(both, Location::of),
-            self_closing: config.get("selfClosing").map_or(both, Location::of),
+            non_empty: config.get("nonEmpty").map_or(both, Location::from_option),
+            self_closing: config.get("selfClosing").map_or(both, Location::from_option),
         }
     }
 

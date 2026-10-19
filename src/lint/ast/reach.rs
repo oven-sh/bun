@@ -45,25 +45,25 @@ tags_in_tree! {
 }
 
 impl File<'_> {
-    /// Like [`File::expr_tags_in_tree`], but stores `of_node(kind, expression)` instead of the kind.
+    /// Like [`File::expr_tags_in_tree`], but stores `encode(kind, expression)` instead of the kind.
     #[inline]
     pub(crate) fn expr_tags_in_tree_as(
         &self,
         out: &mut Vec<u8>,
-        mut of_node: impl FnMut(ExprTag, &hir::Expr) -> u8,
+        mut encode: impl FnMut(ExprTag, &hir::Expr) -> u8,
     ) {
         let all = self.hir.exprs.iter().enumerate();
         out.clear();
         match self.has_synthetic_nodes() {
             true => out.extend(
                 all.map(|(i, raw)| match self.expr_tag_in_tree::<true>(i as u32) {
-                    Some(tag) => of_node(tag, raw),
+                    Some(tag) => encode(tag, raw),
                     None => NOT_IN_TREE,
                 }),
             ),
             false => out.extend(all.map(
                 |(i, raw)| match self.expr_tag_in_tree::<false>(i as u32) {
-                    Some(tag) => of_node(tag, raw),
+                    Some(tag) => encode(tag, raw),
                     None => NOT_IN_TREE,
                 },
             )),
@@ -95,7 +95,7 @@ impl File<'_> {
 
     /// `MAY_BE_SYNTHETIC`, here and below, means the file may have nodes synthesized from JSDoc comments.
     #[inline(always)]
-    fn is_written<const MAY_BE_SYNTHETIC: bool>(&self, pos: u32) -> bool {
+    fn is_in_source<const MAY_BE_SYNTHETIC: bool>(&self, pos: u32) -> bool {
         !MAY_BE_SYNTHETIC || !self.is_in_jsdoc(pos)
     }
 
@@ -106,7 +106,7 @@ impl File<'_> {
         let attributes = self.hir.import_attributes;
         let is_node = !matches!(self.bound.parent_of_expr(id), Parent::None)
             && !matches!(raw.kind, hir::ExprKind::Missing)
-            && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
+            && self.is_in_source::<MAY_BE_SYNTHETIC>(raw.pos)
             && (!MAY_BE_SYNTHETIC || self.jsdoc_cast_operand(id).is_none())
             && (attributes.is_empty()
                 || !matches!(raw.kind, hir::ExprKind::Object(_))
@@ -119,7 +119,7 @@ impl File<'_> {
         let id = hir::StmtId(i);
         let raw = self.hir.stmts.get(id.idx())?;
         let is_node = !matches!(self.bound.parent_of_stmt(id), Parent::None)
-            && self.is_written::<MAY_BE_SYNTHETIC>(raw.start)
+            && self.is_in_source::<MAY_BE_SYNTHETIC>(raw.start)
             && self.wrapped_in(id).is_none()
             && !self.is_nested_namespace(id);
         is_node.then(|| StmtTag::of(&raw.kind))
@@ -134,7 +134,7 @@ impl File<'_> {
             .type_scope
             .get(id.idx())
             .is_some_and(|scope| scope.is_some())
-            && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
+            && self.is_in_source::<MAY_BE_SYNTHETIC>(raw.pos)
             && !self.is_in_error_type(id);
         is_node.then(|| TypeTag::of(&raw.kind))
     }
@@ -148,7 +148,7 @@ impl File<'_> {
             None | Some(PatParent::None)
         );
         let is_node = !matches!(raw.kind, hir::PatKind::Missing)
-            && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
+            && self.is_in_source::<MAY_BE_SYNTHETIC>(raw.pos)
             && (is_bound || self.is_this_name(id, raw));
         is_node.then(|| PatTag::of(&raw.kind))
     }

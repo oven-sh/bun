@@ -541,11 +541,11 @@ impl<'a> ImportTypeComments<'a> {
             let count = (comments.iter())
                 .take_while(|comment| comment.next_token_start() <= token_start)
                 .count();
-            let (taken, rest) = comments.split_at(count);
+            let (front, rest) = comments.split_at(count);
             *comments = rest;
-            taken
+            front
         }
-        let of_source = f.comments().of_name(source.start);
+        let source_comments = f.comments().of_name(source.start);
         let end_of_typeof = ty.span().start + "typeof".len() as u32;
         let is_typeof = matches!(
             ty.kind(),
@@ -554,24 +554,24 @@ impl<'a> ImportTypeComments<'a> {
                 ..
             }
         );
-        let after_typeof = (of_source.leading.iter())
+        let after_typeof = (source_comments.leading.iter())
             .take_while(|comment| is_typeof && comment.prev_token_end() == end_of_typeof)
             .count();
-        let (leading_import, leading_source) = of_source.leading.split_at(after_typeof);
+        let (leading_import, leading_source) = source_comments.leading.split_at(after_typeof);
         let Some(options) = options else {
             return ImportTypeComments {
                 leading_import,
                 leading_source,
-                trailing_source: of_source.trailing,
+                trailing_source: source_comments.trailing,
                 ..ImportTypeComments::default()
             };
         };
         let outer = options.options_span();
-        let of_attributes = f.comments().of_node(options.object().as_ast_nodes());
+        let attribute_comments = f.comments().of_node(options.object().as_ast_nodes());
         let (mut after_source, mut before_attributes, mut after_attributes) = (
-            of_source.trailing,
-            of_attributes.leading,
-            of_attributes.trailing,
+            source_comments.trailing,
+            attribute_comments.leading,
+            attribute_comments.trailing,
         );
         // `"a" /* 1 */, // 2 ⏎ { .. }`: before the `,`, or after it up to the end of its line.
         let before_comma = take_up_to(&mut after_source, outer.start.saturating_sub(1));
@@ -588,7 +588,7 @@ impl<'a> ImportTypeComments<'a> {
         ImportTypeComments {
             leading_import,
             leading_source,
-            trailing_source: (of_source.trailing)
+            trailing_source: (source_comments.trailing)
                 .slice(0, before_comma.len() + on_line_of_comma.len()),
             leading_options,
             leading_property,
@@ -607,7 +607,7 @@ impl<'a> ImportTypeComments<'a> {
         format_with(move |f: &mut Formatter<'a>| {
             write!(f, FormatLeadingComments::Comments(leading));
             let is_ignored = has_ignore_comment(&[leading], trailing, f);
-            f.around_cursor(source, |f| match is_ignored {
+            f.track_cursor(source, |f| match is_ignored {
                 true => write!(f, FormatSuppressedNode(source)),
                 false => write!(
                     f,

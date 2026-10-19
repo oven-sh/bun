@@ -44,15 +44,15 @@ describe.concurrent("bun fmt behaves like oxfmt", () => {
         const after = readFileSync(join(root, name), "utf8");
         return after === text ? [] : [[name, after]];
       });
-      const named = (stdout + stderr)
+      const lines = (stdout + stderr)
         .replace(/\x1b\[[0-9;]*m/g, "")
         .split("\n")
         .map(line => line.replace(/^\[warn\] | \(\d+ms\)$/g, ""));
       expect({
         changed: Object.fromEntries(changed),
-        listed: it.listed && it.listed.filter(name => named.includes(name)),
+        listed: it.listed && it.listed.filter(name => lines.includes(name)),
         others:
-          it.listed && texts.map(([name]) => name).filter(name => named.includes(name) && !it.listed.includes(name)),
+          it.listed && texts.map(([name]) => name).filter(name => lines.includes(name) && !it.listed.includes(name)),
         stdout: it.stdout === undefined ? undefined : stdout,
         exitCode,
       }).toEqual({

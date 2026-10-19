@@ -6,8 +6,8 @@
 //!
 //! All the searches in a file together take time proportional to the number of nodes plus the number of diagnostics,
 //! whatever the tree's shape. A diagnostic keeps the node it was given, so most searches start there. A search for a
-//! token or a name starts where the previous one ended (see [`Places::innermost_around`]). The walk up is either short
-//! or memoized with [`AncestorMemo`].
+//! token or a name starts where the previous one ended (see [`NodeFinder::innermost_enclosing`]). The walk up is either
+//! short or memoized with [`AncestorMemo`].
 
 use super::{Called, Kinds, kind_named};
 use crate::ast::{
@@ -80,8 +80,8 @@ struct Known {
 
 /// One bit per index in `table` whose entry is one of `kinds`.
 fn bits(table: &[u8], kinds: &Kinds) -> u64 {
-    let places = table.iter().zip(0u32..).filter(|it| kinds.has(*it.0));
-    places.fold(0, |all, it| all | (1 << it.1))
+    let matching = table.iter().zip(0u32..).filter(|it| kinds.has(*it.0));
+    matching.fold(0, |all, it| all | (1 << it.1))
 }
 
 pub(super) fn called(kinds: Kinds) -> Called {
@@ -115,7 +115,7 @@ pub(super) fn called(kinds: Kinds) -> Called {
                 UnOp::PreInc as u32,
                 UnOp::PostDec as u32,
             ),
-        is_odd: kinds.has_any_of(&known.parts),
+        needs_part_lookup: kinds.has_any_of(&known.parts),
     }
 }
 
@@ -390,15 +390,15 @@ impl Known {
     }
 
     /// Of the oxc nodes that `node` represents, the innermost one whose kind is in `kinds` and whose span satisfies
-    /// `fits`.
+    /// `accepts`.
     fn innermost_match<'a>(
         &self,
         node: Node<'a>,
         kinds: &Kinds,
-        fits: &dyn Fn(Span) -> bool,
+        accepts: &dyn Fn(Span) -> bool,
     ) -> Option<Found<'a>> {
         let found = |span: Span, level: u8, is_leaf: bool| {
-            fits(span).then_some(Found {
+            accepts(span).then_some(Found {
                 span,
                 node,
                 level,
@@ -451,7 +451,7 @@ impl Known {
         if !kinds.has(self.export_declaration) && !kinds.has(self.export_default_declaration) {
             return None;
         }
-        let statement = node.as_written().as_stmt()?;
+        let statement = node.owner_or_self().as_stmt()?;
         let kind = match statement.is_default_export() {
             true => self.export_default_declaration,
             false => self.export_declaration,
@@ -485,7 +485,7 @@ struct Found<'a> {
 /// since nothing with the same span can be deeper, and for a node that wasn't found, where the diagnostic's span
 /// replaces it.
 #[derive(Copy, Clone)]
-pub(super) struct Place {
+pub(super) struct CalledNode {
     pub(super) span: Span,
     pub(super) node: Option<(Packed, u8)>,
 }
@@ -494,15 +494,15 @@ pub(super) struct Place {
 /// enters those first.
 pub(super) fn depth<'a>(file: &'a File<'a>, (node, level): (Packed, u8), span: Span) -> u32 {
     let mut at = node.unpack(file);
-    let mut around = u32::from(level == PART && estree_span(at) == span);
+    let mut enclosing = u32::from(level == PART && estree_span(at) == span);
     while !matches!(at, Node::File(_)) {
         at = estree_parent(at);
         if estree_span(at) != span {
             break;
         }
-        around += 1;
+        enclosing += 1;
     }
-    around * LEVELS + u32::from(level)
+    enclosing * LEVELS + u32::from(level)
 }
 
 /// The pattern that declares the variable that the name at `label` refers to, if it is a variable or a parameter.
@@ -532,7 +532,7 @@ fn value_of(node: Node) -> Option<Node> {
 }
 
 /// Finds the nodes for a file's diagnostics.
-pub(super) struct Places<'a> {
+pub(super) struct NodeFinder<'a> {
     file: &'a File<'a>,
     known: &'static Known,
     has_no_jsx: bool,
@@ -543,9 +543,9 @@ pub(super) struct Places<'a> {
     far: FxHashMap<u16, AncestorMemo<'a, Found<'a>>>,
 }
 
-impl<'a> Places<'a> {
+impl<'a> NodeFinder<'a> {
     pub(super) fn new(file: &'a File<'a>) -> Self {
-        Places {
+        NodeFinder {
             file,
             known: &KNOWN,
             has_no_jsx: file.hir.jsx.is_empty(),
@@ -555,16 +555,16 @@ impl<'a> Places<'a> {
         }
     }
 
-    /// The fast path of [`Places::of`], which covers most diagnostics: `node`, the node of `it`, is an expression or
-    /// statement that oxlint calls the rule with. `None` if it isn't, or if a bit test can't tell.
+    /// The fast path of [`NodeFinder::of`], which covers most diagnostics: `node`, the node of `it`, is an expression
+    /// or statement that oxlint calls the rule with. `None` if it isn't, or if a bit test can't tell.
     #[inline]
     pub(super) fn by_bit_test(
         &self,
         called: &Called,
         node: Packed,
         it: &Diagnostic,
-    ) -> Option<Place> {
-        if called.is_odd {
+    ) -> Option<CalledNode> {
+        if called.needs_part_lookup {
             return None;
         }
         let known = self.known;
@@ -636,7 +636,7 @@ impl<'a> Places<'a> {
                 )
             }
         };
-        Some(Place {
+        Some(CalledNode {
             span,
             node: (!is_leaf).then_some((node, level)),
         })
@@ -648,19 +648,19 @@ impl<'a> Places<'a> {
     /// previous search's span and no later than `label`. Searches come sorted by start, longer first, which is
     /// pre-order. So a node that has been left is never visited again, and all the searches together traverse each edge
     /// of the tree once up and once down.
-    fn innermost_around(&self, label: Span) -> Node<'a> {
-        let is_around = |it: Node| {
+    fn innermost_enclosing(&self, label: Span) -> Node<'a> {
+        let encloses = |it: Node| {
             let span = it.span();
             span.contains_offset(label.start) && label.end <= span.end
         };
         let mut at = self.last;
-        while !matches!(at, Node::File(_)) && !is_around(at) {
+        while !matches!(at, Node::File(_)) && !encloses(at) {
             at = at.parent();
         }
         loop {
             let mut inner = None;
             at.for_each_child_near(label.start, |child| {
-                if inner.is_none() && is_around(child) {
+                if inner.is_none() && encloses(child) {
                     inner = Some(child);
                 }
             });
@@ -672,7 +672,13 @@ impl<'a> Places<'a> {
     }
 
     /// `from` is the innermost node around `label`, or without a `label`, the reported node.
-    fn find(&mut self, rule: u16, kinds: &Kinds, from: Node<'a>, label: Option<Span>) -> Place {
+    fn find(
+        &mut self,
+        rule: u16,
+        kinds: &Kinds,
+        from: Node<'a>,
+        label: Option<Span>,
+    ) -> CalledNode {
         let known = self.known;
         // Normalize to a single node where oxc has a single node.
         let from = match from {
@@ -680,7 +686,7 @@ impl<'a> Places<'a> {
             Node::Stmt(it) if !matches!(it.tag(), StmtTag::Fn | StmtTag::Class) => from,
             _ => normalize(from),
         };
-        let place_of = |found: Found<'a>| Place {
+        let called_node_of = |found: Found<'a>| CalledNode {
             span: found.span,
             node: (!found.is_leaf).then(|| (found.node.packed(), found.level)),
         };
@@ -688,7 +694,7 @@ impl<'a> Places<'a> {
         let kind = known.kind_of(from);
         let own = estree_span(from);
         if label.is_none() && kinds.has(kind) && !kinds.has_any_of(&known.parts) {
-            return place_of(Found {
+            return called_node_of(Found {
                 span: own,
                 node: from,
                 level: ITSELF,
@@ -699,28 +705,28 @@ impl<'a> Places<'a> {
         if label.is_none()
             && let Some(found) = known.innermost_match(from, kinds, &|_| true)
         {
-            return place_of(found);
+            return called_node_of(found);
         }
         let label = label.unwrap_or(own);
-        let nowhere = Place {
+        let not_found = CalledNode {
             span: label,
             node: None,
         };
-        let (around, beside) = (
+        let (contains_label, follows_label) = (
             |it: Span| it.contains(label),
             |it: Span| it.start >= label.end,
         );
-        if let Some(found) = known.innermost_match(from, kinds, &around) {
-            return place_of(found);
+        if let Some(found) = known.innermost_match(from, kinds, &contains_label) {
+            return called_node_of(found);
         }
-        if kinds.are_among(&known.leaves) {
-            return nowhere;
+        if kinds.is_subset_of(&known.leaves) {
+            return not_found;
         }
         // The rule may report a name or a key but be called with the value, like a method's function.
-        let value = |node: Node<'a>| known.innermost_match(value_of(node)?, kinds, &beside);
+        let value = |node: Node<'a>| known.innermost_match(value_of(node)?, kinds, &follows_label);
         let parent = estree_parent(from);
         let found = value(from)
-            .or_else(|| known.innermost_match(parent, kinds, &around))
+            .or_else(|| known.innermost_match(parent, kinds, &contains_label))
             .or_else(|| value(parent))
             .or_else(|| {
                 let far = self.far.entry(rule).or_default();
@@ -728,21 +734,21 @@ impl<'a> Places<'a> {
                     known.innermost_match(node, kinds, &|it| it.contains(estree_span(child)))
                 })
             });
-        found.map_or(nowhere, place_of)
+        found.map_or(not_found, called_node_of)
     }
 
     /// The node that oxlint calls the rule with index `rule` with when it reports `label`. `kinds` are the kinds it
     /// calls the rule with. `node` is the reported node, if a node was reported, or the node the rule stated. Returns
-    /// `None` if [`Places::search`] is needed.
+    /// `None` if [`NodeFinder::search`] is needed.
     pub(super) fn of(
         &mut self,
         rule: u16,
         kinds: &Kinds,
         label: Span,
         node: Option<Packed>,
-    ) -> Option<Place> {
+    ) -> Option<CalledNode> {
         // A rule that's only called with declarations but reports a name elsewhere is reporting a use of that variable.
-        if kinds.are_among(&self.known.declarations)
+        if kinds.is_subset_of(&self.known.declarations)
             && !kinds.is_empty()
             && let Some(pat) = declaration_of(self.file, label)
         {
@@ -752,21 +758,21 @@ impl<'a> Places<'a> {
         Some(self.find(rule, kinds, node, None))
     }
 
-    /// [`Places::of`] for a token, a name or a span. Calls must come sorted by start, longer first. `near` is a node
-    /// that starts no later than `label`, with its start.
+    /// [`NodeFinder::of`] for a token, a name or a span. Calls must come sorted by start, longer first. `near` is a
+    /// node that starts no later than `label`, with its start.
     pub(super) fn search(
         &mut self,
         rule: u16,
         kinds: &Kinds,
         label: Span,
         near: Option<(u32, Packed)>,
-    ) -> Place {
+    ) -> CalledNode {
         if let Some((start, node)) = near
             && start > self.last_start
         {
             self.last = node.unpack(self.file);
         }
-        let from = self.innermost_around(label);
+        let from = self.innermost_enclosing(label);
         (self.last, self.last_start) = (from, label.start);
         self.find(rule, kinds, from, Some(label))
     }

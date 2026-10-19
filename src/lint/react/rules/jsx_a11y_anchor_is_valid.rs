@@ -60,12 +60,12 @@ impl Rule for AnchorIsValid {
         };
         let names_of_settings = get_attribute_names_from_settings(cx.file(), "href");
         let is_href = |attr: Prop| {
-            let is_it = |href_name: &[u8]| is_identifier_ignore_case(attr, href_name);
+            let has_name = |href_name: &[u8]| is_identifier_ignore_case(attr, href_name);
             let is_known = match names_of_settings {
-                Some(names) => names.iter().filter_map(Json::as_str).any(is_it),
-                None => is_it(b"href"),
+                Some(names) => names.iter().filter_map(Json::as_str).any(has_name),
+                None => has_name(b"href"),
             };
-            is_known || self.special_link.iter().any(|it| is_it(it.as_bytes()))
+            is_known || self.special_link.iter().any(|it| has_name(it.as_bytes()))
         };
         let (mut has_href, mut has_invalid_href, mut has_spread_attr) = (false, false, false);
         for attr in jsx_el.attrs() {
@@ -85,8 +85,8 @@ impl Rule for AnchorIsValid {
         if !has_href {
             if !has_spread_attr && self.no_href && !prefers_button {
                 cx.report(span, MISSING_HREF_ATTRIBUTE).help_with(|| {
-                    let of_settings = names_of_settings.map(|names| names.iter().filter_map(Json::as_str).collect());
-                    let mut valid_attrs: Vec<&[u8]> = of_settings.unwrap_or_else(|| vec![&b"href"[..]]);
+                    let settings_names = names_of_settings.map(|names| names.iter().filter_map(Json::as_str).collect());
+                    let mut valid_attrs: Vec<&[u8]> = settings_names.unwrap_or_else(|| vec![&b"href"[..]]);
                     valid_attrs.extend(self.special_link.iter().map(String::as_bytes));
                     let list = valid_attrs.join(&b"`, `"[..]);
                     let list = bstr::BStr::new(&list);

@@ -30,7 +30,7 @@ impl<'a> Format<'a> for FormatTemplateText {
     }
 }
 
-fn write_source(span: Span, is_one_string: bool, f: &mut Formatter<'_>) {
+fn write_source(span: Span, is_single_string: bool, f: &mut Formatter<'_>) {
     let source = f.source_text().text_for(&span);
     let text = match bun_core::strings::contains_char(source, b'\r') {
         false => Cow::Borrowed(source),
@@ -50,7 +50,7 @@ fn write_source(span: Span, is_one_string: bool, f: &mut Formatter<'_>) {
     // In Prettier it's one string, and a line break in a string has no width, so the fit check measures all its lines
     // together.
     let width = match TextWidth::from_text(&text, 0) {
-        width if !width.is_multiline() || !is_one_string => width,
+        width if !width.is_multiline() || !is_single_string => width,
         _ => TextWidth::multiline_string(
             bun_core::strings::split(&text, b"\n")
                 .map(|line| TextWidth::from_text(line, 0).value())

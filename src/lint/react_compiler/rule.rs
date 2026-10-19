@@ -36,10 +36,10 @@ fn report_with<'a>(
         let mut labels = labels.into_iter();
         let first = labels.next();
         // oxlint prints a diagnostic that has no label without a location.
-        let place = first
+        let report_span = first
             .as_ref()
             .map_or_else(|| Span::empty(0), |label| label.span);
-        let mut report = report_at(place)
+        let mut report = report_at(report_span)
             .data("message", message.into_owned())
             .help(help)
             .note(note);

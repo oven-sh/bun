@@ -31,8 +31,8 @@ fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
 /// `getModuleName(a.id) === getModuleName(b.id)`
 fn have_same_module_name<'a>(a: Module<'a>, b: Module<'a>) -> bool {
     // Upstream takes the first name as written, escapes included.
-    let written = |module: Module<'a>| module.stmt().file().slice(module.name_span());
-    if name_part(a) != name_part(b) || !name_part(a).0 && written(a) != written(b) {
+    let name_source = |module: Module<'a>| module.stmt().file().slice(module.name_span());
+    if name_part(a) != name_part(b) || !name_part(a).0 && name_source(a) != name_source(b) {
         return false;
     }
     let (mut a, mut b) = (a.nested(), b.nested());

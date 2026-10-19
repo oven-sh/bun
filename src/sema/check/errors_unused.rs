@@ -217,7 +217,7 @@ impl Checker<'_, '_> {
             let start = hir[hir[p].value].pos;
             let (node, name) = match hir[hir[p].value].kind {
                 PatKind::Ident(name) if name != known::empty => (
-                    self.place_of_token(file, start),
+                    self.span_of_token(file, start),
                     self.declaration_name_at(file, start),
                 ),
                 _ => ((file, start, start), b"(Missing)".to_vec()),
@@ -276,7 +276,7 @@ impl Checker<'_, '_> {
                 bound.alias_idents[at].1,
                 name,
                 SymFlags::VALUE | SymFlags::EXPORT_VALUE,
-                &mut |held, meaning| self.get_symbol(held, meaning),
+                &mut |entry, meaning| self.get_symbol(entry, meaning),
             );
             if let Some(found) = found {
                 u.note_use(found, VALUE);
@@ -1363,13 +1363,13 @@ impl Unused<'_, '_> {
         let members = (0..hir.members.len())
             .filter(|&m| hir.members[m].key.name() == Some(name))
             .map(|m| bound.member_symbol[m]);
-        let is_it = |p: &ParamId| {
+        let is_private_property_named = |p: &ParamId| {
             hir[*p].flags.contains(Flags::PRIVATE)
                 && matches!(hir[hir[*p].pat].kind, PatKind::Ident(n) if n == name)
         };
         let properties = (0..hir.params.len() as u32)
             .map(ParamId)
-            .filter(is_it)
+            .filter(is_private_property_named)
             .map(|p| bound.symbol_of_declaration(Decl::ParameterProperty(p)));
         for symbol in members.chain(properties).filter(|symbol| symbol.is_some()) {
             self.referenced[symbol.idx()] |= ALL;
@@ -1390,9 +1390,9 @@ impl Unused<'_, '_> {
             return scope;
         }
         let mut scope = ScopeId(0);
-        hir.find_ancestor(hir.parent(hir.node(e)), |around| {
-            let (function, class) = (hir.function_of(around), hir.class_of(around));
-            let found = match hir.data(around) {
+        hir.find_ancestor(hir.parent(hir.node(e)), |ancestor| {
+            let (function, class) = (hir.function_of(ancestor), hir.class_of(ancestor));
+            let found = match hir.data(ancestor) {
                 _ if function.is_some() => bound.fns[function.idx()].scope,
                 _ if class.is_some() => bound.class_scope[class.idx()],
                 NodeData::Stmt(s) => match hir[s].kind {
@@ -1519,8 +1519,13 @@ impl Unused<'_, '_> {
         let named_tuple_members = (hir.tuple_elems.iter())
             .filter(|member| member.name.is_some() && member.written.is_some())
             .map(|member| {
-                let written = member.written.idx();
-                (member.start, member.end, written, bound.type_scope[written])
+                let type_index = member.written.idx();
+                (
+                    member.start,
+                    member.end,
+                    type_index,
+                    bound.type_scope[type_index],
+                )
             });
         let after = function_types
             .chain(named_tuple_members)
@@ -1685,8 +1690,8 @@ impl Unused<'_, '_> {
     /// `Resolve`: what the name resolves to, if that's declared in the file.
     fn resolve_use(&self, from: ScopeId, name: Atom, meaning: SymFlags) -> Option<Use> {
         let files = self.files;
-        self.resolve_use_with(from, name, meaning, &mut |held, meaning| {
-            held.filter(|&sym| files.means(sym, meaning))
+        self.resolve_use_with(from, name, meaning, &mut |entry, meaning| {
+            entry.filter(|&sym| files.means(sym, meaning))
         })
     }
 
@@ -1701,11 +1706,11 @@ impl Unused<'_, '_> {
         let files = self.files;
         // The most recently searched scope.
         let mut found_in = ScopeId::NONE;
-        let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+        let lookup = &mut |table: SymbolTable, entry: Option<Sym>, meaning: SymFlags| {
             if let SymbolTable::Locals(_, scope) = table {
                 found_in = scope;
             }
-            get_symbol(held, meaning)
+            get_symbol(entry, meaning)
         };
         let start = self.bound.scope_to_resolve_from(from, name);
         let found = files
@@ -1808,11 +1813,11 @@ impl Unused<'_, '_> {
         let hir = self.hir;
         // True once a `return` has been visited and the function that contains it hasn't been reached yet.
         let mut in_return = false;
-        let static_block = hir.find_ancestor(hir.node(e), |around| {
-            if hir.kind(around) == Kind::ReturnStatement {
+        let static_block = hir.find_ancestor(hir.node(e), |ancestor| {
+            if hir.kind(ancestor) == Kind::ReturnStatement {
                 in_return = true;
             }
-            let function = hir.function_of(around);
+            let function = hir.function_of(ancestor);
             function.is_some()
                 && std::mem::take(&mut in_return)
                 && hir[function].kind == FnKind::StaticBlock
@@ -2114,7 +2119,7 @@ impl Checker<'_, '_> {
                     && !u.is_never_checked(t.pos)
                     && u.is_unreferenced_type_parameter(param)
                 {
-                    let at = self.place_of_token(u.file, hir[param].pos);
+                    let at = self.span_of_token(u.file, hir[param].pos);
                     let args = [Arg::Atom(hir[param].name)];
                     self.report_unused(u, hir.node(TypeNodeId(i as u32)), true, at, 6196, &args);
                 }
@@ -2286,7 +2291,7 @@ impl Checker<'_, '_> {
             }
             _ => false,
         };
-        let at = self.place_of_token(u.file, hir.start(hir.name(node)));
+        let at = self.span_of_token(u.file, hir.start(hir.name(node)));
         let code = if is_type_declaration { 6196 } else { 6133 };
         self.report_unused(u, node, false, at, code, &[Arg::Atom(name)]);
     }
@@ -2300,7 +2305,7 @@ impl Checker<'_, '_> {
             PatKind::Missing => return,
             PatKind::Ident(name) => {
                 if u.is_unreferenced(pat) {
-                    let at = self.place_of_token(file, hir[pat].pos);
+                    let at = self.span_of_token(file, hir[pat].pos);
                     self.report_unused(u, root, is_parameter, at, 6133, &[Arg::Atom(name)]);
                 }
                 return;
@@ -2418,7 +2423,7 @@ impl Checker<'_, '_> {
                             // `InternalSymbolNameMissing`.
                             let (at, name) = match hir[pat].kind {
                                 PatKind::Ident(name) => {
-                                    (self.place_of_token(file, hir[pat].pos), Arg::Atom(name))
+                                    (self.span_of_token(file, hir[pat].pos), Arg::Atom(name))
                                 }
                                 _ => (
                                     (file, hir[pat].pos, self.end_of_pat(file, pat)),

@@ -10,7 +10,7 @@ use super::explain_relation::{
 };
 use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::links::MappedPart;
-use super::related::Place;
+use super::related::FileSpan;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::shortcuts::task_fact;
 use super::*;
@@ -263,7 +263,7 @@ pub(super) struct Relater {
     compares_types_assignable: bool,
     /// `errorNode`. An end of `0` means the end of the token at the start. This field and the
     /// following ones are read only under `reportErrors`.
-    pub(super) error_node: Place,
+    pub(super) error_node: FileSpan,
     /// `headMessage` of the first comparison, which consumes it.
     pub(super) head_message: Option<u32>,
     /// `errorChain`
@@ -925,16 +925,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertyOfType(source, name)` in `propertiesRelatedTo`. `of_source` is the union to look
+    /// `getPropertyOfType(source, name)` in `propertiesRelatedTo`. `source_lookup` is the union to look
     /// the name up in, or else the type and members to pass to `property_among`.
     #[inline]
     fn property_of_source(
         &mut self,
-        of_source: (Option<TypeId>, TypeId, Members<'p>),
+        source_lookup: (Option<TypeId>, TypeId, Members<'p>),
         inherited: &mut Inherited<'p>,
         name: Atom,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
-        match of_source {
+        match source_lookup {
             (Some(union), ..) => self.get_property_of_type(union, name),
             (None, ty, members) => self.property_among(ty, &members, inherited, name),
         }
@@ -1004,7 +1004,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &part in parts.iter() {
             let part = self.reduced_apparent_type(part);
             // A union has properties and no signature.
-            let of_part = if self.is_union(part) {
+            let part_inherited = if self.is_union(part) {
                 self.inherited_of(&Shape::new_in(self.arena).into())
             } else {
                 let Some(members) = self.members(part) else {
@@ -1012,7 +1012,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.inherited_of(members.shape())
             };
-            for &global in &of_part.globals[..of_part.count] {
+            for &global in &part_inherited.globals[..part_inherited.count] {
                 let global = self.plain_global_ref(global);
                 let has_name = |it: Members<'p>| it.resolved.prop(name).is_some();
                 if self.members(global).is_some_and(has_name) {
@@ -2037,7 +2037,7 @@ impl<'p, 's> Checker<'p, 's> {
         let check_type_deferred =
             self.is_generic(check) || check_tuples && self.has_generic_element(check);
         let mut context = Inference::for_params(&params, None);
-        context.around = mapper;
+        context.conditional_outer_mapper = mapper;
         if !check_type_deferred {
             let extends = self.cond_extends(t);
             let priority = PRIORITY_NO_CONSTRAINTS | PRIORITY_ALWAYS_STRICT;
@@ -2616,7 +2616,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         // `checkClassExpression` checks the type parameters of the class immediately.
         let declaration = hir.parent(hir.node(tp));
-        let mut deferred_around = 0;
+        let mut enclosing_deferred = 0;
         hir.find_ancestor(hir.parent(declaration), |node| {
             if let NodeData::Expr(e) = hir.data(node)
                 && matches!(
@@ -2627,13 +2627,13 @@ impl<'p, 's> Checker<'p, 's> {
                         | ExprKind::Unary { op: UnOp::Void, .. }
                 )
             {
-                deferred_around += 1;
+                enclosing_deferred += 1;
             }
             false
         });
         (
             self.files().rank_of_file(file),
-            deferred_around,
+            enclosing_deferred,
             hir[tp].start,
         )
     }
@@ -2792,10 +2792,10 @@ impl<'p, 's> Checker<'p, 's> {
         // Only a thread that isn't measuring claims or waits. See `commit::Claims` for why.
         let mut has_claim = false;
         if self.task.commits() && !self.in_variance_computation {
-            let asked = std::time::Instant::now();
+            let wait_start = std::time::Instant::now();
             let claim = self.p.claim_variances(sym, cuts == 0);
             let none = std::time::Duration::ZERO;
-            self.task.count_waits([none, none, asked.elapsed()]);
+            self.task.count_waits([none, none, wait_start.elapsed()]);
             match claim {
                 VarianceClaim::Known(variances) => {
                     return self.take_shared_variances(sym, variances);
@@ -3061,8 +3061,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `variances_of`, as a list.
     fn variances_list(&mut self, sym: Sym) -> List<'p, u8> {
         match self.p.variances.get_ref(&self.task, &sym) {
-            Some(known) => List::Kept(known),
-            None => List::Kept(self.variances_worker(sym)),
+            Some(known) => List::Permanent(known),
+            None => List::Permanent(self.variances_worker(sym)),
         }
     }
 
@@ -3215,12 +3215,12 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.has_excess_properties::<REPORT>(r, source, target)
             {
                 if REPORT {
-                    let shown = if self.has_alias(original_target) {
+                    let printed_target = if self.has_alias(original_target) {
                         original_target
                     } else {
                         target
                     };
-                    self.report_relation_error(r, head, source, shown);
+                    self.report_relation_error(r, head, source, printed_target);
                 }
                 return Ternary::FALSE;
             }
@@ -3408,7 +3408,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // by a spread is declared elsewhere. A `Partial` shape has only properties declared in the literal.
                 (PropSource::Type(_) | PropSource::Copy(..), None) => {
                     is_fresh_partial
-                        || prop.flags.contains(PropFlags::WRITTEN)
+                        || prop.flags.contains(PropFlags::DECLARED_IN_LITERAL)
                         || is_jsx && prop.flags.contains(PropFlags::JSX_CHILDREN)
                 }
                 _ => false,
@@ -3441,11 +3441,11 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_identifier = match Self::value_declaration(prop) {
                         Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
                             let p = self.bound(file).declarations_of_literal_member(p)[0];
-                            let (hir, written) = (self.hir(file), &self.hir(file)[p]);
-                            r.error_node = (file, written.pos, self.end_of_prop_name(file, p));
-                            matches!(written.key, PropKey::Name(_))
+                            let (hir, prop_node) = (self.hir(file), &self.hir(file)[p]);
+                            r.error_node = (file, prop_node.pos, self.end_of_prop_name(file, p));
+                            matches!(prop_node.key, PropKey::Name(_))
                                 && !matches!(
-                                    hir.text.get(written.pos as usize),
+                                    hir.text.get(prop_node.pos as usize),
                                     Some(b'"' | b'\'' | b'.' | b'[' | b'0'..=b'9')
                                 )
                         }
@@ -3454,9 +3454,9 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut suggestion = None;
                     if is_identifier {
                         let properties = self.properties_of_type(error_target);
-                        let written = self.atoms().bytes(prop.name);
+                        let name_bytes = self.atoms().bytes(prop.name);
                         suggestion = self
-                            .suggested_property(written, properties)
+                            .suggested_property(name_bytes, properties)
                             .map(|i| Arg::Atom(properties[i].name));
                     }
                     match suggestion {
@@ -3489,13 +3489,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `ast.IsJsxOpeningLikeElement(node) || ast.IsJsxOpeningLikeElement(node.Parent)` for the error
-    /// node at `place`: an opening fragment, or the tag name of an opening element. No error node
+    /// node at `error_span`: an opening fragment, or the tag name of an opening element. No error node
     /// is a `JsxAttributes`.
-    fn is_in_jsx_opening_like_element(&self, place: Place) -> bool {
-        let hir = self.hir(place.0);
+    fn is_in_jsx_opening_like_element(&self, error_span: FileSpan) -> bool {
+        let hir = self.hir(error_span.0);
         hir.jsx.iter().any(|jsx| match jsx.tag.some() {
-            Some(tag) => (hir[tag].pos, hir[tag].end) == (place.1, place.2),
-            None => jsx.opening_end == place.2,
+            Some(tag) => (hir[tag].pos, hir[tag].end) == (error_span.1, error_span.2),
+            None => jsx.opening_end == error_span.2,
         })
     }
 
@@ -4268,7 +4268,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
-            self.note_gave_up("the budget of a comparison");
+            self.note_gave_up("the comparison budget");
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -4287,7 +4287,7 @@ impl<'p, 's> Checker<'p, 's> {
         // discarded, and ends the comparison right away. The results that follow from the answer stay in the file, like
         // those of `REC_BOTH` below.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
-            self.note_gave_up("the depth of a comparison");
+            self.note_gave_up("the comparison depth limit");
             if self.task.was_discarded() {
                 r.overflow = true;
                 return Ternary::FALSE;
@@ -4343,7 +4343,8 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
-        // An entry about the visited file never leaves the task, unless it is held back.
+        // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
+        // first place, as long as it isn't held back. If it were, the commit would publish it.
         if r.relation_count < r.waits_for_commit_below && !key.is_of_visited_file(&self.task.own) {
             self.task.hold_back();
         }
@@ -4366,7 +4367,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // left. Unknown results stay unknown.
                 // Where two types count as deeply nested depends on the comparisons around this one.
                 let is_cut = self.comparisons_of_deeply_nested_types != cuts;
-                let around = std::mem::replace(
+                let outer_per_file = std::mem::replace(
                     &mut self.stores_relations_per_file,
                     is_cut && self.task.commits(),
                 );
@@ -4376,7 +4377,7 @@ impl<'p, 's> Checker<'p, 's> {
                     false => MaybeKeys::Forgotten,
                 };
                 self.reset_maybe_stack(r, maybe_start, propagating, keys, stored);
-                self.stores_relations_per_file = around;
+                self.stores_relations_per_file = outer_per_file;
             }
         } else {
             // A result that's false under assumptions is false without them, and so is one that an overflow cut
@@ -4426,7 +4427,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// of `checkTypeRelatedToEx`. It replaces the plain failure that `recursive_type_related_to` has
     /// stored for the two types.
     fn set_relation_overflow(&mut self, source: TypeId, target: TypeId, relation: Relation) {
-        self.note_gave_up("a comparison that overflowed");
+        self.note_gave_up("a comparison overflow");
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {
@@ -4993,10 +4994,10 @@ impl<'p, 's> Checker<'p, 's> {
         let mut names_of_props = FxHashSet::<Atom>::default();
         let was_listing = self.union_members.set_listing(true);
         for &current in members {
-            let Some(of_current) = self.members(current) else {
+            let Some(current_members) = self.members(current) else {
                 continue;
             };
-            for prop in &of_current.shape().props {
+            for prop in &current_members.shape().props {
                 if !names_of_props.contains(&prop.name)
                     && let Some((combined, mapper)) = self.get_property_of_type(apparent, prop.name)
                 {
@@ -5006,7 +5007,7 @@ impl<'p, 's> Checker<'p, 's> {
                     props.push(combined);
                 }
             }
-            if self.structured(of_current).index_infos().is_empty() {
+            if self.structured(current_members).index_infos().is_empty() {
                 break;
             }
         }
@@ -5676,12 +5677,12 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_repeated = maps_to_itself && self.task_facts.has(target_extends, fact);
                     if !source_params.is_empty() && !is_repeated {
                         let reads = self.in_progress_variance_reads;
-                        let around = self.cond_origin(source).2;
+                        let outer_mapper = self.cond_origin(source).2;
                         let inferred = self.infer_from_types_comparing(
                             &source_params,
                             target_extends,
                             source_extends,
-                            around,
+                            outer_mapper,
                             &mut |c, s, t| c.is_related_to(r, s, t, REC_BOTH) != Ternary::FALSE,
                         );
                         mapper = self.mapper_from(&source_params, &inferred);
@@ -6519,11 +6520,11 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_empty_array_literal_type(source)
             && !self.is_tuple(source);
         let mut inherited = self.inherited_of(sm.shape());
-        let of_source = (by_name, has_properties, sm);
+        let source_lookup = (by_name, has_properties, sm);
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                || (self.property_of_source(of_source, &mut inherited, tp.name)).is_some()
+                || (self.property_of_source(source_lookup, &mut inherited, tp.name)).is_some()
                 // `isStaticPrivateIdentifierProperty`
                 || self.is_static_private_name(tp)
             {
@@ -6544,7 +6545,8 @@ impl<'p, 's> Checker<'p, 's> {
                 for tp in &tm.shape().props {
                     if !self.is_static_private_name(tp)
                         && (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                        && (self.property_of_source(of_source, &mut inherited, tp.name)).is_none()
+                        && (self.property_of_source(source_lookup, &mut inherited, tp.name))
+                            .is_none()
                     {
                         unmatched.push(tp);
                     }
@@ -6578,11 +6580,11 @@ impl<'p, 's> Checker<'p, 's> {
         if REPORT && matches!(td, TypeData::Tuple { .. }) {
             in_order.extend(&tm.shape().props);
             let atoms = &self.atoms();
-            let place = |tp: &Prop| match tp.source {
+            let sort_key = |tp: &Prop| match tp.source {
                 PropSource::Type(_) => (true, atoms.bytes(tp.name)),
                 _ => (false, &[][..]),
             };
-            in_order.shared_sort_by(|a, b| place(a).cmp(&place(b)));
+            in_order.shared_sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
         }
         for (i, tp) in tm.shape().props.iter().enumerate() {
             let tp = if REPORT {
@@ -6597,7 +6599,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let Some((sp, source_mapper)) =
-                self.property_of_source(of_source, &mut inherited, tp.name)
+                self.property_of_source(source_lookup, &mut inherited, tp.name)
             else {
                 continue;
             };
@@ -6644,8 +6646,8 @@ impl<'p, 's> Checker<'p, 's> {
         let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();
-        let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
-        a == b || moved(a).eq(moved(b))
+        let changed_pairs = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
+        a == b || changed_pairs(a).eq(changed_pairs(b))
     }
 
     /// `propertyRelatedTo`. `of` is `source` and `target`, the two types that own the properties.
@@ -6960,7 +6962,7 @@ impl<'p, 's> Checker<'p, 's> {
                     m.call_signatures()
                 };
                 match sigs {
-                    _ if sigs.is_empty() || m.mapper == MapperId::IDENTITY => List::Kept(sigs),
+                    _ if sigs.is_empty() || m.mapper == MapperId::IDENTITY => List::Permanent(sigs),
                     // An object type other than a mapped one is its own reduced apparent type.
                     _ if is_object_kind(data) && !is_mapped_kind(data) => {
                         c.signatures(ty, construct)
@@ -7175,7 +7177,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // In an instantiation it's a clone, represented by the declared one (`cloneTypeParameter`).
                 // A mapper has one pair per parameter, so the order of the pairs doesn't matter.
                 let declared = match *c.data(param) {
-                    TypeData::TypeParam(file, tp, around) if around != MapperId::IDENTITY => {
+                    TypeData::TypeParam(file, tp, outer_mapper)
+                        if outer_mapper != MapperId::IDENTITY =>
+                    {
                         let declared = c.type_param(file, tp);
                         pairs.iter().position(|pair| *pair == (declared, param))
                     }
@@ -7251,8 +7255,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut type_arguments: SmallVec<[TypeId; 8]> = SmallVec::from_slice(&params);
         for argument in &mut type_arguments {
-            if let TypeData::TypeParam(file, tp, around) = *self.data(*argument)
-                && around != MapperId::IDENTITY
+            if let TypeData::TypeParam(file, tp, outer_mapper) = *self.data(*argument)
+                && outer_mapper != MapperId::IDENTITY
             {
                 let declared = self.type_param(file, tp);
                 if self.constraint_of_type_param(declared).is_none() {
@@ -7916,8 +7920,8 @@ impl<'p, 's> Checker<'p, 's> {
             && (r.relation != Relation::StrictSubtype
                 || state & STATE_REGULAR == 0 && self.is_fresh_object_literal_type(source))
         {
-            let looks = self.apparent_type_of_intersection(source);
-            if self.is_object_type_with_inferable_index(looks) {
+            let apparent_source = self.apparent_type_of_intersection(source);
+            if self.is_object_type_with_inferable_index(apparent_source) {
                 return self
                     .members_related_to_index_info::<REPORT>(r, source, &sm, key, expected, state);
             }
@@ -7962,7 +7966,7 @@ impl<'p, 's> Checker<'p, 's> {
         }) {
             return ty;
         }
-        let looks: Vec<TypeId> = parts
+        let apparent_parts: Vec<TypeId> = parts
             .iter()
             .map(|&p| {
                 if self.intersection_member_has_other_apparent_type(p) {
@@ -7972,7 +7976,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             })
             .collect();
-        self.intersection(&looks)
+        self.intersection(&apparent_parts)
     }
 
     /// `apparent_type_of_intersection(ty).is_never()`. FOR SPEED: an intersection whose members are

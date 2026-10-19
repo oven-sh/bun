@@ -558,11 +558,11 @@ impl<'a> Printer<'a, '_> {
         let mut from = 0;
         while let Some(at) = bun_core::strings::index_of_char_usize(&source[from..], b'\n') {
             from += at + 1;
-            let blanks = source[from..]
+            let whitespace_len = source[from..]
                 .iter()
                 .take_while(|it| matches!(it, b' ' | b'\t'))
                 .count();
-            if blanks <= indent && source.get(from + blanks) == Some(&b'\n') {
+            if whitespace_len <= indent && source.get(from + whitespace_len) == Some(&b'\n') {
                 return true;
             }
         }
@@ -945,16 +945,16 @@ impl<'a> Printer<'a, '_> {
             let len = line_len.min(next_spaces - index);
             // A space before a line break or a tab belongs to the same whitespace.
             index += len - usize::from(len == line_len && len > 0 && rest[len - 1] == b' ');
-            let blanks = text[index..]
+            let whitespace_len = text[index..]
                 .iter()
                 .take_while(|&&byte| is_white(byte))
                 .count();
-            if blanks == 0 {
+            if whitespace_len == 0 {
                 break;
             }
-            let (white_start, white_end) = (index, index + blanks);
+            let (white_start, white_end) = (index, index + whitespace_len);
             index = white_end;
-            if blanks == 1 && text[white_start] == b' ' {
+            if whitespace_len == 1 && text[white_start] == b' ' {
                 continue;
             }
             if start < white_start {
@@ -1033,12 +1033,12 @@ impl<'a> Printer<'a, '_> {
                 return true;
             }
             // Keep measuring if the word after `next` can't be wrapped onto a new line.
-            let goes_on = match (tokens.get(at + 2), tokens.get(at + 3)) {
+            let keeps_measuring = match (tokens.get(at + 2), tokens.get(at + 3)) {
                 (Some(_), Some(then)) => Self::may_start_block(self.str(then.value)),
                 (Some(_), None) => false,
                 (None, _) => sentence.next != NONE,
             };
-            if !goes_on {
+            if !keeps_measuring {
                 return false;
             }
             at += 2;
@@ -1523,7 +1523,8 @@ impl<'a> Printer<'a, '_> {
         let run_start = start - before.iter().rev().take_while(is_star).count();
         let after = after.get(end - start..).unwrap_or_default();
         let run_end = end + after.iter().take_while(is_star).count();
-        let is_blank = |byte: Option<u8>| matches!(byte, None | Some(b' ' | b'\t' | b'\n'));
+        let is_whitespace_or_edge =
+            |byte: Option<u8>| matches!(byte, None | Some(b' ' | b'\t' | b'\n'));
         self.tree
             .children(node.parent)
             .filter(|&id| is_text(id))
@@ -1536,8 +1537,8 @@ impl<'a> Printer<'a, '_> {
                     let is_other_star = byte_at(at) == Some(b'*')
                         && !is_escaped
                         && !(run_start..run_end).contains(&at)
-                        && !(is_blank(at.checked_sub(1).and_then(byte_at))
-                            && is_blank(byte_at(at + 1)));
+                        && !(is_whitespace_or_edge(at.checked_sub(1).and_then(byte_at))
+                            && is_whitespace_or_edge(byte_at(at + 1)));
                     is_escaped = byte_at(at) == Some(b'\\') && !is_escaped;
                     is_other_star
                 })
@@ -1597,8 +1598,9 @@ impl<'a> Printer<'a, '_> {
             Kind::InlineCode => self.print_inline_code(id, node),
             Kind::WikiLink => {
                 let value = self.str(node.value);
-                let has_blanks = bun_core::strings::index_of_any(value, b"\t\n").is_some();
-                if self.options.prose_wrap == ProseWrap::Preserve || !has_blanks {
+                let has_tab_or_line_break =
+                    bun_core::strings::index_of_any(value, b"\t\n").is_some();
+                if self.options.prose_wrap == ProseWrap::Preserve || !has_tab_or_line_break {
                     return docs!["[[", value, "]]"];
                 }
                 let mut contents = Vec::with_capacity(value.len());
@@ -1885,12 +1887,12 @@ impl<'a> Printer<'a, '_> {
             code = Cow::Owned(escaped);
         }
         let backticks = vec![b'`'; min_not_present_continuous_count(&code, b'`')];
-        let is_blank = |byte: &u8| matches!(byte, b'\n' | b' ');
+        let is_space_or_line_break = |byte: &u8| matches!(byte, b'\n' | b' ');
         let needs_padding = code.first() == Some(&b'`')
             || code.last() == Some(&b'`')
-            || (code.first().is_some_and(is_blank)
-                && code.last().is_some_and(is_blank)
-                && !code.iter().all(is_blank));
+            || (code.first().is_some_and(is_space_or_line_break)
+                && code.last().is_some_and(is_space_or_line_break)
+                && !code.iter().all(is_space_or_line_break));
         let padding = if needs_padding { " " } else { "" };
         if self.options.flavor.is_oxfmt() && bun_core::strings::contains_char(&code, b'\n') {
             let mut lines = Vec::new();
@@ -1981,7 +1983,11 @@ impl<'a> Printer<'a, '_> {
             // only whitespace isn't part of the code, so trimming it is fine.
             let end = match &value[value.trim_ascii_end().len()..] {
                 b"" => Doc::EMPTY,
-                blanks if bun_core::strings::contains_char(blanks, b'\n') => Doc::EMPTY,
+                trailing_whitespace
+                    if bun_core::strings::contains_char(trailing_whitespace, b'\n') =>
+                {
+                    Doc::EMPTY
+                }
                 _ => Doc::KeepTrailingWhitespace,
             };
             let code = docs!["    ", self.verbatim_code(value, true), end];
@@ -2201,11 +2207,11 @@ impl<'a> Printer<'a, '_> {
             .filter(|_| is_indented_code(self.original, self.tree, list.next))
         {
             Some(code) => {
-                let blanks = self
+                let leading_whitespace = self
                     .str(code.value)
                     .iter()
                     .take_while(|byte| matches!(byte, b' ' | b'\t'));
-                4 + blanks
+                4 + leading_whitespace
                     .map(|&byte| if byte == b'\t' { 4 } else { 1 })
                     .sum::<usize>()
                     + 1
@@ -2368,15 +2374,15 @@ impl<'a> Printer<'a, '_> {
                         if is_compact {
                             return text.clone();
                         }
-                        let blanks = widths[column] - width;
+                        let cell_padding = widths[column] - width;
                         let before = match align_of(column) {
-                            Align::Right => blanks,
-                            Align::Center => blanks / 2,
+                            Align::Right => cell_padding,
+                            Align::Center => cell_padding / 2,
                             _ => 0,
                         };
                         let mut cell = vec![b' '; before];
                         cell.extend_from_slice(text);
-                        cell.resize(cell.len() + blanks - before, b' ');
+                        cell.resize(cell.len() + cell_padding - before, b' ');
                         cell
                     })
                     .collect()

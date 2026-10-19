@@ -126,8 +126,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
 
         let alias = self.alias_symbol_of_type(ty)?;
-        if let Some(kept) = self.links.alias_type_arguments(ty) {
-            return Some((alias, kept));
+        if let Some(cached) = self.links.alias_type_arguments(ty) {
+            return Some((alias, cached));
         }
         let (_, type_arguments) = self.derive_alias_of_node_type(ty)?;
         (self.links).cache_alias_type_arguments(ty, &type_arguments);
@@ -146,8 +146,8 @@ impl<'p, 's> Checker<'p, 's> {
         // FOR SPEED: tsgo reads a field of the type. `CompareTypes` looks this up for both types of
         // every comparison, and for the members of intersections.
 
-        if let Some(kept) = self.links.alias_symbol(ty) {
-            return kept;
+        if let Some(cached) = self.links.alias_symbol(ty) {
+            return cached;
         }
         let alias = self.derive_alias_symbol_of_type(ty);
         self.links.cache_alias_symbol(ty, alias);
@@ -213,8 +213,8 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Sym,
         type_arguments: &[TypeId],
     ) -> TypeId {
-        let of_node = self.alias_node_of_type(created);
-        let is_alias_of_node = of_node.is_some_and(|(file, node, mapper)| {
+        let node_and_mapper = self.alias_node_of_type(created);
+        let is_alias_of_node = node_and_mapper.is_some_and(|(file, node, mapper)| {
             let scope = self.bound(file).type_scope[node.idx()];
             if self.alias_symbol_for_type_node(file, scope, node) != Some(alias) {
                 return false;
@@ -435,8 +435,8 @@ impl<'p, 's> Checker<'p, 's> {
         result: TypeId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
-        let kept = self.stored_alias(ty);
-        if alias.is_none() && kept.is_none() || self.types().deferred(result).is_some() {
+        let own_alias = self.stored_alias(ty);
+        if alias.is_none() && own_alias.is_none() || self.types().deferred(result).is_some() {
             return result;
         }
         // `createDeferredTypeReference`, `instantiateAnonymousType`
@@ -453,7 +453,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_instantiation {
             return result;
         }
-        match (alias, kept) {
+        match (alias, own_alias) {
             // A type that doesn't reference a type parameter isn't instantiated.
             (Some(_), _) if result == ty => ty,
             (Some((alias, type_arguments)), _) => {

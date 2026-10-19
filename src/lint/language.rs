@@ -39,7 +39,7 @@ impl Global {
     }
 
     /// ESLint's `normalizeConfigGlobal`.
-    pub fn of_json(value: &Json) -> Option<Global> {
+    pub fn from_config_value(value: &Json) -> Option<Global> {
         match value {
             Json::Null | Json::Bool(false) => Some(Global::Readonly),
             Json::Bool(true) => Some(Global::Writable),
@@ -93,15 +93,15 @@ impl InferGlobals {
 #[derive(Clone, Debug)]
 pub(crate) struct GlobalsFromOptions {
     all: Arc<Vec<(Box<[u8]>, Global)>>,
-    written: Vec<Box<[u8]>>,
+    enabled_own: Vec<Box<[u8]>>,
     shadowed_env_globals: Vec<(Box<[u8]>, Global)>,
     envs: Vec<Box<[u8]>>,
     own: Vec<(Box<[u8]>, Global)>,
 }
 
 impl GlobalsFromOptions {
-    /// `whose` selects the tool whose environment tables `$env` refers to.
-    pub(crate) fn new(language_options: &Json, whose: Tables) -> GlobalsFromOptions {
+    /// `env_tables` selects the tool whose environment tables `$env` refers to.
+    pub(crate) fn new(language_options: &Json, env_tables: Tables) -> GlobalsFromOptions {
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         let mut enabled_own_globals: Vec<Box<[u8]>> = Vec::new();
         let mut envs: Vec<Box<[u8]>> = Vec::new();
@@ -113,13 +113,13 @@ impl GlobalsFromOptions {
             .unwrap_or_default()
         {
             // oxlint has its own `es6` table.
-            let name: &[u8] = match whose {
+            let name: &[u8] = match env_tables {
                 Tables::Today | Tables::Eslint8 if name == b"es6" => b"es2015",
                 _ => name,
             };
             if is_enabled.as_bool() == Some(true) {
                 envs.push(name.into());
-                let variables = environment(name, whose).into_iter().flatten();
+                let variables = environment(name, env_tables).into_iter().flatten();
                 globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
             }
         }
@@ -128,7 +128,7 @@ impl GlobalsFromOptions {
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            if let Some(value) = Global::of_json(value) {
+            if let Some(value) = Global::from_config_value(value) {
                 globals.push((name[..].into(), value));
                 own_globals.push((name[..].into(), value));
                 if value != Global::Off {
@@ -145,14 +145,14 @@ impl GlobalsFromOptions {
         let mut shadowed_env_globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         globals.dedup_by(|dropped, kept| {
             let is_same = dropped.0 == kept.0;
-            if is_same && whose == Tables::Oxlint && kept.1 == Global::Off {
+            if is_same && env_tables == Tables::Oxlint && kept.1 == Global::Off {
                 shadowed_env_globals.push(dropped.clone());
             }
             is_same
         });
         GlobalsFromOptions {
             all: Arc::new(globals),
-            written: enabled_own_globals,
+            enabled_own: enabled_own_globals,
             shadowed_env_globals,
             envs,
             own: own_globals,
@@ -360,7 +360,7 @@ impl LanguageOptions {
                     ]
                     .concat());
                 }
-                if Global::of_json(value).is_none() {
+                if Global::from_config_value(value).is_none() {
                     return Err([
                         b"Key \"globals\": Key \"",
                         &name[..],
@@ -409,13 +409,13 @@ impl LanguageOptions {
         Self::from_json_for(language_options, Arc::new(settings.clone()), Tables::Today)
     }
 
-    /// Like [`LanguageOptions::from_json`]. `whose` selects the tool whose environment tables `$env` refers to.
+    /// Like [`LanguageOptions::from_json`]. `env_tables` selects the tool whose environment tables `$env` refers to.
     pub(crate) fn from_json_for(
         language_options: &Json,
         settings: Arc<Json>,
-        whose: Tables,
+        env_tables: Tables,
     ) -> LanguageOptions {
-        let globals = GlobalsFromOptions::new(language_options, whose);
+        let globals = GlobalsFromOptions::new(language_options, env_tables);
         Self::from_json_with(language_options, settings, globals)
     }
 
@@ -436,19 +436,19 @@ impl LanguageOptions {
         };
         let flag = |name: &[u8]| parser_options.get(name).and_then(Json::as_bool) == Some(true);
         let name = |value: Option<&Json>| value.and_then(Json::as_str).map(Box::from);
-        let written = language_options.get(b"parser").and_then(Json::as_str);
-        let written = written.map(|it| {
+        let parser_name = language_options.get(b"parser").and_then(Json::as_str);
+        let parser_name = parser_name.map(|it| {
             let version = bun_core::strings::last_index_of_char(it, b'@').filter(|at| *at > 0);
             &it[..version.unwrap_or(it.len())]
         });
-        let parser = match written {
+        let parser = match parser_name {
             None | Some(b"espree") => Parser::Espree,
             Some(b"typescript" | b"@typescript-eslint/parser" | b"typescript-eslint/parser") => {
                 Parser::TypeScript
             }
             Some(_) => Parser::Other,
         };
-        let is_babel = written == Some(&b"@babel/eslint-parser"[..]);
+        let is_babel = parser_name == Some(&b"@babel/eslint-parser"[..]);
         let source_type =
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut options = LanguageOptions {
@@ -458,7 +458,7 @@ impl LanguageOptions {
             },
             source_type,
             globals: globals.all,
-            enabled_own_globals: globals.written,
+            enabled_own_globals: globals.enabled_own,
             shadowed_env_globals: globals.shadowed_env_globals,
             envs: globals.envs,
             own_globals: globals.own,
@@ -533,8 +533,8 @@ impl LanguageOptions {
     /// options, after its last change to them. `Err` describes an invalid `parserOptions.sourceType`.
     pub(crate) fn resolve_source_type(&mut self, language_options: &Json) -> Result<bool, Vec<u8>> {
         let is_set = |key: &[u8]| language_options.get(key).and_then(Json::as_bool) == Some(true);
-        if let Some(written) = self.parser_source_type {
-            self.set_source_type(written);
+        if let Some(explicit_source_type) = self.parser_source_type {
+            self.set_source_type(explicit_source_type);
             return Ok(false);
         }
         if self.parser_options.get(b"sourceType").is_some() {

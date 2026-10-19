@@ -56,7 +56,7 @@ fn position_of(sign: u8, text: &[u8], from: u32) -> u32 {
 pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
     let mut found: Vec<Found> = Vec::new();
     for (stmt, id) in file.stmts.iter().zip(0..) {
-        let written = file.stmt_modifiers(StmtId(id));
+        let modifier_span = file.stmt_modifiers(StmtId(id));
         match stmt.kind {
             StmtKind::Module(module) if !matches!(file[module].name, ModuleName::Ident(_)) => {
                 found.push((stmt.start, 8006, "module"));
@@ -64,9 +64,9 @@ pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
             StmtKind::ExportAsNamespace(_) => {
                 found.push((stmt.start, 8006, "export as namespace"));
             }
-            _ if written.is_empty() => {}
+            _ if modifier_span.is_empty() => {}
             _ => {
-                let modifiers = file.modifier_list(written);
+                let modifiers = file.modifier_list(modifier_span);
                 found.extend(misplaced(
                     modifiers,
                     JAVASCRIPT_MODIFIERS,

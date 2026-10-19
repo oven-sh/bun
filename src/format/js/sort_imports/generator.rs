@@ -66,7 +66,7 @@ pub(super) struct Printer<'m, 'a> {
     /// The queued `;` belongs to a statement that's already an empty line.
     is_queued_hidden: bool,
     /// The end of the last empty line. Nothing before it is trimmed.
-    kept_len: usize,
+    protected_len: usize,
 
     current: Option<Node>,
     indent: u32,
@@ -96,7 +96,7 @@ impl<'m, 'a> Printer<'m, 'a> {
             last: 0,
             queued: 0,
             is_queued_hidden: false,
-            kept_len: 0,
+            protected_len: 0,
             current: None,
             indent: 0,
             no_line_terminator: false,
@@ -142,7 +142,7 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
         if last == i32::from(b'\n') {
             let trimmed = self.out.trim_ascii_end().len();
-            self.out.truncate(trimmed.max(self.kept_len));
+            self.out.truncate(trimmed.max(self.protected_len));
         }
         self
     }
@@ -447,19 +447,19 @@ impl<'m, 'a> Printer<'m, 'a> {
             _ => self.space(),
         }
 
-        let written = self.model.file.slice(comment.span);
+        let source_text = self.model.file.slice(comment.span);
         let is_between_statements = matches!(
             self.current,
             Some(Node::Interpreter | Node::Directive(_) | Node::Import(_) | Node::Empty)
         );
-        let adjusted = match comment.is_block && strings::contains_js_line_break(written) {
+        let adjusted = match comment.is_block && strings::contains_js_line_break(source_text) {
             true => {
                 let mut indent_size = self.get_current_column();
                 if self.should_indent() > 0 {
                     indent_size += self.indent;
                 }
                 Some(adjust_multiline_comment(
-                    written,
+                    source_text,
                     if comment.has_loc {
                         comment.start_column
                     } else {
@@ -473,8 +473,8 @@ impl<'m, 'a> Printer<'m, 'a> {
             }
             false => None,
         };
-        let value = adjusted.as_deref().unwrap_or(written);
-        self.has_changed_comment |= !is_between_statements || value != written;
+        let value = adjusted.as_deref().unwrap_or(source_text);
+        self.has_changed_comment |= !is_between_statements || value != source_text;
         self.maybe_indent();
         self.flush();
         let start = self.out.len() as u32;
@@ -645,7 +645,7 @@ impl<'m, 'a> Printer<'m, 'a> {
                 self.flush();
                 self.out.extend_from_slice(self.end_of_line);
                 self.out.extend_from_slice(self.end_of_line);
-                self.kept_len = self.out.len();
+                self.protected_len = self.out.len();
                 self.last = LAST_IS_TEXT;
                 self.no_line_terminator = false;
             }

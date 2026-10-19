@@ -44,7 +44,7 @@ const BEFORE_CLOSE_NEED_NEWLINE: Message =
     Message::new("beforeCloseNeedNewline", "A newline is required before closing bracket");
 
 impl Spacing {
-    fn of(options: Object<'_>, key: &str, default: Spacing) -> Spacing {
+    fn from_option(options: Object<'_>, key: &str, default: Spacing) -> Spacing {
         match options.str(key) {
             Some("always") => Spacing::Always,
             Some("proportional-always") => Spacing::ProportionalAlways,
@@ -64,10 +64,10 @@ impl Rule for JsxTagSpacing {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         JsxTagSpacing {
-            closing_slash: Spacing::of(options, "closingSlash", Spacing::Never),
-            before_self_closing: Spacing::of(options, "beforeSelfClosing", Spacing::Always),
-            after_opening: Spacing::of(options, "afterOpening", Spacing::Never),
-            before_closing: Spacing::of(options, "beforeClosing", Spacing::Allow),
+            closing_slash: Spacing::from_option(options, "closingSlash", Spacing::Never),
+            before_self_closing: Spacing::from_option(options, "beforeSelfClosing", Spacing::Always),
+            after_opening: Spacing::from_option(options, "afterOpening", Spacing::Never),
+            before_closing: Spacing::from_option(options, "beforeClosing", Spacing::Allow),
         }
     }
 

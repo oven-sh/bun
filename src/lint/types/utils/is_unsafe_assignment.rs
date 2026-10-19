@@ -61,7 +61,7 @@ fn is_unsafe_assignment_worker<'a>(
     visited.push((ty, receiver));
 
     // References to different types are assumed to be safe, since their type arguments don't have to correspond.
-    if !have_the_same_target(ty, receiver) {
+    if !have_same_target(ty, receiver) {
         return None;
     }
     if sender_node.is_some_and(is_new_map_without_arguments) {
@@ -83,7 +83,7 @@ fn is_unsafe_assignment_worker<'a>(
 }
 
 /// `type.target === receiver.target`. TypeScript has one target for all tuple types of the same shape.
-fn have_the_same_target<'a>(ty: Type<'a>, receiver: Type<'a>) -> bool {
+fn have_same_target<'a>(ty: Type<'a>, receiver: Type<'a>) -> bool {
     ty.has_same_target_as(receiver)
 }
 

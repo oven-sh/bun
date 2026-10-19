@@ -269,7 +269,7 @@ fn run<R>(
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(cwd, Some(true), Destination::stderr(), false);
     std::thread::scope(|scope| {
-        let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
+        let progress_thread = scope.spawn(|| show_progress(&progress, &is_done, &style));
         let progress = Some(&progress);
         run_quietly(
             cwd,
@@ -281,9 +281,9 @@ fn run<R>(
             provided,
             |report| {
                 is_done.store(true, Ordering::Release);
-                shown.thread().unpark();
+                progress_thread.thread().unpark();
                 // Wait until the progress line is erased before printing anything else.
-                let _ = shown.join();
+                let _ = progress_thread.join();
                 then(report)
             },
         )
@@ -422,8 +422,8 @@ fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) 
     }
 }
 
-/// True if `bun check --run-typescript-tests` exists. `test/cli/check/conformance.test.ts` uses it.
-/// Release builds don't include it.
+/// True if `bun check --run-typescript-tests` exists. `test/cli/check/typescript-go/conformance.ts`
+/// uses it. Release builds don't include it.
 const HAS_TYPESCRIPT_TEST_RUNNER: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 

@@ -61,15 +61,15 @@ impl Rule for JsxNoScriptUrl {
         let link_props = self.components.iter().rev().find(|it| *it.0 == *component_name).map(|it| &it.1);
         let include_from_settings = self.include_from_settings && link_props.is_none();
         // oxlint reads the components from `settings.react`, and always checks `<a>`.
-        let of_oxlint_settings =
+        let oxlint_settings_props =
             || get_component_attrs_by_name(cx.state, component_name).filter(|_| include_from_settings && is_oxlint);
-        let of_settings = if include_from_settings && !is_oxlint {
+        let settings_props = if include_from_settings && !is_oxlint {
             get_link_component(cx.file(), component_name)
         } else {
             None
         };
         let is_a = component_name == b"a" && (is_oxlint || !include_from_settings);
-        if link_props.is_none() && !is_a && of_settings.is_none() && of_oxlint_settings().is_none() {
+        if link_props.is_none() && !is_a && settings_props.is_none() && oxlint_settings_props().is_none() {
             return;
         }
         for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
@@ -97,12 +97,12 @@ impl Rule for JsxNoScriptUrl {
                 Some(_) => continue,
                 None => name,
             };
-            let is_link_attribute = match (link_props, &of_settings) {
+            let is_link_attribute = match (link_props, &settings_props) {
                 (Some(link_props), _) => link_props.iter().any(|it| **it == *name),
-                (None, Some(of_settings)) => of_settings.contains(&name),
+                (None, Some(settings_props)) => settings_props.contains(&name),
                 // oxlint checks every attribute of `<a>`.
                 (None, None) if is_a => is_oxlint || name == b"href",
-                (None, None) => of_oxlint_settings().is_some_and(|it| it.contains(name)),
+                (None, None) => oxlint_settings_props().is_some_and(|it| it.contains(name)),
             };
             if is_link_attribute {
                 cx.report(attribute, if is_oxlint { JSX_NO_SCRIPT_URL } else { NO_SCRIPT_URL });

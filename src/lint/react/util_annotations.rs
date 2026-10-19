@@ -9,9 +9,9 @@ pub(crate) fn is_props(file: &File<'_>, start: u32) -> bool {
     let first = next_token(file.text(), start);
     let second = next_token(file.text(), first.end);
     [first, second].into_iter().any(|token| {
-        let written = file.slice(token);
+        let token_text = file.slice(token);
         // The `value` of a `PrivateIdentifier` has no `#`.
-        written.strip_prefix(b"#").unwrap_or(written) == b"props"
+        token_text.strip_prefix(b"#").unwrap_or(token_text) == b"props"
     })
 }
 

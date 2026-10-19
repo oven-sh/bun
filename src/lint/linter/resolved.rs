@@ -65,7 +65,7 @@ pub struct ConfiguredRule {
     /// The error ESLint's rule throws for these options even though its schema accepts them, from
     /// [`Rule::validate`](crate::rule::Rule::validate). ESLint stops at the first file the rule runs on (see
     /// [`LintResult::thrown`](super::LintResult::thrown)). Computed the first time a linter runs the rule.
-    pub(super) refusal: OnceLock<Option<Arc<[u8]>>>,
+    pub(super) options_error: OnceLock<Option<Arc<[u8]>>>,
     /// See [`ConfiguredRule::reported_as`].
     reported_as: &'static Meta,
     /// See [`ConfiguredRule::name`].
@@ -82,7 +82,7 @@ impl ConfiguredRule {
             options,
             defaults: Vec::new(),
             instance: OnceLock::new(),
-            refusal: OnceLock::new(),
+            options_error: OnceLock::new(),
             reported_as: entry.meta,
             name: None,
             or_else: None,
@@ -200,7 +200,7 @@ pub(super) struct Prepared {
     /// The rule instances, indexed like `order`. The linter builds this list and knows its concrete type.
     pub(super) rules: Arc<dyn std::any::Any + Send + Sync>,
     /// The error thrown by the first rule that rejects its options.
-    pub(super) refusal: Option<Arc<[u8]>>,
+    pub(super) options_error: Option<Arc<[u8]>>,
     /// The enabled rules that need types.
     pub(super) typed: Box<[&'static Meta]>,
     /// True if an enabled rule needs the module graph, which means a file may be linted again.

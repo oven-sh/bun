@@ -60,7 +60,7 @@ fn name_of_method(ancestor: Node<'_>) -> Option<&[u8]> {
 }
 
 /// The `CallExpression` listener. On `Some`, report `call.callee()` with this `data.name`.
-pub(crate) fn method_around_set_state<'a>(
+pub(crate) fn method_enclosing_set_state<'a>(
     call: Expr<'a>,
     name_matches: &dyn Fn(&[u8]) -> bool,
     mode: Mode,
@@ -82,12 +82,12 @@ pub(crate) fn method_around_set_state<'a>(
         return Some(name);
     }
     // `depth > 1`: the call is inside two functions that are inside the method.
-    let mut function_around = |node| {
+    let mut enclosing_function = |node| {
         (walks.functions).find_with(node, estree_parent, |_, ancestor| {
             is_function(ancestor).then_some(ancestor)
         })
     };
-    let second = function_around(call).and_then(&mut function_around);
+    let second = enclosing_function(call).and_then(&mut enclosing_function);
     let is_deep = second.is_some_and(|function| method.contains(function.span()));
     (!is_deep).then_some(name)
 }

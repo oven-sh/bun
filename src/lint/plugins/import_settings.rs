@@ -89,8 +89,8 @@ impl<'s> Settings<'s> {
         };
         let parsers = self.settings.get(b"import/parsers");
         let parsers = parsers.and_then(Json::as_object).unwrap_or_default();
-        let of_parsers = parsers.iter().flat_map(|it| strings_in(Some(&it.1)));
-        for ext in strings_in(own).chain(of_parsers) {
+        let parser_extensions = parsers.iter().flat_map(|it| strings_in(Some(&it.1)));
+        for ext in strings_in(own).chain(parser_extensions) {
             if !exts.contains(&ext) {
                 exts.push(ext);
             }

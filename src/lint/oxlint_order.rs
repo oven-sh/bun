@@ -6,8 +6,8 @@
 //! the rules in rule-number order. tsgolint's diagnostics come last.
 //!
 //! Our rules run differently, so [`in_run_order`] reorders the diagnostics afterwards, only for files that have any. It
-//! emits the four phases one after the other, with the first sorted by rule number. For the second, [`Places`] finds
-//! the node that oxlint's rule is called with.
+//! emits the four phases one after the other, with the first sorted by rule number. For the second, [`NodeFinder`]
+//! finds the node that oxlint's rule is called with.
 
 mod table;
 mod visited;
@@ -23,7 +23,7 @@ use bun_wyhash::hash_const;
 use rustc_hash::FxHashMap;
 use std::sync::LazyLock;
 use table::{KINDS, RULES};
-use visited::{Place, Places};
+use visited::{CalledNode, NodeFinder};
 
 /// A set of oxc node kinds, with one bit per index in [`KINDS`].
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -55,7 +55,7 @@ impl Kinds {
 
     /// True if this set is a subset of `others`.
     #[inline]
-    fn are_among(&self, others: &Kinds) -> bool {
+    fn is_subset_of(&self, others: &Kinds) -> bool {
         let both = self.0.iter().zip(others.0);
         both.into_iter().all(|(mine, theirs)| mine & !theirs == 0)
     }
@@ -76,7 +76,7 @@ pub(crate) struct Called {
     binaries: u32,
     unaries: u32,
     /// True if the rule is called with something that's only part of one of our nodes, so a bit test isn't enough.
-    is_odd: bool,
+    needs_part_lookup: bool,
 }
 
 /// How oxlint runs a rule.
@@ -239,7 +239,7 @@ impl Turns<'_> {
     }
 
     /// The turn of the innermost call around `label`. If there's none, `u32::MAX`, which sorts after every call.
-    fn of(&mut self, label: Span) -> u32 {
+    fn innermost_turn(&mut self, label: Span) -> u32 {
         while let Some((call, turn)) = self.calls.get(self.seen)
             && call.start <= label.start
         {
@@ -248,8 +248,10 @@ impl Turns<'_> {
             self.seen += 1;
         }
         self.pop_calls_ending_by(label.start);
-        let around = self.open.partition_point(|it| it.0 >= label.end);
-        let innermost = around.checked_sub(1).and_then(|it| self.open.get(it));
+        let enclosing_count = self.open.partition_point(|it| it.0 >= label.end);
+        let innermost = enclosing_count
+            .checked_sub(1)
+            .and_then(|it| self.open.get(it));
         innermost.map_or(u32::MAX, |it| it.1)
     }
 }
@@ -296,14 +298,14 @@ fn merged(a: &[u64], b: &[u64]) -> Vec<u64> {
 fn sort_preorder<'a>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],
-    found: &[(Place, u32)],
+    found: &[(CalledNode, u32)],
     nodes: &mut [u64],
 ) {
-    let key = |at: u32, depth_of: &dyn Fn(&Place) -> u128| {
-        let (it, (place, within)) = (diagnostics.get(at as usize)?, found.get(at as usize)?);
+    let key = |at: u32, depth_of: &dyn Fn(&CalledNode) -> u128| {
+        let (it, (target, within)) = (diagnostics.get(at as usize)?, found.get(at as usize)?);
         Some(
-            (u128::from(u32::MAX - place.span.end) << END)
-                | (depth_of(place) << DEPTH)
+            (u128::from(u32::MAX - target.span.end) << END)
+                | (depth_of(target) << DEPTH)
                 | (u128::from(it.rule) << RULE)
                 | (u128::from(*within) << WITHIN)
                 | u128::from(at),
@@ -311,13 +313,13 @@ fn sort_preorder<'a>(
     };
     let node_of = |key: u128| found.get(key as u32 as usize).and_then(|it| it.0.node);
     let mut same_start_keys: Vec<u128> = Vec::new();
-    for places in nodes.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
-        if places.len() < 2 {
+    for same_start in nodes.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
+        if same_start.len() < 2 {
             continue;
         }
-        let level = |it: &Place| it.node.map_or(DEEPEST, |it| it.1.into());
+        let level = |it: &CalledNode| it.node.map_or(DEEPEST, |it| it.1.into());
         same_start_keys.clear();
-        same_start_keys.extend(places.iter().filter_map(|it| key(*it as u32, &level)));
+        same_start_keys.extend(same_start.iter().filter_map(|it| key(*it as u32, &level)));
         same_start_keys.sort_unstable();
         // Nested nodes with identical spans.
         let is_other_node = |pair: &[u128]| match pair {
@@ -330,30 +332,30 @@ fn sort_preorder<'a>(
             .array_windows::<2>()
             .any(|it| is_other_node(it))
         {
-            let depth = |it: &Place| match it.node {
+            let depth = |it: &CalledNode| match it.node {
                 Some(node) => u128::from(visited::depth(file, node, it.span)).min(DEEPEST - 1),
                 None => DEEPEST,
             };
             same_start_keys.clear();
-            same_start_keys.extend(places.iter().filter_map(|it| key(*it as u32, &depth)));
+            same_start_keys.extend(same_start.iter().filter_map(|it| key(*it as u32, &depth)));
             same_start_keys.sort_unstable();
         }
-        for (place, sorted) in places.iter_mut().zip(&same_start_keys) {
-            *place = u64::from(*sorted as u32);
+        for (entry, sorted) in same_start.iter_mut().zip(&same_start_keys) {
+            *entry = u64::from(*sorted as u32);
         }
     }
 }
 
-/// Returns the indices into `diagnostics` in the order oxlint reports them, and with `wants_keys` also each one's
+/// Returns the indices into `diagnostics` in the order oxlint reports them, and with `with_keys` also each one's
 /// [`RunKey`]. `ran` returns the [`Ran`] of the rule with the given index.
 pub(crate) fn in_run_order<'a, 'r>(
     file: &'a File<'a>,
     diagnostics: &[Diagnostic],
     ran: &dyn Fn(u16) -> Option<&'r Ran>,
-    wants_keys: bool,
+    with_keys: bool,
 ) -> (Vec<u32>, Vec<RunKey>) {
     let unknown = Ran::unknown(Entering, u16::MAX);
-    let mut places = Places::new(file);
+    let mut finder = NodeFinder::new(file);
     // The four phases of the run. Each entry has the index into `diagnostics` in its low 32 bits.
     let with_index = |key: u64, at: u32| (u128::from(key) << 32) | u128::from(at);
     let mut once: Vec<u128> = Vec::new();
@@ -361,23 +363,23 @@ pub(crate) fn in_run_order<'a, 'r>(
     let mut calls: Vec<u128> = Vec::new();
     let mut last: Vec<u128> = Vec::new();
     // For the second phase: each diagnostic's node, and the diagnostics whose node still has to be searched for.
-    let nowhere = Place {
+    let not_found = CalledNode {
         span: Span::new(0, u32::MAX),
         node: None,
     };
-    let mut found: Vec<(Place, u32)> = vec![(nowhere, 0); diagnostics.len()];
+    let mut found: Vec<(CalledNode, u32)> = vec![(not_found, 0); diagnostics.len()];
     let mut searched: Vec<u128> = Vec::new();
     // Each diagnostic's rule number, for the keys.
-    let mut numbers: Vec<u16> = Vec::with_capacity(if wants_keys { diagnostics.len() } else { 0 });
+    let mut numbers: Vec<u16> = Vec::with_capacity(if with_keys { diagnostics.len() } else { 0 });
     // Each rule's diagnostics are contiguous.
     let mut rest = (0u32..).zip(&mut found);
     for rule_diagnostics in diagnostics.chunk_by(|a, b| a.rule == b.rule) {
         let ran = rule_diagnostics.first().and_then(|it| ran(it.rule));
         let ran = ran.unwrap_or(&unknown);
-        if wants_keys {
+        if with_keys {
             numbers.resize(numbers.len() + rule_diagnostics.len(), ran.number);
         }
-        for (it, (at, place)) in rule_diagnostics.iter().zip(&mut rest) {
+        for (it, (at, slot)) in rule_diagnostics.iter().zip(&mut rest) {
             let details = it.details.as_deref();
             // A diagnostic about the whole file, with no position, comes first in its phase.
             let start = details.and_then(|it| it.start_position.as_ref());
@@ -401,7 +403,7 @@ pub(crate) fn in_run_order<'a, 'r>(
                 When::Last => last.push(with_index(by_position, at)),
                 _ => {
                     // A rule that states its node walks the node the same way oxlint's rule does.
-                    place.1 = match it.has_explicit_node || ran.is_port {
+                    slot.1 = match it.has_explicit_node || ran.is_port {
                         true => at,
                         false => it.span.start,
                     };
@@ -409,20 +411,20 @@ pub(crate) fn in_run_order<'a, 'r>(
                     let stated = details.and_then(|it| it.listened_on);
                     let label = stated.filter(|_| it.node.is_none()).unwrap_or(it.span);
                     let known = match it.node {
-                        _ if has_position == 0 => Some(nowhere),
-                        Some(node) => (places.by_bit_test(called, node, it))
-                            .or_else(|| places.of(it.rule, &called.kinds, label, it.node)),
+                        _ if has_position == 0 => Some(not_found),
+                        Some(node) => (finder.by_bit_test(called, node, it))
+                            .or_else(|| finder.of(it.rule, &called.kinds, label, it.node)),
                         // `Report::called_with_name`: oxlint's node is the reported name, which isn't a node in our
                         // tree.
-                        None if it.has_explicit_node && stated.is_none() => Some(Place {
+                        None if it.has_explicit_node && stated.is_none() => Some(CalledNode {
                             span: label,
                             node: None,
                         }),
-                        None => places.of(it.rule, &called.kinds, label, None),
+                        None => finder.of(it.rule, &called.kinds, label, None),
                     };
                     match known {
                         Some(known) => {
-                            place.0 = known;
+                            slot.0 = known;
                             nodes.push((u64::from(known.span.start) << 32) | u64::from(at));
                         }
                         None => searched.push(with_index(preorder_key(label), at)),
@@ -434,7 +436,7 @@ pub(crate) fn in_run_order<'a, 'r>(
     nodes.sort_unstable();
     if !searched.is_empty() {
         searched.sort_unstable();
-        let mut late: Vec<u64> = Vec::with_capacity(searched.len());
+        let mut searched_nodes: Vec<u64> = Vec::with_capacity(searched.len());
         // How many of `nodes` start at or before the span being searched for.
         let mut before = 0;
         for (label, at) in (searched.into_iter()).map(|it| ((it >> 32) as u64, it as u32)) {
@@ -448,17 +450,16 @@ pub(crate) fn in_run_order<'a, 'r>(
                 let node = found.get(at as usize)?.0.node.map(|it| it.0);
                 Some((start, node.or(diagnostics.get(at as usize)?.node)?))
             });
-            let (Some(it), Some(place)) =
-                (diagnostics.get(at as usize), found.get_mut(at as usize))
+            let (Some(it), Some(slot)) = (diagnostics.get(at as usize), found.get_mut(at as usize))
             else {
                 continue;
             };
             let kinds = ran(it.rule).map_or_else(Kinds::default, |it| it.kinds.kinds);
-            place.0 = places.search(it.rule, &kinds, label, near);
-            late.push((u64::from(place.0.span.start) << 32) | u64::from(at));
+            slot.0 = finder.search(it.rule, &kinds, label, near);
+            searched_nodes.push((u64::from(slot.0.span.start) << 32) | u64::from(at));
         }
-        late.sort_unstable();
-        nodes = merged(&nodes, &late);
+        searched_nodes.sort_unstable();
+        nodes = merged(&nodes, &searched_nodes);
     }
     sort_preorder(file, diagnostics, &found, &mut nodes);
     once.sort_unstable();
@@ -477,7 +478,7 @@ pub(crate) fn in_run_order<'a, 'r>(
             let (label, at) = ((*call >> 32) as u64, *call as u32);
             let span = Span::new((label >> 32) as u32, label as u32);
             let rule = diagnostics.get(at as usize).map_or(0, |it| it.rule);
-            *call = (u128::from(turns.of(span)) << 80)
+            *call = (u128::from(turns.innermost_turn(span)) << 80)
                 | (u128::from(rule) << 64)
                 | (u128::from(span.start) << 32)
                 | u128::from(at);
@@ -489,7 +490,7 @@ pub(crate) fn in_run_order<'a, 'r>(
         }
     }
     let mut keys: Vec<RunKey> = Vec::new();
-    if wants_keys {
+    if with_keys {
         let number_of = |at: u32| u128::from(numbers.get(at as usize).copied().unwrap_or(u16::MAX));
         let part = |part: u64, first: u32| (part << 32) | u64::from(first);
         keys.reserve(diagnostics.len());
@@ -498,15 +499,15 @@ pub(crate) fn in_run_order<'a, 'r>(
             keys.push((part(0, number_of(*key as u32) as u32), within));
         }
         for at in nodes.iter().map(|it| *it as u32) {
-            let Some((place, within)) = found.get(at as usize) else {
+            let Some((target, within)) = found.get(at as usize) else {
                 continue;
             };
-            let depth = place.node.map_or(DEEPEST, |it| it.1.into());
-            let rest = (u128::from(u32::MAX - place.span.end) << END)
+            let depth = target.node.map_or(DEEPEST, |it| it.1.into());
+            let rest = (u128::from(u32::MAX - target.span.end) << END)
                 | (depth << DEPTH)
                 | ((number_of(at) & DEEPEST) << RULE)
                 | (u128::from(*within) << WITHIN);
-            keys.push((part(1, place.span.start), rest));
+            keys.push((part(1, target.span.start), rest));
         }
         let turns = turn_of.iter().chain(std::iter::repeat(&0));
         for (call, turn) in calls.iter().zip(turns) {

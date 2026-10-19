@@ -138,8 +138,8 @@ impl<'p> UnionMembers<'p> {
     }
 
     fn cache_facts(&mut self, member: TypeId, facts: MemberFacts<'p>) {
-        if let Some(kept) = self.facts_mut(member) {
-            *kept = facts;
+        if let Some(existing) = self.facts_mut(member) {
+            *existing = facts;
             return;
         }
         self.facts.push(facts);
@@ -277,8 +277,8 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             self.index_types.remove(same);
         }
         let before = self.index_types.iter().rposition(|it| it.0 <= at);
-        let place = before.map_or(0, |before| before + 1);
-        self.index_types.insert(place, (at, ty));
+        let insert_at = before.map_or(0, |before| before + 1);
+        self.index_types.insert(insert_at, (at, ty));
     }
 }
 
@@ -297,12 +297,12 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         skips_augment: bool,
     ) -> Option<&'p Prop<'p>> {
-        let kept = match skips_augment {
+        let cached = match skips_augment {
             true => None,
             false => self.p.union_properties.get(&self.task, &(union, name)),
         };
-        let holder = match kept {
-            Some(kept) => kept,
+        let holder = match cached {
+            Some(cached) => cached,
             None => {
                 let scope = self.begin_scope();
                 let holder = self
@@ -628,8 +628,8 @@ impl<'p, 's> Checker<'p, 's> {
         if recent.is_empty() {
             recent.resize(RECENT_UNION_MEMBERS, TypeId::NEVER);
         }
-        let place = &mut recent[current.0 as usize % RECENT_UNION_MEMBERS];
-        std::mem::replace(place, current) == current
+        let recent_slot = &mut recent[current.0 as usize % RECENT_UNION_MEMBERS];
+        std::mem::replace(recent_slot, current) == current
     }
 
     /// `lookup` must be the value that `add_member` just returned for `current`.

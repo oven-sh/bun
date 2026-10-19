@@ -28,15 +28,15 @@ impl<'p, 's> Checker<'p, 's> {
         owner: DecoratorOwner,
     ) -> Option<(ClassId, Option<MemberId>)> {
         let bound = self.bound(file);
-        let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
+        let class_of_member = |m: MemberId| match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => Some((c, Some(m))),
             _ => None,
         };
         match owner {
             DecoratorOwner::Class(c) => Some((c, None)),
-            DecoratorOwner::Member(m) => of_member(m),
+            DecoratorOwner::Member(m) => class_of_member(m),
             DecoratorOwner::Param(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner {
-                crate::bind::FnOwner::Member(m) => of_member(m),
+                crate::bind::FnOwner::Member(m) => class_of_member(m),
                 _ => None,
             },
         }
@@ -133,8 +133,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_method_declaration(&mut self, file: FileId, m: MemberId) -> TypeId {
         let bound = self.bound(file);
         let func = self.hir(file)[m].func;
-        let around = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
-        let mapper = self.identity_mapper_for_fns(file, around, &[(file, func)]);
+        let parent_scope = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
+        let mapper = self.identity_mapper_for_fns(file, parent_scope, &[(file, func)]);
         self.intern_key(TypeKey::Fns {
             decls: &[(file, func)],
             mapper,
@@ -473,8 +473,8 @@ impl<'p, 's> Checker<'p, 's> {
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
-            let written = self.decorator_position(file, e);
-            let at_sign = written.at_sign;
+            let decorator_span = self.decorator_position(file, e);
+            let at_sign = decorator_span.at_sign;
             // `checkGrammarModifiers` reports a decorator in an invalid position, and then nothing else is reported
             // between it and the declaration.
             if bound.rejected_decorators.contains(&e) {
@@ -506,16 +506,16 @@ impl<'p, 's> Checker<'p, 's> {
                         && matches!(hir[m].key, PropKey::Private(_))
                 })
             {
-                self.error_at((file, at_sign, written.end), 18036, &[]);
+                self.error_at((file, at_sign, decorator_span.end), 18036, &[]);
             }
             if !hir.has_parse_diagnostics
-                && !written.is_parenthesized
+                && !decorator_span.is_parenthesized
                 && let Some((from, to)) = self.invalid_syntax_in_decorator(file, e)
             {
-                self.error_at((file, written.start, written.end), 1497, &[])
+                self.error_at((file, decorator_span.start, decorator_span.end), 1497, &[])
                     .add_related_info(Reported::bare((file, from, to), 1498));
             }
-            self.check_decorator(file, owner, e, written);
+            self.check_decorator(file, owner, e, decorator_span);
         }
     }
 
@@ -565,7 +565,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         owner: DecoratorOwner,
         e: ExprId,
-        written: DecoratorSpan,
+        decorator_span: DecoratorSpan,
     ) {
         let hir = self.hir(file);
         let DecoratorSpan {
@@ -573,7 +573,7 @@ impl<'p, 's> Checker<'p, 's> {
             start,
             end,
             is_parenthesized,
-        } = written;
+        } = decorator_span;
         let function = self.type_of_expr(file, e);
         let apparent = self.apparent_type(function);
         // `resolveErrorCall`

@@ -2827,8 +2827,8 @@ describe.concurrent("bun fmt", () => {
     test.each(Object.keys(sources))("%s: proseWrap", async source => {
       const [files, args] = sources[source]("proseWrap", "never", "--prose-wrap=never");
       const rename = (text: string) => text.replaceAll("a.vue", "a.md");
-      const named = Object.fromEntries(Object.entries(files).map(([name, text]) => [name, rename(text)]));
-      const result = await format({ ...named, "a.md": "a\nb\n" }, [...args, "-l", "a.md"]);
+      const renamed = Object.fromEntries(Object.entries(files).map(([name, text]) => [name, rename(text)]));
+      const result = await format({ ...renamed, "a.md": "a\nb\n" }, [...args, "-l", "a.md"]);
       expect(result.stdout.split("\n").filter(Boolean)).toEqual(["a.md"]);
       expect((await format({ "a.md": "a\nb\n" }, ["-l", "a.md"])).stdout).toBe("");
     });
@@ -4139,23 +4139,23 @@ describe.concurrent("bun fmt", () => {
     });
 
     test("checks stdin", async () => {
-      const [named, unnamed, looks, lost] = await Promise.all([
+      const [withPath, withParser, checked, unsafe] = await Promise.all([
         format(config, ["--debug-check", "--stdin-filepath", "x.js"], { stdin: ugly }),
         format(config, ["--debug-check", "--parser", "babel"], { stdin: ugly }),
         format(config, ["--debug-check", "--check", "--stdin-filepath", "x.js"], { stdin: ugly }),
         format(config, ["--debug-check", "--stdin-filepath", "x.ts"], { stdin: lossy }),
       ]);
       // The path, without a line break.
-      expect(named.raw).toEndWith(`${sep}x.js`);
-      expect(named.exitCode).toBe(0);
-      expect(unnamed.raw).toBe("(stdin)\n");
-      expect(unnamed.exitCode).toBe(0);
+      expect(withPath.raw).toEndWith(`${sep}x.js`);
+      expect(withPath.exitCode).toBe(0);
+      expect(withParser.raw).toBe("(stdin)\n");
+      expect(withParser.exitCode).toBe(0);
       // oxfmt rejects --check with --stdin-filepath.
-      expect(looks.raw).toBe(".oxfmtrc.json" in config ? "" : "(stdin)\n");
-      expect(looks.exitCode).toBe(1);
-      expect(lost.raw).toBe("");
-      expect(lost.stderr).toBe(problem("x.ts", "Not formatted, because formatting would change what the code does"));
-      expect(lost.exitCode).toBe(2);
+      expect(checked.raw).toBe(".oxfmtrc.json" in config ? "" : "(stdin)\n");
+      expect(checked.exitCode).toBe(1);
+      expect(unsafe.raw).toBe("");
+      expect(unsafe.stderr).toBe(problem("x.ts", "Not formatted, because formatting would change what the code does"));
+      expect(unsafe.exitCode).toBe(2);
     });
   });
 
@@ -4579,12 +4579,12 @@ exports.format = async (text, { parser }) => {
     test(
       "a promise that can never settle is an error for the file",
       async () => {
-        const waits = packages["node_modules/prettier/index.cjs"].replace(
+        const hangs = packages["node_modules/prettier/index.cjs"].replace(
           "exports.format = async (text, options) => {",
           'exports.format = async (text, options) => {\n  if (text.includes("waits")) await new Promise(() => {});',
         );
         const result = await format(
-          { ...files, "node_modules/prettier/index.cjs": waits, "c.astro": "<p   >waits</p>\n" },
+          { ...files, "node_modules/prettier/index.cjs": hangs, "c.astro": "<p   >waits</p>\n" },
           [],
           { reads: ["a.astro", "c.astro"] },
         );
@@ -6064,10 +6064,10 @@ exports.format = async text => "by Prettier";
       // In a directory whose own vite.config has no `fmt`, the one above applies.
       const below = await format(files, ["d.js"], { reads, cwd: "other" });
       expect(below.files["other/d.js"]).toBe("d\n");
-      const named = await format(files, ["--config", "other/vite.config.mjs", "a.js"], { reads });
-      expect(named.stderr).toContain("Expected a `fmt` field in the default export of");
-      expect(named.files["a.js"]).toBe("a;\n");
-      expect(named.exitCode).toBe(1);
+      const explicit = await format(files, ["--config", "other/vite.config.mjs", "a.js"], { reads });
+      expect(explicit.stderr).toContain("Expected a `fmt` field in the default export of");
+      expect(explicit.files["a.js"]).toBe("a;\n");
+      expect(explicit.exitCode).toBe(1);
       // Without the dependency, the file is only Vite's config.
       const without = await format({ ...files, "package.json": "{}\n" }, ["a.js"], { reads });
       expect(without.files["a.js"]).toBe("a;\n");
@@ -6099,11 +6099,11 @@ exports.format = async text => "by Prettier";
         [name]: `import { basename } from "node:path";\nexport default { semi: basename(process.cwd()) !== "sub" };\n`,
         "sub/a.js": "a\n",
       };
-      const [below, beside] = await Promise.all([
+      const [below, atRoot] = await Promise.all([
         format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] }),
         format(files, ["sub/a.js"], { reads: ["sub/a.js"] }),
       ]);
-      expect([below.files["sub/a.js"], beside.files["sub/a.js"]]).toEqual(["a\n", "a;\n"]);
+      expect([below.files["sub/a.js"], atRoot.files["sub/a.js"]]).toEqual(["a\n", "a;\n"]);
     },
   );
 
@@ -7073,10 +7073,10 @@ try {
     expect(directory.files).toEqual(after);
     expect(directory.stderr).not.toMatch(anError);
     expect(directory.exitCode).toBe(0);
-    const named = await format(files, reads, { reads });
-    expect(named.files).toEqual(after);
-    expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(2);
-    expect(named.exitCode).toBe(2);
+    const byName = await format(files, reads, { reads });
+    expect(byName.files).toEqual(after);
+    expect(byName.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(2);
+    expect(byName.exitCode).toBe(2);
   });
 
   // `prettier.getSupportInfo()` lists `bun` and `deno` as interpreters for JavaScript, Flow and TypeScript. The first
@@ -7106,12 +7106,12 @@ try {
     expect(directory.files).toEqual({ ...files, "glide.lock": "a: 1\n" });
     expect(directory.exitCode).toBe(0);
     expect((await format(all, [], { reads: [...names, "glide.lock"] })).files).toEqual(all);
-    const named = await format(files, names, { reads: names });
-    expect(named.files).toEqual(files);
-    expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(
+    const byName = await format(files, names, { reads: names });
+    expect(byName.files).toEqual(files);
+    expect(byName.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(
       names.length,
     );
-    expect(named.exitCode).toBe(2);
+    expect(byName.exitCode).toBe(2);
   });
 
   // These are Prettier 3.9.9's exit codes. `handleError` doesn't set one under `--check`, but `formatFiles` still
@@ -7125,8 +7125,8 @@ try {
     [["--write", "--ignore-unknown"], 0],
   ])("a file with no matching parser: %j", async (flags, exitCode) => {
     const files = { "FOO": "x   y\n", "a.xyz": "x   y\n" };
-    for (const named of ["FOO", "*.xyz"]) {
-      const result = await format(files, [...flags, named], { reads: Object.keys(files) });
+    for (const argument of ["FOO", "*.xyz"]) {
+      const result = await format(files, [...flags, argument], { reads: Object.keys(files) });
       expect(result.stderr.includes("error: No parser could be inferred for file")).toBe(exitCode === 2);
       expect(result.files).toEqual(files);
       expect(result.exitCode).toBe(exitCode);
@@ -8045,10 +8045,10 @@ try {
     });
 
     test.each(Object.keys(kinds))("a path passed by name uses its own configuration: %s", async name => {
-      const named = { ran: [`beside/${dirOf(name)}`], different: 1, exitCode: 1 };
-      expect(await run([`../beside/${dirOf(name)}`])).toEqual(named);
-      expect(await run([`../beside/${dirOf(name)}/x.js`])).toEqual(named);
-      expect(await run([`../beside/${dirOf(name)}`, "../beside/*/x.js"])).toEqual(named);
+      const expected = { ran: [`beside/${dirOf(name)}`], different: 1, exitCode: 1 };
+      expect(await run([`../beside/${dirOf(name)}`])).toEqual(expected);
+      expect(await run([`../beside/${dirOf(name)}/x.js`])).toEqual(expected);
+      expect(await run([`../beside/${dirOf(name)}`, "../beside/*/x.js"])).toEqual(expected);
     });
 
     test("a directory passed by name covers everything in it", async () => {
@@ -8234,11 +8234,11 @@ try {
 
     test("--config and --no-config", async () => {
       const files = { ".prettierrc": `{ "semi": false }`, "other.json": `{ "singleQuote": true }`, "a.js": ugly };
-      const [named, none] = await Promise.all([
+      const [explicit, none] = await Promise.all([
         format(files, ["--config", "other.json", "a.js"], { reads: ["a.js"] }),
         format(files, ["--no-config", "a.js"], { reads: ["a.js"] }),
       ]);
-      expect(named.files).toEqual({ "a.js": formatted.replaceAll('"', "'") });
+      expect(explicit.files).toEqual({ "a.js": formatted.replaceAll('"', "'") });
       expect(none.files).toEqual({ "a.js": formatted });
     });
 
@@ -8587,7 +8587,7 @@ try {
         ["indent_size with indent_style", {}, "[*]\nindent_style = space\nindent_size = 4\n", "    "],
         ["indent_size with useTabs", { useTabs: false }, "[*]\nindent_size = 4\n", "    "],
         ["indent_size before tab_width", { useTabs: false }, "[*]\nindent_size = 4\ntab_width = 8\n", "    "],
-        ["tab_width alone", {}, "[*]\ntab_width = 4\n", "    "],
+        ["tab_width on its own", {}, "[*]\ntab_width = 4\n", "    "],
         [
           "useTabs takes precedence over indent_style",
           { useTabs: false },
@@ -8718,7 +8718,7 @@ try {
         const { raw, stderr, exitCode } = await format(files, args, { stdin: ugly });
         return { raw, stderr, exitCode };
       };
-      const [alone, done] = [ugly, formatted].map(raw => ({ raw, stderr: "", exitCode: 0 }));
+      const [skipped, done] = [ugly, formatted].map(raw => ({ raw, stderr: "", exitCode: 0 }));
       const results = await Promise.all([
         print({}, "--stdin-filepath", "node_modules/x/a.js"),
         print({}, "--stdin-filepath", "sub/node_modules/y/a.js"),
@@ -8732,7 +8732,7 @@ try {
         print({ ".oxfmtrc.json": "{}" }, "--stdin-filepath", "node_modules/x/a.js"),
         print({}, "--flavor=oxfmt", "--stdin-filepath", "node_modules/x/a.js"),
       ]);
-      expect(results).toEqual([alone, alone, alone, alone, alone, done, done, done, done, done, done]);
+      expect(results).toEqual([skipped, skipped, skipped, skipped, skipped, done, done, done, done, done, done]);
     });
 
     test("--check prints (stdin) and exits with 1", async () => {
@@ -8852,7 +8852,7 @@ try {
 
     test("uses the config of the working directory", async () => {
       const nested = { ...noSemi, "sub/.prettierrc": `{ "tabWidth": 8 }\n`, "sub/dir/a.txt": "", "other/a.txt": "" };
-      const [here, below, nearer, off, named] = await Promise.all([
+      const [here, below, nearer, off, explicit] = await Promise.all([
         pipe(noSemi),
         pipe(nested, [], { cwd: "other" }),
         pipe(nested, [], { cwd: "sub/dir" }),
@@ -8863,7 +8863,7 @@ try {
       expect(below.raw).toBe(withoutSemi);
       expect(nearer.raw).toBe(printed.replace("  return", "        return"));
       expect(off.raw).toBe(printed);
-      expect(named.raw).toBe(withoutSemi);
+      expect(explicit.raw).toBe(withoutSemi);
     });
 
     test.each([
@@ -9253,11 +9253,11 @@ describe.concurrent("ignored files are never written, however they're reached", 
         different(files, ["{generated,src}/*.js"]),
       ]),
     ).toEqual([["src/d.js"], ["src/d.js"], ["src/d.js"]]);
-    const kept = ["generated/a.js", "generated/deep/b.js", "vendor/c.js"];
-    const result = await format(files, ["generated", "generated/*.js", "vendor", "src"], { reads: kept });
+    const untouched = ["generated/a.js", "generated/deep/b.js", "vendor/c.js"];
+    const result = await format(files, ["generated", "generated/*.js", "vendor", "src"], { reads: untouched });
     expect(result.stdout).toBe("src/d.js");
     expect(result.stderr).not.toMatch(anError);
-    expect(result.files).toEqual(Object.fromEntries(kept.map(name => [name, ugly])));
+    expect(result.files).toEqual(Object.fromEntries(untouched.map(name => [name, ugly])));
     expect(result.exitCode).toBe(0);
   });
 
@@ -9290,7 +9290,7 @@ describe.concurrent("ignored files are never written, however they're reached", 
     ]);
   });
 
-  const beside = {
+  const project = {
     "configs/ignored": "skipped.js\n*.gen.js\n/src/anchored.js\ndir/\n../lib/up.js\n**/src/any.js\nsrc/mid.js\n",
     "configs/hidden": ".*\n",
     "configs/skipped.js": ugly,
@@ -9312,10 +9312,10 @@ describe.concurrent("ignored files are never written, however they're reached", 
   test("a file outside the directory of the --ignore-path file", async () => {
     expect(
       await Promise.all([
-        different(beside, [...ignored, "."]),
-        different(beside, [...ignored, "src/skipped.js", "src/dir/in.js", "src/kept.js"]),
-        different(beside, [...ignored, "src/dir"]),
-        different(beside, ["--ignore-path", join("configs", "hidden"), "."]),
+        different(project, [...ignored, "."]),
+        different(project, [...ignored, "src/skipped.js", "src/dir/in.js", "src/kept.js"]),
+        different(project, [...ignored, "src/dir"]),
+        different(project, ["--ignore-path", join("configs", "hidden"), "."]),
       ]),
     ).toEqual([
       ["src/anchored.js", "src/kept.js", "src/mid.js", "top.js"],
@@ -9329,7 +9329,7 @@ describe.concurrent("ignored files are never written, however they're reached", 
   // `Gitignore::matched`, so a pattern without `/` matches the name in it. For an argument, "a path outside the
   // matcher's root is never ignored".
   test("a file outside the directory of the --ignore-path file, like oxfmt", async () => {
-    const files = { ...beside, ".oxfmtrc.json": "{}\n" };
+    const files = { ...project, ".oxfmtrc.json": "{}\n" };
     expect(
       await Promise.all([
         different(files, [...ignored, "."]),
@@ -9981,7 +9981,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
     expect(asOxfmt.files).toEqual({ "a.ts": "const o = {\n  a: 1,\n};\ntype A = {\n  a: 1;\n};\n" });
   });
 
-  // oxfmt 0.72 writes `\r\r\n` here. Whether to match that is still undecided.
+  // oxfmt 0.72 writes `\r\r\n` here. Bun writes each line break once.
   test("a multi-line type in a JSDoc comment, with endOfLine: crlf", async () => {
     const config = JSON.stringify({ endOfLine: "crlf", jsdoc: true, printWidth: 40 });
     const result = await format(
@@ -10576,9 +10576,9 @@ describe("bun fmt on Windows, macOS and Linux", () => {
       expect(walked.stdout).toBe(`${names.join("/")}/a.js\n${names.join("/")}/b.js\n`);
       expect(read(dir, ...names, "a.js")).toBe("a\n");
       writeFileSync(join(String(dir), ...names, "b.js"), formatted);
-      const named = await format(dir, [join(...names, "b.js")]);
+      const byName = await format(dir, [join(...names, "b.js")]);
       expect(read(dir, ...names, "b.js")).toBe("a\n");
-      expect(named.exitCode).toBe(0);
+      expect(byName.exitCode).toBe(0);
     });
 
     // `subst` gives the directory a drive letter.
@@ -11149,11 +11149,11 @@ describe.concurrent("[fmt] in bunfig.toml", () => {
 
   test("with configPrecedence = prefer-file, the section only applies where there's no configuration file", async () => {
     const bunfig = `[fmt]\nconfigPrecedence = "prefer-file"\nsemi = false\n`;
-    const [alone, beside] = await Promise.all([
+    const [withoutConfig, withConfig] = await Promise.all([
       run({ "bunfig.toml": bunfig, "a.js": "a;\n" }, ["a.js"]),
       run({ "bunfig.toml": bunfig, ".prettierrc": "{}", "a.js": "a;\n" }, ["a.js"]),
     ]);
-    expect([alone.files["a.js"], beside.files["a.js"]]).toEqual(["a\n", "a;\n"]);
+    expect([withoutConfig.files["a.js"], withConfig.files["a.js"]]).toEqual(["a\n", "a;\n"]);
   });
 
   test("reads the working directory's bunfig.toml, after --cwd is applied", async () => {

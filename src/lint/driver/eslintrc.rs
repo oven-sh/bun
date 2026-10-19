@@ -207,7 +207,7 @@ fn read(path: &[u8], modules: &mut Modules) -> Result<Option<Json>, Vec<u8>> {
 }
 
 /// True if the file at `path`, passed with `--config`, is an ESLint 8 config, as far as can be told without running it.
-pub(crate) fn is_one(path: &[u8], pipes: &fs::NamedPipes) -> bool {
+pub(crate) fn is_eslintrc_file(path: &[u8], pipes: &fs::NamedPipes) -> bool {
     let name = paths::basename(path);
     if name.starts_with(b".eslintrc") || name.ends_with(b".yaml") || name.ends_with(b".yml") {
         return true;
@@ -219,7 +219,7 @@ pub(crate) fn is_one(path: &[u8], pipes: &fs::NamedPipes) -> bool {
         return false;
     };
     // Keys that an `.oxlintrc.json` doesn't have.
-    let only_here: [&[u8]; 7] = [
+    let eslintrc_only_keys: [&[u8]; 7] = [
         b"root",
         b"parser",
         b"parserOptions",
@@ -228,13 +228,13 @@ pub(crate) fn is_one(path: &[u8], pipes: &fs::NamedPipes) -> bool {
         b"processor",
         b"ecmaFeatures",
     ];
-    let names_preset = |it: &Json| {
+    let is_preset = |it: &Json| {
         (it.as_str()).is_some_and(|it| it.starts_with(b"eslint:") || it.starts_with(b"plugin:"))
     };
-    only_here.iter().any(|key| json.get(key).is_some())
+    eslintrc_only_keys.iter().any(|key| json.get(key).is_some())
         || match json.get(b"extends") {
-            Some(Json::Array(all)) => all.iter().any(names_preset),
-            Some(one) => names_preset(one),
+            Some(Json::Array(all)) => all.iter().any(is_preset),
+            Some(one) => is_preset(one),
             None => false,
         }
 }
@@ -288,17 +288,17 @@ fn in_directory(
 }
 
 /// True if `directory` has an ESLint 8 configuration file.
-pub(crate) fn has_one(directory: &[u8]) -> bool {
-    let is_there = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
+pub(crate) fn has_eslintrc_file(directory: &[u8]) -> bool {
+    let file_exists = |name: &&[u8]| fs::is_file(&paths::join(directory, name));
     NAMES.iter().any(|name| match *name {
         // One that can't be parsed counts as a config. The error is reported when it's loaded.
         b"package.json" => {
-            is_there(name)
+            file_exists(name)
                 && fs::read(&paths::join(directory, name)).is_ok_and(|it| {
                     json::parse(&it).is_none_or(|it| it.get(b"eslintConfig").is_some())
                 })
         }
-        _ => is_there(name),
+        _ => file_exists(name),
     })
 }
 
@@ -437,13 +437,13 @@ pub(crate) fn load(
         }
         LegacyKind::Plugin => {
             let directory = modules.plugins_from(entry).to_vec();
-            let is_implemented_here = matches!(
+            let is_built_in = matches!(
                 short,
                 b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
             ) && modules.registry.replaces_plugin(short);
             match modules.loaded([b"plugins", &directory, request], from, entry) {
                 // An installed package takes precedence over the built-in implementation, because it also has configs.
-                Err(failure) if failure.is_missing && is_implemented_here => Ok(built_in(request)),
+                Err(failure) if failure.is_missing && is_built_in => Ok(built_in(request)),
                 loaded => loaded,
             }
         }

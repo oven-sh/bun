@@ -242,13 +242,13 @@ pub(super) fn trim_trivia_end(text: &[u8]) -> &[u8] {
     &text[..skip_trivia_back(text, text.len())]
 }
 
-/// Start of the token `written` that immediately precedes `at`, ignoring trivia. `None` if a
+/// Start of the token `token_text` that immediately precedes `at`, ignoring trivia. `None` if a
 /// different token precedes it.
-pub(crate) fn start_of_token_before(text: &[u8], at: u32, written: &[u8]) -> Option<u32> {
+pub(crate) fn start_of_token_before(text: &[u8], at: u32, token_text: &[u8]) -> Option<u32> {
     let before = trim_trivia_end(&text[..(at as usize).min(text.len())]);
     before
-        .ends_with(written)
-        .then(|| (before.len() - written.len()) as u32)
+        .ends_with(token_text)
+        .then(|| (before.len() - token_text.len()) as u32)
 }
 
 /// The name or keyword that starts at `at`, possibly empty.
@@ -982,8 +982,11 @@ impl<'a, 's> Spans<'a, 's> {
 
     /// `e` including the enclosing parentheses that open at `start` or later.
     fn expr_from(self, e: ExprId, start: usize) -> usize {
-        let around = crate::hir::parentheses_around(self.hir, e).iter();
-        match around.take_while(|p| p.1 as usize >= start).last() {
+        let enclosing_parens = crate::hir::parentheses_around(self.hir, e).iter();
+        match enclosing_parens
+            .take_while(|p| p.1 as usize >= start)
+            .last()
+        {
             Some(outermost) => outermost.2 as usize,
             None => self.expr_inside(e),
         }
@@ -1590,9 +1593,9 @@ impl<'s> Checker<'_, 's> {
         if name == known::empty {
             return pos;
         }
-        let written = self.hir(file).text.get(pos as usize..).unwrap_or_default();
+        let rest_of_text = self.hir(file).text.get(pos as usize..).unwrap_or_default();
         let name = self.atoms().bytes(name);
-        if !name.is_empty() && written.starts_with(name) {
+        if !name.is_empty() && rest_of_text.starts_with(name) {
             pos + name.len() as u32
         } else {
             self.end_of_token_at(file, pos)

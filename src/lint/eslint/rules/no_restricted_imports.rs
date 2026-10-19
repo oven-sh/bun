@@ -182,12 +182,12 @@ enum GlobResult {
 
 impl Globs {
     /// For the strings in `patterns`.
-    fn of_strings(strings: &[&str]) -> Globs {
+    fn from_strings(strings: &[&str]) -> Globs {
         let ignores_case = true;
-        Globs { each_pattern_is_a_group: true, ..Globs::of_group(strings, ignores_case) }
+        Globs { each_pattern_is_a_group: true, ..Globs::from_group(strings, ignores_case) }
     }
 
-    fn of_group(group: &[&str], ignores_case: bool) -> Globs {
+    fn from_group(group: &[&str], ignores_case: bool) -> Globs {
         let pattern = |raw: &&str| {
             let (is_negated, rest) = match raw.as_bytes().strip_prefix(b"!") {
                 Some(rest) => (true, rest),
@@ -676,7 +676,7 @@ impl Restrictions {
             let strings = patterns.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok());
             let group: Vec<&str> = strings.collect();
             let ignore = Box::new(ignore_rules(&group, true));
-            let matcher = Matcher::Group(ignore, Globs::of_strings(&group));
+            let matcher = Matcher::Group(ignore, Globs::from_strings(&group));
             all.push(Restriction::new(matcher, Object::default()));
             return Restrictions { all };
         }
@@ -692,7 +692,7 @@ impl Restrictions {
                 None => object.has("group").then(|| {
                     let group = object.strings("group");
                     let ignore = Box::new(ignore_rules(&group, !is_case_sensitive));
-                    Matcher::Group(ignore, Globs::of_group(&group, !is_case_sensitive))
+                    Matcher::Group(ignore, Globs::from_group(&group, !is_case_sensitive))
                 }),
             };
             if let Some(matcher) = matcher {

@@ -11,7 +11,8 @@ fn nodes_or_tokens_overlap(first: Span, second: Span) -> bool {
 }
 
 /// `isSpaceBetweenTokens`. Unlike [`File::is_space_between`], whitespace inside a `JSXText` between
-/// the two counts. This searches the raw text, whereas espree's `value` has `&nbsp;` decoded.
+/// the two counts. Known difference: this checks the raw text, while espree decodes the token's
+/// `value`, so with espree upstream also counts an `&nbsp;` as whitespace.
 pub(crate) fn is_space_between_tokens<'a>(file: &'a File<'a>, first: Span, second: Span) -> bool {
     if nodes_or_tokens_overlap(first, second) {
         return false;

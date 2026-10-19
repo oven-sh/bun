@@ -514,13 +514,13 @@ struct Builder<'t> {
     /// The open paragraph, heading or cell, and the open spans in it.
     spans: Vec<NodeId>,
     /// The parser's last report about a position within a line.
-    place: (u32, u32),
+    inline_range: (u32, u32),
     /// Where the opening marker of each of `spans` ends.
     marker_ends: Vec<u32>,
     /// The text that isn't a node yet: its range, its decoded value, and whether that equals the source text.
     text_range: Option<(u32, u32)>,
     text_value: Vec<u8>,
-    is_text_as_written: bool,
+    text_matches_source: bool,
     /// The text content of the open image.
     alt: Vec<u8>,
     /// Where its last part ends.
@@ -543,7 +543,7 @@ struct Builder<'t> {
 /// indentation, so a fence starts a code block, `***` becomes a thematic break, and `<div>` starts HTML.
 #[derive(Copy, Clone)]
 struct GuardedBreak {
-    place: (u32, u32),
+    break_range: (u32, u32),
     kind: LineBreak,
     /// The line before it, and the line after it without its indentation.
     above: (u32, u32),
@@ -552,9 +552,9 @@ struct GuardedBreak {
 
 #[derive(Copy, Clone)]
 enum LineBreak {
-    /// `is_as_written` means nothing was removed before it.
+    /// `matches_source` means nothing was removed before it.
     Soft {
-        is_as_written: bool,
+        matches_source: bool,
     },
     Hard,
 }
@@ -574,19 +574,19 @@ enum Follower {
 /// content allows.
 fn with_printed_backticks(rest: &[u8], len: usize) -> Vec<u8> {
     let run_at = |at: usize| rest[at..].iter().take_while(|&&byte| byte == b'`').count();
-    let written = run_at(0);
-    let (mut lengths, mut at) = (0u64, written);
+    let source_run = run_at(0);
+    let (mut lengths, mut at) = (0u64, source_run);
     while let Some(skipped) = bun_core::strings::index_of_char_usize(&rest[at..], b'`') {
         at += skipped;
         let run = run_at(at);
-        if run == written {
+        if run == source_run {
             break;
         }
         lengths |= 1 << (run.clamp(1, 64) - 1);
         at += run;
     }
     let mut line = vec![b'`'; lengths.trailing_ones() as usize + 1];
-    line.extend_from_slice(rest.get(written..len).unwrap_or_default());
+    line.extend_from_slice(rest.get(source_run..len).unwrap_or_default());
     line
 }
 
@@ -1025,13 +1025,13 @@ impl Builder<'_> {
             Kind::Code => info.iter().take_while(|&&byte| !is_space(byte)).count(),
             _ => 0,
         } as u32;
-        let blanks = info[lang_len as usize..]
+        let whitespace_len = info[lang_len as usize..]
             .iter()
             .take_while(|&&byte| is_space(byte))
             .count() as u32;
         let (lang, meta) = (
             self.string_value(info_start, info_start + lang_len),
-            self.string_value(info_start + lang_len + blanks, info_end),
+            self.string_value(info_start + lang_len + whitespace_len, info_end),
         );
         if let Some(node) = self.tree.get_mut(node) {
             (node.second, node.third) = (lang, meta);
@@ -1065,11 +1065,11 @@ impl Builder<'_> {
         let line_start = self.tree.line_start(first.beg);
         if lines.len() > 1 && !self.is_for_oxfmt && self.ended.iter().any(|it| it.1 == line_start) {
             self.indented_code(&lines[..1]);
-            let blank = lines[1..]
+            let blank_lines = lines[1..]
                 .iter()
                 .take_while(|line| line.beg >= line.end)
                 .count();
-            return self.indented_code(&lines[1 + blank..]);
+            return self.indented_code(&lines[1 + blank_lines..]);
         }
         let (start, _) = self.indentation_start(first.beg, first.indent + 4);
         // A blank line that is indented enough is part of the code, even at its end.
@@ -1171,7 +1171,7 @@ impl Builder<'_> {
     }
 
     fn table_row(&mut self) {
-        let (start, end) = (self.place.0, self.line_end(self.place.1));
+        let (start, end) = (self.inline_range.0, self.line_end(self.inline_range.1));
         let row = self.tree.add(Kind::TableRow, start, end);
         self.tree
             .append(self.spans.last().copied().unwrap_or(NONE), row);
@@ -1184,9 +1184,9 @@ impl Builder<'_> {
         let row = self.spans.last().copied().unwrap_or(NONE);
         let start = match self.tree.get(row) {
             Some(row) if row.first_child == NONE => row.start,
-            _ => self.place.0.saturating_sub(1),
+            _ => self.inline_range.0.saturating_sub(1),
         };
-        let cell = self.tree.add(Kind::TableCell, start, self.place.1);
+        let cell = self.tree.add(Kind::TableCell, start, self.inline_range.1);
         self.tree.append(row, cell);
         self.spans.push(cell);
         if let Some(align) = align {
@@ -1224,14 +1224,14 @@ impl Builder<'_> {
     fn item_content_start(&self, marker_end: u32) -> u32 {
         let line_end = self.line_end(marker_end);
         let rest = &self.text[marker_end as usize..line_end as usize];
-        let blanks = rest.iter().take_while(|&&byte| is_space(byte)).count();
-        if blanks == rest.len() {
+        let whitespace_len = rest.iter().take_while(|&&byte| is_space(byte)).count();
+        if whitespace_len == rest.len() {
             return marker_end;
         }
         let start = self.column(marker_end);
-        let width = self.column(marker_end + blanks as u32) - start;
+        let width = self.column(marker_end + whitespace_len as u32) - start;
         match width <= 4 {
-            true => marker_end + blanks as u32,
+            true => marker_end + whitespace_len as u32,
             false => marker_end + 1,
         }
     }
@@ -1455,7 +1455,7 @@ impl Builder<'_> {
         let Some((start, end)) = self.text_range.take() else {
             return;
         };
-        let value = match self.is_text_as_written {
+        let value = match self.text_matches_source {
             true => Str::source(start, end),
             false => {
                 let value = &self.text_value;
@@ -1474,21 +1474,21 @@ impl Builder<'_> {
     /// From here on the pending text differs from the source, and `text_value` holds it.
     fn copy_text(&mut self) {
         if let Some((start, end)) = self.text_range
-            && self.is_text_as_written
+            && self.text_matches_source
         {
             let text = self.text;
             self.text_value
                 .extend_from_slice(&text[start as usize..end as usize]);
         }
-        self.is_text_as_written = false;
+        self.text_matches_source = false;
     }
 
-    /// `value` is the decoded form of the source text at `self.place`.
-    fn add_text(&mut self, value: &[u8], is_as_written: bool) {
-        let (start, end) = self.place;
+    /// `value` is the decoded form of the source text at `self.inline_range`.
+    fn add_text(&mut self, value: &[u8], matches_source: bool) {
+        let (start, end) = self.inline_range;
         match self.text_range {
             Some((from, to)) => {
-                if !(self.is_text_as_written && is_as_written && to == start) {
+                if !(self.text_matches_source && matches_source && to == start) {
                     self.copy_text();
                     self.text_value.extend_from_slice(value);
                 }
@@ -1496,34 +1496,39 @@ impl Builder<'_> {
             }
             None => {
                 self.text_range = Some((start, end));
-                self.is_text_as_written = is_as_written;
-                if !is_as_written {
+                self.text_matches_source = matches_source;
+                if !matches_source {
                     self.text_value.extend_from_slice(value);
                 }
             }
         }
     }
 
-    /// The line break at `self.place`, if how it's printed depends on what follows it.
+    /// The line break at `self.inline_range`, if how it's printed depends on what follows it.
     fn guarded_break(&mut self, kind: LineBreak) -> Option<GuardedBreak> {
         self.two_lines?;
-        let next = self.lines.partition_point(|line| line.beg <= self.place.0);
+        let next = self
+            .lines
+            .partition_point(|line| line.beg <= self.inline_range.0);
         let (above, line) = (self.lines.get(next.checked_sub(1)?)?, self.lines.get(next)?);
-        let written = self.text.get(line.beg as usize..line.end as usize)?;
+        let line_text = self.text.get(line.beg as usize..line.end as usize)?;
         // oxfmt's `may_open_block`
         let may_start_block = matches!(
-            written.first()?,
+            line_text.first()?,
             b'>' | b'=' | b'-' | b'*' | b'_' | b'+' | b'0'
                 ..=b'9' | b'#' | b'`' | b'~' | b'<' | b'$' | b'{' | b':' | b'[' | b'|'
         );
-        if !may_start_block || (line.indent < 4 && !looks_like_delimiter_row(written)) {
-            self.is_on_verbatim_line = is_line_shape_start(written);
+        if !may_start_block || (line.indent < 4 && !looks_like_delimiter_row(line_text)) {
+            self.is_on_verbatim_line = is_line_shape_start(line_text);
             return None;
         }
         // Prettier escapes these or keeps them off the start of a line, and so does this printer.
         if !self.is_for_oxfmt {
-            let word = &written[..written.iter().take_while(|&&byte| !is_space(byte)).count()];
-            let marks = written.trim_ascii_end();
+            let word = &line_text[..line_text
+                .iter()
+                .take_while(|&&byte| !is_space(byte))
+                .count()];
+            let marks = line_text.trim_ascii_end();
             if super::printer::Printer::may_start_block(word)
                 || marks.iter().all(|&byte| byte == b'=')
                 || marks.iter().all(|&byte| byte == b'-')
@@ -1532,7 +1537,7 @@ impl Builder<'_> {
             }
         }
         Some(GuardedBreak {
-            place: self.place,
+            break_range: self.inline_range,
             kind,
             above: (above.beg, above.end),
             line: (line.beg, line.end),
@@ -1568,32 +1573,32 @@ impl Builder<'_> {
             is_hard || (self.is_for_oxfmt && (self.is_on_verbatim_line || is_verbatim_line));
         self.is_on_verbatim_line = is_verbatim_line;
         // After a line break that stays, the line above isn't considered.
-        let leaves = leaves_paragraph((!stays).then(|| slice(it.above)), line, two_lines);
-        if let LineBreak::Soft { is_as_written } = it.kind {
+        let ends_paragraph = leaves_paragraph((!stays).then(|| slice(it.above)), line, two_lines);
+        if let LineBreak::Soft { matches_source } = it.kind {
             // A line that looks like a setext underline is escaped.
             let marks = line.trim_ascii_end();
             let is_underline =
                 marks.iter().all(|&byte| byte == b'=') || marks.iter().all(|&byte| byte == b'-');
-            let place = std::mem::replace(&mut self.place, it.place);
-            match leaves && !stays && !is_underline {
+            let saved_range = std::mem::replace(&mut self.inline_range, it.break_range);
+            match ends_paragraph && !stays && !is_underline {
                 // Words are sliced from the source text, which has a line break here.
-                true => self.add_blanks(b" "),
-                false => self.add_text(b"\n", is_as_written),
+                true => self.add_verbatim_spaces(b" "),
+                false => self.add_text(b"\n", matches_source),
             }
-            self.place = place;
+            self.inline_range = saved_range;
         }
-        if leaves && stays && matches!(follower, Follower::Text | Follower::Verbatim) {
-            let place = self.place;
-            self.place = (place.0, place.0);
-            self.add_blanks(b"    ");
-            self.place = place;
+        if ends_paragraph && stays && matches!(follower, Follower::Text | Follower::Verbatim) {
+            let saved_range = self.inline_range;
+            self.inline_range = (saved_range.0, saved_range.0);
+            self.add_verbatim_spaces(b"    ");
+            self.inline_range = saved_range;
         }
     }
 
-    /// `blanks`, printed verbatim.
-    fn add_blanks(&mut self, blanks: &[u8]) {
+    /// `spaces`, printed verbatim.
+    fn add_verbatim_spaces(&mut self, spaces: &[u8]) {
         let node = self.add_span(Kind::Html);
-        let value = self.tree.owned(|out| out.extend_from_slice(blanks));
+        let value = self.tree.owned(|out| out.extend_from_slice(spaces));
         if let Some(node) = self.tree.get_mut(node) {
             node.value = value;
         }
@@ -1601,17 +1606,19 @@ impl Builder<'_> {
 
     fn add_span(&mut self, kind: Kind) -> NodeId {
         self.end_text();
-        let node = self.tree.add(kind, self.place.0, self.place.1);
+        let node = self
+            .tree
+            .add(kind, self.inline_range.0, self.inline_range.1);
         self.tree
             .append(self.spans.last().copied().unwrap_or(NONE), node);
         node
     }
 
-    /// A node that starts with the marker at `self.place`.
+    /// A node that starts with the marker at `self.inline_range`.
     fn enter(&mut self, kind: Kind) -> NodeId {
         let node = self.add_span(kind);
         self.spans.push(node);
-        self.marker_ends.push(self.place.1);
+        self.marker_ends.push(self.inline_range.1);
         node
     }
 
@@ -1620,7 +1627,7 @@ impl Builder<'_> {
         if self.is_in_image() {
             return self.alt.extend_from_slice(content);
         }
-        let (start, end) = self.place;
+        let (start, end) = self.inline_range;
         let node = self.add_span(Kind::Link);
         let text = self.tree.add(Kind::Text, start, end);
         self.tree.append(node, text);
@@ -1682,7 +1689,7 @@ impl RendererImpl for Builder<'_> {
     }
 
     fn inline_source(&mut self, beg: OFF, end: OFF) {
-        self.place = (beg + self.base, end + self.base);
+        self.inline_range = (beg + self.base, end + self.base);
     }
 
     fn definition(&mut self, definition: &Definition<'_>) {
@@ -1926,7 +1933,7 @@ impl RendererImpl for Builder<'_> {
         let (Some(node), Some(marker_end)) = (self.spans.pop(), self.marker_ends.pop()) else {
             return Ok(());
         };
-        let (closing_start, end) = self.place;
+        let (closing_start, end) = self.inline_range;
         self.set_end(node, end);
         let Some(&super::ast::Node {
             kind,
@@ -1940,12 +1947,12 @@ impl RendererImpl for Builder<'_> {
             let mut alt = std::mem::take(&mut self.alt);
             // remark-parse 8 uses the source text between the brackets, whatever it is. oxfmt prints that.
             if self.is_mdx || self.is_for_oxfmt {
-                let mut written = Vec::new();
-                self.push_content_between(marker_end, closing_start, &mut written);
+                let mut raw_alt = Vec::new();
+                self.push_content_between(marker_end, closing_start, &mut raw_alt);
                 alt.clear();
                 match self.is_mdx {
-                    true => unescape(&written, &mut alt),
-                    false => alt = written,
+                    true => unescape(&raw_alt, &mut alt),
+                    false => alt = raw_alt,
                 }
             }
             let value = self.tree.owned(|out| out.extend_from_slice(&alt));
@@ -1987,15 +1994,16 @@ impl RendererImpl for Builder<'_> {
                 TextType::NullChar => self.alt.extend_from_slice(self.nul),
                 TextType::Entity => unescape(content, &mut self.alt),
                 TextType::Softbr => {
-                    if self.alt_end == self.place.0 {
-                        let blanks = self.alt.iter().rev().take_while(|it| is_white(it)).count();
-                        self.alt.truncate(self.alt.len() - blanks);
+                    if self.alt_end == self.inline_range.0 {
+                        let whitespace_len =
+                            self.alt.iter().rev().take_while(|it| is_white(it)).count();
+                        self.alt.truncate(self.alt.len() - whitespace_len);
                     }
                     self.alt.push(b'\n');
                 }
                 TextType::Br => {}
             }
-            self.alt_end = self.place.1;
+            self.alt_end = self.inline_range.1;
             return Ok(());
         }
         self.end_guarded_break(match text_type {
@@ -2011,9 +2019,10 @@ impl RendererImpl for Builder<'_> {
                 self.add_text(&value, false);
             }
             TextType::Normal => {
-                let is_as_written =
-                    self.place.1.saturating_sub(self.place.0) as usize == content.len();
-                self.add_text(content, is_as_written);
+                let matches_source = self.inline_range.1.saturating_sub(self.inline_range.0)
+                    as usize
+                    == content.len();
+                self.add_text(content, matches_source);
             }
             // A code span's value is sliced from the text when it ends.
             TextType::Code | TextType::Latexmath => {}
@@ -2025,24 +2034,25 @@ impl RendererImpl for Builder<'_> {
             // The whitespace before it isn't part of the text.
             TextType::Softbr => {
                 let so_far = match self.text_range {
-                    Some((start, end)) if self.is_text_as_written => {
+                    Some((start, end)) if self.text_matches_source => {
                         &self.text[start as usize..end as usize]
                     }
                     _ => &self.text_value[..],
                 };
-                let blanks = so_far.iter().rev().take_while(|it| is_white(it)).count();
-                if blanks > 0 {
+                let whitespace_len = so_far.iter().rev().take_while(|it| is_white(it)).count();
+                if whitespace_len > 0 {
                     self.copy_text();
-                    self.text_value.truncate(self.text_value.len() - blanks);
+                    self.text_value
+                        .truncate(self.text_value.len() - whitespace_len);
                     if self.text_value.is_empty() {
                         self.text_range = None;
                     }
                 }
                 self.guarded_break = self.guarded_break(LineBreak::Soft {
-                    is_as_written: blanks == 0,
+                    matches_source: whitespace_len == 0,
                 });
                 if self.guarded_break.is_none() {
-                    self.add_text(b"\n", blanks == 0);
+                    self.add_text(b"\n", whitespace_len == 0);
                 }
             }
             TextType::Br => {
@@ -2051,7 +2061,7 @@ impl RendererImpl for Builder<'_> {
             }
             TextType::Html => {
                 let node = self.add_span(Kind::Html);
-                let value = self.raw(self.place.0, self.place.1);
+                let value = self.raw(self.inline_range.0, self.inline_range.1);
                 if let Some(node) = self.tree.get_mut(node) {
                     node.value = value;
                 }
@@ -2065,7 +2075,7 @@ impl RendererImpl for Builder<'_> {
             tag::LIQUID | tag::MATH => Follower::Verbatim,
             _ => Follower::Other,
         });
-        let (start, end) = self.place;
+        let (start, end) = self.inline_range;
         let (kind, value) = match tag {
             tag::CHECK => {
                 let item = self.parent();
@@ -2217,11 +2227,11 @@ pub(crate) fn parse_lines(
         ended: Vec::new(),
         is_extended_to_the_end: false,
         spans: Vec::new(),
-        place: (0, 0),
+        inline_range: (0, 0),
         marker_ends: Vec::new(),
         text_range: None,
         text_value: Vec::new(),
-        is_text_as_written: false,
+        text_matches_source: false,
         alt: Vec::new(),
         alt_end: 0,
         can_start_with_check: &can_start_with_check,

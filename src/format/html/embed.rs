@@ -2,7 +2,7 @@
 
 use super::ast::{Attribute, Flags, Id, Kind};
 use super::js::{self, Hug, SourceType, Syntax};
-use super::parse::collapse_white_space;
+use super::map_strings::ends_with_line_suffix;
 use super::printer::Printer;
 use super::utilities::{
     dedent_string, html_split, html_trim_preserve_indentation, is_script_like_tag,
@@ -35,6 +35,13 @@ pub(crate) fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8
         }
         _ => return None,
     })
+}
+
+/// Returns the classes in `value`, separated by single spaces. HTML splits them at ASCII whitespace. Prettier splits at
+/// JavaScript whitespace, so a class name that contains a no-break space becomes two classes.
+fn class_names(value: &[u8]) -> Vec<u8> {
+    let names = strings::split_any(value, b" \t\n\x0C\r").filter(|name| !name.is_empty());
+    names.collect::<Vec<_>>().join(&b' ')
 }
 
 /// `String(value)`, for a number that is not negative. `None`: it is written with an exponent.
@@ -388,9 +395,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let language = strings::trim_js_whitespace(&raw[3..first_line_end]);
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = strings::trim_js_whitespace(
+        let value = crate::front_matter::trim_end_to_last_line(strings::trim_js_whitespace_start(
             raw.get(first_line_end..last_line_start).unwrap_or_default(),
-        );
+        ));
         // There is no formatter for TOML.
         if !(is_yaml || (is_toml && value.is_empty()))
             || crate::front_matter::has_indented_delimiter(raw)
@@ -403,7 +410,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         self.out.hardline();
         let is_written = value.is_empty() || {
             let is_written = self.text_to_doc(value, b"yaml", SourceType::Unknown);
-            self.out.hardline();
+            self.out.hardline_after(value);
             is_written
         };
         self.out.text(&raw[last_line_start..]);
@@ -424,7 +431,6 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let content = tags.node_content(id);
         let attempt = self.out.start_attempt();
-        self.out.built_text(|out| tags.opening_tag_prefix(id, out));
         self.out.start_group();
         self.print_opening_tag(id);
         self.out.end_group();
@@ -438,10 +444,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             );
             self.out.hardline();
         }
-        self.out.built_text(|out| {
-            tags.closing_tag(id, out);
-            tags.closing_tag_suffix(id, out);
-        });
+        self.out.built_text(|out| tags.closing_tag(id, out));
         self.out.end_attempt(attempt, is_written)
     }
 
@@ -547,6 +550,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
             return false;
         };
+        // The comment would be printed after the closing quote, as Prettier does with `v-for="a in b // c"`. Leave the
+        // value as is.
+        if ends_with_line_suffix(value, self.out.f) {
+            return false;
+        }
         self.write_raw_name(attr.raw_name());
         self.out.token("=\"");
         self.out.start_group();
@@ -627,7 +635,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 }
                 b"class" if is_plain => {
                     return self.print_attribute_with(attr, |printer| {
-                        printer.out.text(&collapse_white_space(value));
+                        printer.out.text(&class_names(value));
                         true
                     });
                 }
@@ -640,6 +648,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             }
         }
         match self.options.parser {
+            // Under `v-pre`, Vue treats it as a plain attribute, not code. Prettier formats it anyway.
+            Parser::Vue if self.tree[element].has(Flags::IS_IN_V_PRE) => false,
             Parser::Vue => self.embed_vue_attribute(element, attr, value),
             Parser::Angular => self.embed_angular_attribute(element, attr, raw_value, value),
             _ => false,

@@ -61,7 +61,7 @@ impl<'a> Formatter<'a> {
 
     /// Calls `write`, which writes the node at `span` and is not called [in a scope](Formatter::in_scope).
     #[inline]
-    fn around_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+    pub(crate) fn around_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
         let cursor = self.context().cursor;
         if !cursor.is_active() {
             return write(self);
@@ -214,6 +214,11 @@ pub(crate) fn format_name<'a>(
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
     format_name_or_copy(false, span, f, write);
+}
+
+/// The name at `span` as it is written, for a caller that writes the comments of the name itself.
+pub(crate) fn name_without_comments<'a>(span: Span) -> impl Format<'a> {
+    format_with(move |f| f.around_cursor(span, |f| write!(f, source_text(span))))
 }
 
 /// [`format_name`] for what Prettier prints like any other node, so that a `prettier-ignore` comment applies to it:
@@ -884,10 +889,8 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
             )
         });
     }
-    let needs_leading_semicolon = matches!(
-        statement.kind(),
-        StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
-    );
+    let needs_leading_semicolon =
+        print::statements::ignored_statement_needs_semicolon(statement, span.start, f);
     f.around_cursor(span, |f| {
         write!(
             f,
@@ -928,14 +931,11 @@ fn write_ignored_statement_without_terminator<'a>(
             write!(f, [FormatSuppressedNode(content), terminator])
         });
     }
-    // The text can start with a parenthesis that would not be written. Before a type cast comment the `;` is written already:
-    // see `semicolon_is_before_cast_comment_of_ignored_statement`.
+    // If a type cast comment comes first, the `;` was already printed before it: see
+    // `semicolon_is_before_cast_comment_of_ignored_statement`.
     let needs_leading_semicolon =
-        matches!(
-            statement.kind(),
-            StmtKind::Expr(expression) if f.source_text().byte_at(content.start) == Some(b'(')
-                || print::statements::expression_statement_needs_semicolon(statement, expression, f)
-        ) && !print::statements::follows_type_cast_comment(content.start, f);
+        print::statements::ignored_statement_needs_semicolon(statement, content.start, f)
+            && !print::statements::follows_type_cast_comment(content.start, f);
     f.around_cursor(content, |f| {
         write!(
             f,
@@ -1126,22 +1126,25 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     if matches!(tag, TypeTag::Keyword | TypeTag::BoolLit) {
         return write!(f, source_text(ty.span()));
     }
-    // No other kind of type ever needs parentheses. Flow's `renders T` writes its own.
-    let needs_parentheses = matches!(
-        tag,
+    // No other kind of type ever needs parentheses.
+    let may_need_parentheses = match tag {
         TypeTag::Fn
-            | TypeTag::Infer
-            | TypeTag::Union
-            | TypeTag::Intersection
-            | TypeTag::Cond
-            | TypeTag::Keyof
-            | TypeTag::Readonly
-            | TypeTag::UniqueSymbol
-            | TypeTag::Unique
-            | TypeTag::Typeof
-            | TypeTag::Import
-    ) && !(tag == TypeTag::Unique && f.file().is_flow())
-        && parentheses::ts_type::needs_parentheses(ty, f);
+        | TypeTag::Infer
+        | TypeTag::Union
+        | TypeTag::Intersection
+        | TypeTag::Cond
+        | TypeTag::Keyof
+        | TypeTag::Readonly
+        | TypeTag::UniqueSymbol
+        | TypeTag::Typeof
+        | TypeTag::Import => true,
+        // Flow's `renders T` writes its own.
+        TypeTag::Unique => !f.file().is_flow(),
+        // In Flow, as the return type of an arrow function: `(): (A<{ b: () => void }>) => c`.
+        TypeTag::Ref => f.file().is_flow(),
+        _ => false,
+    };
+    let needs_parentheses = may_need_parentheses && parentheses::ts_type::needs_parentheses(ty, f);
     if needs_parentheses {
         "(".fmt(f);
     }
@@ -1264,23 +1267,27 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
     }
     let node = AstNodes::TSTypeAnnotation(ty);
     if !f.comments().of_node(node).leading.is_empty()
-        && !(comment_sticks_to_name_before_type_annotation(f)
-            && matches!(
-                node.parent(),
-                AstNodes::VariableDeclarator(_)
-                    | AstNodes::TSThisParameter(_)
-                    | AstNodes::FormalParameterRest(_)
-            ))
+        && !comment_sticks_to_what_is_before_type_annotation(ty, f)
     {
         write!(f, space());
     }
     format_node(node, f, write);
 }
 
-/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt. The same after `this` and after `...a` in
-/// the parameters of a function.
-fn comment_sticks_to_name_before_type_annotation(f: &Formatter<'_>) -> bool {
+/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt, and `class A { b() /* comment */ : T {} }` has
+/// `b()/* comment */ : T {}`. Not in `function a(b /* comment */ : T) /* comment */ : T {}`: after the name or the pattern of a
+/// parameter, and after the parameters of a function that is written with `function`.
+fn comment_sticks_to_what_is_before_type_annotation(ty: TypeNode<'_>, f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
+        && match ty.parent() {
+            // The `a` of `[a: string]: T` is a parameter in the tree.
+            Node::Param(param) => {
+                !matches!(param.as_ast_nodes(), AstNodes::FormalParameter(_))
+                    || (param.func()).is_some_and(|func| func.kind() == FnKind::IndexSignature)
+            }
+            Node::Func(func) => !matches!(func.kind(), FnKind::Decl | FnKind::Expr),
+            _ => true,
+        }
 }
 
 macro_rules! type_annotations {

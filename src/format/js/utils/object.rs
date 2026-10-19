@@ -30,9 +30,28 @@ impl<'a> FormatKey<'a> {
     }
 }
 
-/// Writes `key`, which is not an expression in brackets. `parent`: what it is the name of. Returns
-/// the number of columns that it takes.
-fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
+/// What a key is the name of. Most keys are written without a look at it, so what kind of node a member or a property is gets
+/// found out only when it is asked for.
+#[derive(Copy, Clone)]
+pub(crate) enum KeyParent<'a> {
+    Node(AstNodes<'a>),
+    Member(Member<'a>),
+    Property(Prop<'a>),
+}
+
+impl<'a> KeyParent<'a> {
+    #[inline]
+    fn as_ast_nodes(self) -> AstNodes<'a> {
+        match self {
+            KeyParent::Node(node) => node,
+            KeyParent::Member(member) => member.as_ast_nodes(),
+            KeyParent::Property(property) => property.as_ast_nodes(),
+        }
+    }
+}
+
+/// Writes `key`, which is not an expression in brackets. Returns the number of columns that it takes.
+fn write_key<'a>(key: Key<'a>, parent: KeyParent<'a>, f: &mut Formatter<'a>) -> usize {
     let span = key.inner_span(file_of(f));
     let is_name = matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_));
     if is_name && f.is_quiet() && !f.options().quote_properties.is_consistent() {
@@ -42,7 +61,7 @@ fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Format
             _ => 0,
         };
     }
-    let mut printed = printed_key(key, span, parent(), f);
+    let mut printed = printed_key(key, span, parent.as_ast_nodes(), f);
     // Prettier's `printPropertyKey` prints a key like any other node unless it adds or removes the quotes, so a
     // `prettier-ignore` comment applies to `0XAB` and `'a-b'`, and not to the `'a'` that is printed as `a`.
     let source = f.source_text().text_for(&span);
@@ -69,7 +88,7 @@ impl<'a> Format<'a> for FormatKey<'a> {
         match self.key.kind() {
             KeyKind::Computed(expression) => expression.fmt(f),
             _ => {
-                write_key(self.key, || self.parent, f);
+                write_key(self.key, KeyParent::Node(self.parent), f);
             }
         }
     }
@@ -302,12 +321,11 @@ pub(crate) fn format_computed_or_property_key<'a>(
     }
 }
 
-/// Writes a key that is not computed. `parent`: what it is the name of. Returns the number of columns
-/// that it takes.
+/// Writes a key that is not computed. Returns the number of columns that it takes.
 #[inline]
 pub(crate) fn write_member_name<'a>(
     key: Key<'a>,
-    parent: impl Fn() -> AstNodes<'a>,
+    parent: KeyParent<'a>,
     f: &mut Formatter<'a>,
 ) -> usize {
     write_key(key, parent, f)

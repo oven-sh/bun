@@ -240,7 +240,7 @@ mod _impl {
                 // cannot be handed on to another Worker.
                 if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
                     && bun_core::code_generation_from_strings()
-                        == bun_core::CodeGenerationFromStrings::Disallowed
+                        == bun_core::CodeGenerationFromStrings::Strict
                 {
                     array.push(
                         global_object,
@@ -399,14 +399,14 @@ mod _impl {
         } else {
             b"/[stdin]"
         };
-        if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-            && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+        if let Some(main) = vm.main()
+            && !strings::ends_with(main, EVAL_SUFFIX)
+            && !strings::ends_with(main, STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::borrow_utf8(main));
             }
         }
 

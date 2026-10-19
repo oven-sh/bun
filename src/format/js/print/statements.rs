@@ -3,7 +3,7 @@
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
 use crate::js::comments::OwnedComments;
-use crate::js::format::identifier;
+use crate::js::format::{identifier, name_without_comments};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::expression::ExpressionLeftSide;
@@ -128,6 +128,21 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
                 _ => false,
             }
     })
+}
+
+/// Like [`expression_statement_needs_semicolon`], for a statement that is copied verbatim from the source starting at
+/// `start`. The copied text can start with a parenthesis that the printer would have dropped. Prettier's output for
+/// `a = b⏎// prettier-ignore⏎(c).d()` calls `b`.
+pub(crate) fn ignored_statement_needs_semicolon<'a>(
+    statement: Stmt<'a>,
+    start: u32,
+    f: &Formatter<'a>,
+) -> bool {
+    let StmtKind::Expr(expression) = statement.kind() else {
+        return false;
+    };
+    expression_statement_needs_semicolon(statement, expression, f)
+        || (f.source_text().byte_at(start) == Some(b'(') && can_follow_a_statement(statement))
 }
 
 /// Whether the last comment before the token at `position` looks like a type cast, with or without a `(` after it.
@@ -741,7 +756,7 @@ pub(crate) fn write_labeled_statement<'a>(
         f,
         [
             FormatLeadingComments::Comments(label_comments.leading),
-            source_text(label.span())
+            name_without_comments(label.span())
         ]
     );
     let follows_line_comment = write_comments_before_token(label_comments.trailing, f);

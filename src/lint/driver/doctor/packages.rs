@@ -127,6 +127,19 @@ fn names_in(json: &Json, sections: &[&[u8]]) -> Vec<Vec<u8>> {
     sorted(objects.flatten().map(|it| it.0.clone()).collect())
 }
 
+/// The packages that the package with the manifest `installed` doesn't work without.
+fn required_by(installed: &Json) -> Vec<Vec<u8>> {
+    let meta = installed.get(b"peerDependenciesMeta");
+    let is_optional = |name: &[u8]| {
+        let optional = meta.and_then(|it| it.get(name)?.get(b"optional")?.as_bool());
+        optional == Some(true)
+    };
+    let mut names = names_in(installed, &[b"peerDependencies"]);
+    names.retain(|it| !is_optional(it));
+    names.extend(names_in(installed, &[b"dependencies"]));
+    names
+}
+
 /// Whether any word of the shell command `command` is `name` or a path ending in `name`.
 fn runs(command: &[u8], name: &[u8]) -> bool {
     strings::tokenize_any(command, b" \t\n;&|()\"'")
@@ -196,7 +209,7 @@ impl Packages {
             let Some(installed) = installed_package(directory, &stays) else {
                 continue;
             };
-            let uses = names_in(&installed, &[b"dependencies", b"peerDependencies"]);
+            let uses = required_by(&installed);
             let (kept, removable) = std::mem::take(&mut packages.removable)
                 .into_iter()
                 .partition(|it| uses.contains(it));

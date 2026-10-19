@@ -3,12 +3,12 @@
 // cluster-shared sockets and the udp_wrap internal binding that vendored Node
 // tests reach through bun:internal-for-testing's exposedInternals.
 
-const newSocketFd = $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2);
-const bindFd = $newRustFunction("udp_socket.rs", "jsDgramBindFd", 4);
-const getSockNameFd = $newRustFunction("udp_socket.rs", "jsDgramGetSockNameFd", 1);
-const guessHandleTypeFd = $newRustFunction("udp_socket.rs", "jsDgramGuessHandleType", 1);
-const adoptFd = $newRustFunction("udp_socket.rs", "jsDgramAdoptFd", 1);
-const closeFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
+const newSocketFd = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
+const bindFd = $bindgen("udp_socket.bind.ts", "dgramBindFd");
+const getSockNameFd = $bindgen("udp_socket.bind.ts", "dgramGetSockNameFd");
+const guessHandleTypeFd = $bindgen("udp_socket.bind.ts", "dgramGuessHandleType");
+const adoptFd = $bindgen("udp_socket.bind.ts", "dgramAdoptFd");
+const closeFd = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
 
 const kStateSymbol = Symbol("state symbol");
 

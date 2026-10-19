@@ -1,11 +1,11 @@
 use bun_lint::prelude::*;
-use bun_lint::types::Type;
+use bun_lint::types::{NameOf, Type};
 use bun_lint::types::tsutils::{
     get_well_known_symbol_property_of_type, is_type_reference, union_constituents,
 };
 use bun_lint::types::utils::{
-    Awaitable, get_constrained_type_at_location, is_promise_aggregator_method, is_type_any_type,
-    needs_to_be_awaited,
+    Awaitable, get_constrained_type_at_location, is_declared_in_ambient_module, is_promise_aggregator_method,
+    is_type_any_type, needs_to_be_awaited,
 };
 use bun_lint::utils::ts_utils::{
     FixOrSuggest, get_await_token_removal_range, get_fix_or_suggest, get_for_statement_head_loc,
@@ -84,6 +84,25 @@ fn is_invalid_promise_aggregator_input<'a>(node: Expr<'a>, ty: Type<'a>) -> bool
     is_iterable(ty) && union_constituents(ty).iter().any(|part| has_non_awaitable_value_type(part, node))
 }
 
+/// True for `expect(promise).resolves.toBe(1)` and `expect(promise).rejects.not.toThrow()` from `bun:test`. In
+/// bun-types these matchers return `void`, like the matchers for a plain value, but tests are conventionally written
+/// with `await`.
+fn is_promise_matcher_of_bun_test(node: Expr) -> bool {
+    let Some(call) = node.as_call() else {
+        return false;
+    };
+    let mut member = call.callee();
+    while let ExprKind::Dot { obj, name, .. } = member.kind() {
+        if matches!(name.bytes(), b"resolves" | b"rejects")
+            && NameOf(member).ts_symbol().is_some_and(|it| is_declared_in_ambient_module(it, b"bun:test"))
+        {
+            return true;
+        }
+        member = obj;
+    }
+    false
+}
+
 impl AwaitThenable {
     fn check_await<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // `check_variable_declaration` sees to it: both can report at the same place, the declaration first.
@@ -97,7 +116,9 @@ impl AwaitThenable {
         let ExprKind::Await(argument) = node.kind() else {
             return;
         };
-        if needs_to_be_awaited(argument, argument.ty()) != Awaitable::Never {
+        if needs_to_be_awaited(argument, argument.ty()) != Awaitable::Never
+            || is_promise_matcher_of_bun_test(argument)
+        {
             return;
         }
         // oxlint points at what is awaited.

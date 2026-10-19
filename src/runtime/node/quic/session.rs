@@ -263,7 +263,11 @@ pub(super) struct DeferredAbort {
     ls: *mut lsquic::lsquic_stream,
     reset: Option<u64>,
     stop: Option<u64>,
-    marker: u64,
+    /// A STOP_SENDING of the stream already reached lsquic, so the peer can
+    /// know the stream: these frames are always sent.
+    peer_knows: bool,
+    /// The peer never hears of the stream (`silence_opening_flight_aborts`).
+    silent: bool,
 }
 
 pub(super) enum SessionEvent {
@@ -362,7 +366,8 @@ pub(crate) struct QuicSession {
     events: JsCell<Vec<SessionEvent>>,
     origin_buf: JsCell<Vec<u8>>,
     deferred_aborts: JsCell<Vec<DeferredAbort>>,
-    write_marker: Cell<u64>,
+    /// `process_events` of this session is on the stack.
+    dispatching: Cell<bool>,
     /// A graceful close requested while a dispatch was on the stack: applied
     /// on the next depth-0 pass so its GOAWAY/CONNECTION_CLOSE does not share
     /// a flight with data written by the same dispatch (node's close lands an
@@ -415,7 +420,7 @@ impl QuicSession {
             events: JsCell::new(Vec::new()),
             origin_buf: JsCell::new(Vec::new()),
             deferred_aborts: JsCell::new(Vec::new()),
-            write_marker: Cell::new(0),
+            dispatching: Cell::new(false),
             pending_graceful: JsCell::new(None),
             verneg: Cell::new(None),
             peer_close: JsCell::new(None),
@@ -631,63 +636,86 @@ impl QuicSession {
             ep.schedule_process();
         }
     }
-    pub(super) fn note_stream_write(&self) {
-        self.write_marker
-            .set(self.write_marker.get().wrapping_add(1));
+    /// How many stream aborts are parked. A stream records it at each write.
+    pub(super) fn parked_aborts(&self) -> u32 {
+        self.deferred_aborts.get().len() as u32
+    }
+    /// A client before its handshake is reported. Until LSCONN_HANDSHAKE_DONE
+    /// lsquic sends a packet that holds only RESET_STREAM / STOP_SENDING with a
+    /// Handshake header, which no peer can read.
+    fn awaits_handshake(&self) -> bool {
+        !self.is_server.get() && !self.handshake_reported.get()
+    }
+    /// Whether `destroy()` leaves the frames of a stream that never sent to
+    /// `flush_deferred_aborts`: a client before its handshake is reported, and
+    /// JS of this session's dispatch when the peer cannot know the stream.
+    pub(super) fn parks_stream_abort(&self, peer_knows: bool) -> bool {
+        self.awaits_handshake() || (self.dispatching.get() && !peer_knows)
     }
     pub(super) fn defer_stream_abort(
         &self,
         ls: *mut lsquic::lsquic_stream,
-        reset: Option<u64>,
         stop: Option<u64>,
+        reset: Option<u64>,
+        peer_knows: bool,
     ) {
-        let marker = self.write_marker.get();
         self.deferred_aborts.with_mut(|v| {
-            if let Some(e) = v.iter_mut().find(|e| e.ls == ls) {
-                e.reset = e.reset.or(reset);
-                e.stop = e.stop.or(stop);
-            } else {
-                v.push(DeferredAbort {
-                    ls,
-                    reset,
-                    stop,
-                    marker,
-                });
+            v.push(DeferredAbort {
+                ls,
+                reset,
+                stop,
+                peer_knows,
+                silent: false,
+            });
+        });
+    }
+    /// After a client's handshake callback, in which its `opened` continuation
+    /// ran. A stream destroyed there stays hidden from the peer when an open
+    /// stream wrote after the destroy: Node's peer does not see it either, and
+    /// test-quic-callback-error-stream-onerror.mjs depends on that.
+    fn silence_opening_flight_aborts(&self, parked_before: usize) {
+        let streams = self.streams.get();
+        self.deferred_aborts.with_mut(|v| {
+            for (index, e) in v.iter_mut().enumerate().skip(parked_before) {
+                // SAFETY: as in `any_stream_undelivered`.
+                e.silent = !e.peer_knows
+                    && streams
+                        .iter()
+                        .any(|&s| unsafe { (*s).wrote_after_park(index) });
             }
         });
     }
-    pub(super) fn has_deferred_abort(&self, ls: *mut lsquic::lsquic_stream) -> bool {
-        self.deferred_aborts.get().iter().any(|e| e.ls == ls)
-    }
-    pub(super) fn flush_deferred_aborts(&self) {
-        if self.deferred_aborts.get().is_empty() {
-            return;
-        }
+    /// Sends the parked aborts. A stream the peer cannot know is retired with
+    /// no frame when it is `silent`, and when the connection closes.
+    fn settle_deferred_aborts(&self, closing: bool) {
         let entries = self.deferred_aborts.with_mut(core::mem::take);
         if self.conn.get().is_null() {
             return;
         }
-        let marker = self.write_marker.get();
         for e in entries {
             // SAFETY: entries are cleared before the conn (and thus its
             // streams) is freed, so `ls` is a live lsquic stream.
             let Some(s) = (unsafe { lsquic::Stream::from_raw(e.ls) }) else {
                 continue;
             };
-            if e.marker != marker {
-                // Node parity — the queued frames are dropped.
+            if e.silent || (closing && !e.peer_knows) {
                 s.shutdown_internal();
-                continue;
-            }
-            if let Some(code) = e.stop {
-                s.stop_sending(code);
-            }
-            if let Some(code) = e.reset {
-                s.reset(code);
             } else {
-                s.close();
+                super::stream::send_abort(s, e.stop, e.reset);
             }
         }
+    }
+    /// Runs after this session's dispatch. The aborts wait for a client's
+    /// handshake report, and for a stashed `close()` (`flush_pending_graceful`).
+    pub(super) fn flush_deferred_aborts(&self) {
+        if self.deferred_aborts.get().is_empty()
+            || self.awaits_handshake()
+            || self.pending_graceful.get().is_some()
+        {
+            return;
+        }
+        self.settle_deferred_aborts(false);
+        self.schedule_process();
     }
     pub(super) fn take_pending_local_stream(
         &self,
@@ -885,6 +913,7 @@ impl QuicSession {
         // (dropping the wrapper Strong) and can trigger GC, so hold a Strong
         // for the duration -- `deliver_pending_tickets` touches `self` after.
         let _keep_alive = Strong::create(self.handle(), global);
+        let was_dispatching = self.dispatching.replace(true);
         self.deliver_pending_tickets(global);
         // node leaves a microtask window between a session's lifecycle events
         // and its close; the loop driver can batch a whole exchange into one
@@ -924,6 +953,7 @@ impl QuicSession {
                 }
             }
         }
+        self.dispatching.set(was_dispatching);
     }
 
     /// One queued event's delivery. A value that cannot be built for its
@@ -1611,6 +1641,7 @@ impl QuicSession {
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
+        let parked_before = self.deferred_aborts.get().len();
         if let Some(callback) = callbacks::get(global, "onSessionHandshake") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
@@ -1629,6 +1660,9 @@ impl QuicSession {
                     JSValue::js_boolean(early_data.1),
                 ],
             );
+        }
+        if !self.is_server.get() {
+            self.silence_opening_flight_aborts(parked_before);
         }
 
         if self.qlog_enabled.get() {
@@ -1938,6 +1972,8 @@ impl QuicSession {
         }
         if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
             self.apply_graceful_close(app, code, reason);
+            // The close waits for streams: the aborts it held go out first.
+            self.flush_deferred_aborts();
             return true;
         }
         false
@@ -1945,6 +1981,7 @@ impl QuicSession {
 
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
+        self.settle_deferred_aborts(true);
         if app || code != 0 || reason.len() > 1 {
             let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
             c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);

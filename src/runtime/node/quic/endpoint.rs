@@ -1452,16 +1452,6 @@ impl QuicEndpoint {
         }
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         self.followup_due.set(false);
-        // Not from the mid-turn drain pass: a deferred abort is dropped when
-        // a later stream writes first, and node decides that over the whole
-        // turn -- flushing mid-chain puts a RESET on the wire node never sends.
-        if !self.defer_closes.get() {
-            for session in self.sessions.get().clone() {
-                if let Some(session) = self.live_session(session) {
-                    session.flush_deferred_aborts();
-                }
-            }
-        }
         bun_boringssl_sys::ERR_clear_error();
         for engine in [self.server_engine.get(), self.client_engine.get()] {
             if !engine.is_null() {
@@ -1526,6 +1516,7 @@ impl QuicEndpoint {
             };
             session.process_events(global);
             session.maybe_finish_deferred_close();
+            session.flush_deferred_aborts();
         }
         self.sweep_provisional();
         self.rearm_timer();

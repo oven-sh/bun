@@ -192,8 +192,17 @@ test.concurrent(
       await new Promise<void>(resolve => front.close(() => resolve()));
     }
   },
+  // One second is the shortest idle timeout, and the timer wheel fires it 4 to 8 seconds later. That is more than the
+  // 5 seconds a test gets by default.
   60_000,
 );
+
+// The test above sets 1 second to be short. The installs of the other tests get the value of `bunEnv`, which has to
+// stay below the timeout of the shortest test that installs from the public registry: 100 seconds, in
+// dev-server-ssr-100.test.ts.
+test.concurrent("bunEnv closes a silent connection before such a test times out", () => {
+  expect(Number(bunEnv.BUN_CONFIG_HTTP_IDLE_TIMEOUT)).toBeWithin(1, 100);
+});
 
 test.concurrent(
   "bun install times out when the registry accepts TCP but never completes the TLS handshake",

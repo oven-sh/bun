@@ -419,8 +419,6 @@ impl CryptoHasherClass for CryptoHasher {
         heap: &JsHeap<'a>,
         output: Option<DigestOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        // `finish` gives the closure all of an output array, so the array must hold
-        // what the arms write: the digest length. SHAKE writes as much as it gets.
         let at_least = match output {
             Some(DigestOutput::Into(_)) => self.byte_length(heap)? as usize,
             _ => 0,

@@ -519,7 +519,7 @@ impl ConstructorSuper {
             in_some_paths: info.called.in_some_paths || before.called.in_some_paths,
         };
         if before.called.in_some_paths {
-            let again = std::mem::replace(&mut info.valid_nodes, smallvec::SmallVec::new());
+            let again = std::mem::take(&mut info.valid_nodes);
             if cx.language().is_oxlint {
                 // For oxlint a loop runs not at all or several times.
                 cx.state.is_passed_over |= !again.is_empty();

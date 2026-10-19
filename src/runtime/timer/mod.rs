@@ -44,7 +44,7 @@ pub(crate) mod timer;
 //   - `#[bun_jsc::JsClass(name = $js_name)] pub struct $T { … }`
 //   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
 //   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
-//   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
+//   - `$T::new()` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
 //   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
 //     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
 //     `get_destroyed`/`dispose`.
@@ -74,8 +74,8 @@ macro_rules! impl_timer_object {
             }
         }
 
-        impl ::core::default::Default for $T {
-            fn default() -> Self {
+        impl $T {
+            fn new() -> Self {
                 Self {
                     ref_count: ::bun_ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
@@ -130,7 +130,7 @@ macro_rules! impl_timer_object {
                 // transfers to the wrapper via `to_js_ptr`; freed by
                 // `deref → deinit → heap::take`.
                 let payload: *mut Self =
-                    ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
+                    ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::new()));
                 // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
                 // shim; `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.

@@ -357,7 +357,7 @@ impl<'a> SpreadFinder<'a> {
                     _ => {}
                 },
                 Task::End => {
-                    let (declarator, found) = (group.declarator, std::mem::replace(&mut group.found, smallvec::SmallVec::new()));
+                    let (declarator, found) = (group.declarator, std::mem::take(&mut group.found));
                     let found = if found.len() > 1 {
                         self.lists.push(found.into_vec());
                         Some(Found::Many(self.lists.len() - 1))

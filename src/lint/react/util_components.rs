@@ -535,10 +535,7 @@ impl<'a> Components<'a> {
         if confidence >= 2
             && let Some(name) = name_of_detected_component(normalize(node))
         {
-            let detected = self
-                .detected
-                .entry(name)
-                .or_insert_with(smallvec::SmallVec::new);
+            let detected = self.detected.entry(name).or_default();
             if detected.last() != Some(&id) {
                 detected.push(id);
             }

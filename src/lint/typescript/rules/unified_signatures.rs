@@ -621,7 +621,7 @@ impl UnifiedSignatures {
         for overload in &overloads {
             by_key
                 .entry(overload.key)
-                .or_insert_with(smallvec::SmallVec::new)
+                .or_default()
                 .push(overload.signature);
         }
         let outer = OuterTypeParameters::new(outer);

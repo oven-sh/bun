@@ -8,12 +8,19 @@ use core::fmt;
 
 macro_rules! capabilities {
     ($struct_name:ident { $($name:ident = $bit:literal),* $(,)? }) => {
-        #[derive(Default, Clone, Copy, PartialEq, Eq)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
         pub struct $struct_name {
             $(pub $name: bool,)*
         }
 
         impl $struct_name {
+            /// Every capability off.
+            pub fn none() -> $struct_name {
+                $struct_name {
+                    $($name: false,)*
+                }
+            }
+
             pub fn to_int(self) -> u32 {
                 0 $(| ((self.$name as u32) << $bit))*
             }
@@ -104,7 +111,7 @@ impl MariaDBCapabilities {
             // MariaDB serves JSON columns as plain LONGTEXT/BLOB; the extended
             // column metadata this negotiates carries their format=json marker.
             MARIADB_CLIENT_EXTENDED_TYPE_INFO: true,
-            ..Default::default()
+            ..MariaDBCapabilities::none()
         }
     }
 }
@@ -141,7 +148,7 @@ impl Capabilities {
             CLIENT_SSL: ssl,
             CLIENT_MULTI_STATEMENTS: true,
             CLIENT_MULTI_RESULTS: true,
-            ..Default::default()
+            ..Capabilities::none()
         }
     }
 }

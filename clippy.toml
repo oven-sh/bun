@@ -20,6 +20,12 @@ disallowed-methods = [
   { path = "std::env::var_os", reason = "use bun_core::env_var" },
   { path = "std::thread::spawn", reason = "use std::thread::Builder with a stack size, and name the thread (Output::Source::configure_named_thread), or use bun_threading::ThreadPool" },
   { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
+  # == no `Default` ==
+  # A default value that nothing spells is how two constructors of one type drift apart. No type of this
+  # workspace implements `Default`; test/internal/source-lints/no-default-trait.test.ts covers what
+  # clippy cannot see (a hand-written `impl Default for`, code for other targets, crates that allow
+  # these lints).
+  { path = "core::default::Default::default", reason = "say the value: `0`, `None`, `Vec::new()`, a constructor (`Foo::new()`), the variant of an enum; `..Foo::new()` in a struct literal" },
   { path = "bun_core::output::pretty_fmt_rt", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
   { path = "bun_core::output::pretty_fmt_args", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
   { path = "bun_core::output::pretty_fmt_runtime", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
@@ -102,6 +108,7 @@ disallowed-types = [
   { path = "core::simd::Mask", reason = "use bun_highway / bun_core::strings (highway): one SIMD system, with runtime dispatch" },
   { path = "std::process::Command", reason = "use bun_core::util::spawn_sync_inherit (CLI helpers) or bun_spawn_sys (full control)" },
   { path = "std::backtrace::Backtrace", reason = "release builds compile std without its `backtrace` feature (scripts/build/rust.ts), so this captures frames it cannot symbolize; use bun_core::dump_current_stack_trace (bun_crash_handler)" },
+  { path = "core::default::Default", reason = "generic code takes the value from the caller, or uses a const of the trait that bounds the type (bun_core::Integer::ZERO, bun_alloc::Stateless::INSTANCE)" },
 ]
 
 disallowed-macros = [
@@ -110,6 +117,7 @@ disallowed-macros = [
   { path = "std::print", reason = "use bun_core::output" },
   { path = "std::eprint", reason = "use bun_core::output" },
   { path = "std::dbg", reason = "remove before commit" },
+  { path = "core::default::Default", reason = "write an inherent constructor that spells every field; for an enum, name the variant at the use" },
 ]
 
 pass-by-value-size-limit = 64

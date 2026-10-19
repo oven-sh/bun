@@ -329,6 +329,8 @@ fn build_settings(
         // materializing aliased `&mut` (UB under Stacked Borrows).
         let h: NonNull<ElementHandler> = NonNull::from(&mut **handler);
 
+        #[allow(clippy::disallowed_methods)]
+        // `Default` is the one constructor lol_html gives this type
         let mut handlers: lol_html::ElementContentHandlers<'static> =
             lol_html::ElementContentHandlers::default();
         if has_element {
@@ -364,6 +366,8 @@ fn build_settings(
         // See the `NonNull::from` note in the element loop above.
         let h: NonNull<DocumentHandler> = NonNull::from(&mut **handler);
 
+        #[allow(clippy::disallowed_methods)]
+        // `Default` is the one constructor lol_html gives this type
         let mut handlers: lol_html::DocumentContentHandlers<'static> =
             lol_html::DocumentContentHandlers::default();
         if has_doc_type {

@@ -375,7 +375,7 @@ fn find_corresponding_export<'a>(import_decl: Import<'a>, cx: &mut Cx<'a, Prefer
             if let StmtKind::ExportNamed(export_decl) = statement.kind()
                 && let Some(source) = export_decl.spec()
             {
-                exports_from.entry(source).or_insert_with(smallvec::SmallVec::new).push(export_decl);
+                exports_from.entry(source).or_default().push(export_decl);
             }
         }
         exports_from

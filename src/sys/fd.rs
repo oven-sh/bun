@@ -125,7 +125,7 @@ impl FdExt for Fd {
                         errno: sys::E::EBADF as _,
                         syscall: sys::Tag::close,
                         fd: self,
-                        ..Default::default()
+                        ..sys::Error::init()
                     }),
                     _ => None,
                 }

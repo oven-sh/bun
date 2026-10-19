@@ -108,7 +108,7 @@ impl Rule for GroupExports {
         for span in nodes.iter().filter(|it| it.len() > 1).flatten() {
             cx.report(*span, ES_MODULE);
         }
-        let mut commonjs_exports = std::mem::replace(&mut cx.state.commonjs_exports, smallvec::SmallVec::new());
+        let mut commonjs_exports = std::mem::take(&mut cx.state.commonjs_exports);
         utils::sort::sort_unstable_by_key(&mut commonjs_exports, |it| it.start);
         for span in commonjs_exports
             .iter()

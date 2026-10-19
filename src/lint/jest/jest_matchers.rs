@@ -81,7 +81,7 @@ pub(crate) mod prefer_snapshot_hint {
                     let node = possible_jest_node.node;
                     scoped_expects
                         .entry(get_scope_owner(node, &mut functions))
-                        .or_insert_with(smallvec::SmallVec::new)
+                        .or_default()
                         .push(node);
                 }
             }

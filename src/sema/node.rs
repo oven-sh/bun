@@ -317,8 +317,14 @@ macro_rules! node_vectors {
         const VECTORS: usize = [$($index),*].len();
 
         /// The first handle of the HIR nodes of each vector, and the end of the last vector.
-        #[derive(Copy, Clone, Default, Debug)]
+        #[derive(Copy, Clone, Debug)]
         pub struct NodeBases([u32; VECTORS + 1]);
+
+        impl NodeBases {
+            pub fn new() -> Self {
+                NodeBases([0; VECTORS + 1])
+            }
+        }
 
         impl File<'_> {
             fn node_bases(&self) -> NodeBases {

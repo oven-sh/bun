@@ -893,10 +893,7 @@ pub(crate) mod no_identical_title {
                 is_describe,
                 parent: parent.unwrap_or(0),
             };
-            title_to_calls
-                .entry(title)
-                .or_insert_with(smallvec::SmallVec::new)
-                .push(titled);
+            title_to_calls.entry(title).or_default().push(titled);
         }
         // oxlint sorts the calls with one title by the block, and compares each with the one before: a `describe('a')` that is
         // between `it('a')` and `test('a')` then keeps these two apart. It starts from the order of its list, and the sort is not

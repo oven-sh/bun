@@ -7,7 +7,6 @@
 #![allow(
     clippy::borrow_as_ptr,
     clippy::clone_on_copy,
-    clippy::derivable_impls,
     clippy::format_collect,
     clippy::if_same_then_else,
     clippy::large_enum_variant,

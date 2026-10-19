@@ -2870,14 +2870,8 @@ impl<'p, 's> Checker<'p, 's> {
             mode_of_recheck: std::mem::replace(&mut self.mode_of_recheck, check_mode),
             // A result computed under one pushed contextual type is not valid under another, or
             // under none.
-            rechecked_exprs: std::mem::replace(
-                &mut self.rechecked_exprs,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            ),
-            rechecked_members: std::mem::replace(
-                &mut self.rechecked_members,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            ),
+            rechecked_exprs: std::mem::take(&mut self.rechecked_exprs),
+            rechecked_members: std::mem::take(&mut self.rechecked_members),
             recheck: self.begin_recheck(),
         };
         (check_mode, outside)

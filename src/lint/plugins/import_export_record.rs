@@ -471,9 +471,7 @@ impl<'a> Visitor<'a> {
                 FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
             for stmt in file.body().iter().filter(|it| !it.is_exported()) {
                 let declare = |name: Name<'a>| {
-                    let of_name = declarations
-                        .entry(name)
-                        .or_insert_with(smallvec::SmallVec::new);
+                    let of_name = declarations.entry(name).or_default();
                     if of_name.last() != Some(&stmt) {
                         of_name.push(stmt);
                     }
@@ -492,7 +490,7 @@ impl<'a> Visitor<'a> {
         declarations
             .get(&exported_name)
             .cloned()
-            .unwrap_or_else(smallvec::SmallVec::new)
+            .unwrap_or_default()
     }
 
     /// "This doesn't declare anything, but changes what's being exported."

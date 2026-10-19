@@ -656,7 +656,7 @@ impl Rule for NoUselessReturn {
             }
         }
         let as_entered = |it: &Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
-        for root in utils::sort::in_order_of(std::mem::replace(&mut cx.state.roots, rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher)), as_entered) {
+        for root in utils::sort::in_order_of(std::mem::take(&mut cx.state.roots), as_entered) {
             self.check_code_path(root, cx);
         }
     }

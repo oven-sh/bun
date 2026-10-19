@@ -30,7 +30,6 @@ macro_rules! define_id {
             #[inline]
             pub fn some(self) -> Option<$name> { if self.is_none() { None } else { Some(self) } }
         }
-        impl Default for $name { #[inline] fn default() -> Self { Self::NONE } }
         impl From<u32> for $name { #[inline] fn from(v: u32) -> Self { $name(v) } }
         impl From<$name> for u32 { #[inline] fn from(v: $name) -> u32 { v.0 } }
     )*};
@@ -121,12 +120,6 @@ macro_rules! impl_run {
             #[inline]
             fn clone(&self) -> Self {
                 *self
-            }
-        }
-        impl<T> Default for $name<T> {
-            #[inline]
-            fn default() -> Self {
-                Self::EMPTY
             }
         }
         impl<T> std::fmt::Debug for $name<T> {
@@ -2347,7 +2340,7 @@ impl FileBuilder {
             mapped: Vec::new(),
             modifiers: Vec::new(),
             names: Vec::new(),
-            bases: NodeBases::default(),
+            bases: NodeBases::new(),
             lazy: LazyCells::new(),
             keyword_identifier_positions: Vec::new(),
         }

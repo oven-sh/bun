@@ -271,7 +271,6 @@ needless_pass_by_value = "deny"
 # == clarity / api hygiene ==
 unnecessary_unwrap = "deny"
 derive_partial_eq_without_eq = "deny"
-derivable_impls = "deny"
 clone_on_ref_ptr = "deny"
 if_same_then_else = "deny"
 todo = "deny"

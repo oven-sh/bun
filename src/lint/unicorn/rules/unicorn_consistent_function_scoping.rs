@@ -604,7 +604,7 @@ fn functions_with_private_names<'a>(file: &'a File<'a>) -> IdSet<Scope<'a>> {
             let body_start = class.body_span().start;
             for member in class.members() {
                 if let Some(KeyKind::Private(name)) = member.key().map(Key::kind) {
-                    let classes = declaring.entry(name).or_insert_with(smallvec::SmallVec::new);
+                    let classes = declaring.entry(name).or_default();
                     while classes.last().is_some_and(|it| !it.0.contains(scope)) {
                         classes.pop();
                     }
@@ -663,7 +663,7 @@ fn outermost_captures<'a>(
     // What the scopes in a scope refer to and is declared outside it: all, and what is in the region of the function.
     let mut from_inside: IdMap<Scope<'a>, (Outermost<'a>, Outermost<'a>)> = IdMap::new();
     for &scope in scopes.iter().rev() {
-        let (mut all, mut in_region) = from_inside.remove(scope).unwrap_or_else(|| (smallvec::SmallVec::new(), smallvec::SmallVec::new()));
+        let (mut all, mut in_region) = from_inside.remove(scope).unwrap_or_default();
         let region = regions.get(scope);
         for reference in scope.references_with_names_of_patterns_first() {
             let counts = |it: &Symbol<'a>| {

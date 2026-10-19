@@ -273,7 +273,7 @@ impl MinifyRenamer {
         first_top_level_slots: &js_ast::SlotCounts,
         mut reserved_names: StringHashMap<u32>,
     ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
-        let mut slots = SymbolSlotList::default();
+        let mut slots = SymbolSlotList::from_fn(|_| Vec::new());
 
         for (ns, &count) in first_top_level_slots.slots.iter() {
             let count = count as usize;

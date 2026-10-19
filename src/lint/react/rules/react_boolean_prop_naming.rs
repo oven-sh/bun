@@ -95,7 +95,7 @@ impl Rule for BooleanPropNaming {
         for id in walk.components.list() {
             let node = walk.components.component(id).node;
             let prop_type = get_component_type_annotation(node).map(|it| walk.prop_type(it));
-            for members in prop_type.unwrap_or_else(smallvec::SmallVec::new) {
+            for members in prop_type.unwrap_or_default() {
                 walk.validate_prop_naming(node, PropTypes::Members(members));
             }
             for prop_node in walk.invalid_props.get(&id).into_iter().flatten() {
@@ -248,9 +248,9 @@ fn object_type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, Object
     for declaration in declarations {
         match declaration.kind() {
             StmtKind::TypeAlias(alias) => {
-                find_all_type_annotations(alias.ty(), all.entry(alias.name().name()).or_insert_with(smallvec::SmallVec::new));
+                find_all_type_annotations(alias.ty(), all.entry(alias.name().name()).or_default());
             }
-            StmtKind::Interface(interface) => all.entry(interface.name().name()).or_insert_with(smallvec::SmallVec::new).push(interface.members()),
+            StmtKind::Interface(interface) => all.entry(interface.name().name()).or_default().push(interface.members()),
             _ => {}
         }
     }

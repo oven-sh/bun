@@ -5039,7 +5039,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -5057,7 +5057,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -5080,7 +5080,7 @@ impl NodeFS {
                         errno: SystemErrno::EINVAL as _,
                         syscall: sys::Tag::copyfile,
                         path: args.src.slice().into(),
-                        ..Default::default()
+                        ..sys::Error::init()
                     });
                 }
             }
@@ -5118,7 +5118,7 @@ impl NodeFS {
                         return Err(sys::Error {
                             errno: e as _,
                             syscall: sys::Tag::copyfile,
-                            ..Default::default()
+                            ..sys::Error::init()
                         });
                     }
                 }
@@ -5537,7 +5537,7 @@ impl NodeFS {
                 errno: E::EOPNOTSUPP as _,
                 syscall: sys::Tag::lchmod,
                 path: args.path.slice().into(),
-                ..Default::default()
+                ..sys::Error::init()
             });
         }
         #[cfg(not(any(windows, target_os = "android")))]
@@ -8764,7 +8764,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -8790,7 +8790,7 @@ impl NodeFS {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
                     syscall: sys::Tag::copyfile,
-                    ..Default::default()
+                    ..sys::Error::init()
                 });
             }
 
@@ -8816,7 +8816,7 @@ impl NodeFS {
                         errno: SystemErrno::EINVAL as _,
                         syscall: sys::Tag::copyfile,
                         path: self.sync_error_buf[..src.len()].into(),
-                        ..Default::default()
+                        ..sys::Error::init()
                     });
                 }
             }
@@ -8870,7 +8870,7 @@ impl NodeFS {
                             errno: e as _,
                             syscall: sys::Tag::copyfile,
                             path: self.sync_error_buf[..dest.len()].into(),
-                            ..Default::default()
+                            ..sys::Error::init()
                         });
                     }
                 }

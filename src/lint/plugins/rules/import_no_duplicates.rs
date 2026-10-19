@@ -84,7 +84,7 @@ impl Rule for NoDuplicates {
         }
         let mut by_specifier: FxHashMap<Name<'a>, Imports<'a>> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for import in import_declarations(file) {
-            by_specifier.entry(import.spec()).or_insert_with(smallvec::SmallVec::new).push(import);
+            by_specifier.entry(import.spec()).or_default().push(import);
         }
         // The imports of each file, or of each specifier that stands for none. Only of specifiers that follow each other in oxlint's
         // hash map.
@@ -125,7 +125,7 @@ impl Rule for NoDuplicates {
             for &import in group {
                 attribute_groups
                     .entry(attributes_of(import))
-                    .or_insert_with(smallvec::SmallVec::new)
+                    .or_default()
                     .push(import);
             }
             // oxlint sorts them by the attributes.

@@ -507,6 +507,7 @@ mod zig_crypto_algos {
             impl ZigHashAlgo for $ty {
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
+                #[allow(clippy::disallowed_methods)] // `Default` is the one constructor RustCrypto gives a hash state
                 fn init() -> Self {
                     <$ty>::default()
                 }
@@ -531,6 +532,7 @@ mod zig_crypto_algos {
             impl ZigHashAlgo for $ty {
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
+                #[allow(clippy::disallowed_methods)] // `Default` is the one constructor RustCrypto gives a hash state
                 fn init() -> Self {
                     <$ty>::default()
                 }

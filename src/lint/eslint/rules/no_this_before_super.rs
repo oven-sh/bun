@@ -262,7 +262,7 @@ impl NoThisBeforeSuper {
         if e.is_jsx_tag_name() && !is_oxlint || cx.state.called_around > 0 {
             return;
         }
-        for segment in cx.state.segments_before_call_of_super().unwrap_or_else(smallvec::SmallVec::new) {
+        for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
             if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
                 info.invalid_nodes.push(e);
             }
@@ -286,7 +286,7 @@ impl NoThisBeforeSuper {
     }
 
     fn mark_as_called(cx: &mut Cx<'_, Self>) {
-        for segment in cx.state.segments_before_call_of_super().unwrap_or_else(smallvec::SmallVec::new) {
+        for segment in cx.state.segments_before_call_of_super().unwrap_or_default() {
             if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
                 info.super_called = true;
             }

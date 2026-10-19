@@ -568,10 +568,7 @@ impl<'a> Formatter<'a> {
             storage: std::mem::replace(&mut self.storage, Storage::new()),
             tracker: std::mem::replace(&mut self.tracker, Tracker::new()),
             spare: std::mem::take(&mut self.spare),
-            cleaned: std::mem::replace(
-                &mut self.cleaned,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            ),
+            cleaned: std::mem::take(&mut self.cleaned),
             next_group_id: Cell::new(self.next_group_id.get()),
             source,
             odd_blocks,

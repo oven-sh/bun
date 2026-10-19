@@ -1432,7 +1432,6 @@ export function rustForCrate(files: readonly SchemaFile[]): string {
     unused_unsafe,
     clippy::missing_safety_doc,
     clippy::identity_op,
-    clippy::derivable_impls,
     clippy::large_enum_variant,
     clippy::trivially_copy_pass_by_ref,
     clippy::redundant_closure

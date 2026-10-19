@@ -4595,7 +4595,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let hir = self.hir(file);
         let StmtKind::Switch { cases, .. } = hir[stmt].kind else {
-            return std::rc::Rc::default();
+            return std::rc::Rc::from([]);
         };
         let mut types = Vec::with_capacity(cases.len());
         for clause in cases.iter() {
@@ -6907,10 +6907,7 @@ impl<'p, 's> Checker<'p, 's> {
                         ));
                         let mut restarted = None;
                         for &edge in &edges[1..] {
-                            let cache = std::mem::replace(
-                                &mut self.flow_type_cache,
-                                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                            );
+                            let cache = std::mem::take(&mut self.flow_type_cache);
                             let depth = std::mem::replace(
                                 &mut self.flow_type_cache_depth,
                                 self.stack.len(),
@@ -6955,7 +6952,7 @@ impl<'p, 's> Checker<'p, 's> {
                         self.flow_memo
                             .flow_loop_cache
                             .entry(key)
-                            .or_insert_with(smallvec::SmallVec::new)
+                            .or_default()
                             .push((walk.reference.clone(), result.ty));
                         self.flow_memo.flow_loop_cached_at = self.work;
                     }
@@ -8314,10 +8311,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// With an empty `flowLoopStack` and an empty `flowTypeCache`, as in `checkExpressionCached`.
     pub(super) fn outside_flow_loops<R>(&mut self, compute: impl FnOnce(&mut Self) -> R) -> R {
         let loops = std::mem::take(&mut self.flow_loops);
-        let cache = std::mem::replace(
-            &mut self.flow_type_cache,
-            rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-        );
+        let cache = std::mem::take(&mut self.flow_type_cache);
         let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
         let result = compute(self);
         self.flow_type_cache = cache;

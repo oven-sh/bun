@@ -67,11 +67,6 @@ struct Sendfile {
     has_set_on_writable: bool,
 }
 
-#[allow(
-    clippy::derivable_impls,
-    reason = "only derivable where the linux/android-gated fields are absent; `Fd` has no \
-              `Default` impl, so `#[derive(Default)]` would not compile on linux/android"
-)]
 impl Sendfile {
     fn new() -> Self {
         Self {

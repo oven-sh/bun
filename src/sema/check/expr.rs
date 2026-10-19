@@ -4355,14 +4355,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         // Results computed under one mode are not valid under another.
         let found_outside = (
-            std::mem::replace(
-                &mut self.rechecked_exprs,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            ),
-            std::mem::replace(
-                &mut self.rechecked_members,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            ),
+            std::mem::take(&mut self.rechecked_exprs),
+            std::mem::take(&mut self.rechecked_members),
         );
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, e, check_mode);

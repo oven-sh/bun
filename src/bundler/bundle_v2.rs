@@ -6865,7 +6865,7 @@ pub mod bv2_impl {
                         }
 
                         let resolve_entry = resolve_queue
-                            .get_or_put(path_primary.text, || core::ptr::null_mut())
+                            .get_or_put(path_primary.text, core::ptr::null_mut)
                             .expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
@@ -7255,7 +7255,7 @@ pub mod bv2_impl {
                 }
 
                 let resolve_entry = resolve_queue
-                    .get_or_put(path.text, || core::ptr::null_mut())
+                    .get_or_put(path.text, core::ptr::null_mut)
                     .expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.

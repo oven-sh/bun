@@ -59,9 +59,7 @@ impl Table {
             self.few.push((name, symbol));
             return None;
         }
-        let mut many = spare
-            .pop()
-            .unwrap_or_else(|| rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher));
+        let mut many = spare.pop().unwrap_or_default();
         many.extend(self.few.drain(..));
         many.insert(name, symbol);
         self.many = Some(many);

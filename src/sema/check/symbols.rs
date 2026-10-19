@@ -2667,20 +2667,11 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkDeclarationInitializer` finds no `links.resolvedType`: `checkExpressionCached`
             // checks the initializer again, with an empty `flowLoopStack` and `flowTypeCache`.
             let loops = std::mem::take(&mut self.flow_loops);
-            let cache = std::mem::replace(
-                &mut self.flow_type_cache,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            );
+            let cache = std::mem::take(&mut self.flow_type_cache);
             let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
             let found_outside = (
-                std::mem::replace(
-                    &mut self.rechecked_exprs,
-                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                ),
-                std::mem::replace(
-                    &mut self.rechecked_members,
-                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                ),
+                std::mem::take(&mut self.rechecked_exprs),
+                std::mem::take(&mut self.rechecked_members),
             );
             let mode = std::mem::replace(&mut self.mode_of_recheck, CheckMode::empty());
             let outer = self.begin_recheck();

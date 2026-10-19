@@ -1352,8 +1352,8 @@ impl PackageManager {
     }
     #[cfg(bun_asan)]
     pub fn deinit_caches(&mut self) {
-        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
-        self.update_requests = Box::default();
+        self.workspace_package_json_cache = WorkspacePackageJSONCache::new();
+        self.update_requests = Box::from([]);
     }
 
     /// Reborrow the process-global env loader.

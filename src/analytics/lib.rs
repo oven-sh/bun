@@ -137,7 +137,7 @@ pub mod features {
             // call site. The dense-index assertion below catches gaps/duplicates.
             ::bitflags::bitflags! {
                 #[repr(transparent)]
-                #[derive(Default, Copy, Clone, PartialEq, Eq)]
+                #[derive(Copy, Clone, PartialEq, Eq)]
                 pub struct PackedFeatures: u64 {
                     $( const $ident = 1u64 << $idx; )*
                 }

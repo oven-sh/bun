@@ -551,7 +551,7 @@ impl<'p, 's> Checker<'p, 's> {
         let by_prefix = (patterns.len() >= PatternsByPrefix::WORTHWHILE)
             .then(|| PatternsByPrefix::new(self, &patterns));
         let mut candidates: Vec<u32> = Vec::new();
-        for m in std::mem::replace(members, smallvec::SmallVec::new()) {
+        for m in std::mem::take(members) {
             // For a type with `TypeFlagsStringLiteral`: the value, and whether it is the plain
             // string literal type of that value.
             let (value, is_plain) = match *self.data(m) {

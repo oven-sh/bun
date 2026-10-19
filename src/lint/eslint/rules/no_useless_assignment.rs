@@ -1939,12 +1939,12 @@ impl Rule for NoUselessAssignment {
             }
         }
         let as_entered = |it: &&Node<'_>| (it.span().start, std::cmp::Reverse(it.span().end));
-        let roots = std::mem::replace(&mut cx.state.roots, rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
+        let roots = std::mem::take(&mut cx.state.roots);
         for &root in utils::sort::in_order_of(&roots, as_entered) {
             self.check_code_path(root, cx);
         }
         cx.state.is_only_checked = true;
-        let all_roots = std::mem::replace(&mut cx.state.all_roots, rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher));
+        let all_roots = std::mem::take(&mut cx.state.all_roots);
         for root in utils::sort::in_order_of(all_roots.difference(&roots), as_entered) {
             self.check_code_path(*root, cx);
         }

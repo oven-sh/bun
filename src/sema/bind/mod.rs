@@ -2419,13 +2419,7 @@ impl BoundBuilder {
             scopes: copy_to_arena(&mut self.scopes, arena),
             tables: copy_to_arena(&mut self.tables, arena),
             entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: map_to_arena(
-                std::mem::replace(
-                    &mut self.large_tables,
-                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                ),
-                arena,
-            ),
+            large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
             nested_names: copy_to_arena(&mut self.nested_names, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             file_symbol: self.file_symbol,
@@ -2457,23 +2451,14 @@ impl BoundBuilder {
             type_scope: copy_to_arena(&mut self.type_scope, arena),
             type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
             this_in_type_literal: set_to_arena(
-                std::mem::replace(
-                    &mut self.this_in_type_literal,
-                    rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
-                ),
+                std::mem::take(&mut self.this_in_type_literal),
                 arena,
             ),
             pat_parent: copy_to_arena(&mut self.pat_parent, arena),
             pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
             prop_owner: copy_to_arena(&mut self.prop_owner, arena),
             member_symbol: copy_to_arena(&mut self.member_symbol, arena),
-            property_symbol: map_to_arena(
-                std::mem::replace(
-                    &mut self.property_symbol,
-                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                ),
-                arena,
-            ),
+            property_symbol: map_to_arena(std::mem::take(&mut self.property_symbol), arena),
             member_owner: copy_to_arena(&mut self.member_owner, arena),
             member_scope: copy_to_arena(&mut self.member_scope, arena),
             param_fn: copy_to_arena(&mut self.param_fn, arena),
@@ -2524,20 +2509,8 @@ impl BoundBuilder {
             import_scope: copy_to_arena(&mut self.import_scope, arena),
             import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
             export_scope: copy_to_arena(&mut self.export_scope, arena),
-            expr_scope: map_to_arena(
-                std::mem::replace(
-                    &mut self.expr_scope,
-                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                ),
-                arena,
-            ),
-            private_class: map_to_arena(
-                std::mem::replace(
-                    &mut self.private_class,
-                    rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-                ),
-                arena,
-            ),
+            expr_scope: map_to_arena(std::mem::take(&mut self.expr_scope), arena),
+            private_class: map_to_arena(std::mem::take(&mut self.private_class), arena),
             private_names_outside_class_bodies: few_to_arena(
                 std::mem::take(&mut self.private_names_outside_class_bodies),
                 arena,

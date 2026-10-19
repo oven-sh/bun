@@ -28,8 +28,8 @@ impl HandshakeV10 {
             server_version: Data::empty(),
             connection_id: 0,
             auth_plugin_data: [0u8; NONCE_LENGTH],
-            capability_flags: Capabilities::default(),
-            mariadb_capability_flags: MariaDBCapabilities::default(),
+            capability_flags: Capabilities::none(),
+            mariadb_capability_flags: MariaDBCapabilities::none(),
             character_set: CharacterSet::new(),
             status_flags: StatusFlags::new(),
             auth_plugin_name: Data::empty(),
@@ -83,7 +83,7 @@ impl HandshakeV10 {
         reader.skip(6);
         let mariadb_flags = reader.int::<u32>()?;
         self.mariadb_capability_flags = if self.capability_flags.CLIENT_LONG_PASSWORD {
-            MariaDBCapabilities::default()
+            MariaDBCapabilities::none()
         } else {
             MariaDBCapabilities::from_int(mariadb_flags)
         };

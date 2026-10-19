@@ -290,7 +290,7 @@ impl Rule for NoRestrictedProperties {
                     rule.globally_restricted_objects.insert(object.as_bytes().into(), restriction("allowProperties"));
                 }
                 (Some(object), Some(property)) => {
-                    let properties = rule.restricted_properties.entry(object.as_bytes().into()).or_insert_with(|| rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher));
+                    let properties = rule.restricted_properties.entry(object.as_bytes().into()).or_default();
                     properties.insert(property.as_bytes().into(), Restriction {
                         allowed: None,
                         message: option.str("message").unwrap_or_default().as_bytes().into(),

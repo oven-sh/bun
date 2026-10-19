@@ -791,7 +791,7 @@ impl<'a> Context<'_, 'a> {
             if self.pending.len() > children && self.is_at_key_that_yaml_refuses() {
                 return Err(Unexpected);
             }
-            let key_props = std::mem::replace(&mut key_props, smallvec::SmallVec::new());
+            let key_props = std::mem::take(&mut key_props);
             let child = self.transform_pair(property, Kind::MappingItem, key_props)?;
             self.pending.push(child);
         }

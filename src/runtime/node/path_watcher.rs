@@ -1372,12 +1372,20 @@ impl Darwin {
 /// no filenames, so directory events surface as a bare `rename` with an empty path —
 /// same behaviour as libuv on FreeBSD; callers are expected to re-scan.
 #[cfg(target_os = "freebsd")]
-#[derive(Default)]
 pub(crate) struct Kqueue {
     /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
     /// recursive trees). `udata` on the kevent carries a monotonic generation number
     /// so the reader can reject stale events after the fd is recycled.
     entries: ArrayHashMap<i32, KqEntry>,
+}
+
+#[cfg(target_os = "freebsd")]
+impl Kqueue {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: ArrayHashMap::new(),
+        }
+    }
 }
 
 #[cfg(target_os = "freebsd")]
@@ -1394,9 +1402,15 @@ struct KqEntry {
 }
 
 #[cfg(target_os = "freebsd")]
-#[derive(Default)]
 pub(crate) struct KqueueWatch {
     fds: Vec<i32>,
+}
+
+#[cfg(target_os = "freebsd")]
+impl KqueueWatch {
+    pub(crate) fn new() -> Self {
+        Self { fds: Vec::new() }
+    }
 }
 // Drop: Vec frees automatically.
 
@@ -1418,7 +1432,7 @@ impl Kqueue {
         let kq = sys::kqueue()?;
         // Owning raw pointer first, shared view second: the spawn error arm reclaims
         // through `manager_ptr`, which must not be derived from a shared reference.
-        let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::default()));
+        let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::new()));
         // SAFETY: just allocated and exclusively owned; published only on Ok.
         let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(kq);
@@ -1529,7 +1543,7 @@ impl Kqueue {
             return Err(sys::Error {
                 errno: errno as u16,
                 syscall: Tag::watch,
-                ..Default::default()
+                ..sys::Error::init()
             }
             .with_path(abs_path.as_bytes()));
         }
@@ -1593,7 +1607,7 @@ impl Kqueue {
             // SAFETY: holding manager.mutex; exclusive access to `entries`. This loop
             // never mutates `entries`, so a shared borrow suffices.
             let entries = unsafe { &(*plat).entries };
-            let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
+            let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::new();
 
             for kev in &events[..count as usize] {
                 // Validate via the map — the entry may have been freed by a racing
@@ -1633,7 +1647,7 @@ impl Kqueue {
                 };
 
                 watcher.emit(event_type, rel, entry.is_file);
-                let _ = handle_oom(touched.get_or_put(entry.watcher));
+                let _ = handle_oom(touched.get_or_put(entry.watcher, || ()));
             }
 
             for &w in touched.keys() {

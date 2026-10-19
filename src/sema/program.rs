@@ -5926,10 +5926,7 @@ impl<'s> Files<'s> {
         }
         let mut state = shared.lock();
         let (done, slots) = (
-            std::mem::replace(
-                &mut state.done,
-                rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            ),
+            std::mem::take(&mut state.done),
             std::mem::take(&mut state.slots),
         );
         let parse_of = |slot: Option<Slot<'s, 'r>>| match slot {

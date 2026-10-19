@@ -3869,6 +3869,32 @@ describe("bundler", () => {
           return <button style={style} onClick={onClick}>{label}</button>;
         }
 
+        // Parentheses that are not a parameter list: the comment stays with the function in them.
+        const inParentheses = (function () {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return 1;
+        })();
+        const AfterParentheses = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const inParenthesesAgain = (function () {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          return 1;
+        })();
+        const InsideAfterParentheses = ({
+          label,
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          onClick = () => {},
+        }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+        const AfterInsideAfterParentheses = ({ label, onClick = () => {} }) => {
+          const style = { color: label };
+          return <button style={style} onClick={onClick}>{label}</button>;
+        };
+
         const forms = {
           Above,
           AfterAbove,
@@ -3886,6 +3912,9 @@ describe("bundler", () => {
           AfterAboveTwoLists,
           InTheBody,
           AfterInTheBody,
+          AfterParentheses,
+          InsideAfterParentheses,
+          AfterInsideAfterParentheses,
         };
         for (const [name, form] of Object.entries(forms)) {
           console.log(name + ": " + render(form, { label: "a" }).cacheHooks + " cache hooks in a render");
@@ -3914,6 +3943,9 @@ describe("bundler", () => {
         AfterAboveTwoLists: 1 cache hooks in a render
         InTheBody: 0 cache hooks in a render
         AfterInTheBody: 1 cache hooks in a render
+        AfterParentheses: 1 cache hooks in a render
+        InsideAfterParentheses: 0 cache hooks in a render
+        AfterInsideAfterParentheses: 1 cache hooks in a render
       `,
     },
   });

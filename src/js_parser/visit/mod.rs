@@ -115,11 +115,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
-        let rc_candidate = self.enter_react_compiler_candidate(
+        let prev_may_replace_body = self.enter_react_compiler_candidate(
             func.name.map(|n| n.ref_),
             func.flags
                 .contains(flags::Function::HasReactHooksSuppression),
             body_stmts,
+            body_loc,
         );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
@@ -142,15 +143,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        if rc_candidate.is_candidate() {
-            self.react_compiler_pending =
-                Some(rc_candidate.pending(func.args, func.flags, body_loc, func.open_parens_loc));
+        let rc_binding = self.take_react_compiler_claim(body_loc);
+        if rc_binding.is_some() {
+            self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: func.args,
+                flags: func.flags,
+                body_loc,
+                args_loc: func.open_parens_loc,
+                binding: func
+                    .name
+                    .map(|n| n.ref_)
+                    .filter(|r| r.is_valid())
+                    .or(rc_binding),
+                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+            });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
             .expect("unreachable");
-        if let Some(result) = self.leave_react_compiler_candidate(rc_candidate) {
+        self.react_compiler_pending = None;
+        if let Some(result) = self.react_compiler_result.take() {
             func.args = result.args;
             func.flags = result.flags;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                self.record_usage(b);
+            }
         }
 
         if self.options.features.react_fast_refresh {
@@ -196,6 +212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
+        self.react_compiler_may_replace_body = prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 

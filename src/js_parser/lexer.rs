@@ -216,6 +216,8 @@ pub struct Lexer<'a> {
     /// has been scanned. The parser reads this at function-body close to set
     /// `flags::Function::HasReactHooksSuppression` / `E::Arrow::has_react_hooks_suppression`.
     pub(crate) has_react_hooks_suppression_before: bool,
+    /// A function in a parameter list closed here with the suppression pending: only a function that starts before it still gets it.
+    pub(crate) react_hooks_suppression_taken_at: i32,
     /// Sticky variant of the above: set when the suppression comment is a bare
     /// `eslint-disable` (no `-next-line` suffix). Never cleared by the
     /// parser, so it applies to every subsequent function in the file.
@@ -1944,6 +1946,7 @@ impl<'a> Lexer<'a> {
                         || strings::contains(rest, b"react-hooks/exhaustive-deps")
                     {
                         self.has_react_hooks_suppression_before = true;
+                        self.react_hooks_suppression_taken_at = i32::MAX;
                         if is_block {
                             self.has_react_hooks_block_suppression = true;
                         }
@@ -2264,6 +2267,7 @@ impl<'a> Lexer<'a> {
             has_newline_before: false,
             has_pure_comment_before: false,
             has_react_hooks_suppression_before: false,
+            react_hooks_suppression_taken_at: i32::MAX,
             has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,

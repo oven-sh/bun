@@ -177,7 +177,7 @@ pub(crate) struct ParserSnapshot<'a> {
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
-    react_hooks_suppressions_taken: u32,
+    react_hooks_suppression_taken_at: i32,
     latest_arrow_arg_loc: bun_ast::Loc,
     forbid_suffix_after_as_loc: bun_ast::Loc,
     after_arrow_body_loc: bun_ast::Loc,
@@ -266,8 +266,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
-    /// How many function closes consumed `lexer.has_react_hooks_suppression_before`.
-    pub(crate) react_hooks_suppressions_taken: u32,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
@@ -463,6 +461,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// statement currently being visited. Set in `visit_stmt`, consumed by
     /// `visit_func` / arrow-visit one frame down.
     pub(crate) react_compiler_candidate_name: Option<js_ast::Ref>,
+    /// The body of the function that took `react_compiler_candidate_name` at its entry, and the name it took.
+    pub(crate) react_compiler_claimed_body: bun_ast::Loc,
+    pub(crate) react_compiler_claimed_name: js_ast::Ref,
     /// Set alongside `react_compiler_candidate_name` when the candidate
     /// expression is a `memo(...)` / `forwardRef(...)` call.
     pub(crate) react_compiler_in_react_hoc: bool,
@@ -8230,7 +8231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             should_fold_typescript_constant_expressions: self
                 .should_fold_typescript_constant_expressions,
             fn_or_arrow_data_parse: self.fn_or_arrow_data_parse.clone(),
-            react_hooks_suppressions_taken: self.react_hooks_suppressions_taken,
+            react_hooks_suppression_taken_at: self.lexer.react_hooks_suppression_taken_at,
             latest_arrow_arg_loc: self.latest_arrow_arg_loc,
             forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
             after_arrow_body_loc: self.after_arrow_body_loc,
@@ -8265,7 +8266,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.should_fold_typescript_constant_expressions =
             snapshot.should_fold_typescript_constant_expressions;
         self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
-        self.react_hooks_suppressions_taken = snapshot.react_hooks_suppressions_taken;
+        // Not in `LexerSnapshot`: only this backtrack closes functions.
+        self.lexer.react_hooks_suppression_taken_at = snapshot.react_hooks_suppression_taken_at;
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
@@ -9718,7 +9720,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
-            react_hooks_suppressions_taken: 0,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),
             allocated_names: BumpVec::new_in(arena),
@@ -9777,6 +9778,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_refresh: ReactRefresh::default(),
             react_compiler: None,
             react_compiler_candidate_name: None,
+            react_compiler_claimed_body: crate::react_compiler_host::UNCLAIMED_BODY,
+            react_compiler_claimed_name: js_ast::Ref::NONE,
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             react_compiler_result: None,

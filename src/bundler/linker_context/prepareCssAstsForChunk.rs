@@ -374,8 +374,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         //
                         // Regression: #28914
                         let all_rules = ast.rules.v.as_slice();
-                        // The "@layer" statements ahead of the first "@import" leave the
-                        // body only when an earlier entry prints them.
+                        // An earlier entry prints the "@layer" statements ahead of the first "@import".
                         let printed_earlier = if pre_import_layers_printed_earlier {
                             all_rules
                                 .iter()
@@ -462,6 +461,11 @@ fn layers_printed_earlier(
     conditions: &Vec<ImportConditions>,
 ) -> bool {
     !names.is_empty()
+        // Each "@layer {}" wrapper is a layer of its own.
+        && !conditions
+            .slice()
+            .iter()
+            .any(ImportConditions::has_anonymous_layer)
         && earlier.iter().any(|entry| {
             let CssImportOrderKind::Layers(layers) = &entry.kind else {
                 return false;

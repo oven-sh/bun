@@ -145,9 +145,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // Any pre-import layers come first. Inside an anonymous layer a
-            // separate entry would print as a layer of its own.
+            // Any pre-import layers come first
             if !repr.layers_pre_import.is_empty()
+                // Inside an anonymous layer a separate entry prints as a layer of its own.
                 && !wrapping_conditions
                     .slice()
                     .iter()
@@ -347,9 +347,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // the file when bundling, even though doing so will change the order of CSS
     // evaluation.
     if has_external_import {
-        // Pass 1: Pull out leading "@layer" statements and external "@import" rules.
-        // esbuild keeps every leading layer list here. One under import conditions
-        // prints as a block, and an "@import" after a block is invalid.
+        // Pass 1: Pull out leading "@layer" and external "@import" rules
+        // Unlike esbuild, a layer list that prints as a block (under import conditions) ends the prefix.
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
             is_at_layer_prefix &= entry.prints_as_layer_statements();
@@ -476,8 +475,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 &wip_order,
                 CssOrderDebugStep::WhileOptimizingRedundantLayerRules,
             );
-            // A file's own statements are kept once per condition list, and they
-            // never make another entry redundant.
+            // A file's own statements: kept once per condition list, never a reason to drop another entry.
             if let CssImportOrderKind::Layers(Layers::PreImport(list)) = &entry.kind {
                 let is_repeat = pre_import_entries.iter().any(|&kept| {
                     let kept = wip_order.at(kept as usize);

@@ -970,7 +970,7 @@ impl<'a> LinkerGraph<'a> {
                                 | ImportKind::Url
                                 | ImportKind::Composes => continue,
                                 // Other non-JS imports
-                                ImportKind::HtmlManifest | ImportKind::Internal => continue,
+                                ImportKind::Internal => continue,
                             }
 
                             let import_index: usize = import_record.source_index.get() as usize;

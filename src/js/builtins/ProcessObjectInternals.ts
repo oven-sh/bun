@@ -91,32 +91,7 @@ export function getStdioWriteStream(
   stream.fd = fd;
 
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  if (!underlyingSink && !stream._writableState.autoDestroy) {
-    // No FileSink: Writable parks every write after a failed one until destroy, so a failed write resets the stream.
-    const failures: unknown[] = []; // in order: a corked batch fails one write per chunk
-    const write = stream._write;
-    const destroy = stream._destroy;
-    stream._write = function (chunk, encoding, cb) {
-      write.$call(this, chunk, encoding, err => {
-        if (err) {
-          failures.push(err);
-          this._writableState.autoDestroy = true;
-        }
-        cb(err);
-      });
-    };
-    stream._destroy = function (err, cb) {
-      if (!err || err !== failures[0]) return destroy.$call(this, err, cb);
-      failures.shift();
-      if (failures.length === 0) this._writableState.autoDestroy = false;
-      this._undestroy();
-      // Not through cb: that marks the reset stream errorEmitted a tick later, and end() then never finishes.
-      process.nextTick(() => {
-        this.emit("error", err);
-        this.emit("close");
-      });
-    };
-  }
+  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 

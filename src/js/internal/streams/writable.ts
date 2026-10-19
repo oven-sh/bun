@@ -677,7 +677,6 @@ function errorBuffer(state) {
       const { chunk, callback } = state[kBufferedValue][n];
       const len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length;
       state.length -= len;
-      state.pendingcb--; // taken in _write: a stream that is reset after destroy (stdio) must be able to finish again
       callback(state.errored ?? $ERR_STREAM_DESTROYED("write"));
     }
   }

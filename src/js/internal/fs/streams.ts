@@ -457,17 +457,14 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this.pos = start;
   }
 
-  // No writer for this fd (fd limit, macOS /dev/tty): write synchronously, so a bad fd fails at write time as in node.
+  // No writer for this fd (read-only, fd limit, cannot be polled): syncSink fails at write time, the way node does.
   let fastWriter;
   if (fastPath && fd != null) {
     try {
       fastWriter = Bun.file(fd).writer();
     } catch {
-      fastPath = false;
-      this._write = underscoreWriteSync;
+      fastWriter = syncSink(fd);
     }
-    // Already-open fd (stdio): born constructed, like node's stdio streams, which allocate no construct TickObjects.
-    this._construct = undefined;
   }
 
   // Enable fast path
@@ -477,6 +474,12 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     this._writev = undefined;
     this.write = writeFast as any;
     this._final = finalFast;
+    if (fd != null) {
+      // Already-open fd (stdio): skip the async _construct round-trip so the
+      // stream is born constructed, like node's stdio streams (net.Socket /
+      // tty.WriteStream), which never allocate construct TickObjects.
+      this._construct = undefined;
+    }
   }
 
   Writable.$call(this, options);
@@ -596,27 +599,40 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
-function underscoreWriteSync(this: FSStream, data: Buffer, encoding: any, cb: (err?: any) => void) {
-  const length = data.length;
-  let offset = 0;
-  let retries = 0;
-  while (offset < length) {
-    let written: number;
-    try {
-      written = writeSync(this.fd, data, offset, length - offset);
-    } catch (err: any) {
-      if (err?.code !== "EAGAIN") return cb(err);
-      // A non-blocking fd with no room: wait for the reader, as a blocking write would.
-      Bun.sleepSync(1);
-      continue;
-    }
-    // Like writeAll: an fd that takes no bytes several times in a row fails the write.
-    if (written > 0) retries = 0;
-    else if (++retries > 5) return cb(new Error("write failed"));
-    this.bytesWritten += written;
-    offset += written;
-  }
-  cb(null);
+// The FileSink calls the fast path makes, on an fd that has no FileSink. Writes are synchronous.
+function syncSink(fd: number) {
+  return {
+    write(data: any) {
+      if (typeof data === "string") data = Buffer.from(data);
+      else if (data instanceof ArrayBuffer) data = new Uint8Array(data);
+      else if (data === null) throw $ERR_STREAM_NULL_VALUES();
+      else if (!ArrayBuffer.isView(data)) {
+        throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], data);
+      }
+      const length = data.byteLength;
+      let offset = 0;
+      let retries = 0;
+      while (offset < length) {
+        let written: number;
+        try {
+          written = writeSync(fd, data, offset, length - offset);
+        } catch (err: any) {
+          if (err?.code !== "EAGAIN") return Promise.$reject(err);
+          // A non-blocking fd with no room: wait for the reader, as a blocking write would.
+          Bun.sleepSync(1);
+          continue;
+        }
+        // Like writeAll: an fd that takes no bytes several times in a row fails the write.
+        if (written > 0) retries = 0;
+        else if (++retries > 5) return Promise.$reject(new Error("write failed"));
+        offset += written;
+      }
+      return length;
+    },
+    flush: () => 0,
+    end: () => 0,
+    _getFd: () => fd,
+  };
 }
 
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {

@@ -272,7 +272,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* node:http: the body of the request in flight is still arriving. A tunnel has no body: its parser state only marks the head as read. */
     bool isReceivingRequestBody() const {
-        return !isConnectRequest && !(state & HTTP_NODE_PARSING_STOPPED) && (hasIncompleteRequestBody() || nodeHttpBodyUntilEof);
+        return !isConnectRequest && (hasIncompleteRequestBody() || nodeHttpBodyUntilEof);
     }
 };
 

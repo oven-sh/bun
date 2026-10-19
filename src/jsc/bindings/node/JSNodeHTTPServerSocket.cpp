@@ -907,7 +907,7 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
 /* The FIN of an end() that waited (deferShutdownUntilResponseDrains) is due: uWS holds no more bytes. uWS reads nothing behind a
  * FIN, so that FIN also waits for the request body of a response that has not ended. */
 template<bool SSL>
-static bool takeShutdownAfterDrain(us_socket_t* socket, bool& peerEnded)
+static bool takeShutdownAfterDrain(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     if (!(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) || !reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained()) {
@@ -917,7 +917,6 @@ static bool takeShutdownAfterDrain(us_socket_t* socket, bool& peerEnded)
         return false;
     }
     httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN;
-    peerEnded = (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
     return true;
 }
 
@@ -925,13 +924,8 @@ void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
-    bool peerEnded = false;
-    if (!upgraded && !isClosed() && (is_ssl ? takeShutdownAfterDrain<true>(socket, peerEnded) : takeShutdownAfterDrain<false>(socket, peerEnded))) {
+    if (!upgraded && !isClosed() && (is_ssl ? takeShutdownAfterDrain<true>(socket) : takeShutdownAfterDrain<false>(socket))) {
         halfClose(globalObject);
-        // The peer ended first, so both sides are done: Node.js destroys such a socket at 'finish'.
-        if (peerEnded && !isClosed()) {
-            close();
-        }
         if (isClosed()) {
             return;
         }

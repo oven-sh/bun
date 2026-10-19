@@ -127,7 +127,7 @@ public:
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
 
-    /* socket.end(): true when uWS will shut down later, after the buffered response. destroySoon also waits for the body parse and closes behind the FIN. */
+    /* socket.end(): true when the FIN waits for bytes that uWS still holds. onDrain() sends the FIN of end(). For destroySoon, uWS shuts down: it also waits for the body parse and closes behind the FIN. */
     bool shutdownAfterResponseDrains(bool destroySoon);
     /* socket.end() with nothing left to send: the FIN goes out now and the reads stay armed, so that the peer's FIN closes the socket. */
     JSC::EncodedJSValue halfClose(JSC::JSGlobalObject*);

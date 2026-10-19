@@ -2723,7 +2723,7 @@ describe("minimum-release-age", () => {
   });
 
   describe("transitive dependencies", () => {
-    test("a transitive dependency is filtered by minimum-release-age", async () => {
+    test.concurrent("a transitive dependency is filtered by minimum-release-age", async () => {
       using dir = tempDir("transitive-deps", {
         "package.json": JSON.stringify({
           dependencies: { "dependent-package": "1.0.0" },
@@ -2749,30 +2749,33 @@ describe("minimum-release-age", () => {
       expect(lockfile).toContain('"sibling-package": ["sibling-package@1.0.0"');
     });
 
-    test("a transitive dependency blocked by minimum-release-age names the package that requires it", async () => {
-      using dir = tempDir("transitive-deps-blocked", {
-        "package.json": JSON.stringify({
-          dependencies: { "dependent-package": "^1.0.0" },
-        }),
-        ".npmrc": `registry=${mockRegistryUrl}`,
-      });
+    test.concurrent(
+      "a transitive dependency blocked by minimum-release-age names the package that requires it",
+      async () => {
+        using dir = tempDir("transitive-deps-blocked", {
+          "package.json": JSON.stringify({
+            dependencies: { "dependent-package": "^1.0.0" },
+          }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // dependent-package@1.1.0 passes the gate on its own, but it requires
-      // sibling-package@^1.1.0, and every match is too recent.
-      expect(stderr.split("\n").filter(line => line.startsWith("error:"))).toEqual([
-        'error: No version matching "^1.1.0" found for specifier "sibling-package" (blocked by minimum-release-age: 432000 seconds)',
-        "error: sibling-package@^1.1.0 failed to resolve (declared by dependent-package@1.1.0)",
-      ]);
-      expect(exitCode).toBe(1);
-    });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // dependent-package@1.1.0 passes the gate on its own, but it requires
+        // sibling-package@^1.1.0, and every match is too recent.
+        expect(stderr.split("\n").filter(line => line.startsWith("error:"))).toEqual([
+          'error: No version matching "^1.1.0" found for specifier "sibling-package" (blocked by minimum-release-age: 432000 seconds)',
+          "error: sibling-package@^1.1.0 failed to resolve (declared by dependent-package@1.1.0)",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
   });
 
   describe("special dependencies", () => {

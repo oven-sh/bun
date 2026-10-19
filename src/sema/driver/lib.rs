@@ -4795,12 +4795,12 @@ fn check_named_files(
                     let hir = &program.files.modules[i].hir;
                     (hir.has_parse_diagnostics
                         || hir.has_parse_or_grammar_diagnostics()
-                        || hir.is_js)
+                        || hir.may_have_javascript_diagnostics())
                         && is_reached.as_ref().is_none_or(|reached| reached[i])
                 })
                 .map(|i| FileId(i as u32))
                 .collect();
-            // A checker for each file would cost more than the files: every JavaScript file is a suspect.
+            // A checker for each file would cost more than the files.
             let chunks = suspects.chunks(suspects.len().div_ceil(MIN_TASKS).max(1));
             let chunks: Vec<&[FileId]> = chunks.collect();
             host.parallel(chunks.len(), &|i| {

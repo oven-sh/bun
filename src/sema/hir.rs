@@ -2689,6 +2689,13 @@ impl<S: Storage> FileIn<S> {
         use DiagnosticKind::{Grammar, Parse};
         (self.diagnostics.iter()).any(|d| matches!(d.kind, Parse | Grammar))
     }
+    /// Whether `GetSyntacticDiagnostics` can have what it only has for JavaScript: a `Js` diagnostic, or one of
+    /// `getAdditionalJSSyntacticDiagnostics`, which are about decorators.
+    pub fn may_have_javascript_diagnostics(&self) -> bool {
+        let mut diagnostics = self.diagnostics.iter();
+        self.is_js
+            && (!self.decorators.is_empty() || diagnostics.any(|d| d.kind == DiagnosticKind::Js))
+    }
     /// Whether a diagnostic with `code` starts at `start`.
     pub fn has_diagnostic(&self, start: u32, code: u32) -> bool {
         (self.diagnostics.iter()).any(|d| d.start == start && d.code == code)

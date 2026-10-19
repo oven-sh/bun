@@ -1181,7 +1181,9 @@ impl<'s, 'r> Ahead<'s, 'r> {
     /// Removes and returns the parse in `slot`, which is a `Loaded::parse`. Call only after `wait`, when no loader
     /// thread still has a clone of the `Arc`. A parse is a few thousand bytes, and this is the first time it's moved.
     fn take_parse(&self, slot: u32) -> Option<Parse<'s>> {
-        match self.state.lock().slots[slot as usize].take() {
+        // All threads call this at the same time, so the parse is moved after the lock is released.
+        let taken = self.state.lock().slots[slot as usize].take();
+        match taken {
             Some(ParseSlot::Done { parse, .. }) => Arc::into_inner(parse),
             _ => None,
         }

@@ -104,7 +104,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// which is checked under `check_mode`, passes to `e`.
     fn check_mode_passed_to(&self, file: FileId, e: ExprId, check_mode: CheckMode) -> CheckMode {
         let hir = self.hir(file);
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::Prop(p) if hir[p].kind == PropKind::Spread => {
                 check_mode & CheckMode::INFERENTIAL
             }
@@ -221,6 +221,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                     c.restrictive_instantiations_kept.clear();
+                    c.links.forget_restrictive_instantiations();
                     c.with_own_type_params(signature, &type_params, &unique)
                 };
                 if c.adopt_generic_argument(n, instantiated, contextual_signature) {
@@ -268,7 +269,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether evaluating `e` has a side effect on the checker that a pass of `check_file` of
-    /// `file` reads later: `first_jsx`, `unresolved_identifiers`. A cache hit has no side effect.
+    /// `file` reads later: `deferred_nodes`, `unresolved_identifiers`. A cache hit has no side effect.
     /// So only the task that is checking `file` stores the entry, and every other task evaluates
     /// `e` again. A class expression checks its decorators and heritage clauses, and nothing else
     /// visits them.
@@ -484,7 +485,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `expressions_cached_discarding`.
     #[cold]
     fn note_cached_discarding(&mut self, file: FileId, e: ExprId) {
-        if self.task.file == Some(file) && self.is_checked_by_check_expression_cached(file, e) {
+        // tsc caches the expression of a `return` statement without its parentheses, so the walk checks it again. It caches
+        // an initializer with them.
+        let is_checked_again = is_parenthesized(self.hir(file), e)
+            && matches!(
+                self.bound(file).parent_of_expr(e),
+                crate::bind::Parent::Stmt(_)
+            );
+        if self.task.file == Some(file)
+            && self.is_checked_by_check_expression_cached(file, e)
+            && !is_checked_again
+        {
             self.expressions_cached_discarding.push(e);
         }
     }
@@ -503,8 +514,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::False
                 | ExprKind::Number(_)
                 | ExprKind::String(_)
-        ) || self.stack.len() >= MAX_DEPTH
-            || self.is_stack_low()
+        ) || self.is_most_of_stack_in_use()
         {
             return None;
         }
@@ -780,14 +790,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// there is none, and whether `IsConstAssertion(parent)`.
     fn const_context_parent(&self, file: FileId, e: ExprId) -> ControlFlow<bool, ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let property = match bound.expr_parent[e.idx()] {
+        let property = match bound.parent_of_expr(e) {
             Parent::Expr(parent) => match hir[parent].kind {
                 ExprKind::AsConst(_) => return ControlFlow::Break(true),
                 ExprKind::Array(_) | ExprKind::Spread(_) | ExprKind::Template { .. } => {
                     return ControlFlow::Continue(parent);
                 }
                 // The parent of `a` and of `d` in `{ a = d }` is the shorthand property assignment.
-                ExprKind::Assign { op: None, .. } => match bound.expr_parent[parent.idx()] {
+                ExprKind::Assign { op: None, .. } => match bound.parent_of_expr(parent) {
                     Parent::Prop(p) if hir[p].kind == PropKind::Shorthand => p,
                     _ => return ControlFlow::Break(false),
                 },
@@ -815,6 +825,27 @@ impl<'p, 's> Checker<'p, 's> {
         if depth >= 5 || !self.has_type_variables(ty) {
             return false;
         }
+        // Cached for these kinds because a conditional type's constraint is often a union of conditional types, nested
+        // five levels deep.
+        let is_kept = matches!(
+            self.data(ty),
+            TypeData::Union(_) | TypeData::Intersection(_) | TypeData::Cond { .. }
+        );
+        if !is_kept {
+            return self.is_const_type_variable_worker(ty, depth);
+        }
+        if let Some(known) = self.recent_const_type_variables.get(ty.0, depth + 1) {
+            return known != 0;
+        }
+        let mark = self.non_cacheable_mark();
+        let is_const = self.is_const_type_variable_worker(ty, depth);
+        if self.non_cacheable_mark() == mark {
+            (self.recent_const_type_variables).put(ty.0, depth + 1, u32::from(is_const));
+        }
+        is_const
+    }
+
+    fn is_const_type_variable_worker(&mut self, ty: TypeId, depth: u32) -> bool {
         match self.data(ty) {
             // `core.Some(t.symbol.Declarations, ..)`: the type parameters of one name in the
             // declarations of a class or an interface are one symbol.
@@ -936,7 +967,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         loop {
-            let Parent::Expr(parent) = bound.expr_parent[at.idx()] else {
+            let Parent::Expr(parent) = bound.parent_of_expr(at) else {
                 return false;
             };
             match hir[parent].kind {
@@ -1020,14 +1051,12 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_property_access(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Dot {
-            obj,
-            name,
-            name_pos,
-            chain,
+            obj, name, chain, ..
         } = hir[e].kind
         else {
             return (TypeId::UNRESOLVED, false);
         };
+        let name_pos = hir.name_pos(e);
         let (access, stops) = self.left_type_of_property_access(file, e, obj, chain);
         let (left, receiver) = (access.left, access.widened);
         let target = self.target_kind(file, e);
@@ -1037,7 +1066,6 @@ impl<'p, 's> Checker<'p, 's> {
             return (access.any_like.unwrap_or(TypeId::ERROR), stops);
         }
         let lexical = if is_private {
-            self.note_external_emit_helpers_check(file, e);
             self.lookup_symbol_for_private_identifier_declaration(file, e, name)
         } else {
             None
@@ -1104,7 +1132,12 @@ impl<'p, 's> Checker<'p, 's> {
                 .map(|ty| (ty, Found::Property)),
             found => found,
         };
-        let apparent = self.reduced_apparent_type(receiver);
+        // `getPropertyOfType(apparentType, ..)` reduces the apparent type, but nothing reduces `leftType`. Reducing
+        // `U & { id: string }` lists the properties of `U`'s constraint, which creates them.
+        if !self.never_in_progress.is_empty() {
+            self.reduce_apparent_type_of_intersection_in_progress(access.apparent);
+        }
+        let apparent = self.reduced(access.apparent);
         let Some((declared, how)) = found else {
             // A cycle whose head is this expression or a caller: the members are not all known. One
             // that began and ended in the lookup, as two interfaces that extend each other, is
@@ -1129,7 +1162,6 @@ impl<'p, 's> Checker<'p, 's> {
             // were requested. Nothing is stored, so the task of `file` evaluates it, and reports.
             if let TypeData::Ref { target, .. } = *self.data(apparent)
                 && let Some(height) = self.stack.iter().position(|&q| q == Query::Bases(target))
-                && self.task.checker_count == 0
                 && !self.is_emitting
                 && !self.is_reported_in_time_under_resolution(height, file)
             {
@@ -1209,7 +1241,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if how == Found::ByIndex {
             // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
-            let is_deleted = matches!(bound.expr_parent[e.idx()], Parent::Expr(p)
+            let is_deleted = matches!(bound.parent_of_expr(e), Parent::Expr(p)
                 if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
             if (target.written || is_deleted)
                 && self.is_index_info_for_name_readonly(apparent, name)
@@ -1680,7 +1712,7 @@ impl<'p, 's> Checker<'p, 's> {
                     Chain::No => false,
                     Chain::Start => {
                         let callee = self.type_of_expr(file, call.callee);
-                        self.some_type(callee, |k, m| k.is_nullish(m))
+                        self.is_some_type_of_kind(callee, tf::NULLABLE | tf::VOID)
                     }
                     // `getOptionalExpressionType`: not whether the callee itself may be
                     // `undefined`.
@@ -1708,7 +1740,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkIdentifier`: the placeholder the parser synthesizes for a missing expression is
             // an error, so it is compatible with anything. A hole in an array literal is handled
             // differently.
-            ExprKind::Missing => match self.bound(file).expr_parent[e.idx()] {
+            ExprKind::Missing => match self.bound(file).parent_of_expr(e) {
                 Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
                     self.undefined_widening()
                 }
@@ -1746,8 +1778,8 @@ impl<'p, 's> Checker<'p, 's> {
                 // The value it evaluates to, if that can be determined from the source text alone.
                 // `IsTaggedTemplateExpression(node.Parent)`: neither the tag nor the template of a
                 // tagged template is evaluated.
-                let is_tag = matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p)
-                    if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e || hir[c].template == e))
+                let is_tag = matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p)
+                    if matches!(hir[p].kind, ExprKind::TaggedTemplate(c) if hir[c].callee == e || hir.template_of(c) == e))
                     && !is_parenthesized(hir, e);
                 if !is_tag && let Some(EnumValue::String(text)) = self.constant_value(file, e) {
                     return self.string_literal(text, true);
@@ -1755,7 +1787,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let expects_literal = self.is_const_context(file, e)
                     // `isTemplateLiteralContext`: as an element access key it is typed by its
                     // possible values.
-                    || matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Index { index, .. } if index == e))
+                    || matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Index { index, .. } if index == e))
                     || self.contextual_type(file, e, ContextFlags::empty()).is_some_and(|c| self.parts(c).iter().any(|&m| self.is_template_literal_contextual_type(m)));
                 if !expects_literal {
                     return TypeId::STRING;
@@ -1790,7 +1822,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.check_class_like_declaration(file, class);
                 self.end_recheck(outer);
                 self.check_node_deferred(file, e);
-                self.check_class_expression_external_helpers(file, e, class);
                 let sym = self.class_sym(file, class);
                 self.type_of_symbol(sym)
             }
@@ -1825,7 +1856,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(op) => self.type_of_binary(file, e, op, target, value),
             },
             // `checkConditionalExpression`
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
                 let tested = self.type_of_expr(file, test);
                 self.check_truthiness_of_type(file, test, tested);
                 self.look_at_with(|c| {
@@ -1884,6 +1916,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `checkExpressionWithTypeArguments`
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = hir.list_at(type_args);
                 self.look_at_type_nodes(file, type_args);
                 let ty = self.type_of_expr(file, expr);
                 let args = self.types_from_nodes(file, type_args);
@@ -1893,15 +1926,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_fragment = hir[j].tag.is_none();
                 if !is_fragment {
                     self.check_node_deferred(file, e);
-                }
-                if self.task.file == Some(file) {
-                    if self.first_jsx.0 != file {
-                        self.first_jsx = (file, None, None);
-                    }
-                    self.first_jsx.1 = self.first_jsx.1.or(Some(e));
-                    if is_fragment {
-                        self.first_jsx.2 = self.first_jsx.2.or(Some(e));
-                    }
                 }
                 // `checkJsxFragment` defers nothing: `checkJsxOpeningLikeElementOrOpeningFragment`,
                 // then `checkJsxChildren(node, CheckModeNormal)`.
@@ -1941,27 +1965,24 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {
                 self.is_deferred(ty) && {
                     let constraint = self.base_constraint(ty);
-                    self.maybe_type_of_kind(constraint, Self::is_string_like)
+                    self.maybe_type_of_kind(constraint, tf::STRING_LIKE)
                 }
             }
         }
     }
 
-    /// `maybeTypeOfKind`: whether `ty` is of the kind, or a member of it if it is a union or an intersection.
-    pub(super) fn maybe_type_of_kind(&self, ty: TypeId, kind: fn(&Self, TypeId) -> bool) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.maybe_type_of_kind(p, kind))
-            }
-            _ => kind(self, ty),
-        }
+    /// `maybeTypeOfKind`: true if `ty` has one of the flags in `kind`. For a union or an intersection, true if any
+    /// member does. The flags of the union itself, such as `boolean`, don't count.
+    #[inline]
+    pub(super) fn maybe_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
+        self.types().member_flags(ty) & kind != 0
     }
 
     /// `maybeTypeOfKindConsideringBaseConstraint`
     pub(super) fn maybe_type_of_kind_considering_base_constraint(
         &mut self,
         ty: TypeId,
-        kind: fn(&Self, TypeId) -> bool,
+        kind: u32,
     ) -> bool {
         self.maybe_type_of_kind(ty, kind)
             || self
@@ -2067,7 +2088,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         // `GetDeclarationOfKind`: the first function declaration of a function, else the first variable declaration, has to be ambient.
-        let is_first_ambient = self.files().decls(sym).iter().find_map(|&(f, decl)| {
+        let is_first_ambient = self.files().decls_of(sym).iter().find_map(|&(f, decl)| {
             let of = self.hir(f);
             let is_ambient =
                 |flags: Flags| flags.contains(Flags::AMBIENT) || of.kind == FileKind::Declaration;
@@ -2104,7 +2125,7 @@ impl<'p, 's> Checker<'p, 's> {
         ignore_errors: bool,
     ) -> Result<Option<Sym>, u32> {
         let (files, bound) = (self.files(), self.bound(file));
-        let local = bound.expr_symbol[e.idx()];
+        let local = bound.symbol_of_expr(e);
         if local.is_some() {
             let sym = files.sym(file, local);
             // `getSymbol`: an alias that does not resolve to a value does not match the value
@@ -2191,12 +2212,12 @@ impl<'p, 's> Checker<'p, 's> {
                 // `RequireSymbol`
                 known::require
                     if self.hir(file).is_js
-                        && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(call) if crate::bind::require_argument(self.hir(file), call).is_some()) =>
+                        && matches!(self.bound(file).parent_of_expr(e), Parent::Expr(call) if crate::bind::require_argument(self.hir(file), call).is_some()) =>
                 {
                     TypeId::ANY
                 }
                 // Not reached by the binder: nothing is reported for it.
-                _ if matches!(self.bound(file).expr_parent[e.idx()], Parent::None) => {
+                _ if matches!(self.bound(file).parent_of_expr(e), Parent::None) => {
                     TypeId::UNRESOLVED
                 }
                 // `getResolvedSymbol` gives `unknownSymbol`.
@@ -2347,7 +2368,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isMethodAccessForCall`. A call does not see through `x!`.
     fn is_called(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent)
+        matches!(self.bound(file).parent_of_expr(e), Parent::Expr(parent)
             if matches!(hir[parent].kind, ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee == e))
     }
 
@@ -2394,7 +2415,10 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let container = match parent {
             Parent::Expr(e) => hir.get_this_container(hir.node(e), false, false),
-            Parent::Decorator(class, _) => hir.get_this_container(hir.node(class), false, false),
+            Parent::ClassDecorator(_) | Parent::MemberDecorator(_) | Parent::ParamDecorator(_) => {
+                let class = self.bound(file).class_of_decorator(parent);
+                hir.get_this_container(hir.node(class), false, false)
+            }
             _ => hir.this_container_from(hir.node(parent), false, false),
         };
         Self::function_or_class_of(hir, container)
@@ -2408,7 +2432,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkThisBeforeSuper`
     fn check_this_before_super(&mut self, file: FileId, e: ExprId, container: FnId, code: u32) {
-        let (hir, flow) = (self.hir(file), self.bound(file).expr_flow[e.idx()]);
+        let (hir, flow) = (self.hir(file), self.bound(file).flow_of_expr(e));
         if let Some((class, _)) = self.class_of_member_fn(file, container)
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
@@ -2747,7 +2771,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if let Parent::Prop(p) = bound.expr_parent[owner.idx()] {
+        if let Parent::Prop(p) = bound.parent_of_expr(owner) {
             let containing = bound.prop_owner[p.idx()];
             // `getContainingObjectLiteral`: for a method, an accessor, or a function that is the
             // whole value of a property.
@@ -2797,7 +2821,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 });
                         return Some(self.instantiate(this, mapper.unwrap_or(MapperId::IDENTITY)));
                     }
-                    let Parent::Prop(outer) = bound.expr_parent[literal.idx()] else {
+                    let Parent::Prop(outer) = bound.parent_of_expr(literal) else {
                         break;
                     };
                     if hir[outer].kind != PropKind::Init || is_parenthesized(hir, literal) {
@@ -2822,7 +2846,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // `obj.xxx = function () {}`, whatever the operator: `obj`.
-        if let Parent::Expr(parent) = bound.expr_parent[owner.idx()]
+        if let Parent::Expr(parent) = bound.parent_of_expr(owner)
             && let ExprKind::Assign { target, value, .. } = hir[parent].kind
             && value == owner
             && target.is_some()
@@ -2975,7 +2999,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let is_returned = |returned: ExprId| {
             matches!(
-                bound.expr_parent[returned.idx()],
+                bound.parent_of_expr(returned),
                 Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Return(_))
             )
         };
@@ -2986,7 +3010,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `GetRightMostAssignedExpression`
         let mut rightmost = e;
         while !is_parenthesized(hir, rightmost)
-            && let Parent::Expr(parent) = bound.expr_parent[rightmost.idx()]
+            && let Parent::Expr(parent) = bound.parent_of_expr(rightmost)
             && parent.is_some()
             && let ExprKind::Assign { value, .. } = hir[parent].kind
             && value == rightmost
@@ -2999,7 +3023,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             rightmost = parent;
         }
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             // "`return await` is also safe to unwrap here"
             Parent::Expr(parent) => {
                 parent.is_some()
@@ -3153,7 +3177,7 @@ impl<'p, 's> Checker<'p, 's> {
             || self.inference_contexts.is_empty()
                 && self
                     .members(kept)
-                    .is_some_and(|members| *members.shape() == shape)
+                    .is_some_and(|members| members.shape().is_made_of(&shape))
         {
             return kept;
         }
@@ -3478,9 +3502,9 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `isSpreadIntoCallOrNew`
-        if let Parent::Expr(spread) = bound.expr_parent[e.idx()]
+        if let Parent::Expr(spread) = bound.parent_of_expr(e)
             && matches!(hir[spread].kind, ExprKind::Spread(_))
-            && let Parent::Expr(call) = bound.expr_parent[spread.idx()]
+            && let Parent::Expr(call) = bound.parent_of_expr(spread)
             && matches!(
                 hir[call].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }
@@ -3579,10 +3603,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !hir.is_js {
             return false;
         }
-        let symbol = bound.expr_symbol[literal.idx()];
+        let symbol = bound.symbol_of_expr(literal);
         if symbol.is_some()
             && matches!(hir[literal].kind, ExprKind::Object(props) if props.is_empty())
-            && !bound.table(bound.symbols[symbol.idx()].exports).is_empty()
+            && !bound.table(bound.symbol(symbol).exports).is_empty()
         {
             return true;
         }
@@ -3614,7 +3638,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut child = e;
         loop {
-            let parent = match bound.expr_parent[child.idx()] {
+            let parent = match bound.parent_of_expr(child) {
                 Parent::Expr(parent) if parent.is_some() => parent,
                 Parent::Prop(prop) => bound.prop_owner[prop.idx()],
                 _ => return None,
@@ -3915,7 +3939,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getExportsOfSymbol`, which binds the names of `f[key] = value`, so under whatever is
         // resolving the type of this expression.
         let symbol = bound.symbol_of_function(hir, func);
-        if symbol.is_some() && bound.symbols[symbol.idx()].exports.is_some() {
+        if symbol.is_some() && bound.symbol(symbol).exports.is_some() {
             self.late_bound_members(self.files().sym(file, symbol), true);
         }
         // It creates the signature.
@@ -3967,7 +3991,7 @@ impl<'p, 's> Checker<'p, 's> {
         // finds a signature, and the parameters as `assignNonContextualParameterTypes` left them.
         let is_argument_of_untyped_call = contextual_signature.is_none()
             && self.untyped_call_resolved_again.is_some_and(|(of, call)| {
-                of == file && self.bound(file).expr_parent[e.idx()] == Parent::Expr(call)
+                of == file && self.bound(file).parent_of_expr(e) == Parent::Expr(call)
             });
         // What follows from the incomplete type of a loop stays too (`taint_from`): nothing resets
         // the flag or `links.resolvedType` of a parameter when the loop is complete.
@@ -4354,14 +4378,11 @@ impl<'p, 's> Checker<'p, 's> {
         check_mode: CheckMode,
     ) -> TypeId {
         // Results computed under one mode are not valid under another.
-        let found_outside = (
-            std::mem::take(&mut self.rechecked_exprs),
-            std::mem::take(&mut self.rechecked_members),
-        );
+        let found_outside = self.set_rechecked_aside();
         let outer = self.begin_recheck();
         let ty = self.check_expression_ex(file, e, check_mode);
         self.end_recheck(outer);
-        (self.rechecked_exprs, self.rechecked_members) = found_outside;
+        self.restore_rechecked(found_outside);
         ty
     }
 
@@ -4625,7 +4646,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &(_, declaration) in self.declarations_of_member(file, Decl::Property(p)).iter() {
             let symbol = bound.symbol_of_declaration(declaration);
             if symbol.is_some() {
-                flags |= bound.symbols[symbol.idx()].flags;
+                flags |= bound.symbol(symbol).flags;
             } else if let Decl::Property(q) = declaration
                 && let Some((includes, _)) = crate::bind::flags_of_property(hir[q].kind)
             {
@@ -4947,12 +4968,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // FOR SPEED: in any other literal every member is the first declaration of its symbol. The binder adds a declaration to the
         // symbol of that name where it can, and so does `bindThisPropertyAssignment`.
-        if has_repeated_name || hir.is_js && self.bound(file).expr_symbol[e.idx()].is_some() {
+        if has_repeated_name || hir.is_js && self.bound(file).symbol_of_expr(e).is_some() {
             self.get_named_members(&mut shape.props, |_| true, &[]);
         }
         shape.index = self.index_infos_of_object_literal(file, props, context.in_const_context);
         // "Expando object literals have empty properties but filled exports"
-        let owner = self.bound(file).expr_symbol[e.idx()];
+        let owner = self.bound(file).symbol_of_expr(e);
         self.with_expandos(shape, file, owner)
     }
 
@@ -4967,7 +4988,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mut at = e;
         loop {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::VarInit(d) if hir[d].ty.is_none() => return binding(hir[d].pat),
                 Parent::ParamDefault(p) if hir[p].ty.is_none() => return binding(hir[p].pat),
                 Parent::PatPropDefault(p) => return binding(hir[p].value),
@@ -5014,7 +5035,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         while at.is_some() {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Assign { .. } => {
                         return self.stack.contains(&Query::Expr(file, parent));
@@ -5275,7 +5296,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => {
                         self.check_non_null_type(file, operand, ty);
-                        let (is_symbol, is_bigint) = (Self::is_symbol_like, Self::is_bigint_like);
+                        let (is_symbol, is_bigint) = (tf::ES_SYMBOL_LIKE, tf::BIGINT_LIKE);
                         if self.maybe_type_of_kind_considering_base_constraint(ty, is_symbol) {
                             let operator = match op {
                                 UnOp::Plus => "+",
@@ -5313,10 +5334,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getUnaryResultType`
     fn unary_result_type(&mut self, operand: TypeId) -> TypeId {
-        if !self.maybe_type_of_kind(operand, Self::is_bigint_like) {
+        if !self.maybe_type_of_kind(operand, tf::BIGINT_LIKE) {
             return TypeId::NUMBER;
         }
-        if self.maybe_type_of_kind(operand, Self::is_number_like) {
+        if self.maybe_type_of_kind(operand, tf::NUMBER_LIKE) {
             self.union(&[TypeId::NUMBER, TypeId::BIGINT])
         } else {
             TypeId::BIGINT
@@ -5342,7 +5363,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !passed.contains(CheckMode::TYPE_ONLY) {
                 return false;
             }
-            node = match bound.expr_parent[node.idx()] {
+            node = match bound.parent_of_expr(node) {
                 Parent::Expr(parent) => parent,
                 Parent::Prop(p) => bound.prop_owner[p.idx()],
                 _ => return false,
@@ -5431,6 +5452,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
+                if !is_assignment {
+                    self.look_at_with(|c| {
+                        c.check_testing_known_truthy_left_operand(file, e, true, left);
+                    });
+                }
                 // Without strictNullChecks the falsy values are those of the kind of thing the right side is. Of a left side that
                 // nothing is known of nothing is said.
                 let of = if self.p.files.options.strict_null_checks || l == TypeId::UNRESOLVED {
@@ -5451,6 +5477,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
+                if !is_assignment {
+                    self.look_at_with(|c| {
+                        c.check_testing_known_truthy_left_operand(file, e, false, left);
+                    });
+                }
                 let truthy = self.remove_definitely_falsy(l);
                 let truthy = self.non_nullable(truthy);
                 self.union_reduced(&[truthy, r])
@@ -5465,6 +5496,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return l;
                 }
                 let r = self.type_of_expr(file, right);
+                if !is_assignment {
+                    self.look_at_with(|c| {
+                        c.check_testing_known_truthy_left_operand(file, e, false, left);
+                    });
+                }
                 let present = self.non_nullable(l);
                 self.union_reduced(&[present, r])
             }
@@ -5565,8 +5601,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let l = self.check_non_null_type(file, left, l);
                 let r = self.check_non_null_type(file, right, r);
                 if matches!(op, BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
-                    && self.every_type(l, Self::is_boolean_like)
-                    && self.every_type(r, Self::is_boolean_like)
+                    && self.is_every_type_of_kind(l, tf::BOOLEAN_LITERAL)
+                    && self.is_every_type_of_kind(r, tf::BOOLEAN_LITERAL)
                     && !l.is_never()
                     && !r.is_never()
                 {
@@ -5577,8 +5613,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let right_ok = self.check_arithmetic_operand_type(file, right, r, 2363, true);
                 let any_or_unknown = |c: &Self, t: TypeId| c.is_any(t) || t == TypeId::UNKNOWN;
                 let result = if any_or_unknown(self, l) && any_or_unknown(self, r)
-                    || !self.maybe_type_of_kind(l, Self::is_bigint_like)
-                        && !self.maybe_type_of_kind(r, Self::is_bigint_like)
+                    || !self.maybe_type_of_kind(l, tf::BIGINT_LIKE)
+                        && !self.maybe_type_of_kind(r, tf::BIGINT_LIKE)
                 {
                     TypeId::NUMBER
                 } else if both_are_bigint_like(self, l, r) {

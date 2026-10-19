@@ -6,7 +6,7 @@ const Worker = require("internal/cluster/Worker");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
-const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessagePrimary");
 const { UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 
 let child_process;

@@ -2193,7 +2193,15 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(resolving) = in_progress.find(|resolving| resolving.0 == param) {
             resolving.2 = true;
             let height = resolving.1;
-            self.close_cycle_above(height);
+            // The default that's asked for twice is the circular one. With another default in between, which one that is
+            // depends on where the cycle was entered.
+            match self.defaults_in_progress.last() {
+                Some(innermost) if innermost.0 != param => {
+                    self.task.hold_back();
+                    self.close_ring(height);
+                }
+                _ => self.close_cycle_above(height),
+            }
             return None;
         }
         let (before, scope) = (self.non_cacheable_mark(), self.begin_scope());
@@ -2243,9 +2251,9 @@ impl<'p, 's> Checker<'p, 's> {
         let default = self.type_from_node(of, node);
         let resolving = self.defaults_in_progress.pop();
         if resolving.is_some_and(|resolving| resolving.2) {
-            // It stays, whatever else is in progress.
-            (self.p.type_param_defaults).insert(&self.task, param, None, Stored::new());
+            // It stays, whatever else is in progress. In this order: another task that finds no default has to find the reason.
             (self.p.circular_type_param_defaults).insert(&self.task, param, (), Stored::new());
+            (self.p.type_param_defaults).insert(&self.task, param, None, Stored::new());
             return None;
         }
         Some(match lists {

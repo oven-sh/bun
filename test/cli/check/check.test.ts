@@ -1193,6 +1193,39 @@ type X = (A0 | A1) & (B0 | B1);
     },
   );
 
+  // The defaults of `T` and `U` lead to each other, and TypeScript calls the one circular that it asks for twice. The check
+  // of `d.ts` comes first in program order and begins at the type in `T`'s default, so that's `U`. The other files begin
+  // at `T`, and their checks may run first. With one type parameter there's no choice, but its error can still go missing.
+  test.each([
+    ["U", true, "d.ts(62,24)", `export interface P<T = Q> { t: T }\nexport interface Q<U = P> { u: U }\n`],
+    ["U", false, "d.ts(62,24)", `export interface P<T = Q> { t: T }\nexport interface Q<U = P> { u: U }\n`],
+    ["T", false, "d.ts(61,24)", `export interface P<T = P> { t: T }\n`],
+  ])(
+    "reports a circular default where tsc does, when a later file gets there first (%s, skipLibCheck: %p)",
+    async (name, skipLibCheck, place, interfaces) => {
+      const statements = Array.from(
+        { length: 60 },
+        (_, i) => `const k${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+      ).join("");
+      const user = `import type { P } from "./d";\ndeclare const v: P;\nexport const w = v.t;\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck },
+          files: ["d.ts", "u0.ts", "u1.ts"],
+        }),
+        "d.ts": statements + interfaces,
+        "u0.ts": user,
+        "u1.ts": user,
+      });
+      const runs = skipLibCheck ? 6 : 3;
+      const threads = [1, ...Array(runs).fill(3), ...Array(runs).fill(8)];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(`${place}: error TS2716: Type parameter '${name}' has a circular default.`);
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+
   // `Folder`'s base type mentions `Folder` in a conditional type, and comparing `Folder` asks for its base types again.
   // TypeScript reports that if the base types are what was asked for first, as `root.size` does, and not if the class
   // declaration's own check gets there first. `model.ts` comes first in program order, because `util.ts` imports it.

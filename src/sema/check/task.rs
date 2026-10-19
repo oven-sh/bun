@@ -592,7 +592,12 @@ const TABLES_OF_RECORDS: [&str; 29] = [
 /// The tables to which a task that commits writes at once (`Task::may_write_at_once`), as a bit set by slot: those that are
 /// keyed by a record and hold results.
 pub(super) fn tables_written_at_once() -> u128 {
-    let more = ["relations", "type_param_constraints", "type_param_defaults"];
+    let more = [
+        "relations",
+        "type_param_constraints",
+        "type_param_defaults",
+        "circular_type_param_defaults",
+    ];
     let mut set = 0;
     for (slot, name) in table_names().into_iter().enumerate() {
         if TABLES_OF_RECORDS.contains(&name) || more.contains(&name) {

@@ -1334,7 +1334,7 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── references ─────────────────────────────
 
     /// Returns what the identifier `e` refers to, as the root of a reference or as a key.
-    #[inline]
+    #[inline(always)]
     fn root_of_identifier(&self, file: FileId, e: ExprId, name: Atom) -> Root {
         let symbol = self.bound(file).symbol_of_expr(e);
         if symbol.is_none() {
@@ -1996,6 +1996,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the name of `symbol.ValueDeclaration`, if that's a variable declaration, parameter
     /// or binding element in `file`.
+    #[inline(always)]
     fn name_of_value_declaration(&self, file: FileId, symbol: SymbolId) -> Option<PatId> {
         let files = self.files();
         match files.value_declaration(files.sym(file, symbol)) {
@@ -5035,6 +5036,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// True if `e` is the `x` in `x!`. `(x)!` doesn't count, because only the direct syntactic
     /// parent does.
+    #[inline(always)]
     fn is_operand_of_non_null(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         matches!(self.bound(file).parent_of_expr(e), Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::NonNull(_)))
@@ -6128,7 +6130,7 @@ impl<'p, 's> Checker<'p, 's> {
     ///   flag yet.
     /// - Only a walk resolves the `unchecked_assignment_targets`, so which walks happen is
     ///   observable.
-    #[inline]
+    #[inline(always)]
     pub(super) fn has_order_dependent_assignment_marks(&self, file: FileId) -> bool {
         let is_possible = match self.flow_memo.latest_order_dependent_assignment_marks.get() {
             Some((latest, known)) if latest == file => known,
@@ -6446,10 +6448,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `finalizeEvolvingArrayType`, `createFinalArrayType`
+    #[inline(always)]
     fn finalize_evolving_array(&mut self, ty: TypeId) -> TypeId {
-        let TypeData::EvolvingArray(element) = *self.data(ty) else {
-            return ty;
-        };
+        match *self.data(ty) {
+            TypeData::EvolvingArray(element) => self.final_array_type(ty, element),
+            _ => ty,
+        }
+    }
+
+    /// `createFinalArrayType` for the evolving array type `ty`, whose element type is `element`.
+    #[inline(never)]
+    fn final_array_type(&mut self, ty: TypeId, element: TypeId) -> TypeId {
         if element.is_never() {
             return self.auto_array_type;
         }

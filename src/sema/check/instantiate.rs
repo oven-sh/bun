@@ -262,6 +262,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns the mapper that applies `first`, then `second`. See `unresolved_members`.
+    #[inline(always)]
     pub fn compose(&mut self, first: MapperId, second: MapperId) -> MapperId {
         if first == MapperId::IDENTITY {
             return second;
@@ -269,6 +270,11 @@ impl<'p, 's> Checker<'p, 's> {
         if second == MapperId::IDENTITY {
             return first;
         }
+        self.compose_two(first, second)
+    }
+
+    /// `compose` of two mappers that aren't the identity.
+    fn compose_two(&mut self, first: MapperId, second: MapperId) -> MapperId {
         if let Some(cached_mapper) = self.recent_composed.get(first.0, second.0) {
             return MapperId(cached_mapper);
         }

@@ -2413,6 +2413,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isMethodAccessForCall`. A call doesn't see through `x!`.
+    #[inline(always)]
     fn is_called(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         matches!(self.bound(file).parent_of_expr(e), Parent::Expr(parent)

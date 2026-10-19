@@ -591,7 +591,7 @@ pub fn token_end(text: &[u8], at: usize, is_jsx: bool) -> usize {
     }
     if let Some(operator) = LONG_OPERATORS
         .iter()
-        .find(|operator| text[at..].starts_with(operator))
+        .find(|operator| operator[0] == first && text[at..].starts_with(operator))
     {
         return at + operator.len();
     }

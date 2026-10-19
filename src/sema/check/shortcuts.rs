@@ -202,7 +202,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Equivalent to `some_type(ty, |c, member| c.flags(member) & kind != 0)`.
-    #[inline]
+    #[inline(always)]
     pub(super) fn is_some_type_of_kind(&self, ty: TypeId, kind: u32) -> bool {
         debug_assert!(kind & tf::INTERSECTION == 0);
         let any_member_matches = || self.some_type(ty, |c, member| c.flags(member) & kind != 0);

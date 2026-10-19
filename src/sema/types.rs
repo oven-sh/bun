@@ -3169,7 +3169,7 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     /// True if `id` is an object type other than an evolving array type.
-    #[inline]
+    #[inline(always)]
     pub fn is_object_type(&self, id: TypeId) -> bool {
         self.member_flags_and_more(id) & (IS_PLAIN_OBJECT | IS_MAPPED_TYPE) != 0
     }

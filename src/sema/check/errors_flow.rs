@@ -9,6 +9,7 @@ use crate::bind::{FnOwner, Parent, UNREACHABLE};
 
 impl Checker<'_, '_> {
     /// `IsPotentiallyExecutableNode`
+    #[inline(always)]
     fn is_potentially_executable(&self, file: FileId, s: StmtId) -> bool {
         let hir = self.hir(file);
         match hir[s].kind {

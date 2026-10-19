@@ -237,14 +237,26 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isGenericMappedType`
+    #[inline(always)]
     pub(super) fn is_generic_mapped_type(&mut self, ty: TypeId) -> bool {
-        let TypeData::Anon {
-            origin: Origin::Mapped(file, node),
-            mapper,
-        } = *self.data(ty)
-        else {
-            return false;
-        };
+        match *self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper,
+            } => self.is_mapped_type_generic(ty, file, node, mapper),
+            _ => false,
+        }
+    }
+
+    /// `isGenericMappedType` of the mapped type `ty`, which is declared at `node` and instantiated with `mapper`.
+    #[inline(never)]
+    fn is_mapped_type_generic(
+        &mut self,
+        ty: TypeId,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) -> bool {
         let constraint = self.mapped_keys(ty);
         if self.is_generic_index_type(constraint) {
             return true;

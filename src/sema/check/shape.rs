@@ -789,7 +789,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `d.resolvedTypeArguments` of a reference or a tuple type, if they're resolved.
-    #[inline]
+    #[inline(always)]
     fn resolved_type_arguments(&mut self, ty: TypeId) -> Option<&'p [TypeId]> {
         let p = self.p;
         match self.data(ty) {
@@ -1925,31 +1925,34 @@ impl<'p, 's> Checker<'p, 's> {
     /// A member's name, if it's statically known. A computed name is determined only by the
     /// expression's type, as in an object literal or a binding pattern
     /// (`checkComputedPropertyName`, `isTypeUsableAsPropertyName`).
+    #[inline(always)]
     pub fn member_name(&mut self, file: FileId, key: PropKey) -> Option<Atom> {
         match key {
             PropKey::Name(name) | PropKey::Private(name) => Some(name),
-            PropKey::Computed(e) => {
-                // For `[Symbol.iterator]`, unless `Symbol` is shadowed, read that property of the
-                // global `Symbol` without checking the expression. This is very common in the
-                // default libraries.
-                let hir = self.hir(file);
-                if let ExprKind::Dot { obj, name, .. } = hir[e].kind
-                    && matches!(hir[obj].kind, ExprKind::Ident(known::Symbol))
-                    && self.bound(file).symbol_of_expr(obj).is_none()
-                    && let Some(global) = self.files().global(known::Symbol, SymFlags::VALUE)
-                {
-                    let constructor = self.type_of_symbol(global);
-                    if let Some(ty) = self.type_of_property(constructor, name)
-                        && let Some(found) = self.property_name_of_type(ty)
-                    {
-                        return Some(found);
-                    }
-                }
-                let ty = self.check_computed_property_name(file, e);
-                self.property_name_of_type(ty)
-            }
+            PropKey::Computed(e) => self.computed_member_name(file, e),
             PropKey::None => None,
         }
+    }
+
+    #[inline(never)]
+    fn computed_member_name(&mut self, file: FileId, e: ExprId) -> Option<Atom> {
+        // For `[Symbol.iterator]`, unless `Symbol` is shadowed, read that property of the global `Symbol` without
+        // checking the expression. This is very common in the default libraries.
+        let hir = self.hir(file);
+        if let ExprKind::Dot { obj, name, .. } = hir[e].kind
+            && matches!(hir[obj].kind, ExprKind::Ident(known::Symbol))
+            && self.bound(file).symbol_of_expr(obj).is_none()
+            && let Some(global) = self.files().global(known::Symbol, SymFlags::VALUE)
+        {
+            let constructor = self.type_of_symbol(global);
+            if let Some(ty) = self.type_of_property(constructor, name)
+                && let Some(found) = self.property_name_of_type(ty)
+            {
+                return Some(found);
+            }
+        }
+        let ty = self.check_computed_property_name(file, e);
+        self.property_name_of_type(ty)
     }
 
     /// True if the computed name `[e]` of a member of a class, interface or type literal can
@@ -7082,7 +7085,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `ConstrainedType.resolvedBaseConstraint` of `ty`: the entry in `Program::constraints`, falling back to
     /// `constraints_of_this_file`. Anything computed from the latter is also valid only for this file.
-    #[inline]
+    #[inline(always)]
     pub(super) fn known_constraint(&self, ty: TypeId) -> Option<(Option<TypeId>, bool)> {
         let known = self.p.constraints.get(&self.task, &ty);
         if known.is_some() || self.constraints_of_this_file.is_empty() {
@@ -7412,11 +7415,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getPropertyOfTypeEx`: true if `ty` is the object type of a module that has `name` only
     /// through `export type *`. It's listed among the properties, but a lookup doesn't find it, and
     /// nothing substitutes for it.
-    #[inline]
+    #[inline(always)]
     pub(super) fn is_type_only_member(&self, ty: TypeId, name: Atom) -> bool {
-        if !self.types().is_module_object(ty) {
-            return false;
-        }
+        self.types().is_module_object(ty) && self.is_type_only_member_of_module(ty, name)
+    }
+
+    #[inline(never)]
+    fn is_type_only_member_of_module(&self, ty: TypeId, name: Atom) -> bool {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::Module(module) | Origin::Namespace { module, .. }, .. } if self.files().is_type_only_star_export(module, name))
     }
 
@@ -8289,7 +8294,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isConstEnumObjectType`
-    #[inline]
+    #[inline(always)]
     pub(super) fn is_const_enum_object(&self, ty: TypeId) -> bool {
         // This runs for every expression. Most have a type that isn't an object type, which can be read from a column.
         if !self.types().is_plain_object(ty) {
@@ -8298,6 +8303,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.is_const_enum_object_by_record(ty)
     }
 
+    #[inline(never)]
     fn is_const_enum_object_by_record(&self, ty: TypeId) -> bool {
         matches!(*self.data(ty), TypeData::Anon { origin: Origin::EnumObject(sym), .. }
             if self.files().decls_of(sym).iter().any(|&(f, d)| matches!(d, Decl::Enum(id) if self.hir(f)[id].flags.contains(Flags::CONST))))
@@ -8318,7 +8324,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `String`. For a type variable's apparent type that changes nothing, but the apparent type
     /// doesn't tell what `this` is in a tuple type. `get_property_of_type_ex` gets that from the
     /// variable.
-    #[inline]
+    #[inline(always)]
     pub(super) fn apparent_type_or_type_variable(
         &self,
         ty: TypeId,

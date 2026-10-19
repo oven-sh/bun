@@ -822,6 +822,7 @@ pub enum ExprKind {
 pub const FAR: u16 = u16::MAX;
 
 /// [`FileIn::stmt_modifiers`] for callers that only have the file's list.
+#[inline(always)]
 pub fn stmt_modifiers_in(
     modifiers_of_stmts: &[(StmtId, Span<ModifierId>)],
     s: StmtId,
@@ -2659,6 +2660,7 @@ impl<S: Storage> FileIn<S> {
         &self.modifiers[list.range()]
     }
     /// `ModifiersToFlags`
+    #[inline(always)]
     pub fn modifiers_to_flags(&self, list: Span<ModifierId>) -> Flags {
         let mut flags = Flags::empty();
         for modifier in self.modifier_list(list) {
@@ -3337,6 +3339,7 @@ pub fn is_narrowable_reference(hir: &File, mut e: ExprId) -> bool {
 }
 
 /// `isNarrowableReference` of `e`, or the expression that has the same answer.
+#[inline(always)]
 pub(crate) fn narrowable_reference_step(hir: &File, e: ExprId) -> Result<bool, ExprId> {
     match hir[e].kind {
         ExprKind::Ident(_)

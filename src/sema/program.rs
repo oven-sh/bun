@@ -7968,7 +7968,7 @@ impl<'s> Files<'s> {
         &self.modules[file.idx()].bound
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn symbol(&self, sym: Sym) -> Symbol<'_> {
         self.modules[sym.file.idx()].bound.symbol(sym.id)
     }
@@ -8006,12 +8006,13 @@ impl<'s> Files<'s> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn flags(&self, sym: Sym) -> SymFlags {
         self.symbol(sym).flags
     }
 
     /// Returns every declaration of `sym`, which is canonical. The list is cached permanently if there are several.
+    #[inline(always)]
     pub fn decls_of(&self, sym: Sym) -> List<'_, (FileId, Decl)> {
         let symbol = self.symbol(sym);
         if !symbol.flags.contains(SymFlags::MERGED) {
@@ -8021,6 +8022,11 @@ impl<'s> Files<'s> {
                 _ => {}
             }
         }
+        self.several_decls_of(sym)
+    }
+
+    #[inline(never)]
+    fn several_decls_of(&self, sym: Sym) -> List<'_, (FileId, Decl)> {
         match self.memo.decls.get_ref(&sym) {
             Some(&cached_decls) => List::Permanent(cached_decls),
             // `link` hasn't reached it yet.
@@ -8125,7 +8131,7 @@ impl<'s> Files<'s> {
     }
 
     /// `symbol.ValueDeclaration`
-    #[inline]
+    #[inline(always)]
     pub fn value_declaration(&self, sym: Sym) -> Option<(FileId, Decl)> {
         let symbol = self.symbol(sym);
         let index = symbol.value_declaration as usize;

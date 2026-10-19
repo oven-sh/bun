@@ -1224,6 +1224,7 @@ impl<'s> File<'s> {
     }
 
     /// Returns the JSX element or fragment at `row`, if it's one.
+    #[inline(always)]
     fn jsx_at(&self, row: Node) -> Option<&Jsx> {
         match self.data(row) {
             NodeData::Expr(e) => match self[e].kind {
@@ -1240,7 +1241,7 @@ impl<'s> File<'s> {
     }
 
     /// `node.Parent`. `NONE` for the file, and for a HIR node that's unreachable from the file.
-    #[inline]
+    #[inline(always)]
     pub fn parent(&self, node: Node) -> Node {
         match self.parents().rows.get(node.idx()) {
             Some(&parent) => parent,
@@ -1306,7 +1307,7 @@ impl<'s> File<'s> {
     }
 
     /// Half of all nodes are leaves, and the traversal doesn't need to revisit those.
-    #[inline]
+    #[inline(always)]
     fn may_have_child_rows(&self, data: NodeData, node: Node) -> bool {
         match data {
             NodeData::Expr(e) => !matches!(
@@ -1376,41 +1377,43 @@ impl<'s> File<'s> {
         let mut wrapper_parents = Vec::new();
         // The current HIR node or part, and the parts of that HIR node that have children.
         let (current_node, open) = (Cell::new(Node::NONE), RefCell::new(Vec::new()));
-        let mut visit = |child: Node| {
+        let mut visit_part = |child: Node, part: Part, rows: &mut [Node]| {
             let node = current_node.get();
-            match child.part() {
-                None => {
-                    rows[child.idx()] = node;
-                    return false;
-                }
-                Some(Part::Span | Part::Qualified | Part::JsxExpression) => {
+            match part {
+                Part::Span | Part::Qualified | Part::JsxExpression => {
                     wrapper_parents.push((child, node));
                 }
                 // In the head of a `for` it represents its HIR node, which isn't a tsgo node.
-                Some(Part::DeclarationList) if child.row() != node.row() => {
+                Part::DeclarationList if child.row() != node.row() => {
                     rows[child.row().idx()] = node;
-                    return false;
+                    return;
                 }
                 // The name of an expression or a statement is an identifier.
-                Some(Part::Name) if child.row().0 < self.bases.0[2] => return false,
-                Some(
-                    Part::Label
-                    | Part::BindingsName
-                    | Part::NameLiteral
-                    | Part::Literal
-                    | Part::Operand
-                    | Part::Head
-                    | Part::Tail
-                    | Part::ConstType
-                    | Part::Specifier
-                    | Part::Keyword
-                    | Part::Namespace
-                    | Part::LocalName,
-                ) => return false,
+                Part::Name if child.row().0 < self.bases.0[2] => return,
+                Part::Label
+                | Part::BindingsName
+                | Part::NameLiteral
+                | Part::Literal
+                | Part::Operand
+                | Part::Head
+                | Part::Tail
+                | Part::ConstType
+                | Part::Specifier
+                | Part::Keyword
+                | Part::Namespace
+                | Part::LocalName => return,
                 // Derived from the HIR node.
-                Some(_) => {}
+                _ => {}
             }
             open.borrow_mut().push(child);
+        };
+        // Most children are HIR nodes. The parts are handled behind a `dyn`, so that the rest is small enough to inline.
+        let visit_part: &mut dyn FnMut(Node, Part, &mut [Node]) = &mut visit_part;
+        let mut visit = |child: Node| {
+            match child.part() {
+                None => rows[child.idx()] = current_node.get(),
+                Some(part) => visit_part(child, part, &mut rows),
+            }
             false
         };
         let mut v = Children {
@@ -1532,6 +1535,7 @@ impl<'s> File<'s> {
 
     /// True for the `import` of an `import.x` that's neither `import.meta` nor called. The keyword of a `MetaProperty`
     /// isn't a node.
+    #[inline(always)]
     fn is_import_keyword(&self, e: ExprId) -> bool {
         matches!(self[e].kind, ExprKind::Missing)
             && (self.text.get(self[e].pos as usize..))

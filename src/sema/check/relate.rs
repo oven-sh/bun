@@ -910,7 +910,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `property_in_type`, for looking up several names in sequence. `inherited` is `inherited_of`
     /// the shape of `members`. `ty` is the type that has `members`.
-    #[inline]
+    #[inline(always)]
     pub(super) fn property_among(
         &mut self,
         ty: TypeId,
@@ -1376,6 +1376,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `t.AsLiteralType().value`, of a string or a number.
+    #[inline(always)]
     fn literal_value(&self, ty: TypeId) -> Option<EnumValue> {
         match *self.data(ty) {
             TypeData::StringLit { value, .. } => Some(EnumValue::String(value)),
@@ -1395,6 +1396,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `t.symbol`, of a type with `TypeFlagsEnumLike`.
+    #[inline(always)]
     fn symbol_of_enum_like(&self, ty: TypeId) -> Option<Sym> {
         match *self.data(ty) {
             TypeData::Enum { symbol, .. } | TypeData::EnumLit { member: symbol, .. } => {
@@ -7450,8 +7452,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getEffectiveRestType`
+    #[inline(always)]
     pub(super) fn effective_rest_type(&mut self, params: &[SigParam]) -> Option<TypeId> {
         let last = params.last().filter(|p| p.rest)?;
+        self.effective_type_of_rest_parameter(last)
+    }
+
+    fn effective_type_of_rest_parameter(&mut self, last: &SigParam) -> Option<TypeId> {
         let rest = self.get_type_of_parameter(last);
         match self.data(rest) {
             TypeData::Tuple { flags, .. } => {

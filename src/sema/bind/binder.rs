@@ -1012,9 +1012,11 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `setFlowNodeReferenced`
+    #[inline(always)]
     fn set_flow_node_referenced(&mut self, flow: FlowId) {
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         if word >= self.referenced.len() {
+            std::hint::cold_path();
             self.referenced.resize(word + 1, 0);
             self.b.flow_shared.resize(word + 1, 0);
         }
@@ -4568,6 +4570,7 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// The first part of `expr`, which doesn't depend on flow or on the enclosing expression.
+    #[inline(always)]
     fn enter_expr(&mut self, id: ExprId, parent: Parent) {
         self.b.expr_parent[id.idx()] = parent.into();
         if self.is_unchecked {

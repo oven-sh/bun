@@ -665,16 +665,22 @@ impl<'s> Half<'s> {
 
     /// Returns the cell at `index` of the row `dense`. The first write allocates a cell for every node of the file, so
     /// the row doesn't grow step by step.
-    #[inline]
+    #[inline(always)]
     fn cell_in_row(&mut self, index: u32) -> &mut u32 {
         if index as usize >= self.dense.len() {
-            let cells = (self.nodes as usize).max(index as usize + 1);
-            match self.dense.is_empty() {
-                true => self.dense = vec![0; cells],
-                false => self.dense.resize(cells, 0),
-            }
+            self.grow_row(index);
         }
         &mut self.dense[index as usize]
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_row(&mut self, index: u32) {
+        let cells = (self.nodes as usize).max(index as usize + 1);
+        match self.dense.is_empty() {
+            true => self.dense = vec![0; cells],
+            false => self.dense.resize(cells, 0),
+        }
     }
 
     /// True if `earlier` has the row of `file`. `ordinal` is the file's ordinal, or 0 if it has none.

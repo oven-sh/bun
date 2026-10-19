@@ -120,6 +120,7 @@ use spans::start_of_token_before;
 use spans::token_end;
 use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicBool;
 use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
@@ -1103,7 +1104,7 @@ struct Scope {
 }
 
 /// A query that may be circular.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Query {
     Expr(FileId, ExprId),
     /// Never entered. It owns the diagnostics that `getTypeOfExpression` reports for the expression
@@ -1155,6 +1156,42 @@ enum Query {
     /// overflow (`error_about_comparison_at_current_node`). The entry of a `MappedProp` gets one
     /// too (`circular_mapped_property`).
     Comparison(u64),
+}
+
+/// Hashes what `#[derive(Hash)]` hashes. Written out so that it's inlined, which drops the `match` where the caller
+/// has just built the query.
+impl Hash for Query {
+    #[inline(always)]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match *self {
+            Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) | Query::Call(file, e) => {
+                (file, e).hash(state);
+            }
+            Query::Symbol(sym)
+            | Query::Declared(sym)
+            | Query::Bases(sym)
+            | Query::BaseConstructor(sym)
+            | Query::AliasTarget(sym) => sym.hash(state),
+            Query::Return(file, function) | Query::ReturnAtFirstLook(file, function) => {
+                (file, function).hash(state);
+            }
+            Query::ReturnOfSignature(sig) => sig.hash(state),
+            Query::Shape(ty)
+            | Query::Properties(ty)
+            | Query::Constraint(ty)
+            | Query::InferredConstraint(ty)
+            | Query::TypeArguments(ty) => ty.hash(state),
+            Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => (file, pat).hash(state),
+            Query::LiteralProp(file, prop) => (file, prop).hash(state),
+            Query::TypeNode(file, node) | Query::WriteType(file, node) => (file, node).hash(state),
+            Query::MappedProp(ty, name) => (ty, name).hash(state),
+            Query::Enum(file, member) => (file, member).hash(state),
+            Query::Cond(file, node, mapper) => (file, node, mapper).hash(state),
+            Query::InitializerIsUndefined(file, param) => (file, param).hash(state),
+            Query::Comparison(names) => names.hash(state),
+        }
+    }
 }
 
 /// A record that `Mentioned` still has to visit, or has visited.
@@ -4041,7 +4078,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().flags(ty)
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn is_union(&self, ty: TypeId) -> bool {
         self.flags(ty) & tf::UNION != 0
     }
@@ -4053,7 +4090,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `TypeFlagsObject`, except for an evolving array.
-    #[inline]
+    #[inline(always)]
     pub fn is_object_type(&self, ty: TypeId) -> bool {
         self.types().is_object_type(ty)
     }
@@ -4664,6 +4701,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `removeMissingType`
+    #[inline(always)]
     pub fn remove_missing_type(&mut self, ty: TypeId, is_optional: bool) -> TypeId {
         if is_optional && self.p.files.options.exact_optional_property_types {
             self.filter(ty, |_, m| m != TypeId::MISSING)

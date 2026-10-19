@@ -257,6 +257,8 @@ pub(crate) fn list_objects(
             allow_empty_path: true,
             method: bun_http::Method::GET,
             search_params: Some(search_params.slice()),
+            // `list()` shipped with the key's name for this 404. A rename is a breaking change.
+            missing: s3_simple_request::Missing::Key,
             ..Default::default()
         },
         s3_simple_request::Callback::ListObjects(callback),
@@ -280,6 +282,7 @@ pub(crate) fn head_bucket(
             allow_empty_path: true,
             method: bun_http::Method::HEAD,
             request_payer,
+            missing: s3_simple_request::Missing::Bucket,
             ..Default::default()
         },
         s3_simple_request::Callback::Stat(callback),
@@ -355,6 +358,7 @@ pub(crate) fn delete_bucket(
             allow_empty_path: true,
             method: bun_http::Method::DELETE,
             request_payer,
+            missing: s3_simple_request::Missing::Bucket,
             ..Default::default()
         },
         s3_simple_request::Callback::Delete(callback),

@@ -1565,6 +1565,7 @@ declare module "bun" {
      * @param options Additional S3 options to override defaults
      * @returns A promise that resolves when the bucket is gone.
      * It rejects with an error whose `code` is the S3 error code, for example `BucketNotEmpty` or `NoSuchBucket`.
+     * A 404 that carries no S3 error code is `NoSuchBucket` too.
      *
      * @example
      * ```ts

@@ -1603,10 +1603,43 @@ describe("s3-server", () => {
       expect(await code(client.bucketExists("buntest-us-west-1"))).toBe("PermanentRedirect");
       const stranger = S3({ ...options, accessKeyId: "stranger", secretAccessKey: "stranger" });
       expect(await code(stranger.bucketExists("buntest"))).toBe("AccessDenied");
-      // A 404 with no body is the bucket, not a key.
-      expect(await code(S3(euWest1Server.clientOptions()).deleteBucket(`missing-${randomUUIDv7()}`))).toBe(
-        "NoSuchBucket",
-      );
+    });
+
+    it("deleteBucket names the bucket for a 404 that has no S3 error code", async () => {
+      let body: string | null = null;
+      using server = Bun.serve({ port: 0, fetch: () => new Response(body, { status: 404 }) });
+      const stub = { ...options, endpoint: server.url.href, bucket: "plain" };
+      const client = S3(stub);
+      const outcome = (promise: Promise<unknown>) =>
+        promise.then(
+          value => ({ resolved: value }),
+          e => ({ code: e.code, message: e.message, path: e.path }),
+        );
+      const noSuchBucket = { code: "NoSuchBucket", message: "The specified bucket does not exist", path: "plain" };
+      const noSuchKey = { code: "NoSuchKey", message: "The specified key does not exist." };
+
+      // A proxy or an S3 look-alike answers with no body, with a page of its own, or with no <Code>.
+      for (body of [
+        null,
+        "<html><body><h1>404 Not Found</h1></body></html>",
+        "<Error><Message>gone</Message></Error>",
+      ]) {
+        expect(await outcome(client.deleteBucket())).toEqual(noSuchBucket);
+        expect(await outcome(client.deleteBucket("plain"))).toEqual(noSuchBucket);
+        expect(await outcome(S3Client.deleteBucket("plain", stub))).toEqual(noSuchBucket);
+        expect(await outcome(client.bucketExists())).toEqual({ resolved: false });
+        // A request for a key keeps the name of the key, and so does list().
+        expect(await outcome(client.file("key").delete())).toEqual({ ...noSuchKey, path: "key" });
+        expect(await outcome(client.file("key").stat())).toEqual({ ...noSuchKey, path: "key" });
+        expect(await outcome(client.file("key").text())).toEqual({ ...noSuchKey, path: "key" });
+        expect(await outcome(client.list())).toEqual({ ...noSuchKey, path: "" });
+      }
+
+      // A code from the server wins.
+      body = "<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>";
+      expect(await outcome(client.deleteBucket())).toEqual({ ...noSuchKey, path: "plain" });
+      body = "<Error><Code>NoSuchBucket</Code><Message>no bucket here</Message></Error>";
+      expect(await outcome(client.deleteBucket())).toEqual({ ...noSuchBucket, message: "no bucket here" });
     });
 
     it("sends the acl and object lock headers signed, and the LocationConstraint as XML", async () => {

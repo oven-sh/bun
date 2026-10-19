@@ -139,6 +139,7 @@ pub(crate) struct S3HttpSimpleTask {
     pub(crate) abort_handle: bun_jsc::AbortHandle,
     /// The context of the script that asked (the handle forgets it when the context stops).
     pub(crate) context: bun_jsc::ContextId,
+    pub(crate) missing: Missing,
 }
 
 bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
@@ -220,6 +221,28 @@ enum ErrorType {
     Failure,
 }
 
+/// What a 404 without an S3 `<Code>` names: the resource the request is for.
+#[derive(Clone, Copy)]
+pub(crate) enum Missing {
+    Key,
+    Bucket,
+}
+
+impl Missing {
+    fn error(self) -> S3Error<'static> {
+        match self {
+            Missing::Key => S3Error {
+                code: b"NoSuchKey",
+                message: b"The specified key does not exist.",
+            },
+            Missing::Bucket => S3Error {
+                code: b"NoSuchBucket",
+                message: b"The specified bucket does not exist",
+            },
+        }
+    }
+}
+
 impl S3HttpSimpleTask {
     const HOLDS_TICKET: &str = "S3 request on the HTTP thread holds a ticket";
 
@@ -255,8 +278,9 @@ impl S3HttpSimpleTask {
 
         if error_type == ErrorType::NotFound {
             if !has_error_code {
-                code = b"NoSuchKey";
-                message = b"The specified key does not exist.";
+                let name = self.missing.error();
+                code = name.code;
+                message = name.message;
             }
             self.callback
                 .not_found(code, message, self.callback_context)?;
@@ -556,6 +580,8 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) request_payer: bool,
     /// CreateBucket only: signs and sends `x-amz-bucket-object-lock-enabled: true`.
     pub(crate) bucket_object_lock: bool,
+    /// See [`Missing`].
+    pub(crate) missing: Missing,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -575,6 +601,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             storage_class: None,
             request_payer: false,
             bucket_object_lock: false,
+            missing: Missing::Key,
         }
     }
 }
@@ -702,6 +729,7 @@ pub(crate) fn execute_simple_s3_request(
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
+        missing: options.missing,
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.

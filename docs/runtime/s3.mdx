@@ -582,6 +582,8 @@ await client.deleteBucket("tenant-42");
 
 The `acl` option is sent only when the call sets it: the ACL of the client is for its objects. With `virtualHostedStyle` and an `endpoint`, the bucket is the hostname, so a `name` for another bucket throws. A name with a slash throws too.
 
+`deleteBucket` rejects with the error code that S3 sends, for example `BucketNotEmpty` or `NoSuchBucket`. A 404 that carries no S3 error code, for example from a proxy, is `NoSuchBucket` too.
+
 If the connection is lost before the answer arrives, Bun can send the request again. A `createBucket` or `deleteBucket` that did its work on the first request can then reject, with `BucketAlreadyOwnedByYou` or `NoSuchBucket`.
 
 The static forms take the credentials as the second argument: `S3Client.bucketExists(name, credentials)`, `S3Client.createBucket(name, credentials)`, and `S3Client.deleteBucket(name, credentials)`.

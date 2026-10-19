@@ -420,6 +420,7 @@ describe.concurrent("a subtest that is created before its parent is finished", (
         "(fail) a failing before hook that an after hook registers",
         "(fail) the body throws and a subtest from an after hook fails",
         "(fail) a subtest from an after hook that does not settle",
+        "(fail) a subtest from an after hook that reads a file",
         "(fail) two subtests from an after hook that do not settle",
         "(pass) a later test still runs",
       ],
@@ -434,6 +435,8 @@ describe.concurrent("a subtest that is created before its parent is finished", (
         "error: from the body",
         "error: from the before hook",
         "error: from the body",
+        "error: 1 subtest failed",
+        "error: test did not finish before its parent and was cancelled",
         "error: 1 subtest failed",
         "error: test did not finish before its parent and was cancelled",
         "error: 2 subtests failed",
@@ -485,7 +488,7 @@ describe.concurrent("a subtest that is created before its parent is finished", (
   // [fixture, what the summary of node has, exit code, events]
   const onNode: [string, string[], number, string[] | undefined][] = [
     ["39-subtests-in-hooks.js", ["pass 18", "fail 0", "cancelled 0"], 0, undefined],
-    ["39b-subtests-in-hooks-fail.js", ["pass 3", "fail 14", "cancelled 3"], 1, undefined],
+    ["39b-subtests-in-hooks-fail.js", ["pass 3", "fail 15", "cancelled 4"], 1, undefined],
     ["39c-failed-body-and-hooks.js", ["pass 2", "fail 0", "cancelled 2"], 1, undefined],
     [
       "39d-differences-from-node.js",

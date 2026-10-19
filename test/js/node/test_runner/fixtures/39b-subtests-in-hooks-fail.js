@@ -1,4 +1,5 @@
 const test = require("node:test");
+const fs = require("node:fs");
 
 // This file fails on purpose. A subtest that is created before its parent is
 // finished counts for the parent, also when a hook creates it.
@@ -60,6 +61,15 @@ test("the body throws and a subtest from an after hook fails", t => {
 test("a subtest from an after hook that does not settle", t => {
   t.after(() => {
     t.test("does not settle", () => new Promise(() => {}));
+  });
+});
+
+// What is left is what needs more than microtasks, however fast it is.
+test("a subtest from an after hook that reads a file", t => {
+  t.after(() => {
+    t.test("reads", async () => {
+      await fs.promises.readFile(__filename);
+    });
   });
 });
 

@@ -28,7 +28,7 @@ const kDefaultFunction = () => {};
 // globals, so capture them at module load like Node's runner does.
 const realSetTimeout = setTimeout;
 const realClearTimeout = clearTimeout;
-const realSetImmediate = setImmediate;
+const nextTick = process.nextTick;
 const kDefaultOptions = kEmptyObject;
 // Matches Node's internal/timers TIMEOUT_MAX.
 const kTimeoutMax = 2 ** 31 - 1;
@@ -2485,10 +2485,10 @@ async function drainSubtestChain(node: TestNode) {
   node.subtestChain = kSettledChain;
 }
 
-// False when the subtest chain of a node needs more than the microtasks that are left and one macrotask to settle.
+// False when the subtest chain of a node needs more than the microtasks that are left to settle: a timer, or I/O.
 function subtestsSettleAtOnce(node: TestNode) {
   const { promise, resolve } = Promise.withResolvers<boolean>();
-  realSetImmediate(resolve, false);
+  nextTick(resolve, false);
   drainSubtestChain(node).then(() => resolve(true));
   return promise;
 }

@@ -792,7 +792,7 @@ class Session extends EventEmitter {
           params?.includeObjectsCollectedByMinorGC === undefined ? false : params.includeObjectsCollectedByMinorGC;
         if (
           typeof samplingInterval !== "number" ||
-          !$isFinite(samplingInterval) ||
+          !Number.isFinite(samplingInterval) ||
           typeof includeMajor !== "boolean" ||
           typeof includeMinor !== "boolean"
         ) {

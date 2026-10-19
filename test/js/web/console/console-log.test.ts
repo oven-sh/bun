@@ -185,6 +185,7 @@ describe("console.dir with customInspect: false", () => {
       }
     }
     const jsx = (type, props) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props });
+    const errorWith = p => Object.assign(new Error("boom"), { p });
     // The global of another context: the same kind of value as globalThis, with a short listing.
     const vmGlobal = require("node:vm").runInNewContext("globalThis");
     vmGlobal[custom] = hook;
@@ -236,9 +237,18 @@ describe("console.dir with customInspect: false", () => {
         "toJSON() result": () => console.dir(Object.assign(new URLSearchParams("a=1"), { toJSON: () => new G() }), off),
         "JSX children": () => console.dir(jsx("div", { children: new G() }), off),
         "JSX child that is classified twice": () => console.dir(jsx("div", { children: flipping }), off),
-        "error property, then a sibling": () => console.dir([Object.assign(new Error("boom"), { k: new K() }), new G()], off),
         "global object": () => console.dir(vmGlobal, off),
         "Proxy of a global object": () => console.dir(new Proxy(vmGlobal, {}), off),
+        "error property": () => console.dir(errorWith(new K()), off),
+        "error property behind a Proxy": () => console.dir(errorWith(new Proxy(new G(), {})), off),
+        "error property that is a toJSON() result": () =>
+          console.dir(errorWith(Object.assign(new URLSearchParams("a=1"), { toJSON: () => new G() })), off),
+        "error property with JSX children": () => console.dir(errorWith(jsx("div", { children: new G() })), off),
+        "Proxy of an error": () => console.dir(new Proxy(errorWith(new Proxy(new K(), {})), {}), off),
+        "cause of an error": () => console.dir(new Error("outer", { cause: errorWith(new Proxy(new K(), {})) }), off),
+        "member of an AggregateError": () =>
+          console.dir(new AggregateError([errorWith(new Proxy(new K(), {}))], "all"), off),
+        "Proxy after an error": () => console.dir([errorWith(new K()), new Proxy(new G(), {})], off),
       });
     `);
 
@@ -257,9 +267,16 @@ describe("console.dir with customInspect: false", () => {
         "toJSON() result: calls=0 gets=0",
         "JSX children: calls=0 gets=0",
         "JSX child that is classified twice: calls=0 gets=0",
-        "error property, then a sibling: calls=0 gets=0",
         "global object: calls=0 gets=0",
         "Proxy of a global object: calls=0 gets=0",
+        "error property: calls=0 gets=0",
+        "error property behind a Proxy: calls=0 gets=0",
+        "error property that is a toJSON() result: calls=0 gets=0",
+        "error property with JSX children: calls=0 gets=0",
+        "Proxy of an error: calls=0 gets=0",
+        "cause of an error: calls=0 gets=0",
+        "member of an AggregateError: calls=0 gets=0",
+        "Proxy after an error: calls=0 gets=0",
       ),
       exitCode: 0,
     });
@@ -349,18 +366,20 @@ describe("console.dir with customInspect: false", () => {
 
   it.concurrent("applies to that call only", async () => {
     const { stderr, exitCode } = await run(/* js */ `
-      class SizeLogs extends Map {
-        get size() {
-          console.log(new K());
-          return 0;
-        }
-      }
-      const dirFromHook = {
+      // The native formatter reads the size of a Map subclass through its getter.
+      const logsFromGetter = value =>
+        new (class extends Map {
+          get size() {
+            console.log(value);
+            return 0;
+          }
+        })();
+      const dirFromHook = value => ({
         [custom]() {
-          console.dir(new K(), off);
+          console.dir(value, off);
           return "OUTER";
         },
-      };
+      });
 
       report({
         "console.dir(off), console.log, console.dir": () => {
@@ -368,8 +387,17 @@ describe("console.dir with customInspect: false", () => {
           console.log(new K());
           console.dir(new K());
         },
-        "console.log from a getter that console.dir(off) reads": () => console.dir(new SizeLogs(), off),
-        "console.dir(off) from a hook that console.log calls": () => console.log([dirFromHook, new K()]),
+        "console.log from a getter that console.dir(off) reads": () => console.dir(logsFromGetter(new K()), off),
+        "console.log of an error from that getter": () =>
+          console.dir(logsFromGetter(errorWith(new Proxy(new K(), {}))), off),
+        "console.dir(off) from a hook that console.log calls": () => console.log([dirFromHook(new K()), new K()]),
+        "console.dir(off) from a hook in an error that console.log prints": () =>
+          console.log(
+            Object.assign(new Error("outer"), {
+              a: new Proxy(dirFromHook(errorWith(new Proxy(new K(), {}))), {}),
+              b: new Proxy(new K(), {}),
+            }),
+          ),
         "console.log": () => console.log(new K(), off),
         "console.dirxml": () => console.dirxml(new K(), off),
         "%o": () => console.log("%o", new K(), off),
@@ -382,7 +410,9 @@ describe("console.dir with customInspect: false", () => {
       stderr: lines(
         "console.dir(off), console.log, console.dir: calls=2 gets=0",
         "console.log from a getter that console.dir(off) reads: calls=1 gets=0",
+        "console.log of an error from that getter: calls=1 gets=0",
         "console.dir(off) from a hook that console.log calls: calls=1 gets=0",
+        "console.dir(off) from a hook in an error that console.log prints: calls=1 gets=0",
         "console.log: calls=1 gets=0",
         "console.dirxml: calls=1 gets=0",
         "%o: calls=1 gets=0",
@@ -393,87 +423,153 @@ describe("console.dir with customInspect: false", () => {
     });
   });
 
-  // The native formatter lists prototype members (https://github.com/oven-sh/bun/issues/1713),
-  // so with the hooks off a class prints its hook as one of them.
-  it("prints the value without its hook", async () => {
+  // The error printer turns the hooks off for an error's own properties, but not behind a Proxy.
+  it.concurrent("does not change how an error prints without the option", async () => {
     const { stdout, stderr, exitCode } = await run(/* js */ `
-      const values = [
-        new K(),
-        new URL("http://example.com/a"),
-        new ReadableStream(),
-        Buffer.from("hi"),
-        vmGlobal,
-        new Proxy(vmGlobal, {}),
-      ];
-      for (const value of values) {
-        console.dir(value);
-        console.dir(value, off);
-      }
+      const behindProxy = errorWith(new Proxy(new K(), {}));
+
+      report({
+        "console.dir(error)": () => console.dir(behindProxy),
+        "console.dir(error, {})": () => console.dir(behindProxy, {}),
+        "console.dir(error, { customInspect: true })": () => console.dir(behindProxy, { customInspect: true }),
+        "console.dir(error, { customInspect: undefined })": () => console.dir(behindProxy, { customInspect: undefined }),
+        "console.log(error)": () => console.log(behindProxy),
+        "console.table cell": () => console.table([{ error: behindProxy }]),
+        "direct property": () => console.log(errorWith(new K())),
+        "JSX children": () => console.log(errorWith(jsx("div", { children: new G() }))),
+      });
     `);
 
-    expect(stdout).toMatchInlineSnapshot(`
-      "HOOK
-      K {
-        [Symbol(nodejs.util.inspect.custom)]: [Function],
-      }
-      URL {
-        href: 'http://example.com/a',
-        origin: 'http://example.com',
-        protocol: 'http:',
-        username: '',
-        password: '',
-        host: 'example.com',
-        hostname: 'example.com',
-        port: '',
-        pathname: '/a',
-        search: '',
-        searchParams: URLSearchParams {},
-        hash: ''
-      }
-      URL {
-        href: "http://example.com/a",
-        origin: "http://example.com",
-        protocol: "http:",
-        username: "",
-        password: "",
-        host: "example.com",
-        hostname: "example.com",
-        port: "",
-        pathname: "/a",
-        hash: "",
-        search: "",
-        searchParams: URLSearchParams {},
-        toJSON: [Function: toJSON],
-        toString: [Function: toString],
-        [Symbol(nodejs.util.inspect.custom)]: [Function: anonymous],
-      }
-      ReadableStream { locked: false, state: 'readable', supportsBYOB: false }
-      ReadableStream {
-        locked: false,
-        cancel: [Function: cancel],
-        getReader: [Function: getReader],
-        pipeThrough: [Function: pipeThrough],
-        pipeTo: [Function: pipeTo],
-        tee: [Function: tee],
-        values: [Function: values],
-        blob: [Function: blob],
-        bytes: [Function: bytes],
-        json: [Function: json],
-        text: [Function: text],
-        [Symbol(Symbol.asyncIterator)]: [Function: values],
-        [Symbol(nodejs.stream.readable)]: true,
-        [Symbol(nodejs.stream.errored)]: false,
-        [Symbol(nodejs.stream.disturbed)]: false,
-        [Symbol(nodejs.util.inspect.custom)]: [Function: anonymous],
-      }
-      <Buffer 68 69>
-      Buffer(2) [ 104, 105 ]
-      HOOK
-      JSGlobalProxy {}
-      HOOK
-      JSGlobalProxy {}
-      "
+    expect({ stderr, exitCode }).toEqual({
+      stderr: lines(
+        "console.dir(error): calls=1 gets=0",
+        "console.dir(error, {}): calls=1 gets=0",
+        "console.dir(error, { customInspect: true }): calls=1 gets=0",
+        "console.dir(error, { customInspect: undefined }): calls=1 gets=0",
+        "console.log(error): calls=1 gets=0",
+        "console.table cell: calls=1 gets=0",
+        "direct property: calls=0 gets=0",
+        "JSX children: calls=0 gets=1",
+      ),
+      exitCode: 0,
+    });
+    expect(stdout).toContain(" p: HOOK,\n");
+  });
+
+  it.concurrent("prints the value itself", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const show = (name, print) => {
+        console.log("### " + name);
+        print();
+      };
+      const both = (name, value, options) => {
+        show(name, () => console.dir(value, options));
+        show(name + ", off", () => console.dir(value, { ...options, customInspect: false }));
+      };
+      both("K", new K());
+      both("Buffer", Buffer.from("hi"));
+      both("URL", new URL("http://example.com/a"));
+      both("ReadableStream", new ReadableStream());
+      both("global object", vmGlobal);
+      both("Proxy of a global object", new Proxy(vmGlobal, {}));
+      show("global object that has no hook", () => console.dir(require("node:vm").runInNewContext("globalThis")));
+      both("string", "text");
+      both("depth", { a: { b: 1 } }, { depth: 0 });
+      both("colors", { a: 1 }, { colors: true });
+      const inGroup = options => () => {
+        console.group("group");
+        console.dir({ a: 1 }, options);
+        console.groupEnd();
+      };
+      show("in a group", inGroup());
+      show("in a group, off", inGroup(off));
     `);
+    const text = Object.fromEntries(
+      stdout
+        .split("### ")
+        .slice(1)
+        .map(row => [row.slice(0, row.indexOf("\n")), row.slice(row.indexOf("\n") + 1)]),
+    );
+
+    expect(Object.keys(text)).toEqual([
+      "K",
+      "K, off",
+      "Buffer",
+      "Buffer, off",
+      "URL",
+      "URL, off",
+      "ReadableStream",
+      "ReadableStream, off",
+      "global object",
+      "global object, off",
+      "Proxy of a global object",
+      "Proxy of a global object, off",
+      "global object that has no hook",
+      "string",
+      "string, off",
+      "depth",
+      "depth, off",
+      "colors",
+      "colors, off",
+      "in a group",
+      "in a group, off",
+    ]);
+
+    // The native formatter lists prototype members (https://github.com/oven-sh/bun/issues/1713),
+    // so with the hooks off `K` prints its hook as one of them.
+    expect({
+      "K": text["K"],
+      "K, off": text["K, off"],
+      "Buffer": text["Buffer"],
+      "Buffer, off": text["Buffer, off"],
+    }).toEqual({
+      "K": "HOOK\n",
+      "K, off": "K {\n  [Symbol(nodejs.util.inspect.custom)]: [Function],\n}\n",
+      "Buffer": "<Buffer 68 69>\n",
+      "Buffer, off": "Buffer(2) [ 104, 105 ]\n",
+    });
+
+    // These print through a native hook. The text without the hook is the listing of issue 1713.
+    expect(text["URL"]).toContain("href: 'http://example.com/a'");
+    expect(text["URL, off"]).toContain('href: "http://example.com/a"');
+    expect(text["ReadableStream"]).toContain("state: 'readable'");
+    expect(text["ReadableStream, off"]).toContain("locked: false");
+    expect(text["ReadableStream, off"]).not.toContain("state: 'readable'");
+
+    // A global object at the top level, or behind a Proxy, prints in full and not as "[Global Object]".
+    const globalThatHasNoHook = text["global object that has no hook"];
+    expect(globalThatHasNoHook).not.toBe("[Global Object]\n");
+    expect({
+      "global object": text["global object"],
+      "global object, off": text["global object, off"],
+      "Proxy of a global object": text["Proxy of a global object"],
+      "Proxy of a global object, off": text["Proxy of a global object, off"],
+    }).toEqual({
+      "global object": "HOOK\n",
+      "global object, off": globalThatHasNoHook,
+      "Proxy of a global object": "HOOK\n",
+      "Proxy of a global object, off": globalThatHasNoHook,
+    });
+
+    // The other options apply as they do without `customInspect`.
+    expect({
+      "string": text["string"],
+      "depth": text["depth"],
+      "in a group": text["in a group"],
+      "string, off": text["string, off"],
+      "depth, off": text["depth, off"],
+      "colors, off": text["colors, off"],
+      "in a group, off": text["in a group, off"],
+    }).toEqual({
+      "string": "text\n",
+      "depth": "{\n  a: [Object ...],\n}\n",
+      "in a group": "group\n  {\n    a: 1,\n  }\n",
+      "string, off": text["string"],
+      "depth, off": text["depth"],
+      "colors, off": text["colors"],
+      "in a group, off": text["in a group"],
+    });
+    expect(text["colors"]).toContain("\x1b[");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 });

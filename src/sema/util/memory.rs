@@ -1568,6 +1568,29 @@ mod tests {
     }
 
     #[test]
+    fn written_in_skips_unwritten_pages_and_clips_to_the_range() {
+        const PER_PAGE: usize = SMALLEST_PAGE / size_of::<AtomicU32>();
+        let cells = FixedCells::<AtomicU32>::new_in(3 * PER_PAGE, Global);
+        assert_eq!(cells.written_in(0..3 * PER_PAGE).count(), 0);
+        cells.cell(PER_PAGE - 1).store(7, Ordering::Relaxed);
+        cells.cell(2 * PER_PAGE).store(8, Ordering::Relaxed);
+        // Starts inside the first page, crosses the unwritten second page, and ends inside the third.
+        let found: Vec<(usize, u32)> = (cells.written_in(PER_PAGE - 2..2 * PER_PAGE + 2))
+            .map(|(index, cell)| (index, cell.load(Ordering::Relaxed)))
+            .collect();
+        let expected = [
+            (PER_PAGE - 2, 0),
+            (PER_PAGE - 1, 7),
+            (2 * PER_PAGE, 8),
+            (2 * PER_PAGE + 1, 0),
+        ];
+        assert_eq!(found, expected);
+        assert_eq!(cells.written_in(PER_PAGE..2 * PER_PAGE).count(), 0);
+        assert_eq!(cells.written_in(5..5).count(), 0);
+        assert_eq!(cells.written_in(0..3 * PER_PAGE).count(), 2 * PER_PAGE);
+    }
+
+    #[test]
     fn threads_race_to_write_to_a_page_first() {
         const THREADS: usize = 4;
         const ROUNDS: u32 = if cfg!(miri) { 2 } else { 200 };

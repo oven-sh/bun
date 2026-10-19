@@ -1154,6 +1154,45 @@ module.exports = Base;
     },
   );
 
+  // The annotation of `t` refers to `X`, which contains `B0`, so TypeScript reports a cycle at `t`. It's the only error. The
+  // other files come later in program order, and their checks get to `t` too. Only the check of `d.ts` reports the
+  // cycle, and for that it has to go round by itself, whichever check runs first.
+  const reversed = [0, 1, 2, 3].map(
+    i =>
+      `type Y = ${i % 2 ? "(B1 | B0) & (A1 | A0)" : "(A0 | A1) & (B0 | B1)"};\ndeclare let x: Y;\nconst ok = x.k;\nexport {};\n`,
+  );
+  test.each([
+    ["a generic function", false, [`type Y = X;\nfunction gf<T>(y: T & Y) { return y.k; }\nexport {};\n`]],
+    ["the members in reverse order", false, reversed],
+    ["the members in reverse order", true, reversed],
+  ])(
+    "reports a member that refers to itself, when a later file gets there first (%s, skipLibCheck: %p)",
+    async (_, skipLibCheck, users) => {
+      const names = users.map((_, i) => `u${i}.ts`);
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck },
+          files: ["d.ts", ...names],
+        }),
+        "d.ts": `interface A0 { t: 'a0'; k: 0 | string }
+interface A1 { t: 'a1'; k: 1 | string }
+interface B0 { t: X['k'] extends string ? 'a0' : 'a1'; k: 0 | string }
+interface B1 { t: 'a1'; k: 1 | string }
+type X = (A0 | A1) & (B0 | B1);
+`,
+        ...Object.fromEntries(users.map((text, i) => [names[i], text])),
+      });
+      const runs = skipLibCheck ? 12 : 3;
+      const threads = [1, ...Array(runs).fill(3), ...Array(runs).fill(8)];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          "d.ts(3,16): error TS2502: 't' is referenced directly or indirectly in its own type annotation.",
+        );
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+
   // `Folder`'s base type mentions `Folder` in a conditional type, and comparing `Folder` asks for its base types again.
   // TypeScript reports that if the base types are what was asked for first, as `root.size` does, and not if the class
   // declaration's own check gets there first. `model.ts` comes first in program order, because `util.ts` imports it.

@@ -766,6 +766,16 @@ impl Checker<'_, '_> {
         {
             return;
         }
+        // Only the check of that file or of an earlier one reports a cycle, and for that it has to go round by itself. So it
+        // must not find what this task stored on the way.
+        if let Some(q) = owner
+            && diagnostic.file != NOWHERE.0
+            && self.reports_semantic_errors(diagnostic.file)
+            && self.is_left_to_an_earlier_file(owner, diagnostic.file)
+        {
+            let members = std::iter::once(crate::util::fx_hash(&q));
+            self.task.close_ring(|| false, members);
+        }
         self.log_diagnostic(owner, diagnostic);
     }
 

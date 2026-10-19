@@ -1174,24 +1174,29 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
 {
     #[inline]
     pub fn insert(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
-        if key.local_number().is_none() && is_for_all_tasks(task, &value) {
-            if task.may_write_at_once(self.own_slot(), stored) {
-                if stays_in_task(task, &key) {
-                    return self.insert_for_this_task(task, key, value);
-                }
-                return self.put_value_at_once(task, key, value);
-            }
-            task.hold_back();
-        }
-        self.insert_in_task(task, key, value)
+        self.insert_where::<true>(task, key, value, stored)
     }
 
     /// `insert` for an entry that isn't a function of its key only, so another task might not work out the same: it never
     /// `stays_in_task`.
     #[inline]
     pub fn insert_for_every_task(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
+        self.insert_where::<false>(task, key, value, stored)
+    }
+
+    #[inline]
+    fn insert_where<const MAY_STAY_IN_TASK: bool>(
+        &self,
+        task: &Task,
+        key: I,
+        value: V,
+        stored: Stored,
+    ) -> V {
         if key.local_number().is_none() && is_for_all_tasks(task, &value) {
             if task.may_write_at_once(self.own_slot(), stored) {
+                if MAY_STAY_IN_TASK && stays_in_task(task, &key) {
+                    return self.insert_for_this_task(task, key, value);
+                }
                 return self.put_value_at_once(task, key, value);
             }
             task.hold_back();

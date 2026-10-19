@@ -930,6 +930,12 @@ private:
             if (us_socket_is_closed(s)) {
                 return s;
             }
+            /* That FIN still waits for TLS ciphertext that the kernel has not taken, and the next writable event follows it.
+             * A 'drain' now would let the response write in front of the FIN. */
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) && !asyncSocket->hasFullyDrained()) {
+                reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+                return s;
+            }
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {

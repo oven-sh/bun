@@ -1516,6 +1516,22 @@ devTest("editing an @imported stylesheet recovers from a failed CSS print", {
   },
 });
 
+devTest("a page request reports a parse error in an @imported stylesheet", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+      body: "hello",
+    }),
+    "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
+    "child.css": `.fine { color: red; }\n`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+    await dev.write("child.css", `.fine {\n color`, { dedent: false });
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+
 // Changing index.ts makes the route trace its stylesheets again while main.css is in a failed state.
 devTest("dev server survives a css parse error with an edge adjustment", {
   files: {

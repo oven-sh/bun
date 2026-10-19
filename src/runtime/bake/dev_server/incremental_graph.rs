@@ -1262,14 +1262,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let f = &self.bundled_files.values()[file_index.get() as usize];
                     match &f.content {
                         Content::CssChild => {
-                            debug_assert!(false, "only CSS roots should be found by tracing");
+                            debug_assert!(
+                                goal == TraceImportGoal::FindErrors,
+                                "only CSS roots should be found by tracing"
+                            );
                         }
                         Content::CssRoot(id) => {
                             if goal == TraceImportGoal::FindCss {
                                 self.current_css_files.push(*id);
                             }
-                            // CSS can't import JS; trace is done.
-                            return Ok(());
+                            // CSS can't import JS, but an `@import` can fail to parse.
+                            if goal != TraceImportGoal::FindErrors {
+                                return Ok(());
+                            }
                         }
                         _ => {}
                     }

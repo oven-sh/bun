@@ -45,6 +45,7 @@ internal/build-codegen-declared-outputs.test.ts
 internal/build-debug-info-flags.test.ts
 internal/build-post-link-ordering.test.ts
 internal/build-rust-toolchain-probe.test.ts
+internal/harness-max-rss.test.ts
 internal/internal-module-blob.test.ts
 internal/macos-cross-config.test.ts
 js/bun/bun-object/deep-match.spec.ts
@@ -99,6 +100,7 @@ js/bun/util/bun-isMainThread.test.js
 js/bun/util/filesystem_router.test.ts
 js/bun/util/inspect-error-leak.test.js
 js/bun/util/text-loader.test.ts
+js/bun/wasm/compile-rss.test.ts
 js/bun/websocket/websocket-server-rsv-frames.test.ts
 js/bun/xml/xml-test-suite.test.ts
 js/bun/yaml/yaml.test.ts

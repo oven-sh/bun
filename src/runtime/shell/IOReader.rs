@@ -19,14 +19,14 @@ use crate::shell::yield_::Yield;
 /// — the node id of the owning Cmd plus a tag saying which builtin impl to
 /// dispatch the `on_read_chunk`/`on_reader_done` callback to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChildPtr {
+pub(crate) struct ChildPtr {
     pub node: NodeId,
     pub(crate) tag: ReaderTag,
 }
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ReaderTag {
+pub(crate) enum ReaderTag {
     Cat,
 }
 
@@ -60,7 +60,7 @@ struct State {
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
 }
 
-pub struct IOReader {
+pub(crate) struct IOReader {
     /// Split out of `State` so `state()`'s `&mut State` never overlaps the
     /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
     /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells
@@ -165,7 +165,6 @@ impl IOReader {
     /// owns the IO struct that holds this `Arc`) for the lifetime of this
     /// reader; single-threaded.
     #[inline]
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: precondition above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
@@ -231,7 +230,6 @@ impl IOReader {
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
                 self.on_reader_error(&e);
-                return Yield::failed();
             }
             Yield::suspended()
         }

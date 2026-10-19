@@ -71,6 +71,7 @@
 #include "napi_external.h"
 #include "wtf/Assertions.h"
 #include "wtf/Compiler.h"
+#include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
@@ -3045,28 +3046,33 @@ extern "C" napi_status napi_get_instance_data(napi_env env,
 extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
-    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_PREAMBLE_NO_THROW_SCOPE_GATED(env);
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, throwScope);
     NAPI_CHECK_ARG(env, script);
     NAPI_CHECK_ARG(env, result);
     JSValue scriptValue = toJS(script);
     NAPI_RETURN_EARLY_IF_FALSE(env, scriptValue.isString(), napi_string_expected);
 
     WTF::String code = scriptValue.getString(globalObject);
-    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
+    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_generic_failure));
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
-    // Not JSC::evaluate(): that takes what the script threw off the VM, and a termination has to stay there.
-    JSValue value = vm.interpreter.executeProgram(sourceCode, globalObject, globalObject->globalThis());
-    // Node reports a script that threw as napi_generic_failure, not napi_pending_exception.
-    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
+    NakedPtr<Exception> returnedException;
+    JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
+
+    if (returnedException) {
+        env->scheduleException(returnedException->value());
+        return napi_set_last_error(env, napi_generic_failure);
+    }
 
     ASSERT(!value.isEmpty());
     *result = toNapi(value, globalObject);
-    NAPI_RETURN_SUCCESS(env);
+
+    return napi_set_last_error(env, napi_ok);
 }
 
 extern "C" napi_status napi_set_instance_data(napi_env env,

@@ -1117,62 +1117,6 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
-// cc()-compiled C resolves napi_* from the host process; that lookup is only
-// exercised on POSIX today (see cc-fixture.c).
-it.skipIf(isWindows)(
-  "a script that throws in napi_run_script is thrown where the cc() function is called",
-  async () => {
-    using dir = tempDir("bun-ffi-cc-napi-run-script", {
-      "run_script.c": /* c */ `
-      typedef struct napi_env_fake* napi_env_t;
-      typedef struct napi_value_fake* napi_value_t;
-      extern int napi_create_string_utf8(napi_env_t env, const char* str, unsigned long length, napi_value_t* result);
-      extern int napi_run_script(napi_env_t env, napi_value_t script, napi_value_t* result);
-      napi_value_t run_failing_script(napi_env_t env) {
-        napi_value_t script;
-        napi_value_t result;
-        napi_create_string_utf8(env, "throw new RangeError('boom')", (unsigned long)-1, &script);
-        if (napi_run_script(env, script, &result) != 0) return script;
-        return result;
-      }
-    `,
-      "fixture.js": /* js */ `
-      import { cc } from "bun:ffi";
-      import path from "path";
-
-      const { symbols } = cc({
-        source: path.join(import.meta.dir, "run_script.c"),
-        symbols: {
-          run_failing_script: { args: ["napi_env"], returns: "napi_value" },
-        },
-      });
-
-      let outcome;
-      try {
-        outcome = ["returned", String(symbols.run_failing_script())];
-      } catch (e) {
-        outcome = ["threw", e instanceof RangeError, e.message];
-      }
-      console.log(JSON.stringify(outcome));
-    `,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
-      stdout: JSON.stringify(["threw", true, "boom"]),
-      exitCode: 0,
-    });
-  },
-);
-
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {

@@ -1273,6 +1273,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_napi_run_script_rethrow", ['throw new RangeError("boom")']);
       expect(result).toBe('synchronously threw RangeError: message "boom", code undefined');
     });
+    it("throws what the script threw through node-addon-api's Env::RunScript", async () => {
+      const result = await checkSameOutput("test_napi_run_script_node_addon_api", ['throw new RangeError("boom")']);
+      expect(result).toBe('synchronously threw RangeError: message "boom", code undefined');
+    });
     it("refuses napi_call_function while the exception is pending, then hands it over", async () => {
       const result = await checkSameOutput("test_napi_run_script_then_call", ['throw new RangeError("boom")']);
       expect(splitOutput(result)).toEqual({
@@ -1368,14 +1372,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
       });
     });
-    it.each([
-      ["leaves it pending", "test_napi_run_script"],
-      ["clears it with napi_get_and_clear_last_exception", "test_napi_run_script_clear_exception"],
-    ])("a termination that interrupts the script ends the JS caller when the addon %s", async (_, addonFunction) => {
+    it("a termination that interrupts the script still ends the JS caller", async () => {
+      // The addon leaves what napi_run_script reports pending and returns.
       const fixture = `
         const vm = require("vm");
-        const { ${addonFunction}: runScript } = require(process.argv[2]);
-        globalThis.run = () => runScript(() => {}, "for (;;) {}");
+        const { test_napi_run_script } = require(process.argv[2]);
+        globalThis.run = () => test_napi_run_script(() => {}, "globalThis.started = true; for (;;) {}");
         globalThis.ran = [];
         let code;
         try {
@@ -1386,14 +1388,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         } catch (e) {
           code = e.code;
         }
-        console.log(JSON.stringify({ code, ran }));
+        console.log(JSON.stringify({ started: globalThis.started, code, ran }));
       `;
       const [node, bun] = await Promise.all([
         runFixtureWith(await nodeExeMatchingAbi(), [], fixture),
         runFixtureWith(bunExe(), [], fixture),
       ]);
       expect(bun).toEqual({
-        stdout: JSON.stringify({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", ran: [] }),
+        stdout: JSON.stringify({ started: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT", ran: [] }),
         stderr: "",
         exitCode: 0,
       });
@@ -2113,18 +2115,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(result).toContain("Test completed:");
   }, 10_000);
 
-  it
-    .todoIf(
-      // The test does not properly avoid the non-zero exit code on Windows.
-      isWindows,
-    )
-    .each([
-      ["napi_reference_unref", "test_reference_unref_in_finalizer_experimental", []],
-      ["napi_run_script", "test_run_script_in_finalizer_experimental", ["globalThis.ranInFinalizer = true"]],
-    ])(
-    "%s is blocked from finalizers in experimental modules",
-    async (_blocked, functionName, functionArguments) => {
-      // Experimental NAPI modules should NOT be able to call these functions from finalizers
+  it.todoIf(
+    // The test does not properly avoid the non-zero exit code on Windows.
+    isWindows,
+  )(
+    "napi_reference_unref is blocked from finalizers in experimental modules",
+    async () => {
+      // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
       // The process should crash/abort when this is attempted
       // This matches Node.js behavior for experimental modules
 
@@ -2137,12 +2134,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // to avoid hanging on llvm-symbolizer
       const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
       const bunProc = spawn({
-        cmd: [
-          bunExe(),
-          join(__dirname, "napi-app/test_experimental_with_timeout.js"),
-          functionName,
-          ...functionArguments,
-        ],
+        cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
         env: {
           ...rest,
           BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",

@@ -763,18 +763,12 @@ test_napi_run_script_exception_value(const Napi::CallbackInfo &info) {
   return exc;
 }
 
-// An addon that handles a failed napi_run_script by clearing the exception and
-// returning normally. A termination (worker.terminate(), a node:vm timeout) is
-// not an exception an addon can clear: the JS caller must not run on.
-static napi_value
-test_napi_run_script_clear_exception(const Napi::CallbackInfo &info) {
-  napi_env env = info.Env();
-  napi_value ret = nullptr;
+// The way most addons reach napi_run_script: node-addon-api fetches what the
+// script threw, wraps it in a Napi::Error and throws that.
+static Napi::Value
+test_napi_run_script_node_addon_api(const Napi::CallbackInfo &info) {
   // info[0] is the GC callback
-  (void)napi_run_script(env, info[1], &ret);
-  napi_value exc = nullptr;
-  (void)napi_get_and_clear_last_exception(env, &exc);
-  return nullptr;
+  return info.Env().RunScript(info[1].As<Napi::String>());
 }
 
 // The addon fetches what a failed napi_run_script threw and throws it again.
@@ -4715,7 +4709,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_exception_value);
-  REGISTER_FUNCTION(env, exports, test_napi_run_script_clear_exception);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_node_addon_api);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_rethrow);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_then_call);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);

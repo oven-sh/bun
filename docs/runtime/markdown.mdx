@@ -105,7 +105,7 @@ Bun.markdown.html("## Über uns\n\n## 日本語 ガイド 🚀", { headings: { i
 // '<h2 id="über-uns">Über uns</h2>\n<h2 id="日本語-ガイド">日本語 ガイド 🚀</h2>\n'
 ```
 
-Each ID is unique in its document. When the ID of a heading is taken, Bun appends `-1`, or the next number that gives a free ID.
+Each ID is unique in its document. When the ID of a heading is taken, Bun appends `-1`, or the next number that gives a free ID. A heading with no letter and no digit gets an empty ID, and the next such heading gets `-1`.
 
 ```ts
 Bun.markdown.html("## Foo\n\n## Foo\n\n## Foo 1", { headings: { ids: true } });

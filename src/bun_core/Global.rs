@@ -831,6 +831,27 @@ unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
+/// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
+/// when it builds the default certificate store.
+#[unsafe(no_mangle)]
+pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
+
+/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
+/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
+pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
+    let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
+    let passed = flags.map(has_flag);
+    let count = passed.iter().filter(|&&passed| passed).count();
+    if count > 1 {
+        crate::pretty_errorln!(
+            "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
+        );
+        exit(1);
+    }
+    let from_env = count == 0 && crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
+    Bun__Node__UseSystemCA.store(passed[0] || from_env, Ordering::Relaxed);
+}
+
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
 /// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one
 /// `core::hint::black_box(f as *const ())` per path — purely a side-effect, so

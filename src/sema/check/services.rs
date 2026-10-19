@@ -24,7 +24,7 @@ pub use vocabulary::ObjectFlags;
 pub use vocabulary::*;
 
 use super::*;
-use crate::bind::{Decl, ScopeId, SymbolId};
+use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::node::{Kind, Node, NodeData};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -125,6 +125,13 @@ impl<'p, 's> Checker<'p, 's> {
         then: impl FnOnce(&mut Services<'_, 'p, 's>) -> R,
     ) -> R {
         let arena = Arena::new();
+        // `check_file` skips a file that reports no semantic errors, and rules do not ask in source order.
+        if self.task.file == Some(file)
+            && self.bound(file).has_types_that_depend_on_order()
+            && !self.reports_semantic_errors(file)
+        {
+            self.check_source_file_and_report_nothing(file);
+        }
         // A reference whose control flow walk is too deep disables the analysis (2563), and from then
         // on every reference has the error type, until the function or module block around it ends: at
         // the top level of a file, for good. The questions of the rules are in no block, and begin
@@ -343,10 +350,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             names
         })
-    }
-
-    pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
-        self.c.files().by_path.get(file_name)
     }
 
     /// `checker.getAmbientModules().find(it => it.name === '"name"')`
@@ -808,7 +811,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// the type that a pattern implies is made of all its properties. Whether something has been pushed.
     fn push_contextual_type_of_literal_around(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let literal = match bound.expr_parent[e.idx()] {
+        let literal = match bound.parent_of_expr(e) {
             crate::bind::Parent::Prop(p) => bound.prop_owner[p.idx()],
             crate::bind::Parent::Expr(outer) => outer,
             _ => return false,
@@ -888,8 +891,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 ..
             }
         ) || matches!(
-            self.c.bound(call.file).expr_parent.get(e.idx()),
-            Some(crate::bind::Parent::Decorator(..))
+            self.c.bound(call.file).parent_of_expr(e),
+            Parent::ClassDecorator(_) | Parent::MemberDecorator(_) | Parent::ParamDecorator(_)
         );
         if !is_call_like {
             return None;
@@ -933,7 +936,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 NodeData::Member(m) => Some(self.c.enclosing_scope_of_member(node.file, m)),
                 NodeData::Prop(p) => Some(self.c.enclosing_scope_of_property(node.file, p)),
                 NodeData::Type(t) => bound.type_scope.get(t.idx()).copied(),
-                NodeData::Stmt(s) => bound.stmt_scope.get(s.idx()).copied(),
+                NodeData::Stmt(s) => bound.scope_of_stmt(s).some(),
                 _ => None,
             };
             if let Some(scope) = scope.filter(|scope| scope.is_some()) {

@@ -211,6 +211,11 @@ pub struct LanguageOptions {
     pub is_oxlint: bool,
     /// There's no ESLint or oxlint config, so no rule has to match an installed package's behavior.
     pub stands_alone: bool,
+    /// Set with `stands_alone` when each file's syntax decides whether it's a module. `self` then applies to files with
+    /// module syntax, and this copy applies to files without it, which are CommonJS.
+    /// [`File::new`](crate::ast::File::new) picks one, so [`File::language`](crate::ast::File::language) is correct for
+    /// the file. See [`LanguageOptions::follow_the_runtime`].
+    pub without_module_syntax: Option<Box<LanguageOptions>>,
     /// With a configuration of oxlint. The scopes are those of oxc where they differ from typescript-eslint's: `namespace A.B { }`
     /// is a namespace `B` that is declared in the scope of a namespace `A`; outside strict code a function that JavaScript
     /// declares in a block is a variable of the function around; the name in a closing tag of JSX is a reference; the type of
@@ -263,6 +268,12 @@ fn is_truthy(value: Option<&Json>) -> bool {
         Some(Json::String(s)) => !s.is_empty(),
         Some(_) => true,
     }
+}
+
+/// `parserOptions.ecmaFeatures.globalReturn`
+fn wants_global_return(parser_options: &Json) -> bool {
+    let features = parser_options.get(b"ecmaFeatures");
+    features.and_then(|it| it.get(b"globalReturn")?.as_bool()) == Some(true)
 }
 
 fn source_type_of(value: Option<&Json>) -> Option<SourceType> {
@@ -362,13 +373,15 @@ impl LanguageOptions {
         {
             return Err(b"Key \"parserOptions\": Expected an object.".to_vec());
         }
-        let known: [&[u8]; 6] = [
+        let known: [&[u8]; 8] = [
             b"ecmaVersion",
             b"sourceType",
             b"globals",
             b"parser",
             b"parserOptions",
             b"$env",
+            b"$sourceTypeBySyntax",
+            b"$packageIsModule",
         ];
         match language_options
             .as_object()
@@ -434,7 +447,7 @@ impl LanguageOptions {
         let is_babel = written == Some(&b"@babel/eslint-parser"[..]);
         let source_type =
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
-        LanguageOptions {
+        let mut options = LanguageOptions {
             ecma_version: match language_options.get(b"ecmaVersion") {
                 None => Self::LATEST_ECMA_VERSION,
                 version => Self::normalize_ecma_version(version),
@@ -447,9 +460,7 @@ impl LanguageOptions {
             own_globals: globals.own,
             parser,
             is_babel,
-            // ESLint turns it off for espree in a module. Babel's parser passes over it there.
-            global_return: feature(b"globalReturn")
-                && !((parser == Parser::Espree || is_babel) && source_type == SourceType::Module),
+            global_return: false,
             implied_strict: feature(b"impliedStrict"),
             jsx: feature(b"jsx"),
             parser_source_type: source_type_of(parser_options.get(b"sourceType")),
@@ -476,6 +487,7 @@ impl LanguageOptions {
             refuses_what_parser_refuses: true,
             is_oxlint: false,
             stands_alone: false,
+            without_module_syntax: None,
             has_scopes_of_oxc: false,
             rules_that_oxlint_lacks: Vec::new(),
             has_rule_that_requires_types: false,
@@ -487,7 +499,63 @@ impl LanguageOptions {
             parser_options,
             settings,
             config_globals: OnceLock::new(),
+        };
+        options.set_source_type(source_type);
+        options
+    }
+
+    fn set_source_type(&mut self, source_type: SourceType) {
+        self.source_type = source_type;
+        // ESLint turns `globalReturn` off for espree in a module. Babel's parser ignores it there.
+        self.global_return = wants_global_return(&self.parser_options)
+            && !((self.parser == Parser::Espree || self.is_babel)
+                && source_type == SourceType::Module);
+        self.config_globals = OnceLock::new();
+    }
+
+    /// With `stands_alone`, picks `sourceType` the way Node does when it runs the file. `language_options` is the JSON
+    /// that these options were built from. In order of precedence:
+    ///
+    /// 1. `parserOptions.sourceType`, from `--parser-options` or `[lint.parserOptions]`. It applies to every file, like
+    ///    `languageOptions.sourceType` in an ESLint config object without `files`.
+    /// 2. The extension. The built-in config sets `sourceType` for `.mjs`, `.mts`, `.cjs` and `.cts`, and
+    ///    `$sourceTypeBySyntax` for the others.
+    /// 3. `"type": "module"` in the nearest package.json, which the built-in config passes on as `$packageIsModule`.
+    ///    It's ignored with `ecmaFeatures.globalReturn`, because ESLint turns that option off in a module.
+    /// 4. The syntax. `"type": "commonjs"` ends up here too. Bun runs a file with an `import` in a CommonJS package as
+    ///    a module, and that's how TypeScript and bundled projects are written.
+    ///
+    /// Returns `true` in case 4. The caller must then call [`LanguageOptions::decide_by_syntax`], which clones these
+    /// options, after its last change to them. `Err` describes an invalid `parserOptions.sourceType`.
+    pub(crate) fn follow_the_runtime(&mut self, language_options: &Json) -> Result<bool, Vec<u8>> {
+        let is_set = |key: &[u8]| language_options.get(key).and_then(Json::as_bool) == Some(true);
+        if let Some(written) = self.parser_source_type {
+            self.set_source_type(written);
+            return Ok(false);
         }
+        if self.parser_options.get(b"sourceType").is_some() {
+            return Err(b"Key \"languageOptions\": Key \"parserOptions\": Key \"sourceType\": Expected \"script\", \"module\", or \"commonjs\".".to_vec());
+        }
+        Ok(is_set(b"$sourceTypeBySyntax")
+            && (!is_set(b"$packageIsModule") || wants_global_return(&self.parser_options)))
+    }
+
+    /// Sets [`LanguageOptions::without_module_syntax`].
+    pub(crate) fn decide_by_syntax(&mut self) {
+        self.set_source_type(SourceType::Module);
+        let mut commonjs = self.clone();
+        commonjs.set_source_type(SourceType::CommonJs);
+        self.without_module_syntax = Some(Box::new(commonjs));
+    }
+
+    /// Returns a copy of these options with a different parser.
+    pub fn with_parser(&self, parser: Parser) -> LanguageOptions {
+        let mut other = self.clone();
+        other.parser = parser;
+        if let Some(commonjs) = &mut other.without_module_syntax {
+            commonjs.parser = parser;
+        }
+        other
     }
 
     /// oxlint's `ctx.globals().is_enabled(name)`: `globals` itself has `name`, and not as `"off"`.
@@ -501,10 +569,12 @@ impl LanguageOptions {
         self.config_globals.get_or_init(|| ConfigGlobals::new(self))
     }
 
-    /// The `sourceType` that the scopes of a file are analyzed with. `@typescript-eslint/parser`
-    /// prefers `parserOptions.sourceType`, and takes `"commonjs"` for `"script"`.
+    /// Returns the `sourceType` used for scope analysis. `@typescript-eslint/parser` prefers
+    /// `parserOptions.sourceType`, and treats `"commonjs"` as `"script"`. With `stands_alone`, a CommonJS file written
+    /// in TypeScript gets a function scope around it like any other CommonJS file.
     pub fn scope_source_type(&self) -> SourceType {
         match self.parser {
+            Parser::TypeScript if self.stands_alone => self.source_type,
             Parser::TypeScript => match self.parser_source_type.unwrap_or(self.source_type) {
                 SourceType::Module => SourceType::Module,
                 _ => SourceType::Script,
@@ -548,6 +618,7 @@ impl LanguageOptions {
             dialect: Dialect {
                 oxc: !self.refuses_what_parser_refuses,
                 oxc_names: !self.refuses_what_parser_refuses && self.parser_tracks_names,
+                module_or_script: self.without_module_syntax.is_some(),
                 ..match self.parser {
                     Parser::Espree => Dialect::espree(is_script),
                     Parser::TypeScript | Parser::Other => Dialect::typescript_estree(is_script),
@@ -586,6 +657,7 @@ impl Default for LanguageOptions {
             refuses_what_parser_refuses: true,
             is_oxlint: false,
             stands_alone: false,
+            without_module_syntax: None,
             has_scopes_of_oxc: false,
             rules_that_oxlint_lacks: Vec::new(),
             has_rule_that_requires_types: false,

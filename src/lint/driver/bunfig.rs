@@ -154,7 +154,8 @@ impl Table {
         if let Some(param) = param {
             return Ok(param);
         }
-        if let Some(flag) = self.actions.iter().find(|flag| key_of(flag) == key) {
+        let positive = |flag: &&'static [u8]| flag.strip_prefix(b"no-").unwrap_or(flag);
+        if let Some(flag) = (self.actions.iter()).find(|flag| key_of(positive(flag)) == key) {
             return refuse(
                 at,
                 &[
@@ -329,6 +330,7 @@ const FORMAT: Table = Table {
         b"help",
         b"all",
         b"help-all",
+        b"no-script",
     ],
     others: &[
         b"no-config",
@@ -339,6 +341,7 @@ const FORMAT: Table = Table {
         b"no-insert-final-newline",
         b"no-svelte",
         b"no-color",
+        b"script",
         b"parser",
         b"plugin",
         b"jsx-bracket-same-line",
@@ -756,6 +759,7 @@ const LINT: Table = Table {
         b"version",
         b"help",
         b"help-all",
+        b"no-script",
     ],
     others: &[
         b"no-config-lookup",
@@ -768,6 +772,7 @@ const LINT: Table = Table {
         b"no-infer-globals",
         b"no-native-plugin-rules",
         b"no-eslintrc",
+        b"script",
         b"parser",
         b"eslintrc",
         b"env",
@@ -944,7 +949,8 @@ fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal>
 #[derive(Clone, Debug)]
 pub struct RuleOfBunfig {
     pub key_at: usize,
-    pub setting: Json,
+    /// `None` if `--rule` has overridden this entry.
+    pub setting: Option<Json>,
     pub place: Place,
 }
 
@@ -983,7 +989,7 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
         let written = json_of(setting)?;
         places.push(RuleOfBunfig {
             key_at,
-            setting: written.clone(),
+            setting: Some(written.clone()),
             place: Place::of(setting),
         });
         rules.push((rule.name, written));

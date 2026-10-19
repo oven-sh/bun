@@ -102,7 +102,39 @@ static void probe(napi_env env, const std::string &signal_path,
   // Object::Set on a refused napi_set_named_property runs
   // Error::New(env).ThrowAsJavaScriptException(). node-addon-api 8.0.0 swallows
   // only napi_pending_exception there, so under NAPI_VERSION >= 10 (napi_cannot_run_js)
-  // it is fatal on Node too.
+  // it is fatal on Node too. The same calls are made raw first, each status
+  // recorded, so a fatal inside node-addon-api still names the call that differed.
+  line += "\nreplay:";
+  auto record = [&](const char *name, napi_status status) {
+    line += std::string(" ") + name + "=" + std::to_string(status);
+  };
+  const napi_extended_error_info *info = nullptr;
+  record("last_error_info", napi_get_last_error_info(env, &info));
+  bool pending_before = false;
+  record("is_pending", napi_is_exception_pending(env, &pending_before));
+  napi_value message = nullptr, error = nullptr;
+  record("create_string", napi_create_string_utf8(env, "replay", NAPI_AUTO_LENGTH, &message));
+  record("create_error", napi_create_error(env, nullptr, message, &error));
+  napi_ref ref = nullptr;
+  record("create_reference", napi_create_reference(env, error, 1, &ref));
+  napi_handle_scope scope = nullptr;
+  record("open_handle_scope", napi_open_handle_scope(env, &scope));
+  napi_value ref_value = nullptr;
+  record("get_reference_value", napi_get_reference_value(env, ref, &ref_value));
+  napi_valuetype ref_type = napi_undefined;
+  record("typeof", napi_typeof(env, ref_value, &ref_type));
+  napi_value key = nullptr;
+  record("create_key", napi_create_string_utf8(env, "wrap", NAPI_AUTO_LENGTH, &key));
+  bool has = false;
+  record("has_property", napi_has_property(env, ref_value, key, &has));
+  bool pending_after = false;
+  record("is_pending_again", napi_is_exception_pending(env, &pending_after));
+  line += " pending=" + std::to_string(pending_before) + "," + std::to_string(pending_after);
+  record("throw", napi_throw(env, ref_value));
+  record("close_handle_scope", napi_close_handle_scope(env, scope));
+  record("delete_reference", napi_delete_reference(env, ref));
+  write_probe(probe_path, line);
+
   Napi::Object(env, object).Set("k", Napi::Number::New(env, 1));
   write_probe(probe_path, line + "; node-addon-api returned");
 #endif

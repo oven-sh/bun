@@ -644,17 +644,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         throw error;
       }
     }
+    // node-addon-api's Error::New(env).ThrowAsJavaScriptException() sequence, made raw by the v9 fixture.
+    const replayV9 =
+      "replay: last_error_info=0 is_pending=0 create_string=0 create_error=0 create_reference=0 open_handle_scope=0" +
+      " get_reference_value=0 typeof=0 create_key=0 has_property=10 is_pending_again=0 pending=0,0 throw=10" +
+      " close_handle_scope=0 delete_reference=0; node-addon-api returned";
     describe.each([
-      [9, "init", `${refusedV9}; node-addon-api returned`],
-      [9, "method", `${refusedV9}; node-addon-api returned`],
-      [10, "init", refusedV10],
-      [10, "method", refusedV10],
+      [9, "init", [refusedV9, replayV9]],
+      [9, "method", [refusedV9, replayV9]],
+      [10, "init", [refusedV10]],
+      [10, "method", [refusedV10]],
     ])("worker.terminate() during gated calls (NAPI_VERSION=%i, %s frame)", (version, frame, probe) => {
       it("refuses the calls as Node does and the process survives", async () => {
         const result = await terminateProbe(version, frame, dir =>
           checkSameOutput("test_terminate_during_gated_calls", [version, frame, dir]),
         );
-        expect(result.split(/\r?\n/)).toEqual(["terminate() resolved with 1", probe, "resolved to undefined"]);
+        expect(result.split(/\r?\n/)).toEqual(["terminate() resolved with 1", ...probe, "resolved to undefined"]);
       }, 30_000);
     });
 

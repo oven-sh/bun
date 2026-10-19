@@ -355,14 +355,27 @@ describe("strict: a Statement does not start a run while a parameter has no valu
 
   it("an EXPLAIN needs its values too, because the plan that SQLite reports can depend on them", () => {
     const db = open();
-    const plan = db.query("explain query plan select * from t where a = ?");
-    expect(() => plan.all()).toThrow('Missing parameter "?1"');
-    expect(() => plan.columnTypes).toThrow('Missing parameter "?1"');
-    expect(plan.all(1)).toHaveLength(1);
-    expect(() => db.query("explain select $a as v").get()).toThrow('Missing parameter "a"');
+    db.run("create table names (name text collate nocase); create index names_name on names (name)");
+    const text = "explain query plan select name from names where name like ?";
+    for (const execute of Object.values(executions)) {
+      expect(() => execute(db.query(text))).toThrow('Missing parameter "?1"');
+      expect(() => execute(db.prepare("explain select $a as v"))).toThrow('Missing parameter "a"');
+    }
+
+    const detail = pattern =>
+      db
+        .query(text)
+        .all(pattern)
+        .map(row => row.detail);
+    expect(detail("ab%")).toHaveLength(1);
+    // The bundled SQLite reads the pattern to make the plan. On macOS the library of the system runs.
+    if (!isMacOS) {
+      expect(detail("ab%")).toEqual(["SEARCH names USING COVERING INDEX names_name (name>? AND name<?)"]);
+      expect(detail(null)).toEqual(["SCAN names"]);
+    }
   });
 
-  it("an empty array is not a set of values", () => {
+  it("an empty array clears the values, so the call throws", () => {
     const db = open();
     const q = db.query("select ? as v");
     for (const method of ["get", "all", "values", "raw", "run"]) {
@@ -384,6 +397,46 @@ describe("strict: a Statement does not start a run while a parameter has no valu
     expect(() => q.get()).toThrow('Missing parameter "a"');
     expect(q.get({ a: 3, b: 4 })).toEqual({ a: 3, b: 4 });
     expect(q.get()).toEqual({ a: 3, b: 4 });
+  });
+
+  describe("a call without values throws after a bind that failed by", () => {
+    const throwing = {
+      get() {
+        throw new Error("getter threw");
+      },
+    };
+    const positional = "insert into t values (?, ?)";
+    const named = "insert into t values ($a, $b)";
+    const unsupported = "Binding expected string, TypedArray, boolean, number, bigint or null";
+    const outOfRange = "BigInt value '18446744073709551616' is out of range";
+    // [kind, statement, the values of the bind that fails, its message, the parameter that the next call names]
+    const kinds = [
+      ["too few values", positional, [9], "SQLite query expected 2 values, received 1", "?1"],
+      ["too many values", positional, [9, 9, 9], "SQLite query expected 2 values, received 3", "?1"],
+      ["an unsupported value in a list", positional, [9, Symbol("x")], unsupported, "?1"],
+      ["an unsupported value in an object", named, [{ a: 9, b: Symbol("x") }], unsupported, "a"],
+      ["an element getter that throws", positional, [Object.defineProperty([9, 9], 1, throwing)], "getter threw", "?1"],
+      ["a property getter that throws", named, [Object.defineProperty({ a: 9 }, "b", throwing)], "getter threw", "a"],
+      ["a BigInt out of range in a list", positional, [9, 2n ** 64n], outOfRange, "?1"],
+      ["a BigInt out of range in an object", named, [{ a: 9, b: 2n ** 64n }], outOfRange, "a"],
+      ["a missing key", named, [{ a: 9 }], 'Missing parameter "b"', "a"],
+    ];
+
+    it.each(kinds)("%s", (_, sql, values, message, first) => {
+      using db = new Database(":memory:", { strict: true, safeIntegers: true });
+      db.run("create table t (a, b)");
+      const insert = db.query(sql);
+      const good = sql === positional ? [1, 2] : [{ a: 1, b: 2 }];
+      insert.run(...good);
+      expect(() => insert.run(...values)).toThrow(message);
+      expect(() => insert.run()).toThrow(`Missing parameter "${first}"`);
+      expect(db.query("select a, b from t").values()).toEqual([[1n, 2n]]);
+
+      // A complete bind gives the statement its values again.
+      insert.run(...good);
+      insert.run();
+      expect(db.query("select count(*) from t").values()).toEqual([[3n]]);
+    });
   });
 
   describe("db.prepare() with a lone value that the statement has no one parameter for", () => {
@@ -411,6 +464,19 @@ describe("strict: a Statement does not start a run while a parameter has no valu
     const q = db.prepare("select ? as v", []);
     expect(() => q.get()).toThrow('Missing parameter "?1"');
     expect(q.get(5)).toEqual({ v: 5 });
+  });
+
+  it.each([null, undefined])("db.prepare() with a lone %p returns a statement without values", nothing => {
+    const db = open();
+    const q = db.prepare("select ? as v", nothing);
+    expect(() => q.get()).toThrow('Missing parameter "?1"');
+    expect(() => q.columnTypes).toThrow('Missing parameter "?1"');
+    expect(() => db.prepare("insert into t (a) values (?)", nothing).run()).toThrow('Missing parameter "?1"');
+    expect(rows(db)).toEqual([]);
+
+    // NULL for the one parameter is a list of one, or a value of a call.
+    expect(db.prepare("select ? as v", [null]).get()).toEqual({ v: null });
+    expect(q.get(null)).toEqual({ v: null });
   });
 
   describe("a getter that uses the statement while its values are being read", () => {
@@ -589,6 +655,13 @@ describe("strict: a Statement does not start a run while a parameter has no valu
       expect(db.prepare("select 1 as a", "x").get()).toEqual({ a: 1 });
       db.transaction(() => db.run("insert into t (a) values (5)"))();
       expect(rows(db)).toEqual([[5, null]]);
+    });
+
+    it("statement.native with a list of arguments that has a hole, after a bind", () => {
+      const db = open();
+      const q = db.query("select ? as a, ? as b");
+      expect(q.get(1, 2)).toEqual({ a: 1, b: 2 });
+      expect(q.native.get([, 5])).toEqual({ a: null, b: 5 });
     });
 
     it("a finalized statement reports that it is finalized", () => {

@@ -97,7 +97,7 @@ const notStrict = new Database(":memory:");
 notStrict.query("SELECT $message;").all({ messag: "Hello world" });
 ```
 
-In strict mode, a statement from `db.query()` or `db.prepare()` that has parameters does not start a run before each of them has a value. A call without values reuses the values of the last bind, and throws if that bind failed or there was none. An empty array is not a set of values. To bind `NULL`, write `null` in its place: `[null]`, `[1, null, 3]`. An `EXPLAIN` statement needs its values too, because the plan that SQLite reports can depend on them.
+With `strict: true`, `bun:sqlite` also throws an error such as `Missing parameter "message"` when you run a statement from `db.query()` or `db.prepare()` and one of its parameters has no value. That is the case before the first call with values, after a call with an empty array, and after a call whose values `bun:sqlite` rejected. Pass the values again. To bind `NULL`, pass `null`: `[null]`, `[1, null, 3]`. An `EXPLAIN` statement needs its values too, because the plan that SQLite reports can depend on them.
 
 ```ts db.ts icon="/icons/typescript.svg"
 import { Database } from "bun:sqlite";
@@ -112,8 +112,6 @@ query.all({ message: "Hello world" });
 // does not throw error, reuses "Hello world":
 query.all();
 ```
-
-`db.run()` and `db.exec()` are unchanged in strict mode: a statement that gets no values there runs with `NULL`.
 
 ### Load via ES module import
 
@@ -305,6 +303,15 @@ You can bind using positional parameters too:
 ```ts db.ts icon="/icons/typescript.svg"
 const query = db.query(`select ?1;`);
 query.all("Hello world");
+```
+
+A call without values runs the statement with the values it already has. Before the first call with values, each parameter is `NULL`. An empty array clears the values.
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query(`select ?1 as message;`);
+query.get("Hello world"); // { message: "Hello world" }
+query.get(); // { message: "Hello world" }
+query.get([]); // { message: null }
 ```
 
 #### Names with and without the prefix

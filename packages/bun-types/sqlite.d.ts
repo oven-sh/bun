@@ -74,14 +74,12 @@ declare module "bun:sqlite" {
      * When set to `true`, a query with a missing bound parameter throws an error.
      * When set to `false` or `undefined`, the parameter is `NULL`.
      *
-     * In strict mode, a {@link Statement} that has parameters does not start
-     * a run before each of them has a value. A call without values reuses the
-     * values of the last bind, and throws if that bind failed or there was none.
-     * An empty array is not a set of values. To bind `NULL`, write `null` in
-     * its place: `[null]`, `[1, null, 3]`. An `EXPLAIN` statement needs its
-     * values too, because the plan that SQLite reports can depend on them.
-     * {@link Database.run} and {@link Database.exec} are unchanged: a statement
-     * that gets no values there runs with `NULL`.
+     * In strict mode, running a {@link Statement} while one of its parameters
+     * has no value also throws, for example `Missing parameter "name"`. That is
+     * the case before the first call with values, after a call with an empty
+     * array, and after a call whose values were rejected. To bind `NULL`, pass
+     * `null`: `[null]`, `[1, null, 3]`. An `EXPLAIN` statement needs its values
+     * too, because the plan that SQLite reports can depend on them.
      *
      * In both modes, the key of a named parameter can include the `$`, `:`, or
      * `@` prefix or leave it out. If an object has both keys, the key without
@@ -268,7 +266,7 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     * @param params Optional bindings for the query
+     * @param params Optional bindings for the query. `null` or `undefined` means no values. To bind `NULL` to the one parameter, pass `[null]`.
      *
      * @returns A {@link Statement} instance
      */

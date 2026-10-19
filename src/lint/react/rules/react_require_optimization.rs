@@ -35,13 +35,13 @@ impl Rule for RequireOptimization {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        // Nothing that the rule tells the list changes what is a component. So first what there is in the end, and only
-        // what is in one of these can have something to tell.
+        // Nothing this rule records in the list changes what counts as a component. So compute the final list first:
+        // only nodes inside one of those components matter to the listeners below.
         let mut components = Components::new(file);
         components.finish();
         let mut list = components.list();
-        // Stateless Functional Components cannot be optimized (yet): a function is a component from where it begins,
-        // which is where upstream's listener for functions marks it.
+        // Stateless Functional Components cannot be optimized (yet). A function is a component from its start, which is
+        // where upstream's function listener marks it.
         let has_classes = file.has_classes();
         list.retain(|&id| match components.component(id).node {
             Node::Func(func) => has_classes && is_function_in_class(func),
@@ -58,7 +58,7 @@ impl Rule for RequireOptimization {
             after.checked_sub(1).and_then(|at| outermost.get(at)).is_some_and(|it| it.contains(span))
         };
 
-        // upstream's listeners.
+        // Upstream's listeners.
         let pragmas = *components.pragmas();
         let mut queue = Queue::default();
         let mut mark_scu_as_declared = |node| queue.push(At::enter(node), 0, node);
@@ -67,7 +67,7 @@ impl Rule for RequireOptimization {
                 mark_scu_as_declared(Node::Func(func));
             }
         }
-        // upstream takes a private name for its text.
+        // Upstream treats `#shouldComponentUpdate` like `shouldComponentUpdate`.
         let mentions_scu = file.mentions_any(&["shouldComponentUpdate", "#shouldComponentUpdate"]);
         for class in file.classes().filter(|it| is_in_component(it.span())) {
             if is_class_declaration(Node::Class(class))
@@ -98,7 +98,7 @@ impl Rule for RequireOptimization {
             }
         }
 
-        // They are called in the order of ESLint's walk: what is a component depends on what comes before.
+        // They run in ESLint's traversal order, because what counts as a component depends on the code before it.
         let mut walk = Components::new(file);
         let mut has_scu: FxHashSet<Span> = FxHashSet::default();
         while let Some(event) = queue.pop_until(At::END) {
@@ -114,13 +114,13 @@ impl Rule for RequireOptimization {
 }
 
 impl RequireOptimization {
-    /// What upstream's `hasCustomDecorator` asks of the expression of a decorator.
+    /// The test upstream's `hasCustomDecorator` applies to a decorator's expression.
     fn is_custom_decorator(&self, expression: Expr<'_>) -> bool {
         expression.as_ident().is_some_and(|name| self.allow_decorators.iter().any(|it| **it == *name.bytes()))
     }
 }
 
-/// What upstream's `hasPureRenderDecorator` asks of the expression of a decorator.
+/// The test upstream's `hasPureRenderDecorator` applies to a decorator's expression.
 fn is_pure_render_decorator(expression: Expr<'_>) -> bool {
     let (ExprKind::Call(call) | ExprKind::New(call)) = expression.kind() else {
         return false;
@@ -132,7 +132,7 @@ fn is_pure_render_decorator(expression: Expr<'_>) -> bool {
         && call.args().first().is_some_and(|it| it.is_ident("PureRenderMixin"))
 }
 
-/// upstream's `isSCUDeclared`, for the `name` of a key
+/// Upstream's `isSCUDeclared`, for a key's `name`.
 fn is_scu_declared(name: &[u8]) -> bool {
     name == b"shouldComponentUpdate"
 }

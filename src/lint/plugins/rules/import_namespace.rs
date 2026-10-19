@@ -18,7 +18,7 @@ const ASSIGNMENT: Message = Message::new("", "Assignment to member of namespace 
 const COMPUTED: Message = Message::new("", "Unable to validate computed reference to imported namespace '{{name}}'.");
 const NOT_FOUND: Message = Message::new("", "'{{name}}' not found in {{deeply}}imported namespace '{{namepath}}'.");
 const ONLY_TOP_LEVEL: Message = Message::new("", "Only destructure top-level names.");
-/// `dereference.object.name` of what is no identifier.
+/// `dereference.object.name` when the object isn't an identifier.
 const UNDEFINED: &[u8] = b"undefined";
 
 const OXLINT_NO_EXPORT: Message =
@@ -31,9 +31,9 @@ const OXLINT_ASSIGNMENT: Message = Message::new("", "Assignment to member of nam
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// `None`: oxlint, which asks its records.
+    /// `None` for oxlint, which uses its module records.
     maps: Option<ExportMaps<'a>>,
-    /// `declaredScope(context, name, node) === 'module'`, by the scope of `node`.
+    /// `declaredScope(context, name, node) === 'module'`, cached by `node`'s scope.
     declared: FxHashMap<(Scope<'a>, Name<'a>), bool>,
     star_exports: StarExports<'a>,
     namespaces: FxHashMap<ModuleId, Namespaces<'a>>,
@@ -82,7 +82,8 @@ impl Rule for Namespace {
             }
             for entry in entries {
                 let local = entry.local_name().name();
-                // For oxlint the first that declares a name counts, for ESLint the last that is a namespace.
+                // If several imports declare the same name, oxlint uses the first and ESLint the last one that's a
+                // namespace.
                 if is_oxlint && !seen.insert(local) {
                     continue;
                 }
@@ -97,7 +98,7 @@ impl Rule for Namespace {
                         Nested::Namespace(source, imports)
                     }
                     ImportImportName::Name(specifier) => imports.nested(specifier.imported().bytes(), cx),
-                    // oxlint does not ask what the default is.
+                    // oxlint doesn't look at what the default export is.
                     ImportImportName::Default(_) if is_oxlint => Nested::No,
                     ImportImportName::Default(_) => imports.nested(b"default", cx),
                 };
@@ -120,8 +121,8 @@ impl Rule for Namespace {
                 }
                 continue;
             };
-            // oxlint follows the references to the import, but for those in parentheses, and only into a module that
-            // has an `import` or an `export`.
+            // oxlint follows the references to the import, except parenthesized ones, and only into a module that has
+            // an `import` or an `export`.
             if let Remote::Oxlint(module) = place.module
                 && (ident.is_parenthesized()
                     || !module.record.has_module_syntax
@@ -134,12 +135,12 @@ impl Rule for Namespace {
     }
 }
 
-/// The namespaces of other modules that a module has, for oxlint.
+/// oxlint only: the namespaces of other modules that a module imports or re-exports.
 struct Namespaces<'m> {
     /// The specifier of the first `import * as name from "m"` for each name.
     imported: FxHashMap<&'m [u8], &'m [u8]>,
-    /// The number and the specifier of the first of the `indirect_export_entries` that is an `export * as name from "m"`, and that
-    /// exports what is imported as `name`.
+    /// `exported`: for each name, the index and specifier of the first of the `indirect_export_entries` that's an
+    /// `export * as name from "m"`. `reexported`: the same for the first entry that exports what's imported as `name`.
     exported: FxHashMap<&'m [u8], (usize, &'m [u8])>,
     reexported: FxHashMap<&'m [u8], (usize, &'m [u8])>,
 }
@@ -159,8 +160,8 @@ impl<'m> Namespaces<'m> {
         this
     }
 
-    /// The specifier of the module whose namespace the module has under `name`: `export * as name from "m"`, or
-    /// `import * as name from "m"`.
+    /// Returns the specifier of the module whose namespace this module has as `name`, through `export * as name from
+    /// "m"` or `import * as name from "m"`.
     fn get_module_request_name(&self, name: &[u8]) -> Option<&'m [u8]> {
         let namespace = self.imported.get(name).copied();
         let reexported = self.reexported.get(name).filter(|_| namespace.is_some());
@@ -169,20 +170,20 @@ impl<'m> Namespaces<'m> {
     }
 }
 
-/// Another module, as each of the two knows it.
+/// Another module, as oxlint or the plugin represents it.
 #[derive(Copy, Clone)]
 enum Remote<'a> {
     Oxlint(Loaded<'a>),
     Eslint(ExportMap<'a>),
 }
 
-/// What a name is in a module.
+/// The result of looking a name up in a module.
 enum Nested<'a> {
-    /// Nothing, or no namespace.
+    /// Not exported, or not a namespace.
     No,
-    /// For oxlint: the namespace of a module that is not known.
+    /// oxlint only: the namespace of a module that isn't loaded.
     Unknown,
-    /// For oxlint with the specifier of the module.
+    /// The specifier is only set for oxlint.
     Namespace(&'a [u8], Remote<'a>),
 }
 
@@ -209,12 +210,12 @@ impl<'a> Remote<'a> {
     }
 }
 
-/// The namespace that something is looked up in.
+/// The namespace that a member is looked up in.
 #[derive(Clone)]
 struct Place<'a> {
-    /// For oxlint: the specifier of the module that is imported.
+    /// oxlint only: the imported module's specifier.
     source: &'a [u8],
-    /// The name of the import, and the properties that lead from there to `module`.
+    /// The import's local name, then the properties that lead from it to `module`.
     namespaces: SmallVec<[&'a [u8]; 4]>,
     module: Remote<'a>,
 }
@@ -235,10 +236,10 @@ impl Namespace {
         };
         match ident.parent() {
             Node::Expr(member) if member.is_in_type_query() => {}
-            // ESLint does not ask what the name is declared as.
+            // ESLint doesn't check where the name is declared.
             Node::Expr(member) if member.is_jsx_tag_name() => check_jsx_member_expression(member, place, cx),
             Node::Expr(member) if matches!(member.tag(), ExprTag::Dot | ExprTag::Index) => {
-                // oxlint does not ask which part of the member it is.
+                // oxlint doesn't check that it's the member's object.
                 if !is_oxlint && (member.object() != Some(ident) || !is_declared_in_module(name, member.into(), cx)) {
                     return;
                 }
@@ -246,14 +247,14 @@ impl Namespace {
                     && parent.tag() == ExprTag::Assign
                     && parent.left() == Some(member)
                 {
-                    // oxlint points at the member, and takes a default in a pattern for an assignment.
+                    // oxlint reports the member, and treats a default value in a pattern as an assignment.
                     if is_oxlint {
                         cx.report(member, OXLINT_ASSIGNMENT).data("namespace_name", debug(name.bytes()));
                     } else if !parent.is_assignment_target() {
                         cx.report(parent, ASSIGNMENT).data("name", name);
                     }
                 }
-                // oxlint points at the member, and says nothing about what is computed further on.
+                // oxlint reports the member, and ignores computed accesses further along the chain.
                 if is_oxlint && !self.allow_computed && member.tag() == ExprTag::Index {
                     cx.report(member, OXLINT_COMPUTED_REFERENCE).data("namespace_name", debug(name.bytes()));
                     return;
@@ -274,7 +275,7 @@ impl Namespace {
         let mut node = node;
         loop {
             let property = match node.kind() {
-                // oxlint knows the name of `a["b"]`.
+                // oxlint resolves `a["b"]` to a name.
                 _ if is_oxlint => static_property_info(node).map(|it| (it.0, it.1.bytes())),
                 ExprKind::Dot { name, .. } => {
                     Some((name.span(), name.bytes().strip_prefix(b"#").unwrap_or_else(|| name.bytes())))
@@ -296,7 +297,7 @@ impl Namespace {
             let Node::Expr(parent) = node.parent() else {
                 return;
             };
-            // For oxlint what is in parentheses is part of nothing that is looked at.
+            // oxlint's AST keeps parentheses as nodes, so a chain ends at a parenthesized member.
             if is_oxlint && node.is_parenthesized() || node.is_chain_root() {
                 return;
             }
@@ -307,7 +308,7 @@ impl Namespace {
     }
 }
 
-/// `a.b.c` after `implements`, or after the `extends` of an interface, is a `MemberExpression` in ESTree.
+/// `a.b.c` after `implements`, or after an interface's `extends`, is a `MemberExpression` in ESTree.
 fn check_heritage<'a>(heritage: TypeNode<'a>, mut place: Place<'a>, cx: &mut Cx<'a, Namespace>) {
     let is_heritage = match heritage.parent() {
         Node::Class(class) => class.implements().around(heritage.span().start) == Some(heritage),
@@ -335,8 +336,8 @@ fn check_heritage<'a>(heritage: TypeNode<'a>, mut place: Place<'a>, cx: &mut Cx<
     }
 }
 
-/// `member`: the `a.b` at the start of the name in a tag. Whether the `a` of a closing tag is a reference depends on the parser that is
-/// configured, so a closing tag is looked at with its opening tag.
+/// `member`: the `a.b` at the start of a tag name. Whether the `a` of a closing tag is a reference depends on the
+/// configured parser, so a closing tag is checked together with its opening tag.
 fn check_jsx_member_expression<'a>(member: Expr<'a>, place: &Place<'a>, cx: &mut Cx<'a, Namespace>) {
     let mut tag = member;
     let jsx = loop {
@@ -372,10 +373,10 @@ fn check_deep_namespace_for_object_pattern<'a>(pattern: Pat<'a>, place: Place<'a
                 continue;
             };
             let name = match key.kind() {
-                // oxlint takes every key whose name is written.
+                // oxlint accepts any key with a static name.
                 _ if is_oxlint => key.name(),
                 KeyKind::Ident(name) => Some(name),
-                // It does not ask whether the key is computed.
+                // Upstream doesn't check whether the key is computed.
                 KeyKind::Computed(e) => e.as_ident(),
                 _ => None,
             };
@@ -394,7 +395,7 @@ fn check_deep_namespace_for_object_pattern<'a>(pattern: Pat<'a>, place: Place<'a
                     pending.push((property.value(), next));
                 }
                 Nested::Unknown => {}
-                // oxlint points at the key.
+                // oxlint reports the key.
                 Nested::No if is_oxlint => check_binding_exported(name, key.inner_span(cx.file()), &place, cx),
                 Nested::No => check_binding_exported(name, property.span(), &place, cx),
             }

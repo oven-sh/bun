@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferObjectFromEntries {
     /// `a.b` is `["a", "b"]`.
     functions: Vec<Vec<String>>,
-    /// The calls of `reduce` and of what has the last name of one of `functions`.
+    /// Listens to calls of `reduce` and of the last name of each entry in `functions`.
     on: On,
 }
 
@@ -119,7 +119,7 @@ impl Rule for PreferObjectFromEntries {
             }
             _ => return,
         };
-        // Not what the default value of the parameter is written to.
+        // Excludes the write reference that the parameter's default value creates.
         if accumulator.references().filter(|it| !matches!(it.node(), Node::Pat(_))).take(2).count() == 1 {
             cx.report(span, PREFER_OBJECT_FROM_ENTRIES);
         }

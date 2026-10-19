@@ -1,9 +1,9 @@
-//! ESLint's own `Linter`, for files whose tree is not ours: those for which an `eslint.config.js` has a `language` other than
-//! JavaScript, or a parser that is not known here. See `worker/eslint.js`.
+//! Runs ESLint's own `Linter` for files that Bun can't build a tree for: those where an `eslint.config.js` sets a
+//! `language` other than JavaScript, or a parser that Bun doesn't know. See `worker/eslint.js`.
 //!
-//! The `Linter` is that of the `eslint` which the project has installed. It is given a configuration that is made of what is
-//! configured for the file ([`Configuration`]), and of the objects which that names, each from the module that exports it. The
-//! configuration file is run again only for what JSON cannot say.
+//! The `Linter` comes from the project's installed `eslint`. Its config is built from what's configured for the file
+//! ([`Configuration`]) plus the objects that this refers to, each taken from the module that exports it. The config
+//! file is only run again for values that JSON can't represent.
 
 use super::engine::Vm;
 use super::host::Host;
@@ -13,16 +13,16 @@ use crate::linter::{LintMessage, write_json};
 use crate::options::Json;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// What the program is called with, after those of `processor.rs`.
+/// Call kinds, numbered after those in `processor.rs`.
 mod call {
-    /// `flags`, the id of the [`Configuration`](super::Configuration), the length of the path, the length of what it starts with
-    /// that is the path of the file on disk, the path, the text.
+    /// `flags`, the [`Configuration`](super::Configuration)'s id, the path's length, the length of the path's prefix
+    /// that is the file's path on disk, the path, the text.
     pub(super) const LINT: u32 = 20;
     /// JSON: `[id, run, configuration]`.
     pub(super) const CONFIGURE: u32 = 21;
 }
 
-/// The first byte of what a call returns, after those of `processor.rs`.
+/// First bytes of a call's result, numbered after those in `processor.rs`.
 const NEEDS_CONFIGURATION: u8 = b'4';
 pub(super) const NOT_INSTALLED: u8 = b'5';
 
@@ -31,11 +31,12 @@ pub(super) const OUT_OF_STEP: &[u8] =
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 
-/// What is configured for a file.
+/// A file's config.
 #[derive(Debug)]
 pub struct Configuration {
     id: u32,
-    /// `{ object, parser, plugins }`, as `builtConfiguration` in `worker/eslint.js` reads it. `null`: see [`Configuration::whole`].
+    /// `{ object, parser, plugins }`, as `builtConfiguration` in `worker/eslint.js` reads it. `null` for
+    /// [`Configuration::whole`].
     json: Box<[u8]>,
 }
 
@@ -49,7 +50,7 @@ impl Configuration {
         }
     }
 
-    /// Whatever the configuration file has for a file: a realm runs all of it.
+    /// Uses whatever the config file has for a file. A realm runs the whole config file.
     pub fn whole() -> Configuration {
         Configuration::new(&Json::Null)
     }
@@ -60,14 +61,15 @@ impl Configuration {
 pub struct Text<'t> {
     /// ESLint's `filename`.
     pub path: &'t [u8],
-    /// How much of `path` is ESLint's `physicalFilename`: all of it, unless this is a block that a processor has found.
+    /// The length of the prefix of `path` that is ESLint's `physicalFilename`. That's all of it, unless this is a block
+    /// extracted by a processor.
     pub physical_path_len: usize,
     pub text: &'t [u8],
     /// ESLint's `disableFixes`.
     pub without_fixes: bool,
 }
 
-/// What ESLint's `Linter` says about a text.
+/// The result of ESLint's `Linter` for a text.
 #[derive(Default, Debug)]
 pub struct Linted {
     pub messages: Vec<LintMessage>,
@@ -76,12 +78,11 @@ pub struct Linted {
     pub deprecated: Vec<u8>,
 }
 
-/// Why ESLint's `Linter` says nothing.
+/// Why ESLint's `Linter` returned no result.
 #[derive(Clone, Debug)]
 pub enum Refusal {
     /// The project has no `eslint`.
     NotInstalled,
-    /// What was thrown.
     Thrown(Vec<u8>),
 }
 
@@ -92,7 +93,7 @@ impl From<Vec<u8>> for Refusal {
 }
 
 impl Host<'_> {
-    /// Calls `vm` with `message`, after it has been told the configuration if it has not yet. Returns JSON.
+    /// Calls `vm` with `message`, sending it the config first if it doesn't have it yet. Returns JSON.
     fn lint_in(
         &self,
         vm: &mut dyn Vm,

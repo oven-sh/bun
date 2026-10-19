@@ -1,7 +1,7 @@
-//! Lints a file for which the configuration has a `processor`: ESLint's `_verifyWithFlatConfigArrayAndProcessor`.
+//! Lints a file whose config has a `processor`: ESLint's `_verifyWithFlatConfigArrayAndProcessor`.
 //!
-//! The processor takes blocks out of the file. Each has a path of its own, `a.md/0_example.js`, hence a configuration of its own, and
-//! is linted like a file at that path.
+//! The processor extracts blocks from the file. Each block has its own path, like `a.md/0_example.js`, so it has its
+//! own config, and it's linted like a file at that path.
 
 use crate::configs::{Flavor, Loaded};
 use crate::lint::{Context, Fixes};
@@ -11,12 +11,11 @@ use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages,
 use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
 use std::sync::Arc;
 
-/// Text to lint.
 #[derive(Copy, Clone)]
 struct Text<'t> {
     /// ESLint's `filename`.
     path: &'t [u8],
-    /// How much of `path` is the path of the file on the disk.
+    /// How many leading bytes of `path` are the path of the file on disk.
     physical_path_len: usize,
     text: &'t [u8],
     fixes: Fixes,
@@ -29,8 +28,9 @@ fn thrown(message: Vec<u8>) -> LintResult {
     }
 }
 
-/// The result for a text that only the `eslint` package can lint, when it isn't installed. Whoever gets it adds the text to
-/// [`Context::needs_eslint`]: [`Context::verify_processed_text`] for a file, [`Context::verify_block`] for a part of one.
+/// The result for a text that only the `eslint` package can lint, when it isn't installed. The caller adds the text to
+/// [`Context::needs_eslint`]: [`Context::verify_processed_text`] for a file, [`Context::verify_block`] for a part of
+/// one.
 fn needs_eslint() -> LintResult {
     LintResult {
         is_unread: true,
@@ -38,7 +38,7 @@ fn needs_eslint() -> LintResult {
     }
 }
 
-/// What ESLint says about a `processor` that is not there.
+/// ESLint's error for a `processor` that doesn't exist.
 fn no_such_processor(config: &ResolvedConfig) -> Vec<u8> {
     let written = config.processor.as_deref().unwrap_or_default();
     let (plugin, name) = match bun_core::strings::last_index_of_char(written, b'/') {
@@ -56,7 +56,7 @@ fn no_such_processor(config: &ResolvedConfig) -> Vec<u8> {
 }
 
 impl Context<'_, '_> {
-    /// The rule that a message about a file with `config` names.
+    /// Resolves the rule ID in a message about a file with `config`.
     fn find_rule(&self, config: &ResolvedConfig, id: &[u8]) -> RuleId {
         if let Some(entry) = config.find_rule(self.linter.registry(), id) {
             return RuleId::Known(entry.meta);
@@ -67,7 +67,7 @@ impl Context<'_, '_> {
         }
     }
 
-    /// Lints `text` as the file at `path`, which is in `file`.
+    /// Lints `text` as the file at `path`, which is inside `file`.
     fn verify_natively(
         &self,
         loaded: &Loaded,
@@ -80,7 +80,7 @@ impl Context<'_, '_> {
             return needs_eslint();
         }
         let (len, fixes) = (file.physical_path_len, file.fixes);
-        // What only the parser of the configuration can read is for ESLint's own `Linter`, which has that parser.
+        // Text that only the config's parser can parse goes to ESLint's own `Linter`, which has that parser.
         self.verify_block_if_read(path, len, text, config, fixes)
             .unwrap_or_else(|| match loaded.for_eslint {
                 Some(_) => {
@@ -94,7 +94,7 @@ impl Context<'_, '_> {
             })
     }
 
-    /// A block that a processor has found in `file`, which has `config`.
+    /// Lints a block that a processor found in `file`, which has `config`.
     fn verify_block(
         &self,
         loaded: &Loaded,
@@ -108,7 +108,8 @@ impl Context<'_, '_> {
             }
             Block::Named { path, text } => (paths::from_native(path), text),
         };
-        // ESLint's `filterCodeBlock`. ESLint 8 asks `isTargetPath`: whether it lints a file of that name in a directory.
+        // ESLint's `filterCodeBlock`. ESLint 8 calls `isTargetPath`, which checks whether it would lint a file with
+        // that name in a directory.
         let registry = self.linter.registry();
         let found = match loaded.flavor {
             Flavor::EslintRc => loaded.config.get_unless_ignored(registry, &path),
@@ -127,7 +128,7 @@ impl Context<'_, '_> {
             ..file
         };
         let result = self.verify_routed(loaded, block, &own);
-        // The other blocks of the file are still linted, so the warning names this one.
+        // The file's other blocks are still linted, so the warning lists only this one.
         if result.is_unread {
             self.needs_eslint.lock().push((path, loaded.flavor));
             return LintResult::default();
@@ -190,7 +191,7 @@ impl Context<'_, '_> {
                 if let Some(thrown) = result.thrown {
                     return Err(thrown);
                 }
-                // That block is the whole file.
+                // An unread result only gets here if the block is the whole file.
                 is_unread |= result.is_unread;
                 let (Block::Unnamed(text) | Block::Named { text, .. }) = block;
                 write_messages(&mut lists, &result.messages, &result.suppressed, text);
@@ -216,7 +217,7 @@ impl Context<'_, '_> {
         }
     }
 
-    /// By ESLint's own `Linter`. Also returns JSON: ESLint's `usedDeprecatedRules`.
+    /// Lints with ESLint's own `Linter`. Also returns ESLint's `usedDeprecatedRules` as JSON.
     fn verify_with_eslint(
         &self,
         loaded: &Loaded,
@@ -262,7 +263,7 @@ impl Context<'_, '_> {
         match (route, &config.processor_location) {
             (Route::Native, _) => self.verify_natively(loaded, it, it.path, it.text, config),
             (Route::Language, _) => self.verify_in_language_of(loaded, it, config),
-            // A processor that finds a file for a processor in a file, and so on without end. ESLint overflows its stack.
+            // A processor can find a file for a processor in a file, and so on forever. ESLint overflows its stack.
             (Route::Processor, _) if !bun_core::StackCheck::init().is_safe_to_recurse() => {
                 LintResult::default()
             }
@@ -273,12 +274,12 @@ impl Context<'_, '_> {
             (Route::Unsupported, _) if config.route_as_it_is(it.path) == Route::Eslint => {
                 needs_eslint()
             }
-            // As a file of that kind.
+            // Same as for a file of that kind.
             (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
         }
     }
 
-    /// [`Context::verify_text`] for a file with a processor. `loaded`: where `config` is from. `None`: the file
+    /// [`Context::verify_text`] for a file with a processor. `loaded` is where `config` came from. `None` if the file
     /// [needs `eslint`](Context::needs_eslint).
     pub(crate) fn verify_processed_text(
         &self,
@@ -322,7 +323,7 @@ impl Context<'_, '_> {
                 _ => self.verify_routed(loaded, it, config),
             };
             is_unread |= result.is_unread;
-            // ESLint and a processor have them whoever reads them.
+            // ESLint and processors always produce fixes, whether or not they're read.
             if !reads_fixes {
                 for message in result.messages.iter_mut().chain(&mut result.suppressed) {
                     message.fix = None;

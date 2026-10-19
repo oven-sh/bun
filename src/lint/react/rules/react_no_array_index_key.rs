@@ -18,9 +18,9 @@ const NO_ARRAY_INDEX_KEY: Message = Message::new("", "Usage of Array index in ke
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// `None`: nobody has asked yet. oxlint knows none.
+    /// `None` until it's first needed. Unused for oxlint, which has no pragma setting.
     pragma: Option<&'a [u8]>,
-    /// The attributes and the properties that are named `key` and whose value can be made of an index.
+    /// The attributes and properties named `key` whose value could be built from an index.
     keys: Vec<Prop<'a>>,
 }
 
@@ -39,7 +39,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// oxlint knows `React.cloneElement` only. For upstream what is imported from `react` by a name makes elements.
+/// oxlint only recognizes `React.cloneElement`. For upstream a named import from `react` can also create elements.
 fn may_call_what_makes_elements(file: &File) -> bool {
     file.mentions("cloneElement")
         || (!file.language().is_oxlint
@@ -81,13 +81,13 @@ impl Rule for NoArrayIndexKey {
                 let Some(call) = e.as_call() else {
                     return;
                 };
-                // oxlint has a node for parentheses.
+                // oxlint's AST has a node for parentheses.
                 let Some(ExprKind::Object(properties)) =
                     call.args().get(1).filter(|it| !is_oxlint || !it.is_parenthesized()).map(Expr::kind)
                 else {
                     return;
                 };
-                // For upstream `[key]` is `key`.
+                // Upstream treats `[key]` as `key`.
                 let is_key = |it: &Prop<'a>| match it.key() {
                     Some(key) if is_oxlint => matches!(key.kind(), KeyKind::Ident(name) if name.is("key")),
                     Some(key) => name_of_key(key).is_some_and(|name| name == b"key"),
@@ -106,7 +106,7 @@ impl Rule for NoArrayIndexKey {
         }
     }
 
-    /// Upstream has a stack of the calls that it is in. Here the calls and the keys are gone through in source order.
+    /// Upstream keeps a stack of the enclosing calls. This walks the calls and the keys in source order instead.
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut keys = std::mem::take(&mut cx.state.keys);
         if keys.is_empty() {
@@ -136,13 +136,13 @@ impl Rule for NoArrayIndexKey {
             open.close_until(at);
             let innermost = open.calls.last().filter(|_| is_oxlint).and_then(|it| it.index?.symbol());
             let is_array_index = |it: Expr<'a>| match is_oxlint {
-                // oxlint: the parameter of the innermost call, whatever of TypeScript is around it.
+                // oxlint only accepts the innermost call's parameter, and looks through TypeScript wrappers.
                 true => innermost.is_some() && get_inner_expression(it).symbol() == innermost,
                 false => it.as_ident().is_some_and(|name| open.names.contains_key(&name)),
             };
             let mut is_reported = false;
             check_prop_value(value, is_oxlint, &is_array_index, &mut |node| {
-                // oxlint points at the attribute or the property, once.
+                // oxlint reports the attribute or property, once.
                 if !is_oxlint {
                     cx.report(node, NO_ARRAY_INDEX);
                 } else if !std::mem::replace(&mut is_reported, true) {
@@ -165,10 +165,10 @@ fn is_create_clone_element<'a>(callee: Expr<'a>, cx: &mut Cx<'a, NoArrayIndexKey
         && callee.object().and_then(Expr::as_ident).is_some_and(|it| it.bytes() == cx.state.pragma(file))
 }
 
-/// `a.map(..)` or the like.
+/// `a.map(..)` or a similar call.
 struct IteratorCall<'a> {
     span: Span,
-    /// The parameter of the callback that is the index, if it has one.
+    /// The callback's index parameter, if it has one.
     index: Option<Pat<'a>>,
 }
 
@@ -177,13 +177,13 @@ impl<'a> IteratorCall<'a> {
     fn new(e: Expr<'a>, is_oxlint: bool, pragma: &[u8]) -> Option<IteratorCall<'a>> {
         let call = e.as_call()?;
         let callee = call.callee();
-        // oxlint has a node for parentheses.
+        // oxlint's AST has a node for parentheses.
         if callee.is_chain_root() || (is_oxlint && callee.is_parenthesized()) {
             return None;
         }
         let method = match callee.kind() {
             ExprKind::Dot { name, .. } => name.name(),
-            // For upstream `a[map]` is `a.map`.
+            // Upstream treats `a[map]` as `a.map`.
             ExprKind::Index { index, .. } if !is_oxlint => index.as_ident()?,
             _ => return None,
         };
@@ -192,17 +192,17 @@ impl<'a> IteratorCall<'a> {
             b"reduce" | b"reduceRight" => 2,
             _ => return None,
         };
-        // oxlint does not know `Children.map(children, callback)`.
+        // oxlint doesn't recognize `Children.map(children, callback)`.
         let callback = usize::from(!is_oxlint && is_using_react_children(callee, method, pragma));
         let callback = call.args().get(callback).filter(|it| !is_oxlint || !it.is_parenthesized());
         let callback = callback.and_then(Expr::as_fn);
         let index = callback.and_then(|it| match is_oxlint {
             true => it.params().get(position),
-            // For upstream `this` is a parameter, and `index = 0` has no name.
+            // For upstream `this` counts as a parameter, and `index = 0` has no name.
             false => it.params_with_this().nth(position).filter(|it| it.default().is_none()),
         });
         let index = index.filter(|it| !it.is_rest()).map(Param::pat).filter(|it| it.as_ident().is_some());
-        // oxlint looks no further up than the innermost call, with an index or without.
+        // oxlint stops at the innermost call, whether it has an index or not.
         (is_oxlint || index.is_some()).then(|| IteratorCall { span: e.span(), index })
     }
 }
@@ -218,9 +218,9 @@ fn is_using_react_children(callee: Expr<'_>, method: Name<'_>, pragma: &[u8]) ->
 /// upstream's `indexParamNames`
 #[derive(Default)]
 struct Open<'a> {
-    /// The calls around where it is, the innermost last.
+    /// The enclosing calls at the current position, innermost last.
     calls: Vec<IteratorCall<'a>>,
-    /// How many of them have an index of a name.
+    /// For each name, how many of them use it as their index.
     names: FxHashMap<Name<'a>, u32>,
 }
 
@@ -232,7 +232,7 @@ impl<'a> Open<'a> {
         self.calls.push(call);
     }
 
-    /// Forgets the calls that end before `at`.
+    /// Pops the calls that end before `at`.
     fn close_until(&mut self, at: u32) {
         while let Some(call) = self.calls.pop_if(|it| it.span.end <= at) {
             if let Some(name) = call.index.and_then(Pat::as_ident)
@@ -247,7 +247,7 @@ impl<'a> Open<'a> {
     }
 }
 
-/// `BinaryExpression`: not `a && b` and `a, b`. For oxlint not `#a in b` either.
+/// `BinaryExpression`: not `a && b` or `a, b`. For oxlint not `#a in b` either.
 fn as_binary_expression(expr: Expr<'_>, is_oxlint: bool) -> Option<[Expr<'_>; 2]> {
     match expr.kind() {
         ExprKind::Binary { op, left, right }
@@ -270,7 +270,7 @@ fn check_prop_value<'a>(
     if is_array_index(node) {
         return report(node);
     }
-    // oxlint has a node for parentheses.
+    // oxlint's AST has a node for parentheses.
     let is_seen = |it: Expr<'a>| !is_oxlint || !it.is_parenthesized();
     if !is_seen(node) {
         return;
@@ -299,7 +299,7 @@ fn check_prop_value<'a>(
                 _ if callee.is_chain_root() || !is_seen(callee) => {}
                 // key={bar.toString()}
                 ExprKind::Dot { obj, name, .. } if name.name().is("toString") && is_array_index(obj) => report(node),
-                // For upstream `bar[toString]` is `bar.toString`.
+                // Upstream treats `bar[toString]` as `bar.toString`.
                 ExprKind::Index { obj, index, .. }
                     if !is_oxlint && index.is_ident("toString") && is_array_index(obj) =>
                 {

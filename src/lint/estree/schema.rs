@@ -1,22 +1,21 @@
-//! The one description of ESTree: for each type of node its fields, and how each is computed from
-//! the syntax of [`crate::ast`].
+//! The single definition of ESTree: each node type's fields, and how each field is computed from the [`crate::ast`]
+//! syntax.
 //!
 //! A row of the table is `kind Field = value;`.
-//! - `node`: a field that a traversal goes into. These come first, in the order of the visitor keys
-//!   of ESLint and typescript-eslint.
-//! - `part`: the same, where the value can be made of the same node of [`crate::ast`] as the node
-//!   itself.
+//! - `node`: a field that a traversal visits. These come first, in the order of ESLint's and typescript-eslint's
+//!   visitor keys.
+//! - `part`: like `node`, but the value can be made from the same [`crate::ast`] node as the node itself.
 //! - `data`: any other field.
 //! - `ts_node`, `ts_part`, `ts_data`: the same for a field that only typescript-estree has.
 //! - `es_data`: a field that only espree has.
-//! - `ts_hidden`: a deprecated property of typescript-estree. It is not enumerable: a selector finds
-//!   it, whoever goes through the fields of a node leaves it out.
+//! - `ts_hidden`: a deprecated typescript-estree property. It isn't enumerable, so a selector finds it, but iterating
+//!   over a node's fields skips it.
 //!
-//! The value is an expression of a type that converts to a [`Value`]. `None` converts to `null`.
-//! Where `?` meets a `None`, the field is `undefined`.
+//! The value is an expression of a type that converts to a [`Value`]. `None` converts to `null`. Where `?` hits a
+//! `None`, the field is `undefined`.
 //!
-//! After the name of a type come the kinds of nodes of [`crate::ast`] that a node of this type can
-//! be made of: [`NodeType::listens_to`].
+//! A type's name is followed by the kinds of [`crate::ast`] nodes that a node of this type can be made from. See
+//! [`NodeType::listens_to`].
 
 use super::value::{Emit, Nodes, Object, Sink, Value};
 use super::views::*;
@@ -29,24 +28,24 @@ use crate::ast::{
 };
 use crate::rule::NodeTags;
 
-/// A field of a type of node.
+/// A field of a node type.
 pub(crate) struct FieldEntry {
     pub(crate) field: Field,
-    /// It is among the visitor keys: a traversal goes into it.
+    /// True if it's one of the visitor keys, so a traversal visits it.
     pub(crate) is_child: bool,
-    /// What is in it can have the same [`VNode::base`] as the node.
+    /// True if its value can have the same [`VNode::base`] as the node.
     pub(crate) is_part: bool,
     /// Only typescript-estree has it.
     pub(crate) is_typescript_only: bool,
     /// Only espree has it.
     pub(crate) is_espree_only: bool,
-    /// It is not enumerable.
+    /// True if it isn't enumerable.
     pub(crate) is_hidden: bool,
-    /// Its value in a node of that type.
+    /// Computes its value for a node of that type.
     pub(crate) get: for<'a> fn(VNode<'a>) -> Value<'a>,
 }
 
-/// Gives `sink` the field that `get` makes. `None`: a `?` in it has given up.
+/// Passes the value that `get` returns to `sink`. `None` means a `?` in `get` bailed out.
 #[inline]
 fn emit<'a, T: Emit<'a>>(get: impl FnOnce() -> Option<T>, sink: &mut impl Sink<'a>) {
     match get() {
@@ -55,7 +54,7 @@ fn emit<'a, T: Emit<'a>>(get: impl FnOnce() -> Option<T>, sink: &mut impl Sink<'
     }
 }
 
-/// What `get` makes. `Value::Undefined` if a `?` in it gives up.
+/// Returns the value that `get` returns, or `Value::Undefined` if a `?` in `get` bails out.
 #[inline]
 fn or_undefined<'a>(get: impl FnOnce() -> Option<Value<'a>>) -> Value<'a> {
     get().unwrap_or(Value::Undefined)
@@ -79,8 +78,8 @@ macro_rules! estree_schema {
                 match self { $(NodeType::$name => stringify!($name)),* }
             }
 
-            /// Its fields, except `type`, `range`, `loc` and `parent`. First those that a traversal
-            /// goes into, in that order.
+            /// Returns its fields, except `type`, `range`, `loc` and `parent`. The fields that a traversal visits come
+            /// first, in traversal order.
             pub(crate) fn fields(self) -> &'static [FieldEntry] {
                 match self {
                     $(NodeType::$name => &[$(
@@ -103,8 +102,9 @@ macro_rules! estree_schema {
                 }
             }
 
-            /// Gives `sink` the fields of `v`, which is of this type, that are enumerable and that the parser has, in the
-            /// order of [`NodeType::fields`]. As calling `get` of each, for less: nothing is looked up.
+            /// Passes `sink` the fields of `v`, a node of this type, that are enumerable and that the parser has, in
+            /// the order of [`NodeType::fields`]. Same as calling each field's `get`, but cheaper, because there are no
+            /// table lookups.
             #[inline(never)]
             pub(crate) fn emit_fields<'a>(self, v: VNode<'a>, is_espree: bool, sink: &mut impl Sink<'a>) {
                 match self {
@@ -116,8 +116,8 @@ macro_rules! estree_schema {
                 }
             }
 
-            /// The kinds of nodes of [`crate::ast`] that a node of this type can be made of. See
-            /// [`VNode::for_each_at`].
+            /// Returns the kinds of [`crate::ast`] nodes that a node of this type can be made from. See
+            /// [`VNode::for_each_with_type_at`].
             pub(crate) fn listens_to(self) -> NodeTags {
                 match self {
                     $(NodeType::$name => NodeTags::EMPTY $(| NodeTags::from($tag))*),*
@@ -156,8 +156,7 @@ macro_rules! estree_schema {
     (@is_typescript_only ts_data) => { true };
 }
 
-/// What `$value` is for the statement, the expression or the type that `$v` is made of, if its kind
-/// is `$kind`.
+/// Evaluates `$value` for the statement, expression or type that `$v` is made from, if its kind matches `$kind`.
 macro_rules! of {
     ($handle:ident $v:ident, $kind:pat => $value:expr) => {
         match $v.$handle()?.kind() {
@@ -302,7 +301,7 @@ estree_schema! {
         node Params = params(v)?;
         ts_node ReturnType = return_type(v)?;
         part Body = v.with(Part::Body);
-        // For typescript-estree no constructor is `async`, not even `static async constructor() {}`.
+        // In typescript-estree no constructor is `async`, not even `static async constructor() {}`.
         data Async = v.func()?.is_async() && (v.func()?.kind() != FnKind::Constructor || v.dialect() == Dialect::Espree);
         ts_data Declare = false;
         data Expression = false;
@@ -845,7 +844,7 @@ estree_schema! {
         part Expression = source(v);
     }
 
-    // ───────────────────────────── declarations of TypeScript ─────────────────────────────
+    // ───────────────────────────── TypeScript declarations ─────────────────────────────
 
     TSInterfaceDeclaration [StmtTag::Interface] (v) {
         part Id = v.with(Part::Name);
@@ -1195,12 +1194,12 @@ estree_schema! {
     JSXText [ExprTag::String, ExprTag::Jsx] (v) {
         data Raw = v.file().slice(v.span());
         data Value = match v.part {
-            // oxlint does not read `&amp;` and the like.
+            // oxlint doesn't decode `&amp;` and the like.
             _ if v.file().language().is_oxlint => v.file().slice(v.span()),
             Part::Whitespace(_) => jsx_whitespace_value(v),
             _ => jsx_text_value(v.expr()?)?,
         };
-        // acorn reads the text with `parseLiteral`, which takes what ends in `n` for a `bigint`.
+        // acorn parses the text with `parseLiteral`, which treats anything that ends in `n` as a `bigint`.
         es_data Bigint = match v.part {
             _ if v.file().language().is_oxlint => return None,
             _ if !v.file().slice(v.span()).ends_with(b"n") => return None,
@@ -1209,7 +1208,7 @@ estree_schema! {
         };
     }
 
-    // ───────────────────────────── types of nodes that no syntax is converted to ─────────────────────────────
+    // ───────────────────────────── node types that no syntax produces ─────────────────────────────
 
     TSAbstractKeyword [] (v) {}
     TSAsyncKeyword [] (v) {}

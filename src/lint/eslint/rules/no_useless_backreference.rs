@@ -52,15 +52,15 @@ fn as_lookaround(node: regex::Node<'_>) -> Option<Lookaround> {
     }
 }
 
-/// Why `group` has not captured anything whenever `bref`, which refers to it, is matched.
+/// Returns the reason why `group` can't have captured anything when `bref`, which refers to it, is matched.
 fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Message> {
-    // Only its ancestors reach from where it starts to where it ends.
+    // Only `bref`'s ancestors span its whole range.
     let is_around_bref =
         |node: regex::Node<'r>| node.start() <= bref.start() && bref.end() <= node.end() && node != bref;
     if is_around_bref(group) {
         return Some(NESTED);
     }
-    // From the group up to the lowest common ancestor, and the last node before that.
+    // Walk up from the group to the lowest common ancestor. `below_common` is the last node before it.
     let mut below_common = group;
     let mut is_in_negative_lookaround = false;
     let common = group.ancestors().find(|&ancestor| {
@@ -85,7 +85,7 @@ fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Messa
     is_in_negative_lookaround.then_some(INTO_NEGATIVE_LOOKAROUND)
 }
 
-/// Whether some `\` in `pattern` is before what a backreference goes on with.
+/// Fast check: true if some `\` in `pattern` is followed by a character that can continue a backreference.
 fn may_have_backreference(pattern: &[u8]) -> bool {
     let mut rest = pattern;
     while let Some(at) = strings::index_of_char_usize(rest, b'\\') {
@@ -97,12 +97,13 @@ fn may_have_backreference(pattern: &[u8]) -> bool {
     false
 }
 
-/// `node` is the regular expression: a literal, or a call of `RegExp`.
+/// `node` is the regular expression: a literal, or a call to `RegExp`.
 fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoUselessBackreference>) {
     check_pattern(pattern, Mode::of_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
 }
 
-/// `place`: where a backreference is reported. `shown`: what is said of a backreference and of a group.
+/// `place` returns the span to report for a backreference. `shown` returns the text that the message shows for a
+/// backreference or a group.
 fn check_pattern<'a>(
     pattern: &[u8],
     mode: Mode,
@@ -125,7 +126,7 @@ fn check_pattern<'a>(
         if problems.len() != resolved.len() {
             continue;
         }
-        // The groups in other alternatives do not matter if there is one in the same.
+        // Groups in other alternatives don't matter if there's one in the same alternative.
         if problems.iter().any(|problem| problem.0.id != DISJUNCTIVE.id) {
             problems.retain(|problem| problem.0.id != DISJUNCTIVE.id);
         }
@@ -158,13 +159,13 @@ impl Rule for NoUselessBackreference {
         match (file.mentions("RegExp"), file.language().is_oxlint) {
             (false, _) => on,
             (true, true) => on.exprs(&[ExprTag::New]).calls_named(&["RegExp"]),
-            // Finding the calls takes resolving every name of the file.
+            // Finding the calls requires resolving every name in the file.
             (true, false) => on.finish(),
         }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint reads a pattern that is written where `RegExp` is called, and points at the backreference.
+        // oxlint only reads a pattern written directly in the `RegExp` call, and points at the backreference.
         if cx.language().is_oxlint {
             if let Some(pattern) = run_on_regex_node(e) {
                 let place = |it: regex::Node<'_>| pattern.span(it.start(), it.end());

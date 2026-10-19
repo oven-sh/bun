@@ -1,6 +1,5 @@
-//! Lints the test cases of the rules with what `bun lint` lints a file with once it has found the
-//! file and its configuration. For `bun lint --run-eslint-tests`, which only debug and canary
-//! builds have.
+//! Lints the rules' test cases with the same code that `bun lint` runs on a file once it has found the file and its
+//! config. For `bun lint --run-eslint-tests`, which only debug and canary builds have.
 
 use crate::Linter;
 use crate::cli::Options;
@@ -36,7 +35,7 @@ impl Host for Tester<'_> {
 
     #[optimize(size)]
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {
-        // Nothing here hands out the file before it is linted.
+        // This path has no hook that exposes the file before it's linted.
         if case.prepare.is_some() {
             return None;
         }
@@ -122,7 +121,7 @@ impl Host for Tester<'_> {
                     .complete(&|count, work| (0..count).for_each(work))
                     .is_empty()
                 {
-                    // Or it is read from the disk.
+                    // Otherwise the text would be read from disk.
                     result.text = Some(case.code.to_vec());
                     context.lint_again(&mut result).ok()?;
                 }
@@ -167,15 +166,15 @@ fn object(entries: Vec<(&[u8], Json)>) -> Json {
     Json::Object(entries.map(|(key, value)| (key.to_vec(), value)).collect())
 }
 
-/// `{ basePath, flavor, config, extended, files, directories }`: what the configuration says about each file (`external`,
-/// `ignored`, `unconfigured`, or the rules that are on) and whether each directory is ignored.
+/// Takes `{ basePath, flavor, config, extended, files, directories }`. Returns the config's verdict for each file
+/// (`external`, `ignored`, `unconfigured`, or the rules that are on) and whether each directory is ignored.
 fn configuration_case(registry: &Registry, case: &Json) -> Json {
     let text = |key: &[u8]| case.get(key).and_then(Json::as_str);
     let list = |key: &[u8]| case.get(key).and_then(Json::as_array).unwrap_or_default();
     let base_path = text(b"basePath").unwrap_or(b"/");
     let null = Json::Null;
     let json = case.get(b"config").unwrap_or(&null);
-    // By its path.
+    // Keyed by path.
     let extended = |path: &[u8]| case.get(b"extended")?.get(path).cloned();
     let mut load = |directory: &[u8], name: &[u8]| {
         extended(&paths::resolve_as(Style::Windows, directory, name))
@@ -246,7 +245,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
     ])
 }
 
-/// The file at `file` has a list of what [`configuration_case`] is given. Returns the list of what it answers.
+/// Reads a list of [`configuration_case`] inputs from `file`. Returns the list of results.
 #[optimize(size)]
 fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
     let cases = bun_lint::json::parse(&crate::fs::read(file).ok()?)?;
@@ -259,8 +258,9 @@ fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// `bun lint --run-path-tests <posix | windows> (<function> <a> <b>)..`, or `configurations <file>`: `args` is what follows the
-/// flag. Returns what the functions answer, a line each: the paths of Windows are tested on every system. `None`: no such function.
+/// `bun lint --run-path-tests <posix | windows> (<function> <a> <b>)..`, or `configurations <file>`. `args` is
+/// everything after the flag. Returns one line per function result. This way Windows paths are tested on every system.
+/// `None` for an unknown function.
 #[optimize(size)]
 pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
     let (style, mut rest) = match args {
@@ -290,8 +290,8 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// `bun lint --print-markdown-trees <cases>`: `args` is what follows the flag. Returns the tree that `bun lint` parses
-/// each case into.
+/// `bun lint --print-markdown-trees <cases>`. `args` is everything after the flag. Returns the tree that `bun lint`
+/// parses each case into.
 #[optimize(size)]
 pub fn print_markdown_trees(args: &[&[u8]]) -> Option<Vec<u8>> {
     let &[cases] = args else {
@@ -301,8 +301,8 @@ pub fn print_markdown_trees(args: &[&[u8]]) -> Option<Vec<u8>> {
     Some(bun_lint_markdown::for_tests::trees(&cases))
 }
 
-/// `bun lint --run-eslint-tests <bundle> ..`: `args` is what follows the flag. Prints the cases that
-/// fail and the totals. Returns whether the tests could be run.
+/// `bun lint --run-eslint-tests <bundle> ..`. `args` is everything after the flag. Prints the failing cases and the
+/// totals. Returns whether the tests could be run.
 #[optimize(size)]
 pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
     bun_lint_conformance::run_from_command_line(

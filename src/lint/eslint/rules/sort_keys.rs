@@ -21,7 +21,7 @@ const SORT_KEYS: Message = Message::new(
     "Expected object keys to be in {{natural}}{{insensitive}}{{order}}ending order. '{{thisName}}' should be before '{{prevName}}'.",
 );
 
-/// The static name of the property, or else the name of the identifier in `[name]`, which oxlint passes over.
+/// Returns the property's static name, or else the name of the identifier in `[name]`, which oxlint skips.
 #[inline]
 fn get_property_name(key: Key<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
     match key.kind() {
@@ -32,8 +32,7 @@ fn get_property_name(key: Key<'_>, is_oxlint: bool) -> Option<Cow<'_, [u8]>> {
     }
 }
 
-/// Whether there is a blank line between `previous` and `current` that is not inside a token or a
-/// comment.
+/// True if there's a blank line between `previous` and `current` that isn't inside a token or a comment.
 fn is_blank_line_between<'a>(file: &'a File<'a>, previous: Prop<'a>, current: Prop<'a>) -> bool {
     let mut line = file.line_of(previous.span().end);
     let last_line = file.line_of(current.span().start);
@@ -49,8 +48,8 @@ fn is_blank_line_between<'a>(file: &'a File<'a>, previous: Prop<'a>, current: Pr
     last_line - line > 1
 }
 
-/// oxlint's `take_numeric`: the number that starts with the digit `first` and goes on in `rest`. It wraps around, and
-/// takes the character after the number too.
+/// oxlint's `take_numeric`: returns the number that starts with the digit `first` and continues in `rest`. It wraps on
+/// overflow, and also consumes the character after the number.
 fn take_numeric(rest: &mut impl Iterator<Item = u32>, first: u32) -> u32 {
     let mut sum = first - 0x30;
     for c in rest {
@@ -62,8 +61,8 @@ fn take_numeric(rest: &mut impl Iterator<Item = u32>, first: u32) -> u32 {
     sum
 }
 
-/// oxlint's `compare_keys`: by the bytes of UTF-8, or by its own `natural_compare`. Only the letters of ASCII have
-/// capitals.
+/// oxlint's `compare_keys`: compares UTF-8 bytes, or uses its own `natural_compare`. Case folding only applies to ASCII
+/// letters.
 fn compare_keys_as_oxlint(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: bool) -> Ordering {
     if !is_natural {
         let fold = |it: &u8| if is_insensitive { it.to_ascii_lowercase() } else { *it };
@@ -96,24 +95,24 @@ fn compare_keys_as_oxlint(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: 
     }
 }
 
-/// What oxlint's fix replaces in an object literal, and by what.
+/// The span that oxlint's fix replaces in an object literal, and the replacement text.
 type ObjectFix = Option<(Span, Vec<u8>)>;
 
-/// [`ObjectFix`] for each object literal that was asked about.
+/// Caches the [`ObjectFix`] of each object literal.
 type Fixes<'a> = IdMap<Expr<'a>, ObjectFix>;
 
 /// oxlint's `FixableProperty`.
 struct FixableProperty<'a, 'k> {
     key: Cow<'a, [u8]>,
-    /// [`lift_property_span`]
+    /// The result of [`lift_property_span`].
     span: Span,
-    /// The fix of the object literal that is the value.
+    /// The fix for the value, if it's an object literal.
     nested: Option<&'k (Span, Vec<u8>)>,
-    /// `span` goes on to a comment after the `,`.
+    /// True if `span` extends to a comment after the `,`.
     has_comma: bool,
 }
 
-/// oxlint's `has_blank_line`: a line after the first with nothing at all on it.
+/// oxlint's `has_blank_line`: true if a line after the first is completely empty.
 fn has_empty_line(text: &[u8]) -> bool {
     let mut at = 0;
     let mut is_after_break = false;
@@ -128,10 +127,10 @@ fn has_empty_line(text: &[u8]) -> bool {
     false
 }
 
-/// oxlint's `lift_property_span`: the property, from the first of the JSDoc comments that oxc attaches to it, which are
-/// those before it that are not on the line of the token before, and up to the end of a `// ..` after its `,` on the
-/// same line. `after`: the property before it, or where the object starts. `boundary`: where the next property starts, or
-/// where the object ends.
+/// oxlint's `lift_property_span`: returns the property's span, extended back to the first JSDoc comment that oxc
+/// attaches to it (the ones before it that aren't on the previous token's line), and forward to the end of a `// ..`
+/// after its `,` on the same line. `after` is the previous property, or the object's start. `boundary` is the next
+/// property's start, or the object's end.
 #[cold]
 #[inline(never)]
 fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, after: Result<Prop<'a>, u32>, boundary: u32) -> Span {
@@ -168,9 +167,9 @@ fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, after: Result<Prop
 }
 
 impl SortKeys {
-    /// oxlint's `collect_fixable_properties`: `None` unless the names of all properties are known, they are one group,
-    /// spreads are only before and after them, and every comment moves with a property. `known`: the fixes of the
-    /// object literals in `props`.
+    /// oxlint's `collect_fixable_properties`: returns `None` unless every property's name is known, they form one
+    /// group, spreads only come before and after them, and every comment moves with a property. `known` has the fixes
+    /// of the object literals in `props`.
     #[cold]
     #[inline(never)]
     fn collect_fixable_properties<'a, 'k>(
@@ -179,12 +178,12 @@ impl SortKeys {
         known: &'k Fixes<'a>,
     ) -> Option<Vec<FixableProperty<'a, 'k>>> {
         let file = props.first()?.file();
-        // All that is asked about comments is about those in the object.
+        // Every comment query below is inside the object, so one check up front can skip them all.
         let is_commented = file.comments_in(whole).next().is_some();
         let has_comments = |at: Span| is_commented && file.comments_in(at).next().is_some();
         let (mut has_spread_after, mut is_group_over) = (false, false);
         let mut found: Vec<FixableProperty<'a, 'k>> = Vec::with_capacity(props.len());
-        // What is before the property, and whether that is a spread.
+        // The span of the previous property, and true if that's a spread.
         let (mut before, mut is_after_spread) = (Span::empty(whole.start), false);
         let mut after = Err(whole.start);
         for (index, prop) in props.iter().enumerate() {
@@ -238,7 +237,7 @@ impl SortKeys {
         if is_in_order && props.iter().all(|it| it.nested.is_none()) {
             return None;
         }
-        // What is between the first two, without the `,`, comes between all.
+        // The text between the first two properties, without the `,`, becomes the separator for all of them.
         let raw = props.get(1).map_or(&b" "[..], |second| file.slice(first.span.between(second.span)));
         let between = strings::split_once_char(raw, b',').unwrap_or((raw, &[]));
         let replaced = Span::new(first.span.start, last.span.end);
@@ -263,7 +262,7 @@ impl SortKeys {
         Some((replaced, text))
     }
 
-    /// [`SortKeys::build_object_fix`] of `root`, after those of the object literals that are values in it.
+    /// Runs [`SortKeys::build_object_fix`] on `root`, after running it on the object literals that are values in it.
     #[cold]
     #[inline(never)]
     fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> ObjectFix {
@@ -369,7 +368,7 @@ impl Rule for SortKeys {
                 if *is_pattern.get_or_insert_with(|| utils::is_assignment_target(object)) {
                     return;
                 }
-                // oxlint says one thing about an object, without a name, and points at it.
+                // oxlint reports an object once, without any names, and points at the whole object.
                 if is_oxlint {
                     cx.report(object, SORT_KEYS).fix(|fixer| {
                         let (replaced, text) = self.fix_as_oxlint(object, &mut cx.state)?;

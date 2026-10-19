@@ -5,10 +5,10 @@ use bun_lint::utils::eslint_utils::TraceMap;
 use bun_lint_oxlint::ast_util::static_string;
 use rustc_hash::FxHashMap;
 
-/// Require a listener for `error` on an event emitter that a function of Node.js returns.
+/// Require an `error` listener on an event emitter that a Node.js function returns.
 ///
-/// Without one the error is thrown: see "Error events" in the documentation of `node:events`. By default the functions
-/// of Node.js that begin to work when they are called and return an object for which an `'error'` event is documented.
+/// Without one the error is thrown. See "Error events" in the `node:events` documentation. The defaults are the Node.js
+/// functions that start working as soon as they're called and return an object with a documented `'error'` event.
 pub struct NoUnhandledEmitterErrors {
     factories: Exports,
 }
@@ -44,10 +44,10 @@ const NODE: TraceMap<'static, ()> = TraceMap::new(&[
     ("node:tls", CONNECT),
 ]);
 
-/// They return the emitter.
+/// The methods that add a listener. They return the emitter.
 const LISTEN: [&str; 5] = ["addListener", "on", "once", "prependListener", "prependOnceListener"];
 
-/// `receiver.name(..)`: the name, the call, and all of it.
+/// For `receiver.name(..)`, returns the name, the call, and the whole call expression.
 fn method_call<'a>(receiver: Expr<'a>) -> Option<(Name<'a>, Call<'a>, Expr<'a>)> {
     let member = receiver.parent().as_expr()?;
     let whole = member.parent().as_expr()?;
@@ -59,18 +59,18 @@ fn method_call<'a>(receiver: Expr<'a>) -> Option<(Name<'a>, Call<'a>, Expr<'a>)>
     }
 }
 
-/// Which variables have a listener, by [`Symbol::key`]: many emitters can be the value of one.
+/// Caches whether a variable has a listener, by [`Symbol::key`]. Many emitters can be assigned to one variable.
 type Known = FxHashMap<usize, bool>;
 
 fn has_listener(variable: Symbol) -> bool {
     let is_exported = |it: Declaration| matches!(it.parent(), Some(Node::Stmt(statement)) if statement.is_exported());
-    // What is no expression, as in `export { a }`, cannot be followed.
+    // A reference that isn't an expression, as in `export { a }`, can't be followed.
     let mut uses = variable.references().filter(|it| !it.is_init()).map(Reference::expr);
     variable.declarations().any(is_exported) || uses.any(|it| it.is_none_or(|e| is_taken_care_of(e, None)))
 }
 
-/// Whether the emitter `e` gets a listener for `error`, or goes where that cannot be seen. `known`: it is not the name
-/// of a variable, so that a variable which it is the value of is looked at.
+/// True if the emitter `e` gets an `error` listener, or escapes to where we can't tell. `known` is passed if `e` isn't
+/// itself a reference to a variable. In that case, a variable that `e` is assigned to is checked too.
 fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
     let mut is_emitter = true;
     loop {
@@ -87,7 +87,7 @@ fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
         if listens && call.args().first().and_then(static_string).is_some_and(|it| it.is("error")) {
             return true;
         }
-        // It returns the other stream.
+        // `pipe` returns the destination stream, not the emitter.
         if name.is("pipe") {
             return false;
         }
@@ -102,7 +102,7 @@ fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
     };
     match e.parent() {
         Node::Stmt(statement) => statement.tag() != StmtTag::Expr,
-        // What a pattern takes out of it is not the emitter.
+        // A destructured property isn't the emitter.
         Node::VarDecl(declaration) => declaration.pat().symbol().is_some_and(|it| of_variable(Some(it))),
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj != e,

@@ -1,10 +1,11 @@
 //! Reads `[lint]` and `[fmt]` from bunfig.toml. A key sets the default for the flag with the same name: `maxWarnings`
 //! for `--max-warnings`, `semi = false` for `--no-semi`. A section is turned into the same `Options` as a command line,
 //! through the same `Options::set`, and the command line is applied on top of it. So a key takes exactly what its flag
-//! takes: the value's type comes from the flag table, and the code that rejects a bad value for the flag rejects it here.
+//! takes: the value's type comes from the flag table, and the code that rejects a bad value for the flag rejects it
+//! here.
 //!
-//! A few keys can say more than a flag can: the tables and `overrides` in `[lint]`, and in `[fmt]` both `overrides` and
-//! the options of the features that a flag only turns on ([`FEATURES`]).
+//! A few keys can express more than a flag can: the tables and `overrides` in `[lint]`, and in `[fmt]` both `overrides`
+//! and the options of the features that a flag only turns on ([`FEATURES`]).
 //!
 //! Bun's bunfig.toml loader finds and parses the file, then calls into this module.
 
@@ -22,7 +23,7 @@ use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 use bun_lint::utils::text::number_to_string;
 
-/// What is wrong with a section, and where in the file.
+/// An error in a section, and its location in the file.
 pub struct Refusal {
     pub at: Loc,
     pub message: Vec<u8>,
@@ -46,21 +47,21 @@ fn expected<T>(what: &str, value: &Expr) -> Result<T, Refusal> {
 /// `Options::set`
 type Set<'s> = dyn FnMut(&'static [u8], Option<&[u8]>, bool) -> Result<(), UsageError> + 's;
 
-/// Every flag of a command is in one of the four lists, by its long name.
+/// Each of a command's flags is in one of the four lists, by its long name.
 struct Table {
     section: &'static str,
     params: &'static [Param],
     /// The flags that describe the project. The key is the name in camelCase.
     flags: &'static [&'static [u8]],
-    /// The same, with a key that is called otherwise, or that is read by hand.
+    /// Same, but the key has a different name or is parsed by hand.
     renamed: &'static [(&'static [u8], &'static [u8])],
     /// Keys that have no flag.
     without_flag: &'static [&'static [u8]],
-    /// The flags that say what one run does. A file that rewrites code without a word, or that prints something else than
-    /// the report, is a trap: the key is refused with the name of the flag.
+    /// The flags that say what a single run does. A config file that silently rewrites code, or makes the command print
+    /// something other than the report, is a trap, so the key is rejected with a message that mentions the flag.
     actions: &'static [&'static [u8]],
-    /// The flags that have no key: parts of a configuration file, which bunfig.toml is not one more of, what has no
-    /// effect, and the lines of the help that are the opposite of a flag.
+    /// The flags that have no key: ones that duplicate parts of a linter config file (bunfig.toml isn't meant to be
+    /// another one), ones that have no effect, and the `--no-..` help entries that negate another flag.
     others: &'static [&'static [u8]],
 }
 
@@ -112,7 +113,7 @@ impl Table {
         true
     }
 
-    /// The flag with the long name `name`, which there is.
+    /// The flag with the long name `name`, which must exist.
     const fn param(&self, name: &[u8]) -> &'static Param {
         let mut at = 0;
         while at < self.params.len() {
@@ -123,7 +124,7 @@ impl Table {
             }
             at += 1;
         }
-        panic!("A key of bunfig.toml is for a flag that does not exist.")
+        panic!("A bunfig.toml key maps to a flag that doesn't exist.")
     }
 
     const fn only_has_flags(&self) -> bool {
@@ -146,7 +147,7 @@ impl Table {
         (written.map(<[u8]>::to_vec)).chain(self.flags.iter().map(|flag| key_of(flag)))
     }
 
-    /// The flag that `key` is the default of.
+    /// The flag that `key` sets the default for.
     fn param_of(&self, key: &[u8], at: Loc) -> Result<&'static Param, Refusal> {
         let renamed = self.renamed.iter().find(|it| it.0 == key).map(|it| it.1);
         let flag = renamed.or_else(|| self.flags.iter().copied().find(|flag| key_of(flag) == key));
@@ -174,7 +175,7 @@ impl Table {
         }
     }
 
-    /// Takes in `key = value`, as the flag.
+    /// Applies `key = value` as if it were the flag.
     fn set(&self, key: &Key, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
         give(self.param_of(&key.name, key.at)?, value, set)
     }
@@ -209,7 +210,7 @@ fn at(value: &Expr) -> impl Fn(UsageError) -> Refusal {
     move |UsageError(message)| Refusal { at, message }
 }
 
-/// Takes in `value` as what the flag `param` is given.
+/// Applies `value` as the value of the flag `param`.
 fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusal> {
     let name = param.names.long.unwrap_or_default();
     match (param.takes_value, &value.data) {
@@ -225,8 +226,8 @@ fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusa
     }
 }
 
-/// What is written after the flag `param` for `value`. A flag takes a number if the help calls what it takes `<n>`.
-/// `what`: what is expected where it is a string that is taken.
+/// The text you'd write after the flag `param` to pass `value`. A flag takes a number if the help shows its value as
+/// `<n>`. `what` is the expected type to mention in the error when the flag takes a string.
 fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, Refusal> {
     match (&mut bun_lint::json::from_parsed(value), param.id.value) {
         (Some(Json::Number(number)), b"n") => Ok(number_to_string(*number)),
@@ -269,7 +270,7 @@ const FORMAT: Table = Table {
         b"threads",
         b"allow-unsupported",
         b"flavor",
-        // The options of Prettier: a key is what the option is called in a `.prettierrc`.
+        // Prettier's options. Each key is the option's name in a `.prettierrc`.
         b"print-width",
         b"tab-width",
         b"use-tabs",
@@ -356,8 +357,8 @@ const FORMAT: Table = Table {
 const _: () = assert!(FORMAT.only_has_flags());
 const _: () = assert!(
     FORMAT.has_every_flag(),
-    "A flag of `bun fmt` is in none of the lists of `FORMAT`. If it describes the project it is a key of `[fmt]` in \
-     bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
+    "A `bun fmt` flag isn't in any of `FORMAT`'s lists. If it describes the project, it's a `[fmt]` key in bunfig.toml: \
+     add it to `flags`, docs/runtime/bunfig.mdx and the test. If it says what a single run does, add it to `actions`."
 );
 
 /// Value type of an option in a [`Feature`] table.
@@ -543,7 +544,7 @@ impl Feature {
     }
 }
 
-/// What `[fmt]` of `file` says.
+/// Parses `file`'s `[fmt]` section.
 pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
     if let Some(section) = file.get(b"format") {
         return refuse(
@@ -556,7 +557,7 @@ pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> 
     };
     let mut options = crate::fmt::cli::Options::default();
     for (key, value) in entries(&section)? {
-        // `--no-config` is the opposite of a flag that takes a value.
+        // `--no-config` negates a flag that takes a value.
         if key.name == b"config" && matches!(value.data, Data::EBoolean(it) if !it.value) {
             options.config_lookup = false;
             continue;
@@ -809,8 +810,8 @@ const NATIVE_PLUGIN_RULES: &[u8] = b"native-plugin-rules";
 const _: () = assert!(LINT.only_has_flags());
 const _: () = assert!(
     LINT.has_every_flag(),
-    "A flag of `bun lint` is in none of the lists of `LINT`. If it describes the project it is a key of `[lint]` in \
-     bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
+    "A `bun lint` flag isn't in any of `LINT`'s lists. If it describes the project, it's a `[lint]` key in bunfig.toml: \
+     add it to `flags`, docs/runtime/bunfig.mdx and the test. If it says what a single run does, add it to `actions`."
 );
 
 /// Parses `off`, `warn`, `error`, or the matching number. `of` is the rule or category name, for the error message.
@@ -886,13 +887,13 @@ impl Place {
 /// One entry of `plugins` in `[lint]`.
 #[derive(Clone, Debug)]
 pub struct PluginOfBunfig {
-    /// `name`: the prefix of its rules, if that isn't the name the plugin has for itself.
+    /// `name`: the prefix for its rules, if it differs from the plugin's own name.
     pub alias: Option<Vec<u8>>,
     pub at: usize,
 }
 
-/// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in oxlint's
-/// `jsPlugins`.
+/// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in
+/// oxlint's `jsPlugins`.
 fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal> {
     let Data::EArray(items) = &value.data else {
         return expected("array", value);
@@ -962,7 +963,7 @@ fn json_of(value: &Expr) -> Result<Json, Refusal> {
     )
 }
 
-/// What [`rules`] returns: the single rules, where each one is, and the wildcards.
+/// The return type of [`rules`]: the individual rules, each one's location, and the wildcards.
 type Rules = (Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>, Vec<Wildcard>);
 
 /// Parses `[lint.rules]` or an override's `rules`, and records where each entry is. This doesn't go through `--rule`,
@@ -1028,8 +1029,7 @@ fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal>
     items.iter().map(one).collect()
 }
 
-/// Parses `[lint.globals]` or an override's `globals`. A boolean means what it means to ESLint: whether the global is
-/// writable.
+/// Parses `[lint.globals]` or an override's `globals`. As in ESLint, a boolean says whether the global is writable.
 fn globals(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     let one = |(name, value): (Key, &Expr)| {
         let kind: &[u8] = match &bun_lint::json::from_parsed(value) {
@@ -1058,7 +1058,7 @@ fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     entries(table)?.into_iter().map(one).collect()
 }
 
-/// What `[lint]` of `file` says.
+/// Parses `file`'s `[lint]` section.
 pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
     let mut options = crate::cli::Options::default();
     let Some(section) = file.get(b"lint") else {
@@ -1067,7 +1067,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
     for (key, value) in entries(&section)? {
         let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
         match &key.name[..] {
-            // One key for two flags, as in `linterOptions` of ESLint.
+            // One key for two flags, as in ESLint's `linterOptions`.
             b"reportUnusedDisableDirectives" if !matches!(value.data, Data::EBoolean(_)) => {
                 let severity = severity_of(&key.name, value)?;
                 options.report_unused_disable_directives_severity = Some(severity);
@@ -1088,7 +1088,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 }
                 refusal
             })?,
-            // With the flag, a wrong name comes out when the report is printed.
+            // With the flag, an unknown name is only reported when the report is printed.
             b"format" => {
                 LINT.set(&key, value, set)?;
                 let name = options.format.as_deref().unwrap_or_default();
@@ -1103,7 +1103,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 let text = match &value.data {
                     Data::EBoolean(it) if it.value => b"true".to_vec(),
                     Data::EBoolean(_) => b"false".to_vec(),
-                    // With a comma at the end it is a list, whatever is in it.
+                    // A trailing comma makes it a list, whatever it contains.
                     Data::EArray(items) => {
                         let names = items.slice().iter();
                         let names =
@@ -1119,7 +1119,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 set(NATIVE_PLUGIN_RULES, Some(&text), true).map_err(at(value))?;
             }
             b"globals" => options.globals = globals(value)?,
-            // oxlint goes through `-A`, `-W` and `-D` in their order, and `all` is about every other one.
+            // oxlint applies `-A`, `-W` and `-D` in order, and `all` covers every other category, so it goes first.
             b"categories" => {
                 let mut categories = entries(value)?;
                 bun_lint::utils::sort::sort_by_key(&mut categories, |it| it.0.name != b"all");

@@ -26,11 +26,11 @@ enum Type {
     SideEffectImport,
 }
 
-/// An import or an export from a module.
+/// An import or export from a module.
 pub struct Entry<'a> {
     statement: Stmt<'a>,
     module: &'a [u8],
-    /// The number of the name of the module, if that is `module`: nothing is trimmed off it.
+    /// The atom number of the module's name, if that name equals `module`, meaning nothing was trimmed off it.
     name: Option<u32>,
     ty: Type,
     is_type_only: bool,
@@ -49,7 +49,7 @@ fn can_be_merged(a: &Entry, b: &Entry) -> bool {
 
 const MERGED_WITH_IMPORT: &str = "Can be merged with this import";
 
-/// Where oxlint points: at the specifier of an import, at the first name of an export.
+/// Where oxlint reports: at an import's specifier, or at an export's first name.
 fn oxlint_place(statement: Stmt) -> Span {
     let place = match statement.kind() {
         StmtKind::Import(_) => statement.module_specifier_span(),
@@ -59,22 +59,22 @@ fn oxlint_place(statement: Stmt) -> Span {
     place.unwrap_or_else(|| statement.span())
 }
 
-/// What oxlint knows of the names that have been imported from a module.
+/// oxlint's state for the names imported from a module so far.
 #[derive(Default)]
 struct Imported<'a> {
     by_import_type: bool,
     by_other_imports: bool,
     /// The first statement that counts.
     first: Option<Stmt<'a>>,
-    /// The first statement that imports a namespace, one that imports names, one that imports the default.
+    /// The first statements that import a namespace, names, and the default.
     namespace: Option<Stmt<'a>>,
     named: Option<Stmt<'a>>,
     default: Option<Stmt<'a>>,
 }
 
 impl Imported<'_> {
-    /// oxlint's `can_merge_imports`. `first`: the sort of the first name of a statement, which is an `import type` if
-    /// `is_type`.
+    /// oxlint's `can_merge_imports`. `first` is the kind of a statement's first name. `is_type` means the statement is
+    /// an `import type`.
     fn can_merge(&self, first: Type, is_type: bool, allow_separate_type_imports: bool) -> bool {
         if is_type
             && !self.by_other_imports
@@ -101,14 +101,14 @@ impl Imported<'_> {
 }
 
 impl NoDuplicateImports {
-    /// oxlint's rule without `includeExports`. It goes through the names that the statements of the file itself import,
-    /// and compares the first name of a statement with all the names before. That name does not count later if the
-    /// statement is reported. It looks at the imports without names only if the file has no others.
+    /// oxlint's rule without `includeExports`. It walks the names imported by the file's top-level statements, and
+    /// compares each statement's first name with all the names before it. If the statement is reported, that name
+    /// doesn't count later. It only looks at imports without names if the file has no other imports.
     fn check_imports_as_oxlint<'a>(&self, cx: &Cx<'a, Self>) {
         let imports = || {
             cx.file().body().iter().filter_map(|it| Some((it, it.as_import()?)))
         };
-        // Nothing is said about a module that is imported from once.
+        // A module that's imported only once can't be reported.
         let mut modules: SmallVec<[u32; 32]> = imports().map(|it| it.1.spec().atom().0).collect();
         modules.sort_unstable();
         if modules.iter().zip(modules.iter().skip(1)).all(|(a, b)| a != b) {
@@ -208,8 +208,7 @@ impl NoDuplicateImports {
         }
     }
 
-    /// ESLint's `shouldReportImportExport`, with those of `previous` that are exports or that are
-    /// imports.
+    /// ESLint's `shouldReportImportExport`, against either the exports or the imports in `previous`.
     fn should_report(&self, entry: &Entry, previous: &[&Entry], exports: bool) -> bool {
         previous.iter().any(|it| {
             it.is_export == exports
@@ -262,18 +261,18 @@ impl Rule for NoDuplicateImports {
             }
             return;
         }
-        // Nothing is said about a module that is named once.
+        // A module that's mentioned only once can't be reported.
         let mut names: SmallVec<[u32; 32]> = entries.iter().filter_map(|it| it.name).collect();
         names.sort_unstable();
         if names.len() == entries.len() && names.iter().zip(names.iter().skip(1)).all(|(a, b)| a != b) {
             return;
         }
-        // oxlint looks at the imports without names only if the file has no others.
+        // oxlint only looks at imports without names if the file has no other imports.
         let is_import_of_names = |it: &Entry| !it.is_export && it.ty != Type::SideEffectImport;
         if is_oxlint && entries.iter().any(is_import_of_names) {
             entries.retain(|it| it.is_export || it.ty != Type::SideEffectImport);
         }
-        // oxlint goes through all the imports of a file before its exports.
+        // oxlint visits all of a file's imports before its exports.
         let is_later = |it: &Entry| is_oxlint && it.is_export;
         utils::sort::sort_by(&mut entries, |a, b| {
             (a.module.cmp(b.module))
@@ -281,7 +280,7 @@ impl Rule for NoDuplicateImports {
                 .then_with(|| a.statement.span().start.cmp(&b.statement.span().start))
         });
         for of_module in entries.chunk_by(|a, b| a.module == b.module) {
-            // Of those before `entry`, one of each sort, of which there are 20.
+            // One entry of each kind among those before `entry`. There are 20 kinds.
             let mut previous: SmallVec<[&Entry; 4]> = SmallVec::new();
             for entry in of_module {
                 let messages = match entry.is_export {
@@ -296,7 +295,7 @@ impl Rule for NoDuplicateImports {
                             let is_import = message.id == IMPORT.id;
                             labels.push(first, if is_import { MERGED_WITH_IMPORT } else { "Can be merged with this" });
                         });
-                        // oxlint says one thing about a statement.
+                        // oxlint reports a statement only once.
                         if is_oxlint {
                             break;
                         }

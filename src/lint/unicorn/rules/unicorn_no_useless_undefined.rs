@@ -14,9 +14,9 @@ const NO_USELESS_UNDEFINED: Message = Message::new("", "Do not use useless `unde
 
 pub struct State<'a> {
     undefined: Name<'a>,
-    /// Whether the function around something has a return type.
+    /// Caches whether the enclosing function has a return type.
     return_types: AncestorMemo<'a, bool>,
-    /// Where the first optional parameter of a function with many parameters starts.
+    /// The start of the first optional parameter, for a function with many parameters.
     first_optional_parameters: IdMap<Func<'a>, Option<u32>>,
 }
 
@@ -108,7 +108,7 @@ impl NoUselessUndefined {
             Node::Param(parameter)
                 if is_it(parameter.default()) && !undefined_literal.is_parenthesized() =>
             {
-                // Without the default it is required, which it cannot be after an optional parameter.
+                // Without the default the parameter is required, which isn't allowed after an optional parameter.
                 let Some(func) = parameter.func() else {
                     return;
                 };
@@ -168,7 +168,7 @@ impl NoUselessUndefined {
 #[derive(Copy, Clone)]
 enum Replaced<'a> {
     Span(Span),
-    /// From the `return`, or from the last comment in the statement.
+    /// Starts after the `return`, or after the last comment in the statement.
     AfterReturn(Stmt<'a>),
 }
 
@@ -204,7 +204,7 @@ const FUNCTION_NAMES: [&str; 27] = [
     "property",
     "propertyVal",
     "push",
-    // `ref(undefined)` of Vue
+    // Vue's `ref(undefined)`
     "ref",
     "same",
     "set",
@@ -229,7 +229,7 @@ fn should_ignore(callee: Expr) -> bool {
     !callee.is_parenthesized() && (name.bytes().starts_with(b"set") || name.is_any(&FUNCTION_NAMES))
 }
 
-/// `e`: a call that an `undefined` is directly in. It is looked at for the last argument only.
+/// `e` is a call that directly contains an `undefined`. It's only checked once, for the last argument.
 fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUselessUndefined>) {
     let Some(call_expr) = e.as_call() else {
         return;
@@ -247,7 +247,7 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
     if undefined_count == 0 || should_ignore(call_expr.callee()) {
         return;
     }
-    // The arguments of `Function#bind()` are not looked at, but for `this`.
+    // Skip the arguments of `Function#bind()`, except `this`.
     if arguments.len() != 1
         && !call_expr.is_optional()
         && is_method_call(call_expr, None, Some(&["bind"]), None, None)
@@ -279,7 +279,7 @@ fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUseles
                     previous_argument.outer_span().end,
                     last_undefined.span().end,
                 ),
-                // With the comma at the end.
+                // Including the trailing comma.
                 None => Span::new(first_undefined.span().start, e.span().end.saturating_sub(1)),
             },
         )

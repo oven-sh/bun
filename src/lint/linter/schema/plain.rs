@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 pub struct OptionMistake {
     /// Path from the options array (without the severity) to the invalid value. The value may not exist.
     pub path: Vec<Step>,
-    /// The last key in `path` is the problem, not its value.
+    /// True if the last key in `path` is the problem, not its value.
     pub is_about_key: bool,
     /// The error, plus a second line with the expected values if they're known.
     pub message: Vec<u8>,

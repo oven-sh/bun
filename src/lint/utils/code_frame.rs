@@ -1,5 +1,5 @@
-//! `codeFrameColumns` of @babel/code-frame 7, without colors: the lines around a range, each after its number, and a row of `^`
-//! under each line of the range.
+//! `codeFrameColumns` of @babel/code-frame 7, without colors. It prints the lines around a range, each after its line
+//! number, and a row of `^` under each line of the range.
 //!
 //! ```text
 //!   1 | function Component() {
@@ -10,16 +10,16 @@
 //!   4 |   return <Foo />;
 //! ```
 //!
-//! Byte for byte, so with what one would not write again:
-//! - A number is moved to the right by one blank at most: in a frame that ends at line 100, line 8 is ` 8`.
-//! - A line without text has no blank after its `|`.
-//! - In a row of `^`, a tab of the line stays a tab, and a character outside the BMP is two blanks.
-//! - Where there would be no `^`, there is one.
-//! - The message is after the `^` of the last line of the range. Without a column it is a row of its own, above the frame.
+//! The output matches byte for byte, including the quirks:
+//! - A line number is padded by at most one space: in a frame that ends at line 100, line 8 is ` 8`.
+//! - An empty line has no space after its `|`.
+//! - In a row of `^`, a tab in the line stays a tab, and a character outside the BMP becomes two spaces.
+//! - A row that would have no `^` gets one.
+//! - The message comes after the `^` of the range's last line. Without a column it's on its own row above the frame.
 //! - Lines of any length are printed whole.
-//! - Columns are counted from 1, and 0 is as good as none. In a range of several lines, the last has as many `^` as its column
-//!   says, which is one more than the characters before it, and all between the first and the last have as many as the second
-//!   is long.
+//! - Columns are 1-based, and 0 means no column. In a range of several lines, the last line gets as many `^` as its
+//!   column number, which is one more than the characters before it. Every line between the first and the last gets as
+//!   many as the length of the second line.
 
 use crate::ast::File;
 use bun_core::strings::utf8_decoded_len_utf16;
@@ -33,27 +33,27 @@ pub struct Place {
     pub column: Option<u32>,
 }
 
-/// The arguments of `codeFrameColumns` but for the text.
+/// The arguments of `codeFrameColumns` except the text.
 pub struct Frame<'m> {
     pub start: Place,
-    /// Without one, or without a column, it has that of `start`.
+    /// If it's `None` or has no column, `start`'s is used.
     pub end: Option<Place>,
-    /// Empty for none.
+    /// Empty means no message.
     pub message: &'m [u8],
-    /// 2 unless the caller of `codeFrameColumns` says otherwise.
+    /// `codeFrameColumns` defaults to 2.
     pub lines_above: u32,
-    /// 3 likewise.
+    /// `codeFrameColumns` defaults to 3.
     pub lines_below: u32,
 }
 
 /// `text.split(/\r\n|[\n\r\u2028\u2029]/)`
 pub trait Lines<'a> {
     fn count(&self) -> u32;
-    /// A line, counted from 1. Empty if there is none.
+    /// A line by its 1-based number. Empty if it doesn't exist.
     fn line(&self, number: u32) -> &'a [u8];
 }
 
-/// Without the byte order mark, as ESLint's `sourceCode.text` is.
+/// Without the byte order mark, like ESLint's `sourceCode.text`.
 impl<'a> Lines<'a> for File<'a> {
     fn count(&self) -> u32 {
         self.line_count()
@@ -64,18 +64,18 @@ impl<'a> Lines<'a> for File<'a> {
     }
 }
 
-/// V8 has no longer string: `"^".repeat(..)` throws.
+/// V8's maximum string length. `"^".repeat(..)` throws above it.
 const LONGEST_STRING: u64 = 0x1FFF_FFE8;
 
-/// Appends the frame, which does not end with a line break. `false`, and nothing is appended, where `codeFrameColumns` throws:
-/// the range ends before it starts in a line, starts behind the end of its line or in no line and goes on in another, or has
-/// lines in the middle that the text does not have.
+/// Appends the frame, which doesn't end with a line break. Returns `false` and appends nothing where `codeFrameColumns`
+/// throws: the range ends before it starts on the same line, it spans several lines but starts past the end of its line
+/// or on a line that doesn't exist, or it has middle lines that the text doesn't have.
 pub fn write<'a>(out: &mut Vec<u8>, lines: &(impl Lines<'a> + ?Sized), frame: &Frame) -> bool {
     write_rows_of(out, lines, frame, &(0..u32::MAX))
 }
 
-/// [`write`], but only the rows of the lines in `shown`: for what shows the start and the end of a long range, in time that does
-/// not depend on its length.
+/// [`write`], but it only prints the rows of the lines in `shown`. That lets a caller show the start and the end of a
+/// long range in time that doesn't depend on the range's length.
 pub fn write_rows_of<'a>(
     out: &mut Vec<u8>,
     lines: &(impl Lines<'a> + ?Sized),
@@ -92,7 +92,8 @@ pub fn write_rows_of<'a>(
     let to = end_column.map_or(from, u64::from);
     let has_column = from != 0 || (first == last && to != 0);
     let before = from.saturating_sub(1);
-    // How many `^` the first line has, and each between the first and the last if that is the same for all.
+    // The number of `^` on the first line, and on each line between the first and the last if that's the same for all
+    // of them.
     let (mut on_first, mut between) = (0, None);
     if has_column && first == last {
         if exists(first) && (to < from || to - from > LONGEST_STRING) {

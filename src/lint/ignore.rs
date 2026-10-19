@@ -1,7 +1,8 @@
 //! Parses one ignore file (or one ignore array from a config). The last matching line wins.
 //!
-//! Each line is converted to a pattern for [`bun_glob::match`]. The npm package `ignore` has its own reading of a few things
-//! (a `\`, `[!a]`, a path with an empty segment). Those fall back to the package's algorithm, which turns the line into a regex.
+//! Each line is converted to a pattern for [`bun_glob::match`]. The npm package `ignore` has its own interpretation of
+//! a few things (a `\`, `[!a]`, a path with an empty segment). Those fall back to the package's algorithm, which turns
+//! the line into a regex.
 
 use crate::regex::Regex;
 use bun_collections::StringHashMap;
@@ -144,7 +145,7 @@ fn read_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
     let mut is_for_directories = false;
     if let Some(rest) = written.strip_suffix(b"/") {
         is_for_directories = true;
-        // A `\` that escapes the trailing `/` goes with it.
+        // A `\` that escapes the trailing `/` is removed with it.
         written = rest.strip_suffix(b"\\").unwrap_or(rest);
     }
     is_anchored |= strings::contains_char(written, b'/');
@@ -191,7 +192,7 @@ fn read_for_crate(line: &[u8], ignores_case: bool) -> Result<Option<Line>, ()> {
                 depth = depth.checked_sub(1).ok_or(())?;
                 pattern.push(byte);
             }
-            // `{1..3}` is not a sequence.
+            // `{1..3}` isn't a sequence.
             b'.' if written.get(at) == Some(&b'.') => pattern.extend_from_slice(b"\\."),
             b'!' if at == 1 => pattern.extend_from_slice(b"\\!"),
             _ => pattern.push(byte),
@@ -318,11 +319,12 @@ fn regex_of_package(pattern: &[u8], ignores_case: bool) -> Option<Regex> {
     Regex::from_bytes(&source, if ignores_case { b"i" } else { b"" }).ok()
 }
 
-/// Returns true if [`read_plain`] and the package agree on `line` (without its `!`). That holds for ASCII lines without `\` or
-/// trailing whitespace whose classes only contain letters and digits, and whose `**` are read the same.
+/// Returns true if [`read_plain`] and the package agree on `line` (without its `!`). That's the case for ASCII lines
+/// without `\` or trailing whitespace whose classes only contain letters and digits, and whose `**` are interpreted the
+/// same.
 fn is_read_the_same(line: &[u8]) -> bool {
-    // To the package, the `**` in `a/**/` can stand for nothing, so the line is also about `a` itself, and about every file in it.
-    // And it has its own reading of a `**` that isn't a whole segment, as in `a**/**`.
+    // In the package, the `**` in `a/**/` can match nothing, so the line also matches `a` itself and every file in it.
+    // The package also has its own interpretation of a `**` that isn't a whole segment, as in `a**/**`.
     if line.ends_with(b"/**/")
         || strings::split(line, b"/").any(|it| it != b"**" && strings::contains(it, b"**"))
     {
@@ -417,7 +419,7 @@ impl IgnoreRules {
                 _ => body,
             }
         });
-        // A line made only of `/` is about an empty segment, which only the package's regex handles.
+        // A line made only of `/` matches an empty segment, which only the package's regex handles.
         let is_read_the_same = |it: &&[u8]| {
             is_read_the_same(it) && !it.trim_ascii_end().iter().all(|byte| *byte == b'/')
         };

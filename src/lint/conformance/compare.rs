@@ -1,5 +1,4 @@
-//! What is compared of a test case: what ESLint reported for it when it was recorded, and what is
-//! reported now.
+//! Compares a test case's recorded ESLint output with what's reported now.
 
 use bstr::BString;
 use bun_lint::fix::{Fix, SuggestionKind};
@@ -9,7 +8,7 @@ use bun_lint::runner::RuleEntry;
 use bun_lint::utils::sort;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// What is reported for the code of a case, and the code after one pass of fixes.
+/// The messages reported for a case's code, and the code after one pass of fixes.
 pub struct Outcome {
     pub messages: Vec<Reported>,
     pub output: Option<Vec<u8>>,
@@ -35,10 +34,10 @@ fn fix_of(message: &LintMessage) -> Option<&Fix> {
     message.fix.as_ref().or_else(held_back)
 }
 
-/// A message, as far as it is compared.
+/// The parts of a message that are compared.
 #[derive(PartialEq, Eq, Debug)]
 pub struct Reported {
-    /// `None`: the rule that is tested. Empty: the linter itself.
+    /// `None` for the rule under test. Empty for the linter itself.
     pub rule_id: Option<BString>,
     pub message_id: BString,
     pub message: BString,
@@ -49,7 +48,7 @@ pub struct Reported {
     pub suggestions: Vec<Suggested>,
 }
 
-/// ESLint's `fix`: a range in UTF-16 code units, and what replaces it.
+/// ESLint's `fix`: a range in UTF-16 code units, and its replacement text.
 #[derive(PartialEq, Eq, Debug)]
 pub struct Edit {
     pub range: (i64, i64),
@@ -61,12 +60,12 @@ pub struct Suggested {
     pub message_id: BString,
     pub desc: BString,
     pub fix: Option<Edit>,
-    /// The code after it.
+    /// The code after applying it.
     pub output: BString,
 }
 
 impl Outcome {
-    /// `messages`: what the linter says about `code` in a test of the rule `entry`.
+    /// `messages` is the linter's output for `code` in a test of the rule `entry`.
     pub fn new(entry: &'static RuleEntry, code: &[u8], messages: &[LintMessage]) -> Outcome {
         let mut fixes: Vec<_> = messages.iter().filter_map(fix_of).collect();
         Outcome {
@@ -84,7 +83,7 @@ impl Outcome {
 }
 
 impl Reported {
-    /// What is compared of a message about `code` in a test of the rule `entry`.
+    /// Extracts the compared parts of a message about `code` in a test of the rule `entry`.
     pub fn new(entry: &'static RuleEntry, code: &[u8], message: &LintMessage) -> Reported {
         let apply = |fix: &Fix| {
             bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec())
@@ -124,7 +123,7 @@ impl Reported {
     }
 }
 
-/// The string at `key` of `json`.
+/// The string value of `key` in `json`.
 pub fn string_of<'j>(json: &'j Json, key: &[u8]) -> Option<&'j [u8]> {
     json.get(key)?.as_str()
 }
@@ -133,7 +132,7 @@ fn text_of(json: &Json, key: &[u8]) -> BString {
     string_of(json, key).unwrap_or_default().into()
 }
 
-/// A message as it is printed: here it is valid UTF-8 from the start.
+/// A recorded message made well-formed, as printing it would. Our own messages are valid UTF-8 from the start.
 fn message_of(json: &Json, key: &[u8]) -> BString {
     let mut message = Vec::new();
     bun_core::strings::push_wtf8_well_formed(
@@ -163,7 +162,7 @@ fn expected_edit(of: &Json) -> Option<Edit> {
     })
 }
 
-/// What ESLint reported for `case`.
+/// The messages ESLint reported for `case`.
 pub fn expected_messages(case: &Json) -> Vec<Reported> {
     let messages = case
         .get(b"messages")
@@ -195,22 +194,22 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
     reported.collect()
 }
 
-/// What is counted beside the cases that fail.
+/// Counters other than the failing cases.
 #[derive(Default)]
 pub struct Counts {
-    /// Messages without a help for which oxlint has one.
+    /// Messages that have no help text where oxlint has one.
     pub lacking_help: AtomicUsize,
-    /// Cases whose messages are the recorded ones in another order.
+    /// Cases whose messages match the recorded ones but in a different order.
     pub in_another_order: AtomicUsize,
-    /// `--in-order`: such a case fails.
+    /// Set by `--in-order`, which makes such a case fail.
     pub fails_on_order: bool,
     /// Passing cases where `--fix` applies fewer fixes than upstream's `--fix`. The rest need `--fix-suggestions` or
     /// `--fix-dangerously`.
     pub holding_back_a_fix: AtomicUsize,
 }
 
-/// The order of what starts at the same place depends on the order in which ESLint visits the
-/// nodes.
+/// Sorts the messages, because the order of messages that start at the same position depends on ESLint's node visiting
+/// order.
 fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
     sort::sort_by(&mut messages, |a, b| {
         (a.line, a.column, a.end, &a.message_id, &a.message).cmp(&(
@@ -224,14 +223,15 @@ fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
     messages
 }
 
-/// Why a case fails: in a few words, and at length.
+/// Why a case fails, as a short summary and full details.
 pub struct Problem {
     pub summary: &'static str,
     pub details: String,
 }
 
-/// What is wrong with `messages`, which are about `code`, where oxlint is the judge: the messages without their fixes, and the code
-/// after the fixes that each further flag of oxlint applies. A help that is there has to be oxlint's.
+/// Checks `messages`, reported for `code`, against oxlint's recorded output. It compares the messages without their
+/// fixes, and the code after the fixes that each additional oxlint flag applies. If a message has help text, it has to
+/// match oxlint's.
 pub(crate) fn problem_of_oxlint(
     entry: &'static RuleEntry,
     code: &[u8],
@@ -242,10 +242,11 @@ pub(crate) fn problem_of_oxlint(
     let mut outcome = Outcome::new(entry, code, messages);
     for message in &mut outcome.messages {
         (message.fix, message.suggestions) = (None, Vec::new());
-        // Those of oxlint have none.
+        // oxlint's messages have no id.
         message.message_id.clear();
     }
-    // As they were recorded, which keeps the order of oxlint only among those that start at one place.
+    // Sorted the way they were recorded, which keeps oxlint's order only among messages that start at the same
+    // position.
     sort::sort_by_key(&mut outcome.messages, |it| (it.line, it.column));
     // `output` is compared below.
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
@@ -255,7 +256,7 @@ pub(crate) fn problem_of_oxlint(
     }
     let expected = case.get(b"messages").and_then(Json::as_array);
     for message in messages {
-        // Several can say the same at one place.
+        // Several messages can have the same text at the same position.
         let there = expected.unwrap_or_default().iter().filter(|it| {
             (number_of(it, b"line"), number_of(it, b"column"))
                 == (Some(message.line), Some(message.column))
@@ -289,7 +290,7 @@ pub(crate) fn problem_of_oxlint(
         ),
     ];
     let outputs = steps.map(|(_, kinds)| {
-        // oxlint applies the first of several.
+        // oxlint applies the first of several suggestions.
         let mut fixes: Vec<&Fix> = (messages.iter())
             .filter_map(|it| {
                 let suggested = it.suggestions.first().filter(|it| kinds.contains(&it.kind));
@@ -323,7 +324,7 @@ pub(crate) fn problem_of_oxlint(
     None
 }
 
-/// What is wrong with `outcome`, which is `None` if the code was not linted at all.
+/// Checks `outcome` against the recorded case. `outcome` is `None` if the code wasn't linted at all.
 pub fn problem_of(outcome: Option<Outcome>, case: &Json, counts: &Counts) -> Option<Problem> {
     let problem = |summary, details| Some(Problem { summary, details });
     let Some(outcome) = outcome else {

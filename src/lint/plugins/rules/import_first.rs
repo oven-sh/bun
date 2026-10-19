@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
 
-/// Ensure all imports appear before other statements. `OLD_NAME`: as `imports-first`.
+/// Ensure all imports appear before other statements. `OLD_NAME`: registered under the deprecated name `imports-first`.
 pub struct First<const OLD_NAME: bool = false> {
     absolute_first: bool,
 }
@@ -19,10 +19,10 @@ fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../") || path.starts_with(b"/")
 }
 
-/// An import after something else.
+/// An import that comes after a non-import statement.
 struct ErrorInfo<'a> {
     node: Stmt<'a>,
-    /// From the end of the statement before it.
+    /// Starts at the end of the previous statement.
     range: Span,
 }
 
@@ -56,7 +56,7 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                     ImportEqualsTarget::Require(Some(source)) => Some(source),
                     _ => None,
                 },
-                // For oxlint a string in parentheses is no directive.
+                // oxlint doesn't treat a parenthesized string as a directive.
                 StmtKind::Expr(e)
                     if !any_expressions && e.as_string().is_some() && !(is_oxlint && e.is_parenthesized()) =>
                 {
@@ -68,15 +68,15 @@ impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
                 }
             };
             any_expressions = true;
-            // oxlint passes over `import a = b.c`.
+            // oxlint skips `import a = b.c`.
             if is_oxlint && source.is_none() {
                 continue;
             }
             if self.absolute_first && let Some(source) = source {
-                // For oxlint `.a` is absolute and `/a` relative.
+                // oxlint treats `.a` as absolute and `/a` as relative.
                 let source = source.bytes();
                 let is_relative = if is_oxlint { is_relative_path(source) } else { source.starts_with(b".") };
-                // oxlint points at the string in `require("a")` too.
+                // oxlint reports the string even in `import a = require("a")`.
                 let place = || match stmt.kind() {
                     StmtKind::ImportEquals(import) if !is_oxlint => import.require_span(),
                     _ => stmt.module_specifier_span(),
@@ -168,18 +168,19 @@ fn joins_statements<'a>(file: &'a File<'a>, removed: Span) -> bool {
 }
 
 impl<'a> ErrorInfo<'a> {
-    /// Something that it declares is referred to before its end.
+    /// True if a binding it declares is referenced before the import ends.
     fn is_used_before(&self) -> bool {
         let is_before = |it: Reference| it.ident().start() < self.range.end;
         Node::Stmt(self.node).declared_symbols().iter().any(|it| it.references().any(is_before))
     }
 
-    /// `lastSortNodesIndex`: the last before the first that cannot be moved. The first of all is moved whatever it is.
+    /// `lastSortNodesIndex`: the index of the last import before the first one that can't be moved. The very first
+    /// import is always moved.
     fn last_to_sort(error_infos: &[ErrorInfo]) -> usize {
         error_infos.iter().take_while(|it| !it.is_used_before()).count().saturating_sub(1)
     }
 
-    /// Moves all of `sort_nodes` after the last import that's already in place, or to the start of the file's first
+    /// Moves all of `sort_nodes` after the last import that's already at the top, or to the start of the file's first
     /// statement if there is none. Comments above and beside an import move with it. Returns `None` if the move would
     /// change the program's behavior.
     #[cold]

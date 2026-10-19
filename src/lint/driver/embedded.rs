@@ -1,7 +1,7 @@
-//! The scripts in `.vue`, `.svelte` and `.astro` files, with a configuration of oxlint.
+//! Lints the scripts in `.vue`, `.svelte` and `.astro` files, with an oxlint config.
 //!
-//! They are found as oxlint finds them, by searching the text: nothing is parsed but the scripts. Each is a program of its own,
-//! which knows nothing of the other scripts of the file or of the template.
+//! Scripts are found the way oxlint finds them, by searching the text. Only the scripts themselves are parsed. Each one
+//! is a separate program that can't see the file's other scripts or its template.
 
 use crate::lint::{Context, RuleFilter};
 use bun_core::strings;
@@ -12,7 +12,7 @@ use bun_lint::linter::{LintMessage, LintResult, ResolvedConfig, RuleId};
 use bun_lint::rule::Plugin;
 use bun_sema::resolve::ScriptKind;
 
-/// What kind of file has scripts in it.
+/// A kind of file that embeds scripts.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Framework {
     Vue,
@@ -21,7 +21,7 @@ pub(crate) enum Framework {
 }
 
 impl Framework {
-    /// By the name of the file.
+    /// Decided by the file's extension.
     pub(crate) fn of(path: &[u8]) -> Option<Framework> {
         let name = crate::paths::basename(path);
         match &name[strings::last_index_of_char(name, b'.')?..] {
@@ -33,7 +33,7 @@ impl Framework {
     }
 }
 
-/// A script: where it is in the text of the file, and in what language.
+/// A script: its range in the file's text, and its language.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct Script {
     start: usize,
@@ -59,8 +59,8 @@ fn kind_of(lang: &[u8]) -> Option<ScriptKind> {
     }
 }
 
-/// `find_script_closing_angle`: how far from `from` the `>` is that ends the tag. There can be others before it, in a string, between
-/// braces or after a `<`.
+/// `find_script_closing_angle`: the distance from `from` to the `>` that ends the tag. Earlier `>`s can appear in a
+/// string, between braces or after a `<`.
 fn closing_angle(text: &[u8], from: usize) -> Option<usize> {
     let (mut angles, mut braces) = (0u32, 0u32);
     let mut quote = None;
@@ -84,7 +84,7 @@ fn closing_angle(text: &[u8], from: usize) -> Option<usize> {
     None
 }
 
-/// `find_script_start`: the end of the next `<script` after `from` that is not in a comment.
+/// `find_script_start`: the end of the next `<script` after `from` that isn't in a comment.
 fn script_start(text: &[u8], from: usize) -> Option<usize> {
     let mut at = from;
     loop {
@@ -96,8 +96,8 @@ fn script_start(text: &[u8], from: usize) -> Option<usize> {
     }
 }
 
-/// `find_attribute`: the value of the attribute `target` of a tag, of which `content` is what follows the name. `Some(None)`: it
-/// has none.
+/// `find_attribute`: the value of a tag's `target` attribute, where `content` is everything after the tag's name.
+/// `Some(None)` if the attribute has no value.
 fn attribute<'t>(content: &'t [u8], target: &[u8]) -> Option<Option<&'t [u8]>> {
     let mut rest = content.trim_ascii();
     loop {
@@ -137,7 +137,7 @@ fn attribute<'t>(content: &'t [u8], target: &[u8]) -> Option<Option<&'t [u8]>> {
     }
 }
 
-/// `VuePartialLoader::extract_lang_attribute`, which looks for the letters.
+/// `VuePartialLoader::extract_lang_attribute`, which just searches for the letters `lang`.
 fn lang_of_vue(content: &[u8]) -> &[u8] {
     let content = content.trim_ascii();
     let Some(at) = strings::index_of(content, b"lang") else {
@@ -159,7 +159,7 @@ fn lang_of_vue(content: &[u8]) -> &[u8] {
     }
 }
 
-/// From `start`, which is after the tag, to the next `</script>`. Returns the script, and where the search goes on.
+/// The script from `start`, just after the tag, to the next `</script>`. Also returns where the search continues.
 fn until_end(text: &[u8], start: usize, kind: ScriptKind) -> Option<(Script, usize)> {
     let end = start + strings::index_of(&text[start..], SCRIPT_END)?;
     let script = Script { start, end, kind };
@@ -194,7 +194,7 @@ fn script_of_svelte(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     until_end(text, at + tag + 1, kind)
 }
 
-/// `AstroPartialLoader::is_fence`: `---` at `at` is alone on its line.
+/// `AstroPartialLoader::is_fence`: true if the `---` at `at` is alone on its line.
 fn is_fence(text: &[u8], at: usize) -> bool {
     let line_start = strings::last_index_of_char(&text[..at], b'\n').map_or(0, |it| it + 1);
     let after = &text[at + 3..];
@@ -253,7 +253,7 @@ fn scripts_of_astro(text: &[u8]) -> Vec<Script> {
     {
         let start = tag_start + tag + 1;
         let script = match text[start - 2] {
-            // The tag closes itself.
+            // A self-closing tag.
             b'/' => {
                 at = start;
                 Script {
@@ -283,7 +283,7 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
         Framework::Svelte => script_of_svelte,
         Framework::Astro => return scripts_of_astro(text),
     };
-    // A file has two at most.
+    // A file has at most two.
     let Some((first, after)) = next(text, 0) else {
         return Vec::new();
     };
@@ -293,8 +293,8 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// `should_run` of the rules of oxlint 1.80 that go by these names of files: what the template uses or assigns to cannot be told,
-/// and `$:` is Svelte's. Each rule was tried.
+/// The `should_run` of the oxlint 1.80 rules that check for these file extensions. There's no way to tell what the
+/// template uses or assigns to, and `$:` is Svelte syntax. Each rule was tried.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;
@@ -311,14 +311,14 @@ fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     !is_off && oxlint_runs_on(meta, is_typescript)
 }
 
-/// Where a script starts.
+/// A script's starting position in the file.
 #[derive(Copy, Clone)]
 struct Origin {
     /// In bytes.
     offset: u32,
-    /// How many lines are before its first.
+    /// The number of lines before its first line.
     lines: u32,
-    /// How many UTF-16 code units are before it on its first line.
+    /// The number of UTF-16 code units before it on its first line.
     columns: u32,
 }
 
@@ -357,7 +357,7 @@ impl Origin {
         fix.span.end += self.offset;
     }
 
-    /// Makes a message about the script one about the file.
+    /// Translates a message's positions from the script to the file.
     fn message(self, message: &mut LintMessage) {
         if message.line as i32 > 0 {
             (message.line, message.column) = self.position((message.line, message.column));
@@ -389,7 +389,7 @@ impl Context<'_, '_> {
         self.verify_scripts_by(framework, path, text, config, outer)
     }
 
-    /// The same. `outer`: which rules run, of those that run on such a script.
+    /// Same. `outer` selects which rules run, among those that run on such a script.
     pub(crate) fn verify_scripts_by(
         &self,
         framework: Framework,

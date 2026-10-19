@@ -76,7 +76,7 @@ impl Kinds {
     }
 }
 
-/// The part of a selector before its last component: which ancestors the node needs.
+/// The part of a selector before its last component, which determines which ancestors the node needs.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Within {
     Anything,
@@ -95,7 +95,8 @@ pub(crate) struct Listener {
     kinds: Kinds,
     within: Within,
     is_exit: bool,
-    /// The selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type names.
+    /// True if the selector isn't just a type name. On the same node, ESLint calls such listeners after the plain type
+    /// names.
     is_more_than_a_type: bool,
 }
 

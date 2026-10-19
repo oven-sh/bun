@@ -14,7 +14,7 @@ use std::ops::Range;
 /// Disallow certain propTypes.
 pub struct ForbidPropTypes {
     forbid: Vec<Box<[u8]>>,
-    /// `mention_bit` of each of `forbid`, and of the private name with that text.
+    /// `mention_bit` of each name in `forbid`, and of the private name with the same text.
     bits_of_forbidden: Vec<u32>,
     check_context_types: bool,
     check_child_context_types: bool,
@@ -22,7 +22,7 @@ pub struct ForbidPropTypes {
 
 const FORBIDDEN_PROP_TYPE: Message = Message::new("forbiddenPropType", "Prop type \"{{target}}\" is forbidden");
 
-/// What the listener for `ImportDeclaration` sets.
+/// The variables that the `ImportDeclaration` listener sets.
 #[derive(Copy, Clone, Default)]
 struct Packages<'a> {
     prop_types_package_name: Option<Name<'a>>,
@@ -30,19 +30,20 @@ struct Packages<'a> {
     is_foreign_prop_types_package: bool,
 }
 
-/// An import that sets something, once a foreign package is imported: before that the names do not matter.
+/// An import that sets one of those variables. Only recorded once a foreign package has been imported, because the
+/// names don't matter before that.
 struct Imported<'a> {
     start: u32,
-    /// What is set after it.
+    /// The variables' values after this import.
     packages: Packages<'a>,
 }
 
-/// The node that a listener of upstream is called with.
+/// The node that one of upstream's listeners is called with.
 struct Listened<'a> {
     span: Span,
-    /// How many of `State::imports` come before it.
+    /// The number of `State::imports` before it.
     imports: usize,
-    /// What they have set.
+    /// The variables' values at that point.
     packages: Packages<'a>,
 }
 
@@ -54,11 +55,11 @@ struct Forbidden<'a> {
 }
 
 pub struct State<'a> {
-    /// In the order of the source.
+    /// In source order.
     imports: Vec<Imported<'a>>,
-    /// What is reported at the end, so that what is said twice about a property comes in the order of upstream's walk.
+    /// Reported in `finish`, so that two reports about the same property come in upstream's traversal order.
     forbidden: Vec<Forbidden<'a>>,
-    /// By where the object literal of a variable starts and `Listened::imports`: what of `forbidden` is about it.
+    /// Maps (start of a variable's object literal, `Listened::imports`) to the range of `forbidden` that's about it.
     known: FxHashMap<(u32, usize), Range<usize>>,
 }
 
@@ -102,7 +103,7 @@ impl Rule for ForbidPropTypes {
         {
             return on.members().props();
         }
-        // Private names, and the fields with a type annotation that upstream takes for declarations.
+        // Private names, and the fields with a type annotation that upstream treats as declarations.
         if file.mentions_any(&["#propTypes", "props", "#props"])
             || (context && file.mentions_any(&["#contextTypes", "context", "#context"]))
             || (child_context && file.mentions("#childContextTypes"))
@@ -182,7 +183,7 @@ impl Rule for ForbidPropTypes {
     }
 }
 
-/// What the listener for `ImportDeclaration` does, for all of the file.
+/// Does what the `ImportDeclaration` listener does, for the whole file.
 fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
     if !file.mentions("PropTypes") {
         return Vec::new();
@@ -223,7 +224,8 @@ fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
     imports
 }
 
-/// `node.type === "MemberExpression" ? node.property.name : node.name`, for a node that is reached from above.
+/// `node.type === "MemberExpression" ? node.property.name : node.name`. Seen from its parent, the root of an optional
+/// chain is a `ChainExpression`, so it has neither.
 fn name_of(node: Expr<'_>) -> Option<&[u8]> {
     match node.as_ident() {
         Some(name) => Some(name.bytes()),
@@ -233,7 +235,7 @@ fn name_of(node: Expr<'_>) -> Option<&[u8]> {
 }
 
 impl<'a> Packages<'a> {
-    /// `isPropTypesPackage`, for a node that is reached from above.
+    /// `isPropTypesPackage`. Seen from its parent, the root of an optional chain is a `ChainExpression`.
     fn is_prop_types_package(self, node: Expr<'a>) -> bool {
         match node.kind() {
             ExprKind::Ident(name) => {
@@ -257,7 +259,7 @@ impl<'a> State<'a> {
 }
 
 impl ForbidPropTypes {
-    /// What the listeners begin with, without `isPropTypesPackage`.
+    /// The check that the listeners start with, minus `isPropTypesPackage`.
     fn is_checked_declaration(&self, node: Node<'_>) -> bool {
         is_prop_types_declaration(node)
             || (self.check_context_types && is_context_types_declaration(node))
@@ -309,7 +311,8 @@ impl ForbidPropTypes {
         }
     }
 
-    /// `checkProperties` of the object literal that a variable is, which costs its length only the first time.
+    /// `checkProperties` of a variable's object literal. The result is cached, so only the first call walks the
+    /// properties.
     fn check_properties_of_variable<'a>(&self, init: Expr<'a>, listened: &Listened<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(properties) = init.kind() else {
             return;
@@ -351,7 +354,8 @@ impl ForbidPropTypes {
         }
     }
 
-    /// The listener for `MemberExpression`, for a `node` that is the `left` of its parent. Nothing comes of a `right`.
+    /// The `MemberExpression` listener, for a `node` that's its parent's `left`. If it's the `right`, upstream checks
+    /// the member expression itself, which does nothing.
     fn member_expression<'a>(&self, node: Expr<'a>, right: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(right.tag(), ExprTag::Object | ExprTag::Ident | ExprTag::Call)
             || !matches!(node.tag(), ExprTag::Dot | ExprTag::Index)
@@ -365,7 +369,7 @@ impl ForbidPropTypes {
         }
     }
 
-    /// The listener for `CallExpression`.
+    /// The `CallExpression` listener.
     fn call_expression<'a>(&self, node: Expr<'a>, call: Call<'a>, cx: &mut Cx<'a, Self>) {
         let Some(ExprKind::Object(properties)) = call.args().first().map(Expr::kind) else {
             return;

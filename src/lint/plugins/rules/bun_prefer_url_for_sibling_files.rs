@@ -4,10 +4,10 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::{callee_name, is_global_reference, static_string};
 
-/// Prefer `new URL("./file", import.meta.url)` to a path that is joined onto the directory of the module.
+/// Prefer `new URL("./file", import.meta.url)` to a path joined onto the module's directory.
 ///
-/// Bundlers follow the former: see "new URL(url, import.meta.url)" in Vite's guide to static assets and "URL assets" in
-/// webpack's guide to asset modules.
+/// Bundlers understand the `new URL` form. See "new URL(url, import.meta.url)" in Vite's static assets guide and "URL
+/// assets" in webpack's asset modules guide.
 pub struct PreferUrlForSiblingFiles;
 
 const JOINED_PATH: Message = Message::new(
@@ -23,7 +23,7 @@ fn is_meta_property(e: Expr, names: &[&str]) -> bool {
     matches!(e.kind(), ExprKind::Dot { obj, name, .. } if obj.tag() == ExprTag::ImportMeta && name.name().is_any(names))
 }
 
-/// The one argument of `name(argument)` or `object.name(argument)`.
+/// Returns the only argument of `name(argument)` or `object.name(argument)`.
 fn argument_of<'a>(e: Expr<'a>, name: &str) -> Option<Expr<'a>> {
     let call = e.as_call().filter(|it| it.args().len() == 1 && callee_name(*it).is_some_and(|callee| callee.is(name)))?;
     call.args().first()
@@ -36,14 +36,14 @@ fn is_own_file(e: Expr) -> bool {
         || argument_of(e, "fileURLToPath").is_some_and(|it| is_meta_property(it, &["url"]))
 }
 
-/// `__dirname`, `import.meta.dirname`, `import.meta.dir`, `dirname()` of the file of the module
+/// `__dirname`, `import.meta.dirname`, `import.meta.dir`, `dirname()` of the module's own file
 fn is_written_own_directory(e: Expr) -> bool {
     (e.is_ident("__dirname") && is_global_reference(e))
         || is_meta_property(e, &["dirname", "dir"])
         || argument_of(e, "dirname").is_some_and(is_own_file)
 }
 
-/// The same, or a constant that is declared as that.
+/// Like `is_written_own_directory`, but also follows a constant initialized to one of those.
 fn is_own_directory(e: Expr) -> bool {
     let declared = || match e.symbol()?.declarations().next()?.node()? {
         Node::VarDecl(declaration) if declaration.var_kind() == VarKind::Const => declaration.init(),
@@ -52,13 +52,13 @@ fn is_own_directory(e: Expr) -> bool {
     is_written_own_directory(e) || declared().is_some_and(is_written_own_directory)
 }
 
-/// Whether a path that ends with `end` can be that of a file: not `..`, `a/.`, `a/`.
+/// True if a path ending with `end` can be a file's path: not `..`, `a/.`, `a/`.
 fn can_name_a_file(end: &[u8]) -> bool {
     let name = end.get(strings::last_index_of_char(end, b'/').map_or(0, |it| it + 1)..);
     !matches!(name, None | Some(b"" | b"." | b".."))
 }
 
-/// `/a.txt`, to be put behind a directory.
+/// `/a.txt`, to be appended to a directory.
 fn is_rest_of_path(written: Option<Name>) -> bool {
     written.is_some_and(|it| it.bytes().starts_with(b"/") && can_name_a_file(it.bytes()))
 }
@@ -78,7 +78,7 @@ impl Rule for PreferUrlForSiblingFiles {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // There is no `import.meta.url` in a script.
+        // A script has no `import.meta.url`.
         if !file.is_module() || !["__dirname", "dirname", "dir"].iter().any(|it| file.mentions(it)) {
             return None;
         }

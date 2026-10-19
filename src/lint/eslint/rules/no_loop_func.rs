@@ -11,8 +11,8 @@ const UNSAFE_REFS: Message = Message::new(
     "Function declared in a loop contains unsafe references to variable(s) {{ varNames }}.",
 );
 
-/// Whose rule it is. That of typescript-eslint takes every reference in a type for safe, and names
-/// a variable once for each reference.
+/// Whose rule this is. typescript-eslint's treats every reference in a type as safe, and lists a variable once per
+/// reference.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Dialect {
     Eslint,
@@ -28,15 +28,15 @@ fn is_iife(func: Func) -> bool {
         && matches!(e.parent(), Node::Expr(parent) if parent.as_call().is_some_and(|call| call.callee() == e))
 }
 
-/// `scope.through` of the scope of `func`, in the order of the source.
+/// The `scope.through` of `func`'s scope, in source order.
 fn through<'a>(func: Func<'a>, scope: Scope<'a>) -> impl Iterator<Item = Reference<'a>> {
     func.file().references_within(func.span()).filter(move |it| {
         scope.contains(it.scope()) && it.symbol().is_none_or(|variable| !scope.contains(variable.scope()))
     })
 }
 
-/// Whether `func`, which is in a loop, is among ESLint's `SKIPPED_IIFE_NODES`: it is called where
-/// it is written and nowhere else, so what is in it is in the loop.
+/// True if `func`, which is in a loop, is one of ESLint's `SKIPPED_IIFE_NODES`: it's invoked immediately and called
+/// nowhere else, so its contents count as part of the loop.
 fn is_skipped_iife(func: Func) -> bool {
     if func.is_async() || func.is_generator() || !is_iife(func) {
         return false;
@@ -50,14 +50,14 @@ fn is_skipped_iife(func: Func) -> bool {
 /// Where a variable is written to.
 #[derive(Copy, Clone)]
 struct Writes {
-    /// In another function than the one that it is a variable of.
+    /// True if it's written in a function other than the one that declares it.
     is_in_other_function: bool,
-    /// Where the last one starts.
+    /// The start of the last write.
     last: Option<u32>,
 }
 
 impl Writes {
-    /// `references`: all those to a variable of `variable_scope`.
+    /// `references` holds every reference to a variable of `variable_scope`.
     fn among<'a>(references: impl Iterator<Item = Reference<'a>>, variable_scope: Scope<'a>) -> Writes {
         let mut writes = Writes {
             is_in_other_function: false,
@@ -71,18 +71,18 @@ impl Writes {
     }
 }
 
-/// What has been found out about a file.
+/// Cached facts about a file.
 #[derive(Default)]
 pub struct Known<'a> {
-    /// Where the loops are that are in no other loop, in the order of the source.
+    /// The spans of the outermost loops, in source order.
     loops: SmallVec<[Span; 4]>,
     /// ESLint's `getContainingLoopNode`.
     containing_loops: AncestorMemo<'a, Option<Stmt<'a>>>,
     writes_to_variables: FxHashMap<usize, Writes>,
     writes_to_globals: FxHashMap<Name<'a>, Writes>,
-    /// Where a variable is written to and not declared, sorted.
+    /// The sorted offsets where a variable is assigned, not counting declarations.
     assignments: FxHashMap<usize, Vec<u32>>,
-    /// Where the functions start that are reported as oxlint does.
+    /// The start offsets of the functions reported the way oxlint does.
     reported_as_oxlint: FxHashSet<u32>,
 }
 
@@ -119,7 +119,7 @@ impl<'a> Known<'a> {
         let is_oxlint = node.file().language().is_oxlint;
         let found = self.containing_loops.find(node, |current, parent| match parent {
             Node::Stmt(statement) => match statement.kind() {
-                // For oxlint what is in the head of a loop is in the body of the loop around that.
+                // For oxlint, code in a loop's head belongs to the body of the enclosing loop.
                 StmtKind::For { body, .. }
                 | StmtKind::ForIn { body, .. }
                 | StmtKind::ForOf { body, .. }
@@ -130,7 +130,7 @@ impl<'a> Known<'a> {
                     (current == Node::Stmt(body)).then_some(Some(statement))
                 }
                 StmtKind::While { .. } | StmtKind::DoWhile { .. } => Some(Some(statement)),
-                // `init` is outside of the loop.
+                // `init` is outside the loop.
                 StmtKind::For { init, .. } => {
                     let is_init = init.is_some_and(|init| match init.kind() {
                         StmtKind::Expr(e) => current == Node::Expr(e),
@@ -138,7 +138,7 @@ impl<'a> Known<'a> {
                     });
                     (!is_init).then_some(Some(statement))
                 }
-                // `right` is outside of the loop.
+                // `right` is outside the loop.
                 StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => {
                     (current != Node::Expr(expr)).then_some(Some(statement))
                 }
@@ -150,8 +150,8 @@ impl<'a> Known<'a> {
         found.flatten()
     }
 
-    /// Whether `last` is not before ESLint's `getTopLoopNode`: the outermost of the loops around `node`, and `node` itself, that
-    /// start at `border` or after it.
+    /// True if `last` isn't before ESLint's `getTopLoopNode`: the outermost loop among `node` and its enclosing loops
+    /// that starts at or after `border`.
     fn is_written_in_top_loop(&mut self, node: Stmt<'a>, border: u32, last: u32) -> bool {
         let mut at = node;
         loop {
@@ -165,16 +165,16 @@ impl<'a> Known<'a> {
         }
     }
 
-    /// Whether one of the `writes` to a variable can modify it between the iterations of the loop: it is in another function, or
-    /// not before the loop.
+    /// True if one of the `writes` to a variable can modify it between iterations of the loop: it's in another
+    /// function, or it isn't before the loop.
     fn has_unsafe_write(&mut self, writes: Writes, loop_node: Stmt<'a>, excluded_end: u32) -> bool {
         writes.is_in_other_function
             || writes.last.is_some_and(|last| self.is_written_in_top_loop(loop_node, excluded_end, last))
     }
 }
 
-/// Where the loops that `statement` is in, in its function, and `statement` itself declare their variables: the `init` of a `for`,
-/// the `left` of a `for`-`in`. With whether something gives them another value for the next iteration.
+/// Returns where `statement` and its enclosing loops in the same function declare their variables: the `init` of a
+/// `for`, the `left` of a `for`-`in`. Each comes with whether the variables get a new value for the next iteration.
 fn heads<'a>(statement: Stmt<'a>) -> impl Iterator<Item = (Span, bool)> {
     let around = Node::Stmt(statement).ancestors().take_while(|it| !matches!(it, Node::Func(_)));
     std::iter::once(Node::Stmt(statement)).chain(around).filter_map(|it| match it.as_stmt()?.kind() {
@@ -184,8 +184,8 @@ fn heads<'a>(statement: Stmt<'a>) -> impl Iterator<Item = (Span, bool)> {
     })
 }
 
-/// `is_unsafe_reference` of oxlint, which goes by the first declaration of `variable`. `None`: as for ESLint, where the end
-/// of the declaration is given.
+/// oxlint's `is_unsafe_reference`, which goes by `variable`'s first declaration. `None` means the caller falls back to
+/// ESLint's check, which is given the end of the declaration.
 fn is_unsafe_for_oxlint<'a>(loop_node: Stmt<'a>, variable: Symbol<'a>, known: &mut Known<'a>) -> Option<bool> {
     let is_safe = Some(false);
     let Some(first) = variable.declarations().next() else {
@@ -205,7 +205,7 @@ fn is_unsafe_for_oxlint<'a>(loop_node: Stmt<'a>, variable: Symbol<'a>, known: &m
         (DeclarationKind::CatchClause, _) | (DeclarationKind::Variable, Some(VarKind::Let)) => {
             (whole.contains(place) || is_in_head(known, false)).then_some(false)
         }
-        // All iterations share it. Else only what is written in the loop counts, and no declaration does.
+        // All iterations share it. Otherwise only assignments inside the loop count, and declarations don't.
         (DeclarationKind::Parameter, _) | (DeclarationKind::Variable, Some(VarKind::Var)) => {
             if whole.contains(place) || is_in_head(known, true) {
                 return Some(true);
@@ -223,7 +223,7 @@ fn is_unsafe_for_oxlint<'a>(loop_node: Stmt<'a>, variable: Symbol<'a>, known: &m
     }
 }
 
-/// It resolves to something, and ESLint's `isSafe` does not hold.
+/// True if `reference` resolves to something and ESLint's `isSafe` is false for it.
 fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect, known: &mut Known<'a>) -> bool {
     if dialect == Dialect::TypeScript && reference.is_type() {
         return false;
@@ -256,7 +256,7 @@ fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect
     let excluded_end = match declaration {
         Some((VarKind::Const | VarKind::Using | VarKind::AwaitUsing, _)) => return false,
         Some((VarKind::Let, declaration)) => {
-            // It is a different instance in each iteration.
+            // It's a different instance in each iteration.
             let whole = loop_node.span();
             if declaration.start > whole.start && declaration.end < whole.end {
                 return false;
@@ -307,8 +307,8 @@ fn check_in_loop<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Di
     var_names.push(b'\'');
     let mut place = func.estree_span();
     if cx.language().is_oxlint {
-        // oxlint looks at the functions that are directly in the loop, with all that is in them: once at the function
-        // that is called where it is written, not at those in it.
+        // oxlint looks at the functions directly in the loop, including everything nested in them. So it reports an
+        // immediately invoked function once, and not the functions inside it.
         let (whole, mut at) = (loop_node.span(), func);
         while let Some(outer) = at.enclosing().filter(|it| whole.contains(it.span())) {
             if ast_utils::is_function_with_body(outer) {

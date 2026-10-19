@@ -64,8 +64,8 @@ struct MatchedTsDirective<'a> {
     description: &'a [u8],
 }
 
-/// `/^\s*@ts-(?<directive>a|b)(?<description>.*)/` for the `directives` `a` and `b`, on text
-/// without line breaks after the directive.
+/// `/^\s*@ts-(?<directive>a|b)(?<description>.*)/` for the `directives` `a` and `b`, on text without line breaks after
+/// the directive.
 fn match_directive<'a>(text: &'a [u8], directives: [&'static str; 2]) -> Option<MatchedTsDirective<'a>> {
     directive_at(strings::trim_js_whitespace_start(text), &directives)
 }
@@ -101,7 +101,7 @@ fn find_directive_in_comment(comment: Token<'_>) -> Option<MatchedTsDirective<'_
     match_directive(rest, SUPPRESSIONS)
 }
 
-/// oxlint's `find_ts_comment_directive`, and what it passes over then. Only a `\n` ends a line.
+/// oxlint's `find_ts_comment_directive`, plus the matches it then ignores. Only a `\n` ends a line.
 fn find_directive_in_comment_for_oxlint(comment: Token<'_>) -> Option<MatchedTsDirective<'_>> {
     let (value, is_block) = (comment.comment_value(), comment.kind() == TokenKind::Block);
     if comment.kind() == TokenKind::Shebang {
@@ -132,7 +132,7 @@ impl BanTsComment {
             let Some(MatchedTsDirective { directive, description }) = found else {
                 continue;
             };
-            // oxlint does not ask where the comment is.
+            // oxlint doesn't care where the comment is.
             if directive == "nocheck"
                 && !is_oxlint
                 && let Some(first_statement) = file.body().first()
@@ -148,14 +148,14 @@ impl BanTsComment {
                 "ignore" => &self.ts_ignore,
                 _ => &self.ts_nocheck,
             };
-            // oxlint points at what is in the comment.
+            // oxlint points at the comment's content.
             let place = match cx.language().is_oxlint {
                 true => comment.comment_value_span(),
                 false => comment.span(),
             };
             match option {
                 DirectiveConfig::Allowed => {}
-                // For oxlint it is a fix, of what is in the comment, and of every `@ts-ignore` there.
+                // In oxlint it's a fix. It rewrites the comment's content and replaces every `@ts-ignore` in it.
                 DirectiveConfig::Banned if directive == "ignore" && cx.language().is_oxlint => {
                     cx.report(place, TS_IGNORE_INSTEAD_OF_EXPECT_ERROR).fix(|fixer| {
                         let value = comment.comment_value();
@@ -183,7 +183,7 @@ impl BanTsComment {
                     cx.report(place, TS_DIRECTIVE_COMMENT).data("directive", directive);
                 }
                 DirectiveConfig::AllowedWithDescription(format) => {
-                    // oxlint counts bytes, and looks at the format whatever the length is.
+                    // oxlint counts bytes, and checks the format whatever the length is.
                     let length = match is_oxlint {
                         true => strings::trim_unicode_whitespace(description).len(),
                         false => get_string_length(strings::trim_js_whitespace(description)),

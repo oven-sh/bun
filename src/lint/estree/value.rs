@@ -1,4 +1,4 @@
-//! What a field of a node holds.
+//! The values of a node's fields.
 
 use super::vnode::{Part, VNode};
 use crate::ast::{
@@ -10,7 +10,7 @@ use crate::ast::{
 /// The value of a field.
 #[derive(Copy, Clone)]
 pub(crate) enum Value<'a> {
-    /// The node has no such field, or it is `undefined`.
+    /// The node has no such field, or the field is `undefined`.
     Undefined,
     Null,
     Bool(bool),
@@ -24,13 +24,13 @@ pub(crate) enum Value<'a> {
     },
     /// The `value` of a `bigint` literal, in decimal.
     BigInt(&'a [u8]),
-    /// An object that is not a node.
+    /// An object that isn't a node.
     Object(Object<'a>),
     Node(VNode<'a>),
     Nodes(Nodes<'a>),
 }
 
-/// Takes the fields of a node, one call for each: [`NodeType::emit_fields`](super::NodeType::emit_fields).
+/// Receives a node's fields, one call per field. See [`NodeType::emit_fields`](super::NodeType::emit_fields).
 pub(crate) trait Sink<'a> {
     fn undefined(&mut self);
     fn null(&mut self);
@@ -43,8 +43,8 @@ pub(crate) trait Sink<'a> {
     fn other(&mut self, value: &Value<'a>);
 }
 
-/// What converts to a [`Value`] goes to a [`Sink`] without one being made: which call it is, is known where the field is written
-/// down.
+/// Passes anything that converts to a [`Value`] to a [`Sink`] without building the [`Value`]. The field's definition
+/// already determines which `Sink` method to call.
 pub(crate) trait Emit<'a> {
     fn emit(self, sink: &mut impl Sink<'a>);
 }
@@ -110,7 +110,7 @@ impl<'a> Emit<'a> for Value<'a> {
     }
 }
 
-/// The objects in an ESTree that are not nodes.
+/// The objects in an ESTree that aren't nodes.
 #[derive(Copy, Clone)]
 pub(crate) enum Object<'a> {
     /// The `value` of a `TemplateElement`
@@ -166,8 +166,7 @@ impl<'a, T: Into<Value<'a>>> From<Option<T>> for Value<'a> {
     }
 }
 
-/// A list of nodes, in which a hole is `None`. It is the iterator over itself, and starts over
-/// from every copy.
+/// A list of nodes, in which a hole is `None`. It's its own iterator, and each copy iterates independently.
 #[derive(Copy, Clone)]
 pub(crate) struct Nodes<'a>(Inner<'a>);
 
@@ -190,15 +189,15 @@ enum Inner<'a> {
     TupleElems(ListIter<'a, TupleElem<'a>>),
     PatProps(ListIter<'a, PatProp<'a>>),
     PatElems(ListIter<'a, PatElem<'a>>),
-    /// The default import, the namespace import, the named imports. The number says what is next.
+    /// The default import, the namespace import, then the named imports. The number tracks which comes next.
     ImportSpecifiers(Stmt<'a>, u8, ListIter<'a, ImportSpec<'a>>),
     Decorators(Node<'a>, ListIter<'a, Modifier<'a>>),
     /// The entries of `with { .. }` in a statement or a type.
     Attributes(Node<'a>, ListIter<'a, Prop<'a>>),
-    /// The `TemplateElement`s of a node from an index up to another.
+    /// A node's `TemplateElement`s, from a start index up to an end index.
     Quasis(Node<'a>, u32, u32),
-    /// The operands of comma operators. First the left operand of the innermost, then the right
-    /// operand of each from there up to the outermost.
+    /// The operands of nested comma operators: first the innermost operator's left operand, then each operator's right
+    /// operand, from the innermost to the outermost.
     Sequence {
         innermost_left: Option<Expr<'a>>,
         at: Option<Expr<'a>>,
@@ -252,7 +251,7 @@ impl<'a> Nodes<'a> {
         Nodes(Inner::ImportSpecifiers(statement, 0, named.iter()))
     }
 
-    /// The decorators among `modifiers`, which are those of `owner`.
+    /// Returns the decorators among `modifiers`, which are `owner`'s modifiers.
     pub(super) fn decorators(
         owner: impl Into<Node<'a>>,
         modifiers: List<'a, Modifier<'a>>,
@@ -268,7 +267,7 @@ impl<'a> Nodes<'a> {
         Nodes(Inner::Quasis(owner.into(), 0, count as u32))
     }
 
-    /// The operands of the comma operators of which `outermost` is the last.
+    /// Returns the operands of the chain of comma operators that ends with `outermost`.
     pub(super) fn sequence(outermost: Expr<'a>) -> Nodes<'a> {
         let mut innermost = outermost;
         let left = loop {
@@ -304,7 +303,7 @@ impl<'a> Nodes<'a> {
         self.count()
     }
 
-    /// The element at `i`. The outer `None`: there is none.
+    /// Returns the element at `i`. The outer `None` means `i` is out of range.
     #[inline]
     pub(crate) fn get(mut self, i: usize) -> Option<Option<VNode<'a>>> {
         self.nth(i)

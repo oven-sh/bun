@@ -1,8 +1,8 @@
-//! Names that are keywords in some places, `eval` and `arguments`: oxc's `check_identifier`, `check_binding_identifier` and
-//! `check_identifier_reference`, which the pass that builds its scopes runs on every identifier, and what its parser says
-//! about such a name.
+//! Checks for contextual keywords used as identifiers, and for `eval` and `arguments`. Covers oxc's `check_identifier`,
+//! `check_binding_identifier` and `check_identifier_reference`, which its semantic pass runs on every identifier, and
+//! its parser's errors for such names.
 //!
-//! The parser notes where such a name is an identifier. Few files have one, and no other file is looked at.
+//! Our parser records where such a name is used as an identifier. Few files have one, and the other files are skipped.
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
@@ -29,13 +29,13 @@ enum Role {
 struct Checks<'a> {
     file: &'a File<'a>,
     is_module: bool,
-    /// Only oxc's parser has something to say about the names in a declaration file.
+    /// In a declaration file, only oxc's parser reports errors about these names.
     is_declaration_file: bool,
-    /// Where the parser has noted such a name, sorted, and whether what is there has been looked at.
+    /// The offsets the parser recorded, sorted, each with a flag that's set once the name there has been checked.
     noted: SmallVec<[(u32, bool); 8]>,
-    /// How many of `noted` have not been looked at.
+    /// How many of `noted` haven't been checked yet.
     left: usize,
-    /// The names that oxc's parser has an error about. It has one at most about a name.
+    /// The offsets of names that already have an error from oxc's parser. It reports at most one per name.
     settled: SmallVec<[u32; 4]>,
     read_again: OnceCell<Vec<Span>>,
     errors: Vec<SyntaxError>,
@@ -47,7 +47,7 @@ fn has_use_strict<'a>(statements: impl Iterator<Item = Stmt<'a>>) -> bool {
     directives.any(|it| it == b"use strict")
 }
 
-/// Why the code at a name is strict. oxlint says so in a note.
+/// Why the code at a name is strict. oxlint prints the reason in a note.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Strict {
     No,
@@ -62,7 +62,7 @@ impl<'a> Checks<'a> {
         SyntaxError::of_oxc(Span::new(at, at + token_len(rest) as u32), message)
     }
 
-    /// What is at `at` has been looked at.
+    /// Marks the name at `at` as checked.
     fn look_at(&mut self, at: u32) {
         if let Ok(index) = self.noted.binary_search_by_key(&at, |it| it.0)
             && let Some(it) = self.noted.get_mut(index)
@@ -73,8 +73,8 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// The token after `at`: where it starts, its text, which is empty at the end of the file, and whether it is on the line
-    /// of `at`.
+    /// The token after `at`: its start, its text (empty at the end of the file), and whether it's on the same line as
+    /// `at`.
     fn token_after(&self, at: u32) -> (u32, &'a [u8], bool) {
         let file = self.file;
         let next = skip_trivia(file.text(), at);
@@ -87,8 +87,8 @@ impl<'a> Checks<'a> {
         )
     }
 
-    /// oxc's `Kind::is_after_await_or_yield` of the token after `end`, if that is on the same line: it is a name, a keyword or a
-    /// literal, and no operator.
+    /// oxc's `Kind::is_after_await_or_yield` for the token after `end`, if it's on the same line. True for an
+    /// identifier, a keyword or a literal, but not for an operator.
     fn has_operand_after(&self, end: u32) -> bool {
         let (_, token, is_on_line) = self.token_after(end);
         is_on_line
@@ -102,8 +102,9 @@ impl<'a> Checks<'a> {
             }
     }
 
-    /// Whether oxc's parser has taken the file for a module when it is at `at`, which is in no function. By its name, or from
-    /// the first statement on that only a module has. It knows that after the statement, but for an `export`.
+    /// True if oxc's parser already treats the file as a module when it reaches `at`, which is outside any function. It
+    /// does so because of the file extension, or from the first module-only statement on. It only knows after that
+    /// statement, except for an `export`, where it knows from the keyword on.
     fn is_module_at(&self, at: u32) -> bool {
         if !self.is_module || !is_either(self.file) {
             return self.is_module;
@@ -141,7 +142,7 @@ impl<'a> Checks<'a> {
             start = span.start.min(at);
             break;
         }
-        // `import.meta`, and an `await` that can be nothing but the operator.
+        // `import.meta`, or an `await` that can only be the operator.
         file.hir.exprs.iter().enumerate().any(|(i, raw)| {
             raw.pos < start
                 && match raw.kind {
@@ -159,25 +160,26 @@ impl<'a> Checks<'a> {
         })
     }
 
-    /// Whether `at` is in one of the [statements that oxc reads again](super::statements_read_again), with `await` as the
-    /// operator. It doesn't get there after an error that it gives up at.
+    /// True if `at` is in one of the [statements that oxc reparses](super::statements_read_again) with `await` as the
+    /// operator. oxc doesn't reparse after a fatal error.
     fn is_read_again(&self, at: u32) -> bool {
         let again = || super::statements_read_again(self.file);
         !self.file.has_parse_errors()
             && (self.read_again.get_or_init(again).iter()).any(|it| it.contains_offset(at))
     }
 
-    /// Whether oxc's parser is in the await context at `node`, which is at `at`.
+    /// True if oxc's parser is in the await context at `node`, which is at `at`.
     fn is_in_async(&self, node: Node<'a>, at: u32) -> bool {
         Self::is_in_async_function(node).unwrap_or_else(|| self.is_module_at(at))
     }
 
-    /// The same. `None`: `node` is in no function, and it depends on what the file is.
+    /// Like [`Checks::is_in_async`]. Returns `None` if `node` is outside any function, where the answer depends on the
+    /// source type.
     fn is_in_async_function(node: Node<'a>) -> Option<bool> {
         let mut below = node;
         for above in node.ancestors() {
             match above {
-                // The head of an arrow function is in the context of what is around, too.
+                // An arrow function's head is also in the enclosing context.
                 Node::Func(func) if func.kind() == FnKind::Arrow => {
                     let is_head =
                         matches!(below, Node::Param(_) | Node::Type(_) | Node::TypeParam(_));
@@ -199,9 +201,9 @@ impl<'a> Checks<'a> {
         None
     }
 
-    /// `async await => 1`, at the name. oxc reads what is after `async` as an expression, so in the await context it looks for an
-    /// operand and finds the `=>`. A statement in no function is read again that way once the file turns out to be a module.
-    /// Returns whether it gives up there.
+    /// `async await => 1`, where `at` is the `await`. oxc parses what follows `async` as an expression, so in the await
+    /// context it looks for an operand and finds the `=>`. A statement outside any function is reparsed that way once
+    /// the file turns out to be a module. Returns true if oxc gives up there.
     fn await_before_arrow(&mut self, func: Func<'a>, at: u32) -> bool {
         let (arrow, token, _) = self.token_after(at + 5);
         let is_keyword = || Self::is_in_async_function(Node::Func(func)).unwrap_or(self.is_module);
@@ -214,8 +216,8 @@ impl<'a> Checks<'a> {
         true
     }
 
-    /// What oxc says about `pattern` where it reads it as a type: an object pattern as a type literal, an array pattern as a
-    /// tuple.
+    /// oxc's error for `pattern` when it parses it as a type: an object pattern as a type literal, an array pattern as
+    /// a tuple.
     fn pattern_as_type(&self, pattern: Pat<'a>) -> Option<SyntaxError> {
         let semicolon = |after: u32| {
             let message =
@@ -253,9 +255,9 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// `({ await }: T) => void` where `await` is a keyword, at the name, and the same for `yield`. oxc tells a function type
-    /// from a type in parentheses by what follows the `(`. A pattern that it has an error about is none, so it reads a type.
-    /// Returns whether it gives up on that.
+    /// `({ await }: T) => void` where `await` is a keyword and `at` is its offset, and the same for `yield`. oxc tells
+    /// a function type from a parenthesized type by what follows the `(`. A pattern with an error doesn't count as a
+    /// pattern, so oxc parses a type instead. Returns true if oxc gives up on that.
     fn function_type_as_type(&mut self, func: Func<'a>, at: u32) -> bool {
         let Some(first) = func.params().first().filter(|it| {
             it.pat().span().contains_offset(at)
@@ -268,7 +270,7 @@ impl<'a> Checks<'a> {
         };
         let pattern = first.pat();
         self.settled.push(at);
-        // One of the names in it has been here.
+        // Another name in the same pattern has already reported this.
         if self.settled.contains(&pattern.span().start) {
             return true;
         }
@@ -289,7 +291,8 @@ impl<'a> Checks<'a> {
         true
     }
 
-    /// `check_identifier` of oxc's parser: `await` or `yield` is a name where it is a keyword. The parser goes on.
+    /// `check_identifier` in oxc's parser: `await` or `yield` is used as an identifier where it's a keyword. The parser
+    /// continues.
     fn keyword_in_its_context(&mut self, name: Atom, at: u32) {
         if self.settled.contains(&at) {
             return;
@@ -315,7 +318,7 @@ impl<'a> Checks<'a> {
         self.errors.push(error.stage(Stage::Parser));
     }
 
-    /// The local name of an import specifier is any word to oxc's parser, which then looks at what it has got.
+    /// oxc's parser accepts any word as an import specifier's local name and checks it afterwards.
     fn reserved_word_in_import(&mut self, name: Atom, at: u32) {
         self.look_at(at);
         self.settled.push(at);
@@ -329,7 +332,8 @@ impl<'a> Checks<'a> {
         self.errors.push(error.stage(Stage::Parser));
     }
 
-    /// oxc's `parse_let`, for the statements that start at one of `lets`, where the word is a name here.
+    /// oxc's `parse_let`, for the statements that start at one of `lets`, where our parser parsed `let` as an
+    /// identifier.
     fn statements_that_start_with_let(&mut self, lets: &[u32]) {
         let file = self.file;
         for tag in [StmtTag::Expr, StmtTag::Labeled] {
@@ -342,8 +346,8 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// At the start of a statement `let` begins a declaration whatever comes next, unless that is an operator between two
-    /// operands, a `.`, a `(` or a `;`. `after`: the end of the word.
+    /// At the start of a statement `let` begins a declaration, unless the next token is a binary operator, a `.`, a `(`
+    /// or a `;`. `after` is the end of the `let`.
     fn statement_that_starts_with_let(&mut self, statement: Stmt<'a>, after: u32) {
         let (next, token, is_on_line) = self.token_after(after);
         let goes_on = match token {
@@ -355,7 +359,8 @@ impl<'a> Checks<'a> {
         if goes_on {
             return;
         }
-        // Where there can be one statement and no declaration, the word is a name, and the statement is over after it.
+        // In a single-statement position, which doesn't allow a declaration, `let` is an identifier and the statement
+        // ends after it.
         let is_alone = matches!(statement.parent(), Node::Stmt(it) if matches!(
             it.kind(),
             StmtKind::If { .. }
@@ -374,7 +379,8 @@ impl<'a> Checks<'a> {
                 SyntaxError::of_oxc(Span::empty(after), message)
                     .help("Try inserting a semicolon here")
             }
-            // An escape, however it is written, is part of a name for oxc's lexer, which has reported it.
+            // oxc's lexer treats any escape, even a malformed one, as part of an identifier, and has already reported
+            // it.
             false if token.starts_with(b"\\") => return,
             false => {
                 let label = Span::new(next, next + token.len() as u32);
@@ -384,9 +390,9 @@ impl<'a> Checks<'a> {
         self.errors.push(error.stage(Stage::Fatal));
     }
 
-    /// `ScopeFlags::is_strict_mode` where the name at `at` is, which is `node` or is in it. The decorators of a class are
-    /// outside its scope, the name and the parameters of a function are in the scope of the function. For the note oxc goes up
-    /// the tree, where the decorators are in the class.
+    /// `ScopeFlags::is_strict_mode` for the name at `at`, which is `node` or inside it. A class's decorators are
+    /// outside its scope, and a function's name and parameters are inside the function's scope. To pick the note, oxc
+    /// walks up the tree, where decorators are inside the class.
     fn strictness(&self, node: Node<'a>, at: u32) -> Strict {
         let (mut is_in_class, mut is_in_scope_of_class, mut has_directive) = (false, false, false);
         for it in std::iter::once(node).chain(node.ancestors()) {
@@ -413,7 +419,7 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// It is in a statement that starts with `declare`.
+    /// True if `node` is in a statement that starts with `declare`.
     fn is_ambient(node: Node<'a>) -> bool {
         std::iter::once(node)
             .chain(node.ancestors())
@@ -425,7 +431,7 @@ impl<'a> Checks<'a> {
         if name == known::eval || name == known::arguments || Self::is_ambient(node) {
             return;
         }
-        // The name, however it is spelled: `yi\u0065ld`
+        // The decoded name, even if the source has an escape: `yi\u0065ld`
         let text = self.file.name(name).bytes();
         let reserved = [b"The keyword '", text, b"' is reserved"].concat();
         let error = if name != known::r#await {
@@ -465,7 +471,7 @@ impl<'a> Checks<'a> {
     /// `check_binding_identifier`
     fn binding(&mut self, name: Atom, at: u32, node: Node<'a>) {
         if name == known::eval || name == known::arguments {
-            // As in tsc's binder, what is only declared passes, but for a variable and a name in a pattern.
+            // As in tsc's binder, ambient declarations are allowed, except for a variable or a name in a pattern.
             let is_variable_or_in_pattern = match node {
                 Node::Pat(pat) => match pat.parent() {
                     Node::VarDecl(it) => !is_catch_parameter(it),
@@ -581,13 +587,13 @@ impl<'a> Checks<'a> {
     }
 }
 
-/// The `e` of `catch (e)` is a declaration here, and none to oxc.
+/// The `e` in `catch (e)` is a variable declaration in our tree but not in oxc's.
 fn is_catch_parameter(it: VarDecl) -> bool {
     matches!(it.parent(), Node::Stmt(it) if matches!(it.kind(), StmtKind::Try { .. }))
 }
 
-/// The scope that oxc is in at `node` is that of a static block. The name of a function or a class is in the scope of that, the
-/// name of an enum, an interface, a type alias or a namespace is outside.
+/// True if oxc's current scope at `node` is a static block's. A function's or class's name is inside its own scope,
+/// while the name of an enum, interface, type alias or namespace is outside.
 fn is_directly_in_static_block<'a>(node: Node<'a>) -> bool {
     let is_scope = |it: &Node<'a>| match it {
         Node::Func(_) | Node::Class(_) => true,
@@ -611,8 +617,8 @@ fn is_directly_in_static_block<'a>(node: Node<'a>) -> bool {
     matches!(scope, Some(Node::Func(func)) if func.kind() == FnKind::StaticBlock)
 }
 
-/// Whether oxc's parser sets the await and the yield context anew for `func`, which is no arrow function. Not for what is only
-/// a type: a function type, a signature in an interface or in a type literal.
+/// True if oxc's parser resets the await and yield contexts for `func`, which isn't an arrow function. It doesn't for
+/// type-only functions: a function type, or a signature in an interface or type literal.
 fn has_own_context(func: Func) -> bool {
     match func.kind() {
         FnKind::CallSignature
@@ -628,8 +634,8 @@ fn has_own_context(func: Func) -> bool {
     }
 }
 
-/// oxc leaves the await context for a declaration that starts with one of these words. One after `export` or a decorator does
-/// not start with it. A type is in the context of what is around it.
+/// oxc leaves the await context for a declaration that starts with one of these words. A declaration after `export` or
+/// a decorator doesn't start with one. A type stays in the enclosing context.
 fn is_read_outside_the_await_context(it: Stmt) -> bool {
     let text = it.text();
     matches!(
@@ -656,12 +662,13 @@ fn is_read_outside_the_await_context(it: Stmt) -> bool {
     )
 }
 
-/// Whether oxc's parser is in the yield context at `node`. Unlike the await context, that goes on in types.
+/// True if oxc's parser is in the yield context at `node`. Unlike the await context, the yield context extends into
+/// types.
 fn is_in_generator(node: Node) -> bool {
     let mut below = node;
     for above in node.ancestors() {
         match above {
-            // The head of an arrow function is in the context of what is around.
+            // An arrow function's head is in the enclosing context.
             Node::Func(func)
                 if func.kind() == FnKind::Arrow
                     && matches!(below, Node::Param(_) | Node::Type(_) | Node::TypeParam(_)) => {}
@@ -674,7 +681,7 @@ fn is_in_generator(node: Node) -> bool {
     false
 }
 
-/// The function one of whose parameters binds `name`, and whether the name is all of the pattern of the parameter.
+/// The function that has a parameter binding `name`, and true if the name is that parameter's whole pattern.
 fn function_of_parameter<'a>(name: Node<'a>) -> Option<(Func<'a>, bool)> {
     let mut is_all = true;
     for above in name.ancestors() {
@@ -688,8 +695,8 @@ fn function_of_parameter<'a>(name: Node<'a>) -> Option<(Func<'a>, bool)> {
     None
 }
 
-/// oxc goes up from the name, past functions too, until it meets a member expression: a pattern that is assigned to or a `++`
-/// anywhere above counts, and an assignment to the same name.
+/// oxc walks up from the name, even past functions, until it reaches a member expression. A destructuring assignment or
+/// a `++` anywhere above counts, and so does an assignment to the same name.
 fn is_assigned_to(it: Expr, name: Atom) -> bool {
     for above in Node::Expr(it).ancestors() {
         let Node::Expr(above) = above else {
@@ -704,7 +711,7 @@ fn is_assigned_to(it: Expr, name: Atom) -> bool {
                 op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                 ..
             } => return true,
-            // A default in a pattern is no assignment to oxc.
+            // oxc doesn't treat a default in a pattern as an assignment.
             ExprKind::Assign { target, .. }
                 if matches!(target.try_raw().map(|it| it.kind), Some(hir::ExprKind::Ident(it)) if it == name)
                     && !above.is_assignment_target() =>
@@ -740,7 +747,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let is_keyword = |name: Atom| name.is_keyword_identifier();
     let is_reserved = |name: Atom| name == known::r#await || name == known::r#yield;
     let statement = |id: hir::StmtId| Node::Stmt(Stmt::new(file, id));
-    // It is over as soon as all that the parser has noted is found.
+    // Stop as soon as every recorded name has been found.
     'all: {
         for (i, raw) in hir.exprs.iter().enumerate() {
             if let hir::ExprKind::Ident(name) = raw.kind
@@ -762,13 +769,13 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 && file.pat_in_tree(i).is_some()
             {
                 let node = Node::Pat(Pat::from_raw(file, i as u32));
-                // The key of an index signature is no binding to oxc.
+                // oxc doesn't treat an index signature's key as a binding.
                 let owner = node.ancestors().nth(1);
                 if matches!(owner, Some(Node::Func(it)) if it.kind() == FnKind::IndexSignature) {
                     continue;
                 }
-                // The parser here reads the head of an arrow function outside the context around it, and knows late that one is
-                // async.
+                // Our parser parses an arrow function's head outside the enclosing context, and learns late that the
+                // function is async.
                 let is_keyword_here = match function_of_parameter(node) {
                     Some((func, false))
                         if !has_own_context(func)
@@ -875,7 +882,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 }
             }
         }
-        // The parser here leaves the await context of the top level for the whole of `import a = b`.
+        // Our parser leaves the top-level await context for the whole of `import a = b`.
         for raw in hir.import_equals.iter() {
             if raw.name == known::r#await
                 && matches!(statement(raw.stmt).parent(), Node::File(_))
@@ -943,7 +950,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !lets.is_empty() {
         checks.statements_that_start_with_let(&lets);
     }
-    // The `a` of `export * as a from "b"` is noted like a name that is declared. To oxc it is any word.
+    // The parser records the `a` in `export * as a from "b"` like a declared name, but oxc accepts any word there.
     for it in file.stmts_of_kind(StmtTag::ExportStar) {
         if let StmtKind::ExportStar {
             alias: Some(alias), ..
@@ -952,7 +959,8 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             checks.settled.push(alias.span().start);
         }
     }
-    // What the parser has noted: see `note_keyword_identifier`. 1262 and 1214 are at the top level.
+    // The diagnostics the parser recorded. See `note_keyword_identifier`. 1262 and 1214 are only reported at the top
+    // level.
     for it in hir.diagnostics.iter() {
         let is_noted = it.kind == DiagnosticKind::Grammar && matches!(it.code, 1359 | 1262 | 1214);
         if is_noted && (it.code == 1359 || checks.is_module_at(it.start)) {

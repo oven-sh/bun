@@ -82,7 +82,7 @@ pub(super) fn report(
         let (scope, path) = (&target.scope, &target.path);
         let named = configs.packages_of_plugins(scope, Some(path));
         let missing = configs.missing_plugins(scope, Some(path)).iter();
-        // With `svelte = false` nobody does what the plugin for it does.
+        // With `svelte = false`, nothing does the Svelte plugin's job, so it isn't in use.
         let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_plugin_for_svelte(it));
         named
             .chain(missing.map(|it| &it[..]))

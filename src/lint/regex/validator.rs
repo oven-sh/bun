@@ -1,7 +1,9 @@
-//! `RegExpValidator` of `@eslint-community/regexpp`: the grammar of regular expressions, the syntax
-//! errors with regexpp's messages, and a [`Handler`] that is told what is found.
+//! `@eslint-community/regexpp`'s `RegExpValidator`: the regular expression grammar, the syntax
+//! errors with regexpp's messages, and a [`Handler`] that gets a callback for everything that's
+//! parsed.
 //!
-//! A [`SyntaxError`] also has what `oxc_regular_expression` says about the pattern, for oxlint's `no-invalid-regexp`.
+//! A [`SyntaxError`] also carries `oxc_regular_expression`'s diagnostic for the pattern, for
+//! oxlint's `no-invalid-regexp`.
 
 use super::ast::{EscapeSet, Flags, INFINITY, ModifierFlags, Reference};
 use super::{unicode, wtf8};
@@ -9,10 +11,10 @@ use bun_core::strings;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
-/// The options of `RegExpValidator` and `RegExpParser`.
+/// `RegExpValidator`'s and `RegExpParser`'s options.
 #[derive(Copy, Clone, Debug)]
 pub struct Options {
-    /// Disables the syntax of Annex B.
+    /// Disables Annex B syntax.
     pub strict: bool,
     /// 5, or 2015 to 2025.
     pub ecma_version: u32,
@@ -60,29 +62,29 @@ impl Mode {
 pub struct SyntaxError {
     /// `Invalid regular expression: /(/: Unterminated group`
     pub message: String,
-    /// Where, as a byte offset in the source.
+    /// Location of the error, as a byte offset into the source.
     pub offset: u32,
-    /// regexpp's `index`: the same as an index in the UTF-16 form of the source.
+    /// regexpp's `index`: the same location as an index into the source's UTF-16 form.
     pub index: u32,
-    /// `None` if `oxc_regular_expression` accepts what is refused here.
+    /// `None` if `oxc_regular_expression` accepts what's rejected here.
     pub oxc: Option<Oxc>,
     reason: u32,
 }
 
-/// A diagnostic of `oxc_regular_expression`, as oxlint 1.87 has it.
+/// An `oxc_regular_expression` diagnostic, as of oxlint 1.87.
 #[derive(Clone, Debug)]
 pub struct Oxc {
     /// Without `Invalid regular expression: `.
     pub message: Cow<'static, str>,
     pub help: Cow<'static, str>,
-    /// What it marks, as byte offsets in the source.
+    /// The range it marks, as byte offsets into the source.
     pub start: u32,
     pub end: u32,
-    /// What it marks besides.
+    /// A second range it marks.
     pub also: Option<(u32, u32)>,
 }
 
-/// The message and the help of an [`Oxc`].
+/// An [`Oxc`]'s message and help.
 type Said = (&'static str, &'static str);
 
 impl Oxc {
@@ -238,12 +240,12 @@ impl std::fmt::Display for SyntaxError {
 
 impl std::error::Error for SyntaxError {}
 
-/// The callbacks in the options of `RegExpValidator`, with the same names and arguments. `start`
-/// and `end` are byte offsets.
+/// The callbacks in `RegExpValidator`'s options, with the same names and arguments. `start` and
+/// `end` are byte offsets.
 ///
-/// A pattern with named groups is parsed twice without the `u` and `v` flags:
-/// [`on_pattern_enter`](Handler::on_pattern_enter) is then called a second time. When the pattern
-/// has a syntax error, what precedes the error has been reported.
+/// Without the `u` and `v` flags, a pattern with named groups is parsed twice, so
+/// [`on_pattern_enter`](Handler::on_pattern_enter) is called a second time. If the pattern has a
+/// syntax error, everything before the error has already been reported.
 #[allow(unused_variables)]
 pub trait Handler {
     fn on_literal_enter(&mut self, start: u32) {}
@@ -263,7 +265,7 @@ pub trait Handler {
     fn on_remove_modifiers(&mut self, start: u32, end: u32, flags: ModifierFlags) {}
     fn on_capturing_group_enter(&mut self, start: u32, name: Option<&[u8]>) {}
     fn on_capturing_group_leave(&mut self, start: u32, end: u32, name: Option<&[u8]>) {}
-    /// `max` is [`INFINITY`] if there is none.
+    /// `max` is [`INFINITY`] if there's no upper bound.
     fn on_quantifier(&mut self, start: u32, end: u32, min: u32, max: u32, greedy: bool) {}
     fn on_lookaround_assertion_enter(&mut self, start: u32, behind: bool, negate: bool) {}
     fn on_lookaround_assertion_leave(&mut self, start: u32, end: u32, behind: bool, negate: bool) {}
@@ -354,11 +356,11 @@ type Consumed<T = bool> = Result<T, Raised>;
 
 const EOF: i32 = -1;
 
-/// A disjunction that is being parsed, to tell whether two groups with the same name can both take part in a match: not if
-/// they are in different alternatives of it.
+/// A disjunction being parsed. It's used to tell whether two groups with the same name can both
+/// participate in a match: they can't if they're in different alternatives of it.
 #[derive(Copy, Clone)]
 struct Disjunction {
-    /// How many groups with a name there were before it, and before its current alternative.
+    /// Number of named groups before it, and before its current alternative.
     groups_before: u32,
     groups_before_alternative: u32,
 }
@@ -367,11 +369,11 @@ struct Disjunction {
 struct GroupName {
     start: u32,
     len: u32,
-    /// Where it is written.
+    /// Its range in the source.
     written: (u32, u32),
 }
 
-/// The name in a `\k<name>`, and where the whole of that is written.
+/// The name in a `\k<name>`, and the range of the whole `\k<name>`.
 #[derive(Copy, Clone)]
 struct BackreferenceName {
     start: u32,
@@ -379,14 +381,14 @@ struct BackreferenceName {
     written: (u32, u32),
 }
 
-/// With more names than this, they are looked up in a map.
+/// Above this many names, lookups use a map.
 const FEW_NAMES: usize = 16;
 
 /// `{ mayContainStrings }`
 #[derive(Copy, Clone, Default)]
 struct SetResult {
     may_contain_strings: bool,
-    /// What oxc says if something follows the contents of a class that are made with `&&` or `--`.
+    /// oxc's message if something follows class contents built with `&&` or `--`.
     after_operation: Option<Said>,
 }
 
@@ -406,7 +408,7 @@ struct PropertyResult {
     strings: bool,
 }
 
-/// Which of the flags `u` and `v` the pattern is read with.
+/// Which of the `u` and `v` flags the pattern is parsed with.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Unicode {
     Neither,
@@ -441,7 +443,7 @@ struct Validator<'s, 'h> {
     disjunctions: Vec<Disjunction>,
     names: Vec<u8>,
     group_names: Vec<GroupName>,
-    /// The last group of each name, as an index into `group_names`, if there are more than `FEW_NAMES` groups.
+    /// The last group with each name, as an index into `group_names`. Only filled with more than `FEW_NAMES` groups.
     last_group_of_name: FxHashMap<Box<[u8]>, u32>,
     backreference_names: Vec<BackreferenceName>,
 }
@@ -635,7 +637,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         }
     }
 
-    /// Offsets are `u32`.
+    /// Offsets are `u32`, which limits the size of the source.
     fn check_size(&mut self) -> Consumed<()> {
         if self.source.len() >= u32::MAX as usize / 2 {
             self.source = &[];
@@ -825,18 +827,18 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     // == errors ==
 
-    /// oxc finds nothing that matches here either.
+    /// For an error where oxc's parser also gets stuck at the current position.
     fn raise<T>(&mut self, message: &str) -> Consumed<T> {
         self.raise_where_oxc_stops(message, self.index)
     }
 
-    /// oxc finds nothing that matches at `at`.
+    /// For an error where oxc's parser gets stuck at `at`.
     fn raise_where_oxc_stops<T>(&mut self, message: &str, at: usize) -> Consumed<T> {
         let oxc = self.oxc_stops(at);
         self.raise_with(message, oxc)
     }
 
-    /// oxc says `said` about what is from `start` to here.
+    /// For an error where oxc reports `said` for the range from `start` to the current position.
     fn raise_as<T>(&mut self, message: &str, said: Said, start: usize) -> Consumed<T> {
         self.raise_with(message, Some(Oxc::new(said, start, self.index)))
     }
@@ -853,13 +855,14 @@ impl<'s, 'h> Validator<'s, 'h> {
         raised
     }
 
-    /// What oxc says if nothing matches at `at`: that what is open there is not closed. Up to there the pattern is valid.
+    /// oxc's diagnostic if nothing matches at `at`: whatever is open there isn't closed. The
+    /// pattern is valid up to `at`.
     #[cold]
     fn oxc_stops(&self, at: usize) -> Option<Oxc> {
         let open = self.open_at(at);
         let innermost = open.last().copied();
         let is_in_class = innermost.is_some_and(|it| is_class(it.0));
-        // Without the flags only a backslash that ends the pattern is no escape.
+        // Without the flags, the only backslash that isn't an escape is one that ends the pattern.
         if !self.unicode_mode() && at < self.end && self.source.get(at) == Some(&b'\\') {
             let said = match is_in_class {
                 true => said::CLASS_ATOM,
@@ -874,7 +877,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         }
     }
 
-    /// What oxc says about `\x` without two digits, with a flag. `backslash` is where it starts.
+    /// oxc's diagnostic for `\x` without two digits, with a flag. `backslash` is its start.
     #[cold]
     fn oxc_has_no_escape(&self, backslash: usize) -> Option<Oxc> {
         match self.open_at(backslash).last() {
@@ -892,12 +895,13 @@ impl<'s, 'h> Validator<'s, 'h> {
                     false => self.oxc_stops(backslash),
                 }
             }
-            // It has read the backslash.
+            // oxc has consumed the backslash.
             _ => self.oxc_stops(backslash + 1),
         }
     }
 
-    /// The groups and the classes that `at` is in, outermost first: what oxc says if one is not closed, and where it starts.
+    /// The groups and classes that enclose `at`, outermost first. Each has oxc's message for
+    /// leaving it unclosed, and its start.
     fn open_at(&self, at: usize) -> Vec<(Said, usize)> {
         let mut open: Vec<(Said, usize)> = Vec::new();
         let mut i = self.start;
@@ -969,7 +973,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         message.push_str(": ");
         let start = message.len() as u32;
         message.push_str(reason);
-        // An index can be past the end: that of the flags of a pattern that has none.
+        // An index can be past the end, e.g. the index of the flags of a pattern that has none.
         let past = index.saturating_sub(self.source.len());
         self.error = Some(SyntaxError {
             message,
@@ -988,7 +992,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.raise(&message)
     }
 
-    /// Into a group or a class. regexpp overflows its stack.
+    /// Call on entering a group or a class. regexpp overflows its stack instead.
     fn enter(&mut self) -> Consumed<()> {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return self.raise("Regular expression too large");
@@ -996,7 +1000,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(())
     }
 
-    // == the names of groups ==
+    // == group names ==
 
     fn clear_group_specifiers(&mut self) {
         self.disjunctions.clear();
@@ -1038,7 +1042,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             .unwrap_or_default()
     }
 
-    /// The last group so far that is called `name`.
+    /// The last group so far named `name`.
     fn last_group_called(&self, name: &[u8]) -> Option<u32> {
         if self.group_names.len() > FEW_NAMES {
             return self.last_group_of_name.get(name).copied();
@@ -1073,17 +1077,18 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.last_group_called(name).is_some()
     }
 
-    /// Whether a group that is called `name` can take part in a match together with what is being parsed. If the last one
-    /// cannot, none can: it was accepted, so those before it are in other alternatives than it is, of disjunctions that are
-    /// still being parsed.
+    /// True if a group named `name` can participate in a match together with what's being parsed.
+    /// If the last one can't, none can: it was accepted, so the earlier ones are in different
+    /// alternatives than it is, in disjunctions that are still being parsed.
     fn has_in_scope(&self, name: &[u8]) -> bool {
         self.last_group_called(name)
             .is_some_and(|group| self.is_in_scope(group))
     }
 
-    /// Whether the group can take part in a match together with what is being parsed.
+    /// True if the group can participate in a match together with what's being parsed.
     fn is_in_scope(&self, group: u32) -> bool {
-        // What each has before its current alternative is before the next one starts.
+        // Only the innermost disjunction that contains the group matters: each one's
+        // `groups_before_alternative` is at most the next inner one's `groups_before`.
         let inner = self
             .disjunctions
             .partition_point(|it| it.groups_before <= group);
@@ -1093,7 +1098,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         !around.is_some_and(|it| group < it.groups_before_alternative)
     }
 
-    /// oxc marks the first group of the name `last_str_value` that is in the way, and the one that is written at `written`.
+    /// oxc marks the first conflicting group named `last_str_value`, and the one at `written`.
     #[cold]
     fn oxc_has_duplicate(&self, written: (u32, u32)) -> Oxc {
         let is_in_the_way = |(i, group): &(usize, &GroupName)| {
@@ -1175,7 +1180,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(())
     }
 
-    /// `written` is where a `\k<name>` is.
+    /// `written` is the range of a `\k<name>`.
     #[cold]
     fn oxc_knows_no_group(&self, written: (u32, u32)) -> Oxc {
         let mut names: Vec<&[u8]> = Vec::new();
@@ -1258,12 +1263,12 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(())
     }
 
-    /// From `start` to here is a quantifier, with or without the `?` of a lazy one.
+    /// The text from `start` to the current position is a quantifier, with or without a lazy `?`.
     #[cold]
     fn nothing_to_repeat(&mut self, start: usize) -> Raised {
         let is = |i: usize, byte: u8| i < self.end && self.source.get(i) == Some(&byte);
         let here = self.index;
-        // Where it ends without the `?`, and with it.
+        // Its end without the `?`, and with it.
         let (eager_end, end) = match is(start, b'{') {
             true if is(here - 1, b'?') => (here - 1, here),
             true => (here, here + usize::from(is(here, b'?'))),
@@ -1464,10 +1469,10 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(false)
     }
 
-    /// What oxc says about the modifiers that start at `start`, which are refused here.
+    /// oxc's diagnostic for the modifiers that start at `start`, which were rejected here.
     #[cold]
     fn oxc_refuses_modifiers(&self, start: usize) -> Oxc {
-        // Those that are turned on, and those that are turned off.
+        // The modifiers turned on, and those turned off.
         let mut seen = [[false; 3]; 2];
         let (mut side, mut has_duplicate, mut i) = (0, false, start);
         loop {
@@ -1662,10 +1667,10 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(false)
     }
 
-    /// After a backslash, with a flag.
+    /// Called after a backslash, with a flag.
     #[cold]
     fn oxc_has_no_atom_escape(&self) -> Option<Oxc> {
-        // It has `\A`, `\z` and `\Z`.
+        // oxc supports `\A`, `\z` and `\Z`.
         if matches!(u8::try_from(self.cp), Ok(b'A' | b'z' | b'Z')) {
             return None;
         }
@@ -1939,7 +1944,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() {
-                // For oxc a backslash before a `c` stands for itself with the flags too.
+                // For oxc, a backslash before a `c` is a literal backslash even with the flags.
                 let oxc = (!self.is(b'c')).then(|| Oxc::new(said::CLASS_ATOM, start, start + 1));
                 return self.raise_with("Invalid escape", oxc);
             }
@@ -2230,12 +2235,13 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(false)
     }
 
-    /// `start` is where the `<` is. Here is what is no part of a name, or not the `>`.
+    /// `start` is the position of the `<`. The current character can't be part of a name, or isn't
+    /// the expected `>`.
     #[cold]
     fn oxc_refuses_group_name(&mut self, start: usize) -> Oxc {
         let here = self.index;
         if self.is(b'\\') {
-            // An escape that is one is of a character that no name has.
+            // If it's a valid escape, it's for a character that isn't allowed in a name.
             self.advance();
             let is_escape = matches!(self.eat_regexp_unicode_escape_sequence(true), Ok(true));
             let end = if is_escape { self.index } else { here + 1 };
@@ -2350,7 +2356,7 @@ impl<'s, 'h> Validator<'s, 'h> {
                 return Ok(true);
             }
             if self.strict() || u_flag {
-                // Without a flag this is in a name, and oxc has not read the `u`.
+                // Without a flag this is inside a group name, and oxc hasn't consumed the `u` yet.
                 let read = usize::from(self.unicode_mode());
                 let oxc = Oxc::new(said::UNICODE_ESCAPE, start - 1 + read, start + read);
                 return self.raise_with("Invalid unicode escape", Some(oxc));
@@ -2505,7 +2511,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         Ok(None)
     }
 
-    /// Whether any character was eaten.
+    /// Returns true if it ate any character.
     fn eat_while(&mut self, accept: fn(i32) -> bool) -> bool {
         let start = self.index;
         while accept(self.cp) {

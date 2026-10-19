@@ -15,7 +15,7 @@ fn is_within_declare_global(statement: Stmt) -> bool {
     Node::Stmt(statement).ancestors().any(|ancestor| match ancestor {
         Node::Stmt(outer) => match outer.kind() {
             StmtKind::Module(module) => {
-                // oxlint does not ask for the `declare`.
+                // oxlint doesn't require the `declare`.
                 matches!(module.name(), ModuleName::Global)
                     && (outer.flags().contains(Flags::AMBIENT) || outer.file().language().is_oxlint)
             }
@@ -45,7 +45,7 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
         fixes.push(fixer.replace(first_token, "type"));
         fixes.push(fixer.replace(Span::before(head_end, body), " = "));
     }
-    // oxlint replaces all of the declaration, so that no other fix is made in it at the same time.
+    // oxlint replaces the whole declaration, so that no other fix is applied inside it in the same pass.
     if file.language().is_oxlint {
         fixes.push(fixer.replace(body, file.slice(body).to_vec()));
     }
@@ -61,7 +61,7 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
     fixes
 }
 
-/// oxlint points at the keyword, which is before the name.
+/// oxlint points at the keyword, which comes right before the name.
 fn place<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
     if !cx.language().is_oxlint {
         return name.span();
@@ -96,11 +96,12 @@ impl Rule for ConsistentTypeDefinitions {
             let fix = |fixer: Fixer<'a>| (!is_declared_again(interface)).then(|| fix_interface(fixer, statement, interface));
             match is_within_declare_global(statement) {
                 false => report.fix_where_safe(|| is_only_declaration(interface), fix),
-                // For oxlint the fix is dangerous there.
+                // oxlint marks the fix as dangerous there.
                 true if cx.language().is_oxlint => report.fix_dangerously(fix),
                 true => report,
             };
-            // oxlint comes to it twice: as what is exported and as the interface. The second fix is in the first.
+            // oxlint visits it twice: as the exported declaration and as the interface. The second fix overlaps the
+            // first.
             if cx.language().is_oxlint && statement.is_default_export() {
                 cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
             }

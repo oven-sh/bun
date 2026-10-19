@@ -38,7 +38,7 @@ impl NoAsyncEndpointHandlers {
     fn check_endpoint_arg<'a>(&self, endpoint: Option<Name<'a>>, arg: Expr<'a>, cx: &Cx<'a, Self>) {
         let mut at = get_inner_expression(arg);
         let mut registered_at = None;
-        // `const a = b, b = a` goes in a circle.
+        // `const a = b, b = a` is a cycle.
         let mut seen = rustc_hash::FxHashSet::default();
         let handler = loop {
             match at.kind() {
@@ -52,7 +52,7 @@ impl NoAsyncEndpointHandlers {
                         (Declaration::Var(_), Some(Node::VarDecl(declarator))) => declarator,
                         _ => return,
                     };
-                    // What is in parentheses is neither an identifier nor a function for oxlint.
+                    // In oxlint's AST a parenthesized expression is neither an identifier nor a function.
                     let Some(init) = declarator.init().filter(|it| !it.is_parenthesized()) else {
                         return;
                     };
@@ -92,8 +92,8 @@ impl NoAsyncEndpointHandlers {
 
 const ROUTER_HANDLER_METHOD_NAMES: [&str; 9] = ["all", "delete", "get", "head", "options", "patch", "post", "put", "use"];
 
-/// Whether the call registers an endpoint handler or middleware to a route or an Express application object: the path, if it is
-/// written there, and the arguments after it.
+/// If the call registers an endpoint handler or middleware on a route or an Express application object, returns the
+/// path, if it's a literal, and the arguments after it.
 fn as_endpoint_registration(call: Call<'_>) -> Option<(Option<Name<'_>>, ListIter<'_, Expr<'_>>)> {
     let first = call.args().first().filter(|it| it.tag() != ExprTag::Spread)?;
     let callee = call.callee();
@@ -114,7 +114,7 @@ fn as_endpoint_registration(call: Call<'_>) -> Option<(Option<Name<'_>>, ListIte
     Some((path, args))
 }
 
-/// Whether a function expression or an arrow function has the parameters of an endpoint handler.
+/// True if a function expression or arrow function has an endpoint handler's parameters.
 fn is_endpoint_handler(func: Func) -> bool {
     let params = func.params();
     if params.len() > 4 || params.last().is_some_and(Param::is_rest) {

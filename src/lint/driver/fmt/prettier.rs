@@ -14,7 +14,7 @@ use bun_lint::options::Json;
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
-/// Whether the package `name` is found from `directory`.
+/// True if the package `name` resolves from `directory`.
 pub(crate) fn is_installed(directory: &[u8], name: &[u8]) -> bool {
     paths::ancestors(directory).any(|it| {
         let package = paths::join(&paths::join(it, b"node_modules"), name);
@@ -25,7 +25,7 @@ pub(crate) fn is_installed(directory: &[u8], name: &[u8]) -> bool {
 pub(crate) struct Prettier<'e> {
     host: Host<'e>,
     cwd: Vec<u8>,
-    /// What is the same for all files, as `formatWithPrettier` in `worker/prettier.js` reads it.
+    /// The settings shared by all files, in the shape that `formatWithPrettier` in `worker/prettier.js` reads.
     run: Vec<(Vec<u8>, Json)>,
     once: fs::Written,
 }
@@ -40,7 +40,7 @@ impl<'e> Prettier<'e> {
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
         host.expect(files, size, threads);
-        // A string is written without its quotes.
+        // A string flag's value has no quotes, so it isn't valid JSON.
         let value = |text: &[u8]| match bun_lint::json::parse(text) {
             Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
             _ => Json::String(text.to_vec()),
@@ -85,8 +85,8 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. `shown`: its name for the user. `writes`: it is written if it changes. Returns whether it
-    /// changes. `Err`: for the user.
+    /// Formats the file at `path`. `shown` is the name to print. With `writes`, the file is written if it changes.
+    /// Returns whether it changed. `Err` is the message to print.
     pub(crate) fn format_file(
         &self,
         (path, shown): (&[u8], &[u8]),
@@ -109,8 +109,8 @@ impl<'e> Prettier<'e> {
         Ok(true)
     }
 
-    /// What Prettier makes of `text`, which is the file at `path`. `None`: it has no file name. `config`: its configuration
-    /// file.
+    /// Returns Prettier's output for `text`, the contents of the file at `path`. `path` is `None` if it has no file
+    /// name. `config` is its config file.
     pub(crate) fn format(
         &self,
         path: Option<&[u8]>,
@@ -123,7 +123,8 @@ impl<'e> Prettier<'e> {
         how.push((b"config".to_vec(), or_null(config)));
         let mut json = Vec::new();
         write_json(&mut json, &Json::Object(how));
-        // Prettier puts the byte order mark back. What decodes the text may not show it one.
+        // Prettier keeps a byte order mark, but decoding the text for JavaScript may strip it first. So it's re-added
+        // here.
         let (mark, text) = match text.strip_prefix(BOM) {
             Some(text) => (BOM, text),
             None => (&b""[..], text),
@@ -133,7 +134,7 @@ impl<'e> Prettier<'e> {
     }
 }
 
-/// For the user, behind the name of the file.
+/// The message to print after the file name.
 pub(crate) fn describe(why: Unformatted) -> Vec<u8> {
     match why {
         Unformatted::NotInstalled => b"prettier is not installed".to_vec(),

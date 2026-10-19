@@ -1,11 +1,11 @@
-//! Finds the comments of a file that configure the linter.
+//! Finds a file's comments that configure the linter.
 
 use super::comment::{Space, parse_directive};
 use crate::ast::File;
 use crate::span::Span;
 use crate::tokens::TokenKind;
 
-/// What a comment that configures the linter starts with.
+/// The label at the start of a comment that configures the linter.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Label {
     /// `eslint`
@@ -27,7 +27,7 @@ pub(crate) enum Label {
 }
 
 impl Label {
-    /// `oxlint-disable` and the like mean what `eslint-disable` means, if the configuration is one of oxlint:
+    /// `oxlint-disable` and the like mean the same as `eslint-disable` with an oxlint config:
     /// [`ResolvedConfig::understands_oxlint_comments`](super::ResolvedConfig::understands_oxlint_comments).
     fn of(label: &[u8]) -> Option<Label> {
         Some(match label {
@@ -47,30 +47,30 @@ impl Label {
 /// A comment that configures the linter: an element of ESLint's `getInlineConfigNodes()`.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ConfigComment {
-    /// With its delimiters.
+    /// Includes the delimiters.
     pub(crate) span: Span,
     pub(crate) label: Label,
     pub(crate) label_span: Span,
-    /// What follows the label, trimmed.
+    /// The text after the label, trimmed.
     pub(crate) value: Span,
-    /// What follows ` -- `, trimmed.
+    /// The text after ` -- `, trimmed.
     pub(crate) justification: Span,
-    /// `// eslint-disable`, `// eslint-enable`: a comment to the end of the line, which for ESLint cannot be about more than a
-    /// line. It is a comment like any other for ESLint.
+    /// `// eslint-disable` or `// eslint-enable`. ESLint doesn't let a line comment apply to more than one line, so it
+    /// treats these as ordinary comments.
     pub(crate) is_only_of_oxlint: bool,
 }
 
-/// Whether `value`, which is a comment without its delimiters, can start with a label.
+/// True if `value`, a comment without its delimiters, could start with a label.
 #[inline]
 fn may_start_with_label(value: &[u8]) -> bool {
-    // Or with whitespace that is not ASCII.
+    // Or with non-ASCII whitespace.
     matches!(
         value.trim_ascii_start().first(),
         Some(b'e' | b'o' | b'g' | 0x0B | 0x80..)
     )
 }
 
-/// The range of `inner`, which is a slice of `outer`, in `outer`.
+/// The range within `outer` of `inner`, which is a slice of it.
 fn range_in(outer: &[u8], inner: &[u8]) -> Span {
     let start = (inner.as_ptr() as usize)
         .saturating_sub(outer.as_ptr() as usize)

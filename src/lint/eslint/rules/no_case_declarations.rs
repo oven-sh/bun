@@ -9,7 +9,7 @@ const UNEXPECTED: Message =
 
 fn is_lexical_declaration(statement: Stmt) -> bool {
     match statement.kind() {
-        // Without a body it is a `TSDeclareFunction`.
+        // Without a body it's a `TSDeclareFunction`.
         StmtKind::Fn(func) => func.has_body(),
         StmtKind::Class(_) => true,
         StmtKind::Var(declarations) => {
@@ -19,7 +19,7 @@ fn is_lexical_declaration(statement: Stmt) -> bool {
     }
 }
 
-/// Where oxlint points: as many bytes from the start as `function`, `class`, `let`, `const`, `using` have, or
+/// Where oxlint reports: as many bytes from the start as the length of `function`, `class`, `let`, `const`, `using` or
 /// `await using`.
 fn keyword(statement: Stmt) -> Span {
     let whole = statement.span();

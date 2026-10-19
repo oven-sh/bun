@@ -2,9 +2,9 @@ use crate::bun::{LaunchOptions, can_launch, launches};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Require `windowsHide` for a child process that does not share a stream with its parent.
+/// Require `windowsHide` for a child process that doesn't share a stream with its parent.
 ///
-/// See `windowsHide` and `stdio` in the documentation of `child_process.spawn()` of Node.js and of `Bun.spawn()`.
+/// See `windowsHide` and `stdio` in the documentation of Node.js's `child_process.spawn()` and of `Bun.spawn()`.
 pub struct NoConsoleWindowFlash;
 
 const CONSOLE_WINDOW: Message = Message::new(

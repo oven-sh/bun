@@ -13,11 +13,11 @@ use std::sync::OnceLock;
 pub struct NoRestrictedPaths {
     zones: Vec<Written>,
     base_path: Option<Box<[u8]>>,
-    /// With absolute paths. All files of a run have the same working directory.
+    /// The zones with absolute paths. Every file in a run has the same working directory.
     read: OnceLock<Vec<Zone>>,
 }
 
-/// A zone as the options have it.
+/// A zone as it appears in the options.
 struct Written {
     target: Vec<Box<[u8]>>,
     from: Vec<Box<[u8]>>,
@@ -38,24 +38,26 @@ const EXCEPTION_IS_NO_GLOB: Message =
 
 enum Place {
     Glob(Glob),
-    /// It, and all that is in it.
+    /// The path itself and everything under it.
     Path(Vec<u8>),
 }
 
-/// The validators of a zone.
+/// A zone's validators.
 enum Validators {
     /// `computeMixedGlobAndAbsolutePathValidator`
     Mixed,
-    /// `computeGlobPatternPathValidator`, for each. The exceptions are the same for all. `None`: one is no pattern.
+    /// `computeGlobPatternPathValidator` for each glob. They all share the exceptions, which are `None` if one of them
+    /// isn't a glob.
     Globs(Vec<Glob>, Option<Vec<Glob>>),
-    /// `computeAbsolutePathValidator`: each with its exceptions. `None`: one of them is not in it.
+    /// `computeAbsolutePathValidator`: each path with its exceptions, which are `None` if one of them isn't under the
+    /// path.
     Paths(Vec<(Vec<u8>, Option<Vec<Vec<u8>>>)>),
 }
 
 struct Zone {
     target: Vec<Place>,
     from: Validators,
-    /// After a blank. It is a part of the message that ESLint fills in.
+    /// Starts with a space. ESLint interpolates it as part of the message.
     message: Box<str>,
 }
 
@@ -64,7 +66,7 @@ fn contains_path(filepath: &[u8], target: &[u8]) -> bool {
     match filepath.strip_prefix(target) {
         Some([]) => true,
         Some([b'/', rest @ ..]) => !rest.starts_with(b".."),
-        // Only in a path of Windows, or in a root, can there be more to it.
+        // Only a Windows path or a root can need the full comparison.
         _ if target.len() > 1 && target.starts_with(b"/") && !target.starts_with(b"//") => false,
         _ => !paths::relative(target, filepath).starts_with(b".."),
     }
@@ -109,7 +111,8 @@ impl Zone {
         Zone { target: written.target.iter().map(|it| place(it)).collect(), from, message: written.message.clone() }
     }
 
-    /// What `checkForRestrictedImportPath` reports for the zone. `found`: the file that `import_path` means.
+    /// Reports what `checkForRestrictedImportPath` reports for the zone. `found`: the file that `import_path` resolves
+    /// to.
     fn check<'a>(&self, (import_path, found, cwd): (&[u8], &[u8], &[u8]), report: &dyn Fn(Message) -> Report<'a>) {
         let restricted = || {
             let message = interpolate_text(&self.message, |name| (name == "importPath").then_some(import_path));
@@ -141,7 +144,7 @@ impl Zone {
     }
 }
 
-/// `[].concat(value)`, of strings.
+/// `[].concat(value)`, keeping only the strings.
 fn strings_of(value: Option<&Json>) -> Vec<Box<[u8]>> {
     match value {
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).map(Box::from).collect(),
@@ -153,7 +156,7 @@ fn strings_of(value: Option<&Json>) -> Vec<Box<[u8]>> {
 impl Rule for NoRestrictedPaths {
     const META: Meta = Meta::plugin(Plugin::Import, "no-restricted-paths", Kind::Problem).needs_modules();
     const ON: On = On::new().finish();
-    /// The zones that have the file as a target: where they are in [`NoRestrictedPaths::read`].
+    /// The indices in [`NoRestrictedPaths::read`] of the zones that target this file.
     type State<'a> = SmallVec<[u32; 8]>;
 
     fn new(options: &Options) -> Self {

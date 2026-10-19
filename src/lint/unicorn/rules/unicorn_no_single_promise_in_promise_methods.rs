@@ -73,7 +73,7 @@ fn is_fixable(call: Expr) -> bool {
         Some(Node::Stmt(stmt)) => stmt.tag() != StmtTag::Return,
         Some(Node::Expr(e)) => match e.tag() {
             ExprTag::Call => false,
-            // Not the default value in a pattern.
+            // A default value in a pattern isn't an assignment.
             ExprTag::Assign => e.is_assignment_target(),
             _ => true,
         },
@@ -81,7 +81,7 @@ fn is_fixable(call: Expr) -> bool {
     }
 }
 
-/// `awaited`: the `await` of the call.
+/// `awaited` is the `await` of the call.
 fn is_await_value_discarded(awaited: Expr) -> bool {
     let around = iter_outer_expressions(awaited).find(|it| !matches!(it, Node::Expr(e) if e.tag() == ExprTag::Await));
     matches!(around, Some(Node::Stmt(stmt)) if stmt.tag() == StmtTag::Expr)

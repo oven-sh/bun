@@ -15,7 +15,7 @@ use std::cell::OnceCell;
 pub struct BooleanPropNaming {
     /// `config.rule`
     pattern: String,
-    /// `None` without options: nothing is checked then.
+    /// `None` if there are no options, and then nothing is checked.
     rule: Option<Regex>,
     prop_type_names: Vec<Box<[u8]>>,
     message: Option<String>,
@@ -27,10 +27,10 @@ const PATTERN_MISMATCH: Message =
 /// `config.message`
 const CONFIGURED: Message = Message::new("", "{{message}}");
 
-/// What a name that is `undefined` is tested and shown as.
+/// A name that's `undefined` is tested and printed as this.
 const UNDEFINED: &[u8] = b"undefined";
 
-/// `config.rule`, with the default of the schema. `None`: there are no options.
+/// `config.rule`, with the schema's default. `None` if there are no options.
 fn rule_of<'o>(options: &Options<'o>) -> Option<&'o str> {
     options.get(0).map(|_| options.object(0).str("rule").unwrap_or("^(is|has)[A-Z]([A-Za-z0-9]?)+"))
 }
@@ -61,7 +61,7 @@ impl Rule for BooleanPropNaming {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // The `name` of a `PrivateIdentifier` is without the `#`.
+        // A `PrivateIdentifier`'s `name` doesn't include the `#`.
         let names = ["propTypes", "#propTypes", "boolean"];
         (self.rule.is_some() && file.mentions_any(&names) && Components::may_have_any(file)).then_some(())
     }
@@ -125,9 +125,10 @@ impl BooleanPropNaming {
     }
 }
 
-/// The nodes at which a listener of upstream does something before the program ends, as ESLint gets to them.
+/// Returns the nodes where one of upstream's listeners does something before `Program:exit`, in ESLint's traversal
+/// order.
 fn listened<'a>(file: &'a File<'a>) -> Vec<Node<'a>> {
-    // A field `props` with a type does nothing but forget what a `propTypes` has brought.
+    // A typed `props` field only clears what a `propTypes` has added.
     if !file.mentions_any(&["propTypes", "#propTypes"]) {
         return Vec::new();
     }
@@ -145,12 +146,12 @@ fn listened<'a>(file: &'a File<'a>) -> Vec<Node<'a>> {
     nodes
 }
 
-/// `nestedPropTypes`: the call that is `prop.value`.
+/// `nestedPropTypes`: returns `prop.value` if it's a call.
 fn nested_prop_types(prop: Prop<'_>) -> Option<Call<'_>> {
     prop.value().filter(|it| prop.kind() != PropKind::Spread && !it.is_chain_root())?.as_call()
 }
 
-/// `node.property.name`. The outer `None`: `node` has no `property`.
+/// `node.property.name`. The outer `None` means `node` has no `property`.
 fn name_of_property(node: Expr<'_>) -> Option<Option<&[u8]>> {
     match node.kind() {
         ExprKind::Dot { .. } | ExprKind::Index { .. } if !node.is_chain_root() => {
@@ -172,7 +173,7 @@ fn get_prop_key(node: Prop<'_>) -> Option<&[u8]> {
     }
 }
 
-/// The call that `node` is, if that is one of a prop wrapper function.
+/// Returns `node` as a call, if it calls a prop wrapper function.
 fn as_call_of_prop_wrapper(node: Expr<'_>) -> Option<Call<'_>> {
     let call = node.as_call().filter(|_| !node.is_chain_root())?;
     is_prop_wrapper_function(node.file(), call.callee().text()).then_some(call)
@@ -194,7 +195,7 @@ fn right_of_parent(node: Expr<'_>) -> Option<Expr<'_>> {
             StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => Some(expr),
             _ => None,
         },
-        // An `AssignmentPattern`, if `node` is the default.
+        // An `AssignmentPattern`, if `node` is the default value.
         Node::Param(param) => param.default().filter(|it| *it == node),
         Node::PatProp(prop) => prop.default().filter(|it| *it == node),
         Node::PatElem(element) => element.default().filter(|it| *it == node),
@@ -206,7 +207,7 @@ fn get_component_type_annotation(node: Node<'_>) -> Option<TypeNode<'_>> {
     // If this is a functional component that uses a global type, check it
     if let Node::Func(func) = node
         && matches!(func.kind(), FnKind::Decl | FnKind::Arrow)
-        // With a default it is an `AssignmentPattern`, which has no annotation.
+        // With a default it's an `AssignmentPattern`, which has no annotation.
         && let Some(param) = func.params_with_this().next().filter(|it| it.default().is_none())
         && let Some(annotation) = param.ty()
     {
@@ -225,7 +226,7 @@ fn get_component_type_annotation(node: Node<'_>) -> Option<TypeNode<'_>> {
     }
 }
 
-/// The `members` of some `TSTypeLiteral`s, the `body` of some `TSInterfaceBody`s.
+/// The `members` of `TSTypeLiteral`s and the `body` of `TSInterfaceBody`s.
 type ObjectTypes<'a> = SmallVec<[List<'a, Member<'a>>; 2]>;
 
 fn find_all_type_annotations<'a>(node: TypeNode<'a>, found: &mut ObjectTypes<'a>) {
@@ -239,7 +240,7 @@ fn find_all_type_annotations<'a>(node: TypeNode<'a>, found: &mut ObjectTypes<'a>
     }
 }
 
-/// `objectTypeAnnotations`, as it is when the program ends.
+/// `objectTypeAnnotations`, as it is at `Program:exit`.
 fn object_type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, ObjectTypes<'a>> {
     let declarations = [StmtTag::TypeAlias, StmtTag::Interface].map(|tag| file.stmts_of_kind(tag));
     let mut declarations: Vec<Stmt<'a>> = declarations.into_iter().flatten().collect();
@@ -257,7 +258,7 @@ fn object_type_annotations<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, Object
     all
 }
 
-/// The `proptypes` of `validatePropNaming`.
+/// `validatePropNaming`'s `proptypes` argument.
 #[derive(Copy, Clone)]
 enum PropTypes<'a> {
     Undefined,
@@ -275,7 +276,7 @@ impl<'a> PropTypes<'a> {
     }
 }
 
-/// What upstream's `create` keeps.
+/// The local state of upstream's `create`.
 struct Walk<'r, 'a> {
     config: &'r BooleanPropNaming,
     rule: &'r Regex,
@@ -318,7 +319,7 @@ impl<'a> Walk<'_, 'a> {
             if self.config.validate_nested
                 && let Some(call) = nested_prop_types(prop)
             {
-                // Without an argument upstream throws.
+                // Upstream throws if there's no argument.
                 if let Some(ExprKind::Object(nested)) = call.args().first().map(Expr::kind) {
                     worklist.extend(nested.iter().rev());
                 }
@@ -332,7 +333,7 @@ impl<'a> Walk<'_, 'a> {
         let component = self.components.get(node);
         let mut invalid_props = component.and_then(|it| self.invalid_props.remove(&it)).unwrap_or_default();
         self.run_check(proptypes, &mut invalid_props);
-        // The component around a `node` that is none loses what it had.
+        // If `node` isn't a component itself, this overwrites the enclosing component's list, as upstream does.
         if let Some(component) = self.components.set(node) {
             self.invalid_props.insert(component, invalid_props);
         }
@@ -357,7 +358,7 @@ impl<'a> Walk<'_, 'a> {
                 self.validate_prop_naming(node, properties);
             }
         }
-        // No type of TypeScript has `properties`.
+        // No TypeScript type has `properties`.
         if member.ty().is_some() {
             self.validate_prop_naming(node, PropTypes::Undefined);
         }
@@ -386,7 +387,7 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// The `propType` of `Program:exit`, without what has no members.
+    /// The `propType` in `Program:exit`, minus the types that have no members.
     fn prop_type(&self, annotation: TypeNode<'a>) -> ObjectTypes<'a> {
         let types: SmallVec<[TypeNode<'a>; 4]> = match annotation.kind() {
             TypeKind::Intersection(types) => types.iter().collect(),

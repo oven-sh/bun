@@ -26,7 +26,7 @@ fn is_blank(byte: u8) -> bool {
 }
 
 /// True if the marker isn't attached to a word on this side. `outward` iterates over the text, moving away from the
-/// marker. Punctuation before the next blank is skipped. `/` and `\` count as word characters: `src/*`, `*/`.
+/// marker. Punctuation before the next whitespace is skipped. `/` and `\` count as word characters: `src/*`, `*/`.
 fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
     let is_in_word =
         |byte: u8| byte.is_ascii_alphanumeric() || byte >= 0x80 || matches!(byte, b'/' | b'\\');
@@ -35,7 +35,7 @@ fn is_free(mut outward: impl Iterator<Item = u8>) -> bool {
         .is_some_and(is_in_word)
 }
 
-/// True if two identical markers would be emphasis if not for a blank just inside them: `** a**`, `_a _`, `__ a __`.
+/// True if two identical markers would be emphasis if not for whitespace just inside them: `** a**`, `_a _`, `__ a __`.
 ///
 /// Upstream pairs a paragraph's first marker with its second, its third with its fourth, and so on, no matter what
 /// surrounds them. So it reports `*.ts, *.tsx` and `char *a, *b`, and its fix joins the words.
@@ -50,7 +50,7 @@ fn is_broken_pair(text: &[u8], opening: Marker, closing: Marker) -> bool {
         text.get(..opening.start).unwrap_or_default(),
         text.get(closing.end..).unwrap_or_default(),
     );
-    // A single `*` or `~` with blanks inside on both ends isn't emphasis: `(* a comment in OCaml *)`.
+    // A single `*` or `~` with whitespace inside on both ends isn't emphasis: `(* a comment in OCaml *)`.
     let is_single = opening.end - opening.start == 1 && text.get(opening.start) != Some(&b'_');
     match (is_blank(first), is_blank(last)) {
         (false, false) => return false,
@@ -175,8 +175,8 @@ impl Listens for NoSpaceInEmphasis {
                 end,
                 place: (index, index + len as Index),
             };
-            // A `*` or `~` with blanks on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 * 4`
-            // into `2 *3* 4`.
+            // A `*` or `~` with whitespace on both sides is plain text: `2 * 3`, `~ 5`. Upstream's fix turns `2 * 3 *
+            // 4` into `2 *3* 4`.
             let is_blank_at = |at: Option<usize>| {
                 at.and_then(|at| masked.get(at))
                     .copied()

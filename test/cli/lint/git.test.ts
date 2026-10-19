@@ -236,7 +236,7 @@ describe.concurrent.each(commands)("bun %s", command => {
       stderr: `No changed files to ${verb[command]}\n`,
       exitCode: 0,
     });
-    // A file is staged, but the argument names a different one.
+    // A file is staged, but the argument is a different file.
     write(root, "b.js", before);
     await git(root, "add", "b.js");
     const { stderr, exitCode } = await bun(root, [command, "--staged", "a.js"]);

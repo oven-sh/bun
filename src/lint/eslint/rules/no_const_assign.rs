@@ -31,7 +31,7 @@ impl Rule for NoConstAssign {
                 continue;
             }
             for reference in get_modifying_references(symbol.references()) {
-                // oxlint points at the declaration.
+                // oxlint reports at the declaration.
                 let place = if cx.language().is_oxlint { pat.span() } else { reference.span() };
                 let report = cx.report(place, CONST).data("name", reference.name()).hint_with(|| {
                     let line = cx.line_of(pat.span().start);

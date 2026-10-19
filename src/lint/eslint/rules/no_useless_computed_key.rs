@@ -24,7 +24,7 @@ impl Literal<'_> {
     }
 }
 
-/// What is in the brackets of `key`, if that is a string or a number literal.
+/// Returns the literal in `key`'s brackets, if it's a string or a number.
 #[inline(never)]
 fn computed_literal<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<(Key<'a>, Literal<'a>)> {
     let key = key?;
@@ -54,7 +54,7 @@ impl NoUselessComputedKey {
     fn report<'a>(node: Node<'a>, key: Key<'a>, cx: &Cx<'a, Self>) {
         let file = cx.file();
         let (brackets, literal) = (key.span(file), key.inner_span(file));
-        // Of a property of an object or a class, oxlint points at what is in the brackets.
+        // For a property of an object or a class, oxlint points at the literal in the brackets.
         let is_property = match node {
             Node::Prop(_) => true,
             Node::Member(member) => member.kind() == MemberKind::Property,
@@ -112,7 +112,7 @@ impl Rule for NoUselessComputedKey {
         let Some((key, literal)) = computed_literal(prop.key(), cx.file()) else {
             return;
         };
-        // `{ "__proto__": a }` sets the prototype, unless it is a pattern.
+        // `{ "__proto__": a }` sets the prototype, unless it's a pattern.
         if literal.is_any(&["__proto__"])
             && !matches!(prop.parent(), Node::Expr(object) if utils::is_assignment_target(object))
         {

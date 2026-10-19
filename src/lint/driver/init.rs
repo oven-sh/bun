@@ -1,5 +1,5 @@
-//! `bun lint --init` and `bun fmt --init`. Adds the command's section to the bunfig.toml in the working directory, unless one
-//! above it has the section: a new one would take its place.
+//! `bun lint --init` and `bun fmt --init`. Adds the command's section to the bunfig.toml in the working directory,
+//! unless a bunfig.toml above it already has the section, because the new one would override it.
 
 use crate::format::summary::write_error;
 use crate::run::{Environment, Outcome};
@@ -44,7 +44,7 @@ impl Section {
         strings::replace_owned(text.as_bytes(), b"\n", line_break)
     }
 
-    /// `Ok` says what was done. `Err` says why nothing was.
+    /// `Ok` describes what was done. `Err` explains why nothing was.
     fn try_add(
         &self,
         other: Option<&[u8]>,
@@ -114,8 +114,8 @@ impl Section {
         Ok(format!("Added [{}] to bunfig.toml", self.name).into_bytes())
     }
 
-    /// `other` is another tool's config file, if one applies in the working directory. `above` is the path of the bunfig
-    /// above the working directory whose section the run has found.
+    /// `other` is another tool's config file, if one applies in the working directory. `above` is the bunfig.toml above
+    /// the working directory whose section this run uses, if any.
     #[optimize(size)]
     pub(crate) fn add(
         &self,

@@ -6,7 +6,7 @@ use smallvec::{SmallVec, smallvec};
 
 /// Prefer a default export if module exports a single name or multiple names.
 pub struct PreferDefaultExport {
-    /// `target: "any"`, not `"single"`.
+    /// True for `target: "any"`, false for `"single"`.
     is_for_any: bool,
 }
 
@@ -15,22 +15,22 @@ const ANY: Message = Message::new("", "Prefer default export to be present on ev
 
 #[derive(Default)]
 pub struct Seen {
-    /// There is a default export, an `export *` or an export of a type.
+    /// True if there's a default export, an `export *` or a type export.
     is_exempt: bool,
     count: u32,
-    /// upstream's `namedExportNode`: what is reported.
+    /// upstream's `namedExportNode`: the span to report.
     last: Option<Span>,
 }
 
 impl Seen {
-    /// The listeners are called in no particular order. Of two nodes ESLint comes last to the one that starts later.
+    /// Listeners run in no particular order. ESLint visits the node that starts later last.
     fn see(&mut self, node: Span) {
         if self.last.is_none_or(|it| it.start < node.start) {
             self.last = Some(node);
         }
     }
 
-    /// What oxlint goes by: its module record, which has the top level alone, with an entry for each name.
+    /// oxlint's version, which uses its module record. That only has the top level, with one entry per name.
     fn in_record<'a>(file: &'a File<'a>, is_for_any: bool) -> Seen {
         if export_default(file).is_some() {
             return Seen { is_exempt: true, ..Seen::default() };
@@ -51,7 +51,7 @@ impl Seen {
     }
 }
 
-/// upstream's `captureDeclaration`: a hole counts, and so does, for one, what has a default or follows `...`.
+/// upstream's `captureDeclaration`. A hole counts as one, and so does an element that has a default or follows `...`.
 fn capture_declaration(pattern: Pat<'_>) -> u32 {
     let mut count = 0;
     let mut pending: SmallVec<[Pat<'_>; 8]> = smallvec![pattern];
@@ -103,7 +103,7 @@ impl Rule for PreferDefaultExport {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // oxlint looks at nothing but its module record.
+        // oxlint only uses its module record.
         if file.language().is_oxlint { On::new().finish() } else { Self::ON }
     }
 
@@ -116,7 +116,7 @@ impl Rule for PreferDefaultExport {
             cx.state.is_exempt = true;
             return;
         }
-        // typescript-estree makes an export of a declaration whose first modifier is `export`, wherever it is.
+        // typescript-estree turns a declaration whose first modifier is `export` into an export, wherever it is.
         let mut keywords = stmt.modifiers().iter().filter(|it| it.decorator().is_none());
         let Some(export) = keywords.next().filter(|it| it.flag() == Flags::EXPORT) else { return };
         let is_default = keywords.next().is_some_and(|it| it.flag() == Flags::DEFAULT);

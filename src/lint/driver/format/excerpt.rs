@@ -1,6 +1,6 @@
-//! The formats that `bun check` has too: `pretty`, which shows the code around each problem the way
-//! Bun prints its own errors, `agent`, the same in tags and without colors, and `github`, the
-//! workflow commands that GitHub Actions turns into annotations.
+//! The formats shared with `bun check`. `pretty` shows the code around each problem the way Bun prints its own errors.
+//! `agent` is the same in tags and without colors. `github` prints the workflow commands that GitHub Actions turns into
+//! annotations.
 
 use super::{Meta, linked, shown_at};
 use crate::paths;
@@ -22,13 +22,13 @@ macro_rules! pretty {
 
 /// Above this many problems, identical ones are grouped instead of printed one by one.
 const GROUP_THRESHOLD: usize = 50;
-/// Groups printed with a source excerpt. The others take a line each.
+/// How many groups are printed with a source excerpt. The rest get one line each.
 const MAX_GROUPS: usize = 12;
 const MAX_COMPACT_GROUPS: usize = 30;
-/// Files listed under a group.
+/// How many files are listed under a group.
 const MAX_FILES: usize = 8;
 
-/// A problem, and the file that has it.
+/// A problem and the file it's in.
 #[derive(Copy, Clone)]
 struct Problem<'r> {
     result: &'r FileResult,
@@ -49,7 +49,7 @@ impl Problem<'_> {
     }
 }
 
-/// Relative to the working directory, or absolute when that would need two or more `../`.
+/// Returns the path relative to the working directory, or the absolute path if that would need two or more `../`.
 fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     let path = paths::from_native(path);
     if !paths::is_absolute(&path) {
@@ -63,14 +63,14 @@ fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     }
 }
 
-/// What is kept for the next problem, which is in the same file as a rule.
+/// State cached for the next problem, which is usually in the same file.
 #[derive(Default)]
 struct Place<'r> {
-    /// The file that was asked about last, where its lines start, and [`display_path`] of it.
+    /// The last file looked up, its line starts, and its [`display_path`].
     file: Option<(&'r FileResult, LineStarts, Vec<u8>)>,
-    /// The file that [`with_help`] has asked about last, and the answer.
+    /// The last file that [`with_help`] linted again, and the resulting messages.
     helped: Option<(&'r FileResult, Vec<LintMessage>)>,
-    /// The rules of the problems that are written, if those are few.
+    /// The rules of the problems that get printed, if only a few do.
     written: Option<Vec<&'r RuleId>>,
 }
 
@@ -86,8 +86,8 @@ impl<'r> Place<'r> {
     }
 }
 
-/// The message of `problem` with what oxlint says besides it, if that was not made when the file was linted: [`Meta::help`]. It is
-/// what the same rule says at the same place in the same words.
+/// Returns `problem`'s message with oxlint's help text added, if that wasn't generated when the file was linted. See
+/// [`Meta::help`]. The help comes from the second lint's message with the same rule, location and text.
 fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Option<LintMessage> {
     let (lint, Problem { result, message }) = (meta.help?, problem);
     if !(place.helped.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result)) {
@@ -107,7 +107,7 @@ fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Op
     })
 }
 
-/// The lines `from..=to` of the text of `result`, counted from 1 as ESLint counts them, without their ends.
+/// Returns lines `from..=to` of `result`'s text, without line terminators. Lines count from 1, like ESLint's.
 fn lines<'r>(
     result: &'r FileResult,
     (from, to): (u32, u32),
@@ -138,7 +138,7 @@ fn lines<'r>(
     found
 }
 
-/// `lines`, one after the other, with a space for each tab.
+/// Joins `lines` with newlines and replaces each tab with a space.
 fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
     let mut text = Vec::with_capacity(lines.iter().map(|it| it.len() + 1).sum());
     for (i, line) in lines.iter().enumerate() {
@@ -147,7 +147,7 @@ fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
         }
         text.extend_from_slice(line);
     }
-    // Every byte is written, so that many are at a time.
+    // Storing every byte unconditionally lets the compiler vectorize the loop.
     for byte in &mut text {
         *byte = match *byte {
             b'\t' => b' ',
@@ -157,7 +157,8 @@ fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
     text
 }
 
-/// What is printed is appended. A space is written at a time in front of a `^`.
+/// Appends formatted output to a `Vec`. `write_char` has a fast path because the padding before a `^` is written one
+/// space at a time.
 struct Appender<'o>(&'o mut Vec<u8>);
 
 impl std::fmt::Write for Appender<'_> {
@@ -177,7 +178,7 @@ impl std::fmt::Write for Appender<'_> {
     }
 }
 
-/// As `{}` prints a `BStr`.
+/// Appends `text` the way `{}` prints a `BStr`.
 fn push_lossy(out: &mut Vec<u8>, text: &[u8]) {
     match text.is_ascii() {
         true => out.extend_from_slice(text),
@@ -197,7 +198,7 @@ fn all<'r>(results: &'r [FileResult]) -> Vec<Problem<'r>> {
     problems.collect()
 }
 
-/// What is the same for two problems if [`Problem::rule`] is, and is not written anew for each.
+/// Equal for two problems exactly when their [`Problem::rule`] is, without allocating the name for each problem.
 #[derive(PartialEq, Eq, Hash)]
 enum Rule<'r> {
     None,
@@ -228,7 +229,8 @@ fn rules_of<'r>(problems: impl Iterator<Item = Problem<'r>>) -> Option<Vec<&'r R
 /// Groups problems that have the same rule and message, largest group first. With `by_rule`, the message is ignored and
 /// groups of errors come before groups of warnings.
 fn grouped<'r>(problems: &[Problem<'r>], by_rule: bool) -> Vec<Vec<Problem<'r>>> {
-    // A number for each rule, and that of a rule that is built in by where the rule is: its name is read once, not for each problem.
+    // Each rule gets a number. A built-in rule's number is also cached by the address of its `Meta`, so its name is
+    // hashed once instead of once per problem.
     let mut numbers: FxHashMap<Rule, u32> = FxHashMap::default();
     let mut numbers_by_address: FxHashMap<usize, u32> = FxHashMap::default();
     let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
@@ -277,11 +279,11 @@ fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-/// How many of `group` each file has, the most first.
+/// Counts the problems of `group` in each file, highest count first.
 fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
     let mut files: Vec<(Problem, usize)> = Vec::new();
     for problem in group {
-        // They are in the order of the files.
+        // Problems are already ordered by file.
         match files.last_mut() {
             Some(last) if std::ptr::eq(last.0.result, problem.result) => last.1 += 1,
             _ => files.push((*problem, 1)),
@@ -291,12 +293,12 @@ fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
     files
 }
 
-/// How many columns stay visible to the left of the reported place when the start of its line is cut off.
+/// How many columns stay visible to the left of the reported location when the start of its line is cut off.
 const LEFT_OF_THE_PLACE: usize = 30;
 
-/// Fits `lines` into `room` terminal columns. Lines that are too wide are cut down to the part around the reported place,
-/// which is at `column` in the last line. Returns the text and the place's new column. Both columns count like ESLint's:
-/// from 1, in UTF-16 code units. A `room` of 0 means no limit.
+/// Fits `lines` into `room` terminal columns. Lines that are too wide are cut down to the part around the reported
+/// location, which is at `column` in the last line. Returns the text and the location's new column. Both columns count
+/// like ESLint's: from 1, in UTF-16 code units. A `room` of 0 means no limit.
 fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
     use strings::visible::width::exclude_ansi_colors::{utf8 as width, utf8_index_at_width};
     let text = without_tabs(lines);
@@ -338,7 +340,7 @@ fn fitted(lines: &[&[u8]], column: u32, room: usize) -> (Vec<u8>, u32) {
     (cut, column)
 }
 
-/// The file, line and column of a place, and the source lines to show. The place is in the last line.
+/// The file, line and column of a location, and the source lines to show. The location is in the last line.
 type Spot<'s> = ((&'s [u8], u32, u32), &'s [&'s [u8]]);
 
 /// Prints `text` the way Bun prints its own errors.
@@ -414,7 +416,7 @@ fn write_pretty_problem<'r>(
         line @ 1.. => lines(result, (line.saturating_sub(2).max(1), line), meta, place),
         0 => Vec::new(),
     };
-    // Not lines that nobody has written, which fill the screen.
+    // No excerpt for a blank line, or for generated code, whose long lines would fill the screen.
     let is_hidden = shown.last().is_none_or(|line| line.trim_ascii().is_empty())
         || shown.iter().any(|line| line.len() > 1000);
     let shown = if is_hidden { Vec::new() } else { shown };
@@ -650,7 +652,7 @@ fn write_agent_problem<'r>(
     if let (Some(_), line @ 1..) = (&result.text, line) {
         let first = line.saturating_sub(2).max(1);
         let mut shown = lines(result, (first, line + 1), meta, place);
-        // A blank line after it says nothing.
+        // A trailing blank line adds nothing.
         if shown.len() as u32 > line - first + 1
             && shown.last().is_some_and(|it| it.trim_ascii().is_empty())
         {
@@ -729,7 +731,7 @@ pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
             );
         }
     }
-    // The caller adds the end of the last line.
+    // The caller adds the last newline.
     if !problems.is_empty() {
         out.pop();
     }
@@ -737,7 +739,7 @@ pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
 
 /// `::error file=a.js,line=1,col=1,endLine=1,endColumn=10,title=no-var::Unexpected var.`
 pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    // GitHub takes the path from the root of the repository, wherever the step runs.
+    // GitHub resolves the path from the repository root, wherever the step runs.
     let workspace = bun_core::env_var::GITHUB_WORKSPACE::get().map(paths::from_native);
     let from = workspace.as_deref().unwrap_or(meta.cwd);
     for (i, problem) in all(results).into_iter().enumerate() {

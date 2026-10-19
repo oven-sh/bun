@@ -1,7 +1,6 @@
 //! A Markdown file's text and tree: `@eslint/markdown`'s `MarkdownSourceCode`.
 //!
-//! The tree is [mdast](https://github.com/syntax-tree/mdast), and its nodes have the positions that
-//! mdast-util-from-markdown gives them.
+//! The tree is [mdast](https://github.com/syntax-tree/mdast), with the same node positions as mdast-util-from-markdown.
 //!
 //! The tree stores byte offsets. The plugin's rules work with UTF-16 indices and do arithmetic on them, so the ports do
 //! the same arithmetic on an [`Index`]. In ASCII text the two are equal.
@@ -171,7 +170,7 @@ impl<'t> Document<'t> {
     }
 
     /// Converts an index to a byte offset. An index outside the text is clamped to its start or end. An index in the
-    /// middle of a surrogate pair gives the start of the character.
+    /// middle of a surrogate pair maps to the start of the character.
     pub(crate) fn offset_of(&self, index: Index) -> u32 {
         let index = index.clamp(0, Index::from(u32::MAX)) as u32;
         if self.is_ascii {
@@ -389,7 +388,7 @@ impl<'d> Node<'d> {
         self.document.slice(self.span())
     }
 
-    /// What the source has at the start of each further line of the node that `node.value` doesn't have: the `> ` of a
+    /// The prefixes of the node's second and later lines that are in the source but not in `node.value`: the `> ` of a
     /// block quote, the indentation of a list item.
     fn container_prefixes(self) -> Vec<Span> {
         let (text, value) = (self.text(), self.value().unwrap_or_default());

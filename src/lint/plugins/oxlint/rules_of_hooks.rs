@@ -1,5 +1,5 @@
-//! `react/rules-of-hooks` of oxlint 1.80. It reports a call once, for the first of its reasons, and decides from what is around the
-//! function whether it looks at the flow of control at all.
+//! oxlint 1.80's `react/rules-of-hooks`. It reports each call once, for the first reason that applies, and decides from
+//! the function's surroundings whether to look at control flow at all.
 
 use crate::rules::react_hooks_rules_of_hooks::{
     CALLBACK, CLASS, EFFECT_EVENT_FUNCTION, EFFECT_EVENT_PASSED_DOWN, FUNCTION, LOOP, Memo, Ranges,
@@ -19,13 +19,13 @@ const ASYNC: Message = Message::new(
     "React Hook \"{{hook}}\" cannot be called in an async function. ",
 );
 
-/// What the code path says about a call.
+/// The results of code path analysis for a call.
 #[derive(Copy, Clone)]
 pub(crate) struct Flow {
     pub(crate) is_reachable: bool,
-    /// It can be reached from itself.
+    /// True if it can be reached from itself.
     pub(crate) is_cyclic: bool,
-    /// There is a way through the function that does not lead through it.
+    /// True if some path through the function skips it.
     pub(crate) is_conditional: bool,
 }
 
@@ -66,12 +66,12 @@ fn function_around<'a>(node: Node<'a>, memo: &mut Memo<'a>) -> Option<Func<'a>> 
         .find(node, |_, parent| parent.as_func().filter(is_function_like))
 }
 
-/// The expression that the function is, if nothing is around it.
+/// The function's expression, if it isn't parenthesized.
 fn bare_expression(func: Func) -> Option<Expr> {
     func.owner().as_expr().filter(|it| !it.is_parenthesized())
 }
 
-/// The name of a function declaration or of a named function expression.
+/// The name of a function declaration or a named function expression.
 fn own_name(func: Func) -> Option<Name> {
     func.name()
         .filter(|_| matches!(func.kind(), FnKind::Decl | FnKind::Expr))
@@ -86,14 +86,14 @@ fn get_declaration_identifier(func: Func) -> Option<Name> {
     match e.parent() {
         Node::VarDecl(declarator) => declarator.pat().as_ident(),
         Node::Expr(parent) => match parent.kind() {
-            // Not the default of what is assigned to: `({ a = () => {} } = {})`.
+            // Not a default in a destructuring assignment: `({ a = () => {} } = {})`.
             ExprKind::Assign {
                 op: None,
                 target,
                 value,
             } if value == e && !parent.is_assignment_target() => match target.as_ident() {
                 Some(name) => (!target.is_parenthesized()).then_some(name),
-                // The `b` of `a.b = () => {}`.
+                // The `b` in `a.b = () => {}`.
                 None => static_property_name(target),
             },
             _ => None,
@@ -133,9 +133,9 @@ fn has_name_of_component_or_hook(func: Func) -> bool {
     name.is_some_and(|it| is_component_or_hook_name(it.bytes()))
 }
 
-/// A function around `node` has the name of a component or of a hook, or is in a call of `memo` or `forwardRef`.
+/// True if a function enclosing `node` is named like a component or a hook, or is inside a `memo` or `forwardRef` call.
 fn is_somewhere_inside_component_or_hook<'a>(node: Node<'a>, memo: &mut Memo<'a>) -> bool {
-    // All that is around an outer function is around the innermost one.
+    // Start at the innermost function, whose ancestors include every outer function's.
     let Some(innermost) = function_around(node, memo) else {
         return false;
     };
@@ -148,7 +148,7 @@ fn is_somewhere_inside_component_or_hook<'a>(node: Node<'a>, memo: &mut Memo<'a>
         .is_some()
 }
 
-/// It is passed to a call, other than of `memo` and `forwardRef`, to a constructor, or to an element.
+/// True if the function is passed to a call (other than `memo` and `forwardRef`), a constructor or a JSX element.
 fn is_non_react_func_arg(func: Func) -> bool {
     let Some(e) = bare_expression(func) else {
         return false;
@@ -242,7 +242,7 @@ fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, mem
     }
 }
 
-/// `node`: a call of what has the name of a hook. `root`: what the code path that it is in starts with.
+/// `node` is a call whose callee is named like a hook. `root` is the node that starts the code path it's in.
 pub(crate) fn check<'a, R: Rule>(
     cx: &Cx<'a, R>,
     node: Expr<'a>,
@@ -310,7 +310,7 @@ pub(crate) fn check<'a, R: Rule>(
             let outer_function = func.name().map(Ident::span).unwrap_or_default();
             return function_error(name.bytes(), outer_function);
         }
-        // oxlint does not look for loops and conditions in a callback. The plugin reports a hook in a loop wherever it is.
+        // oxlint doesn't look for loops and conditions in a callback. The plugin reports a hook in a loop anywhere.
         None if is_non_react_func_arg(func) => {
             if !is_use && is_somewhere_inside_component_or_hook(Node::Func(func), memo) {
                 report(CALLBACK, "This Hook call is inside a nested callback.");
@@ -335,7 +335,7 @@ pub(crate) fn check<'a, R: Rule>(
         }
         _ => {}
     }
-    // More of them are around the call than around the function.
+    // True if more of the statements enclose the call than enclose the function.
     let is_within = |statements: &Ranges| {
         statements.count_around(node.span().start) > statements.count_around(func.span().start)
     };
@@ -369,7 +369,7 @@ pub(crate) fn check<'a, R: Rule>(
     }
 }
 
-/// What is around `hook` in `func`.
+/// The ancestors of `hook` inside `func`.
 fn within<'a>(hook: Expr<'a>, func: Func<'a>) -> impl Iterator<Item = Node<'a>> {
     Node::Expr(hook)
         .ancestors()
@@ -387,8 +387,8 @@ fn loop_keyword_span<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<Span> {
     Some(Span::new(start, start + len))
 }
 
-/// The nearest condition by which `hook` can be skipped, and what oxlint says there. What is in a condition is evaluated before it
-/// decides.
+/// The nearest condition that can skip `hook`, and the text of oxlint's label there. A hook inside the condition itself
+/// doesn't count, because it's evaluated before the branch is taken.
 fn conditional_context<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<(Span, &'static str)> {
     within(hook, func).find_map(|ancestor| {
         let (condition, text) = match ancestor {

@@ -15,7 +15,7 @@ use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, as_read, from_native};
 use std::borrow::Cow;
 
-/// Which files to ask git for.
+/// Selects the files to ask git for.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Only {
     /// `--staged`
@@ -66,7 +66,7 @@ const DIFF: [&[u8]; 9] = [
     b"--no-textconv",
 ];
 
-/// Added, modified or type-changed files. Leaves out deleted and conflicted ones.
+/// Added, modified or type-changed files. Skips deleted and conflicted ones.
 const IS_THERE: &[u8] = b"--diff-filter=AMT";
 
 /// Refs to try for the default branch, each with the short name used in error messages.
@@ -143,7 +143,7 @@ fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The object ID git printed. `None` if git failed or printed anything else.
+/// Returns the object ID git printed. `None` if git failed or printed anything else.
 fn object_id(finished: &Finished) -> Option<&[u8]> {
     let id = finished.stdout.trim_ascii();
     (finished.is_ok && !id.is_empty() && id.iter().all(u8::is_ascii_hexdigit)).then_some(id)
@@ -153,7 +153,7 @@ fn object_id(finished: &Finished) -> Option<&[u8]> {
 pub(crate) struct Files<'e> {
     only: &'e Only,
     environment: &'e Environment<'e>,
-    /// The root of the work tree. It comes from `getcwd`, so there are no links in it.
+    /// The root of the work tree. It comes from `getcwd`, so it contains no symlinks.
     top: Vec<u8>,
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
@@ -339,7 +339,7 @@ impl<'e> Files<'e> {
         object_id(&found).map(<[u8]>::to_vec).ok_or_else(unknown)
     }
 
-    /// The merge base of `HEAD` and the default branch.
+    /// Returns the merge base of `HEAD` and the default branch.
     fn where_it_left_the_default_branch(&self) -> Result<Vec<u8>, Fatal> {
         for (branch, _) in DEFAULT_BRANCHES {
             if let Some(id) = object_id(&self.git(&[b"merge-base", b"HEAD", branch], b"")?) {
@@ -358,9 +358,10 @@ impl<'e> Files<'e> {
         ))
     }
 
-    /// `path` (absolute) as the lists spell it. An argument can reach the work tree through a link: `/tmp/repo/a.js` on macOS,
-    /// or `$PWD/a.js` in a shell that got here through one. Only the directory is resolved, because a link to a file doesn't
-    /// count as that file. A path in `top` is taken as it is, so an ordinary run resolves nothing.
+    /// Returns `path` (absolute) spelled the way the lists spell it. An argument can reach the work tree through a
+    /// symlink: `/tmp/repo/a.js` on macOS, or `$PWD/a.js` in a shell that got here through one. Only the directory is
+    /// resolved, because a symlink to a file doesn't count as that file. A path in `top` is used as is, so an ordinary
+    /// run resolves nothing.
     fn as_listed<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         if paths::inside(&self.top, path).is_some() {
             return Cow::Borrowed(path);
@@ -371,7 +372,7 @@ impl<'e> Files<'e> {
         }
     }
 
-    /// Whether git listed the file at `path` (absolute). A symlink doesn't count, even if it points to a file.
+    /// True if git listed the file at `path` (absolute). A symlink doesn't count, even if it points to a file.
     pub(crate) fn has(&self, path: &[u8]) -> bool {
         self.named.contains(&*self.as_listed(path))
             && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))

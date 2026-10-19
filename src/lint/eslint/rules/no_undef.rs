@@ -73,8 +73,9 @@ impl Rule for NoUndef {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // oxlint says nothing about a name that can be that of a type. And for oxc only an expression and the `a` of
-        // `export { a }` refer to a variable: not the `a` of `import b = a.c`, of `export as namespace a`, of `a is T`, of `<a:b />`.
+        // oxlint doesn't report a name that may refer to a type. And in oxc, only an expression and the `a` of
+        // `export { a }` reference a variable, not the `a` of `import b = a.c`, `export as namespace a`, `a is T` or
+        // `<a:b />`.
         let is_oxlint = cx.language().is_oxlint;
         let is_none_for_oxc = |it: Reference| match it.expr() {
             None => !matches!(it.node(), Node::ExportSpec(_)),
@@ -85,11 +86,11 @@ impl Rule for NoUndef {
             }
         };
         let file = cx.file();
-        // Whether a global variable of a name is one for a value, and for a type.
+        // Bit flags: a name's global variable can be used as a value, and as a type.
         let (for_value, for_type) = (1, 2);
         let mut globals: ByName<u8> = ByName::default();
-        // With no config file, a name that the file tests with `typeof` isn't reported anywhere in it. The author knows that it may
-        // be missing: `if (typeof define === "function" && define.amd) define(factory);`
+        // With no config file, a name that the file tests with `typeof` isn't reported anywhere in it. The author knows
+        // it may be missing: `if (typeof define === "function" && define.amd) define(factory);`
         let trusts_typeof = cx.language().stands_alone && !self.considers_typeof;
         let tested: OnceCell<Vec<Name>> = OnceCell::new();
         let names_with_typeof = || {
@@ -128,10 +129,10 @@ impl Rule for NoUndef {
             }
             found.push(reference);
         }
-        // oxlint's rule goes through oxc's table of the names that resolve to nothing, name by name.
+        // oxlint's rule iterates over oxc's table of unresolved references, name by name.
         if is_oxlint && found.len() > 1 {
             let order = UnresolvedOrder::new(file);
-            // Those of one name stay in the order of the text.
+            // The sort is stable, so references to the same name stay in source order.
             utils::sort::sort_by_cached_key(&mut found, |it| order.rank(it.name()));
         }
         for reference in found {

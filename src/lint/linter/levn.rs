@@ -1,5 +1,5 @@
-//! `levn.parse("Object", text)`: the liberal notation that ESLint reads an `/* eslint .. */`
-//! comment in before it tries JSON.
+//! `levn.parse("Object", text)`: the lenient notation that ESLint tries on an `/* eslint .. */` comment before it tries
+//! JSON.
 
 use crate::json::RoomToNest;
 use crate::options::Json;
@@ -40,8 +40,8 @@ fn date_end(text: &[u8]) -> Option<usize> {
     bun_core::strings::last_index_of_char(&text[1..end], b'#').map(|i| i + 2)
 }
 
-/// `[^\s<special>](?:\s*[^\s<special>]+)*`. The colon of `bun:test/no-focused-tests` is part of the word: levn makes nothing of
-/// that text, and no rule is called `bun`.
+/// `[^\s<special>](?:\s*[^\s<special>]+)*`. The colon in `bun:test/no-focused-tests` is part of the word: levn can't
+/// parse that text anyway, and no rule is named `bun`.
 fn word_end(text: &[u8]) -> usize {
     let (mut at, mut end) = (0, 0);
     let colon_of_name = if text.starts_with(b"bun:test/") {
@@ -89,7 +89,7 @@ fn tokenize(text: &[u8]) -> Vec<&[u8]> {
     tokens
 }
 
-/// What `parse-string.js` makes of the tokens.
+/// The tree that `parse-string.js` builds from the tokens.
 enum Node {
     Value(Vec<u8>),
     List(Vec<Node>),
@@ -181,7 +181,7 @@ impl<'t> Tokens<'t> {
     }
 }
 
-/// The `String` cast: without its quotes, and with its escapes replaced.
+/// The `String` cast: strips the quotes and resolves the escapes.
 fn unquote(text: &[u8]) -> Vec<u8> {
     let (quote, inner) = match text {
         [b'\'', inner @ .., b'\''] => (b'\'', inner),
@@ -224,8 +224,8 @@ fn unquote(text: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The `*` cast. `None` where levn throws, and for a regular expression, which JSON cannot
-/// express. A date stays a string.
+/// The `*` cast. `None` where levn throws, and for a regular expression, which JSON can't represent. A date stays a
+/// string.
 fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
     if !room.has_more() {
         return None;
@@ -265,7 +265,7 @@ fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<
     let mut out = Vec::with_capacity(fields.len());
     for (key, value) in fields {
         let (key, value) = (unquote(key), cast(value, room)?);
-        // levn assigns each to an object, which makes no property of this one.
+        // levn assigns each key to an object, and assigning `__proto__` doesn't create a property.
         if key != b"__proto__" {
             out.push((key, value));
         }
@@ -283,7 +283,7 @@ fn parse_fields(text: &[u8]) -> Option<(Vec<(Vec<u8>, Node)>, RoomToNest)> {
     let Node::Fields(fields) = tokens.fields(has_delimiters)? else {
         return None;
     };
-    // levn reads what has tokens left over as a tuple, which is no object.
+    // If tokens are left over, levn reads the text as a tuple, which isn't an object.
     (tokens.at == tokens.tokens.len()).then_some((fields, tokens.room))
 }
 

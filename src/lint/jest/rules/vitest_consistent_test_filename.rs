@@ -5,24 +5,24 @@ use bun_lint::prelude::*;
 
 /// This rule triggers an error when a file is considered a test file, but its name does not match an expected filename format.
 pub struct ConsistentTestFilename<const RUNNER: u8 = { jest::VITEST }> {
-    /// By default `.*\.(test|spec)\.[tj]sx?$`
+    /// Defaults to `.*\.(test|spec)\.[tj]sx?$`.
     all_test_pattern: Matcher,
-    /// By default `.*\.test\.[tj]sx?$`
+    /// Defaults to `.*\.test\.[tj]sx?$`.
     pattern: Matcher,
-    /// As `help` has it.
+    /// The pattern's source, shown in `help`.
     pattern_source: String,
 }
 
 enum Matcher {
     Default,
-    /// The option, if it is a pattern.
+    /// The configured pattern, or `None` if it isn't a valid regex.
     Pattern(Option<Box<Regex>>),
 }
 
 const CONSISTENT_TEST_FILENAME: Message =
     Message::new("", "The file {{file_path}} is a test file, but its name does not match the expected pattern.");
 
-/// Of `/pattern/flags`, of which the flags are ignored, the pattern.
+/// Returns the `pattern` in `/pattern/flags`. The flags are ignored.
 fn source_of(pattern: &str) -> &str {
     let literal = pattern.strip_prefix('/').and_then(|it| it.get(..strings::last_index_of_char(it.as_bytes(), b'/')?));
     literal.unwrap_or(pattern)
@@ -35,7 +35,7 @@ fn matcher_pattern(configured: Option<&str>) -> Matcher {
     }
 }
 
-/// The `test` or `spec` of a path that `\.(test|spec)\.[tj]sx?$` matches.
+/// Returns `test` or `spec` if the path matches `\.(test|spec)\.[tj]sx?$`.
 fn kind_of_test(path: &[u8]) -> Option<&'static [u8]> {
     let extensions: [&[u8]; 4] = [b".ts", b".tsx", b".js", b".jsx"];
     let rest = extensions.iter().find_map(|it| path.strip_suffix(*it))?;

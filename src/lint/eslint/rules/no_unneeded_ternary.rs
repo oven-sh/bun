@@ -15,7 +15,7 @@ const UNNECESSARY_CONDITIONAL_ASSIGNMENT: Message = Message::new(
     "Unnecessary use of conditional expression for default assignment.",
 );
 
-/// That of a `UnaryExpression`.
+/// The precedence of a `UnaryExpression`.
 const UNARY_PRECEDENCE: i32 = 16;
 
 fn boolean_literal(e: Expr) -> Option<bool> {
@@ -26,9 +26,9 @@ fn boolean_literal(e: Expr) -> Option<bool> {
     }
 }
 
-/// ESLint's `invertExpression`: the text of an expression that is true when `e` is falsy.
+/// ESLint's `invertExpression`: returns the text of an expression that's true when `e` is falsy.
 fn invert_expression(e: Expr) -> Vec<u8> {
-    // `<` and `>=` are not inverses: both are false with `NaN`.
+    // `<` and `>=` aren't inverses: both are false with `NaN`.
     let inverse = match e.kind() {
         ExprKind::Binary { op: BinOp::EqEq, .. } => Some("!="),
         ExprKind::Binary { op: BinOp::NotEq, .. } => Some("=="),
@@ -75,8 +75,8 @@ fn is_boolean_expression(e: Expr) -> bool {
     )
 }
 
-/// What oxlint makes of `test ? true : false`, or with `is_inverted` of `test ? false : true`. It looks at how `test`
-/// is written: in parentheses it is nothing that it knows.
+/// Returns oxlint's replacement for `test ? true : false`, or with `is_inverted` for `test ? false : true`. It goes by
+/// `test`'s syntax, and doesn't recognize any expression in parentheses.
 fn boolean_of_oxlint(test: Expr, is_inverted: bool) -> Vec<u8> {
     let file = test.file();
     let written = file.slice(test.outer_span());
@@ -139,7 +139,7 @@ impl Rule for NoUnneededTernary {
         let Some((test, yes, no)) = e.as_cond() else {
             return;
         };
-        // oxlint sees through `as T` and the like.
+        // oxlint looks through `as T` and the like.
         let is_oxlint = cx.language().is_oxlint;
         let seen = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
         if let (Some(consequent), Some(alternate)) = (boolean_literal(yes), boolean_literal(no)) {
@@ -151,7 +151,7 @@ impl Rule for NoUnneededTernary {
                     });
                 }
                 if consequent == alternate {
-                    // Not `foo() ? true : true`, which calls `foo`.
+                    // Don't fix `foo() ? true : true`, which calls `foo`.
                     return (test.tag() == ExprTag::Ident).then(|| fixer.replace(e, yes.text()));
                 }
                 if alternate {

@@ -13,16 +13,16 @@ use std::cmp::Ordering;
 pub struct Order {
     newlines_between: Newlines,
     newlines_between_types: Newlines,
-    /// `pathGroupsExcludedImportTypes`: a bit for each [`ImportType`].
+    /// `pathGroupsExcludedImportTypes`, with one bit per [`ImportType`].
     excluded: u16,
-    /// `sortTypesGroup`, if `type` is among the groups.
+    /// `sortTypesGroup`, if `type` is one of the groups.
     sorts_types_group: bool,
     consolidates_islands: bool,
     named: Named,
     alphabetize: Alphabetize,
     distinct_group: bool,
     warn_on_unassigned_imports: bool,
-    /// The rank of each [`ImportType`] but the last.
+    /// The rank of every [`ImportType`] except the last.
     groups: [f64; 9],
     is_type_in_groups: bool,
     path_groups: Vec<PathGroup>,
@@ -79,7 +79,7 @@ enum ImportKind {
     Type,
 }
 
-/// The `type` of an entry.
+/// An entry's `type`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Written {
     Import,
@@ -97,11 +97,11 @@ enum Category {
 }
 
 struct Entry<'a> {
-    /// What is reported.
+    /// The span to report.
     node: Span,
     /// `findRootNode(node)`
     root: Span,
-    /// Where the root is in its block.
+    /// The root's index in its block.
     index: usize,
     value: Cow<'a, [u8]>,
     display_name: Cow<'a, [u8]>,
@@ -174,7 +174,7 @@ fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
                 after[group as usize] += 1;
                 f64::from(after[group as usize])
             }
-            // How many there are after it is not known yet.
+            // The number of groups after this one isn't known yet, so this is fixed up below.
             Some("before") => {
                 before[group as usize] += 1;
                 -f64::from(before[group as usize])
@@ -351,8 +351,8 @@ fn is_require_expression(e: Expr) -> bool {
     }
 }
 
-/// The `require("a")` for which `getRequireBlock` finds the statement that `init` is in: `require("a")`,
-/// `require("a").b.c`, `require("a")()`. With its argument.
+/// Returns the `require("a")` for which `getRequireBlock` finds the statement that contains `init`, with its argument:
+/// `require("a")`, `require("a").b.c`, `require("a")()`.
 fn static_require_in<'a>(init: Expr<'a>) -> Option<(Expr<'a>, Name<'a>)> {
     let mut e = init;
     loop {
@@ -376,7 +376,7 @@ fn can_be_crossed(statement: Stmt) -> bool {
         StmtKind::Import(import) => {
             import.default().is_some() || import.namespace().is_some() || !import.named().is_empty()
         }
-        // With `export` before it, it is in an `ExportNamedDeclaration`.
+        // With an `export` in front it's inside an `ExportNamedDeclaration`.
         StmtKind::ImportEquals(import) => {
             !statement.is_exported() && matches!(import.target(), ImportEqualsTarget::Require(_))
         }
@@ -419,7 +419,7 @@ fn is_comment_on_line(file: &File, token: Token, line: u32) -> bool {
         && file.line_of(token.end()) == line
 }
 
-/// Where the last of the comments ends that follow `root` on its last line.
+/// Returns the end of the last comment that follows `root` on its last line.
 fn end_with_comments<'a>(file: &'a File<'a>, root: Span) -> u32 {
     let line = file.line_of(root.end);
     let after = file.tokens_after(root).with_comments().take(100);
@@ -445,7 +445,7 @@ fn start_of_line_with_comments<'a>(file: &'a File<'a>, root: Span) -> u32 {
     let before = file.tokens_before(root).with_comments().take(100);
     let comments = before.take_while(|it| is_comment_on_line(file, *it, line));
     let mut start = comments.last().map_or(root.start, |it| it.start());
-    // The first character of the text is never looked at.
+    // Upstream never looks at the first character of the text.
     let first = file.line_span(1).start + 1;
     while start > first && matches!(file.text().get(start as usize - 1), Some(b' ' | b'\t')) {
         start -= 1;
@@ -453,7 +453,7 @@ fn start_of_line_with_comments<'a>(file: &'a File<'a>, root: Span) -> u32 {
     start
 }
 
-/// `findOutOfOrder`: where they are.
+/// `findOutOfOrder`, returning indices.
 fn find_out_of_order(ranks: &[f64]) -> Vec<usize> {
     let mut max = ranks.first().copied().unwrap_or(0.0);
     let is_out_of_order = |rank: f64| {
@@ -475,7 +475,7 @@ fn description_of(entry: &Entry) -> &'static str {
     }
 }
 
-/// The `name` of a name in the braces of an import or an export. One in quotes is a `Literal`, which has none.
+/// The `name` of a name inside an import's or export's braces. A quoted one is a `Literal`, which has no `name`.
 fn name_of(name: Ident<'_>) -> &[u8] {
     if name.is_string() {
         b"undefined"
@@ -484,7 +484,7 @@ fn name_of(name: Ident<'_>) -> &[u8] {
     }
 }
 
-/// The `name` of a key that is an `Identifier`, in brackets or not.
+/// The `name` of a key that's an `Identifier`, in brackets or not.
 fn identifier_of(key: Key<'_>) -> Option<&[u8]> {
     match key.kind() {
         KeyKind::Ident(name) => Some(name.bytes()),
@@ -493,7 +493,7 @@ fn identifier_of(key: Key<'_>) -> Option<&[u8]> {
     }
 }
 
-/// The object and the name of a `MemberExpression` whose `property` is an `Identifier`.
+/// Returns the object and the property name of a `MemberExpression` whose `property` is an `Identifier`.
 fn member_of<'a>(e: Expr<'a>) -> Option<(Expr<'a>, &'a [u8])> {
     match e.kind() {
         ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
@@ -536,7 +536,7 @@ fn named_cjs_export(target: Expr) -> Option<Vec<u8>> {
     (!names.is_empty()).then(|| names.join(&b"."[..]))
 }
 
-/// `findRootNode` of what is in `statement`.
+/// `findRootNode` for a node inside `statement`.
 fn root_of(mut statement: Stmt) -> Span {
     // An `if` and a `switch` have no `body`.
     loop {
@@ -561,7 +561,7 @@ impl Order {
         }
     }
 
-    /// `computeRank`. `None`: it is not registered.
+    /// `computeRank`. Returns `None` if the import isn't registered.
     fn rank_of(
         &self,
         value: &[u8],
@@ -609,7 +609,7 @@ impl Order {
         }
     }
 
-    /// The imports of a `Program` or a `TSModuleBlock`.
+    /// Checks the imports of a `Program` or a `TSModuleBlock`.
     fn check_block<'a>(
         &self,
         body: List<'a, Stmt<'a>>,
@@ -622,7 +622,7 @@ impl Order {
         let is_multiline = |span: Span| file.line_of(span.start) != file.line_of(span.end);
         for (index, statement) in body.iter().enumerate() {
             let root = statement.span();
-            // `whole`: of which it is asked whether it is on several lines.
+            // `whole`: the span that decides whether the entry is multiline.
             let mut register = |(node, whole): (Span, Span),
                                 name: &'a [u8],
                                 written: Written,
@@ -738,7 +738,7 @@ impl Order {
                 is_type_only != (previous.import_kind == ImportKind::Type) && sorts_types;
             let is_type_only = is_type_only && sorts_types;
             let is_either_multiline = previous.is_multiline || current.is_multiline;
-            // Where they want the opposite, `consolidateIslands` wins.
+            // If the two options conflict, `consolidateIslands` wins.
             let between = match self.newlines_between {
                 Never if sorts_types && consolidates && is_either_multiline => {
                     AlwaysAndInsideGroups
@@ -813,7 +813,7 @@ impl Order {
         }
     }
 
-    /// `getSorter`. It is no order where a name that starts with `./` meets one that starts with `../`.
+    /// `getSorter`. It isn't a consistent ordering when one name starts with `./` and the other with `../`.
     fn compare(&self, a: (&[u8], ImportKind), b: (&[u8], ImportKind)) -> Ordering {
         let is_relative = |it: &[u8]| matches!(it, b"." | b"..");
         let (mut of_a, mut of_b) = (strings::split(a.0, b"/"), strings::split(b.0, b"/"));
@@ -821,7 +821,7 @@ impl Order {
         let by_name = loop {
             match (of_a.next(), of_b.next()) {
                 (Some(x), Some(y)) if is_first && is_relative(x) && is_relative(y) && x != y => {
-                    // By how many names they have.
+                    // Compare by number of segments.
                     let (names_of_a, names_of_b) = (
                         strings::count_char(a.0, b'/'),
                         strings::count_char(b.0, b'/'),
@@ -844,7 +844,7 @@ impl Order {
             Direction::Desc => ordering.reverse(),
             _ => ordering,
         };
-        // "type" comes before "value", which is also what stands for none.
+        // "type" sorts before "value", and a missing kind counts as "value".
         let rank = |it: ImportKind| it != ImportKind::Type;
         in_direction(by_name, self.alphabetize.order).then_with(|| {
             match self.alphabetize.order_import_kind {
@@ -879,14 +879,15 @@ impl Order {
                 }
                 _ => false,
             };
-            // Each group as `Array.prototype.sort` sorts it, which what is no order depends on.
+            // Sort each group exactly like `Array.prototype.sort`, because the result of an inconsistent ordering
+            // depends on the algorithm.
             for group in order
                 .chunk_by_mut(|a, b| rank(*a) == rank(*b))
                 .filter(|it| it.len() > 1)
             {
                 utils::array_sort_by(group, &is_before);
             }
-            // What has the same name and the same kind gets the rank of the last of them.
+            // Entries with the same name and kind all get the rank of the last one.
             let mut ranks: FxHashMap<(&[u8], ImportKind), f64> = FxHashMap::default();
             for (new_rank, it) in order
                 .iter()
@@ -910,7 +911,8 @@ impl Order {
             .for_each(|(it, rank)| it.rank = rank);
     }
 
-    /// `makeOutOfOrderReport`. `body`: the block, where whole statements are moved that cannot cross everything.
+    /// `makeOutOfOrderReport`. `body`: the block, if whole statements are being moved, since those can't cross every
+    /// statement.
     fn report_out_of_order<'a>(
         &self,
         mut imported: Vec<Entry<'a>>,
@@ -923,7 +925,7 @@ impl Order {
         if out_of_order.is_empty() {
             return;
         }
-        // The direction in which less is reported.
+        // Pick the direction that produces fewer reports.
         let reversed: Vec<f64> = ranks.iter().rev().map(|it| -it).collect();
         let reversed_out_of_order = find_out_of_order(&reversed);
         let is_reversed = reversed_out_of_order.len() < out_of_order.len();
@@ -931,7 +933,7 @@ impl Order {
             imported.reverse();
             (ranks, out_of_order) = (reversed, reversed_out_of_order);
         }
-        // How many of the statements before each cannot be crossed.
+        // For each statement, the number of statements before it that can't be crossed.
         let uncrossable: Vec<u32> = body.map_or_else(Vec::new, |body| {
             let counts = body.iter().scan(0, |count, it| {
                 *count += u32::from(!can_be_crossed(it));
@@ -947,7 +949,7 @@ impl Order {
             };
             from >= to || uncrossable.get(from) == uncrossable.get(to)
         };
-        // The highest rank so far: the first that is higher than a rank is where this gets higher than it.
+        // The running maximum rank. It's sorted, so a binary search finds the first entry that ranks above a given one.
         let highest: Vec<f64> = ranks
             .iter()
             .scan(f64::NEG_INFINITY, |highest, it| {
@@ -1003,7 +1005,7 @@ impl Order {
             .data("firstKind", description_of(first))
             .data("first", first.display_name.clone());
         if category == Category::Named {
-            // The names are looked at where the declaration is entered.
+            // Upstream checks the names when it enters the declaration.
             let report = report.on_exit(false);
             // `findSpecifierStart`, `findSpecifierEnd`
             let around = |it: &Entry| {
@@ -1096,7 +1098,7 @@ impl Order {
         });
     }
 
-    /// An element of what `makeNamedOrderReport` is called with.
+    /// Builds one element of the list passed to `makeNamedOrderReport`.
     fn named_entry<'a>(
         &self,
         node: Span,

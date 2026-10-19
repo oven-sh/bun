@@ -1,7 +1,8 @@
-//! `react/exhaustive-deps` of oxlint 1.87, which is a rule of its own more than a port of `react-hooks/exhaustive-deps`: it has other
-//! messages, reports each dependency that is not needed by itself, and has its own notion of what a dependency is.
+//! oxlint 1.87's `react/exhaustive-deps`. It's more a separate rule than a port of `react-hooks/exhaustive-deps`: it
+//! has different messages, reports each unnecessary dependency separately, and has its own definition of a dependency.
 //!
-//! oxlint walks the callback. Here the references in it are looked at, each with what is around it.
+//! oxlint walks the callback. This port instead goes through the references in the callback and looks at each one's
+//! ancestors.
 
 use bun_lint::prelude::*;
 use bun_lint::types::IdMap;
@@ -111,26 +112,26 @@ impl<'a> Dependency<'a> {
     }
 }
 
-/// What is known about `name.chain[0].chain[1]`.
+/// The state of one path `name.chain[0].chain[1]`.
 #[derive(Default)]
 struct Path {
-    /// What it is a property of. 0 for a variable.
+    /// The path it's a property of. 0 for a variable.
     base: u32,
-    /// It is read in the function.
+    /// True if it's read in the function.
     is_found: bool,
-    /// It or a property of it is read in the function.
+    /// True if it or one of its properties is read in the function.
     is_found_within: bool,
-    /// Its position in the array of dependencies, and 1.
+    /// Its index in the dependency array plus 1, or 0 if it isn't there.
     declared: u32,
-    /// It is read in the function and missing in the array.
+    /// True if it's read in the function but missing from the array.
     is_undeclared: bool,
 }
 
-/// The dependencies of one function, as a tree: a dependency is a property of another if that is above it.
+/// One function's dependencies as a tree, where a property's parent is the path it's a property of.
 struct Paths<'a> {
-    /// The first is above the variables.
+    /// The first entry is the root, the parent of all variables.
     list: Vec<Path>,
-    /// The number of a path, by the number of what it is a property of and its last name.
+    /// Maps a parent path's number and a property name to the property's path number.
     properties: FxHashMap<(u32, Name<'a>), u32>,
 }
 
@@ -144,7 +145,8 @@ impl Default for Paths<'_> {
 }
 
 impl<'a> Paths<'a> {
-    /// The number of `dependency`. Calls `on_the_way` with what it is a property of, from the variable on, and with itself.
+    /// Returns `dependency`'s path number. Calls `on_the_way` with each path from the variable down to `dependency`
+    /// itself.
     fn number_of(
         &mut self,
         dependency: &Dependency<'a>,
@@ -176,7 +178,7 @@ impl<'a> Paths<'a> {
         self.get(self.get(path).base)
     }
 
-    /// What `path` is a property of, the nearest first.
+    /// The ancestors of `path`, nearest first.
     fn above(&self, path: u32) -> impl Iterator<Item = &Path> {
         std::iter::successors(Some(self.get(path).base), |it| Some(self.get(*it).base))
             .take_while(|it| *it != 0)
@@ -184,7 +186,7 @@ impl<'a> Paths<'a> {
     }
 }
 
-/// oxc's `get_inner_expression`. Parentheses are not nodes here.
+/// oxc's `get_inner_expression`. Parentheses aren't nodes in our tree.
 fn inner(mut e: Expr) -> Expr {
     while matches!(
         e.tag(),
@@ -200,7 +202,7 @@ fn inner(mut e: Expr) -> Expr {
     e
 }
 
-/// The opposite of [`inner`]: `e` with what is around it that only concerns types.
+/// The opposite of [`inner`]: `e` including the type-only wrappers around it.
 fn outer(mut e: Expr) -> Expr {
     while let Node::Expr(parent) = e.parent()
         && matches!(
@@ -217,7 +219,7 @@ fn outer(mut e: Expr) -> Expr {
     e
 }
 
-/// `StaticMemberExpression`, of what is known not to be in the name of a tag.
+/// `StaticMemberExpression`, for an expression that's known not to be part of a JSX tag name.
 fn as_static_member_outside_tags<'a>(e: Expr<'a>) -> Option<(Expr<'a>, Ident<'a>)> {
     match e.kind() {
         ExprKind::Dot { obj, name, .. }
@@ -238,7 +240,7 @@ fn symbol_of(ident: Expr) -> Option<Symbol> {
     ident.reference()?.symbol()
 }
 
-/// `Err`: it is not a chain of properties. `Ok(None)`: of a JSX element.
+/// `Err` if `e` isn't a property chain. `Ok(None)` if the chain starts at a JSX element.
 fn analyze_property_chain(e: Expr) -> Result<Option<Dependency>, ()> {
     let e = inner(e);
     if e.tag() == ExprTag::Dot && e.is_jsx_tag_name() {
@@ -267,7 +269,7 @@ fn analyze_property_chain(e: Expr) -> Result<Option<Dependency>, ()> {
     }
 }
 
-/// `useEffect` for `useEffect` and `React.useEffect`.
+/// Returns `useEffect` for both `useEffect` and `React.useEffect`.
 fn name_without_react_namespace(callee: Expr) -> Option<Name> {
     match callee.as_ident() {
         Some(name) => Some(name),
@@ -283,7 +285,7 @@ fn func_call_without_react_namespace(call: Call) -> Option<Name> {
     name_without_react_namespace(inner(call.callee()))
 }
 
-/// What oxc's `symbol_declaration` is.
+/// The kinds of node that oxc's `symbol_declaration` returns.
 #[derive(Copy, Clone)]
 enum Declared<'a> {
     Variable(VarDecl<'a>),
@@ -314,7 +316,7 @@ fn declaration_of(symbol: Symbol) -> Option<Declared> {
     })
 }
 
-/// The scope that the node which declares it is in. For a `var` in a block that is the block.
+/// The scope that contains the declaring node. For a `var` in a block, that's the block.
 fn scope_of_declaration<'a>(symbol: Symbol<'a>, declared: Declared<'a>) -> Scope<'a> {
     match declared {
         Declared::Variable(declarator) => Node::VarDecl(declarator).scope(),
@@ -340,18 +342,18 @@ fn is_second_of_array_pattern<'a>(declarator: VarDecl<'a>, name: Name<'a>) -> bo
     })
 }
 
-/// What is read in a function.
+/// The dependencies that a function reads.
 #[derive(Default)]
 struct Found<'a> {
-    /// In the order of the source, each with its number in `paths`.
+    /// In source order, each with its number in `paths`.
     dependencies: Vec<(Dependency<'a>, u32)>,
-    /// By the number in `paths` and the variable, for those that are found: the position in `dependencies`. oxlint hashes the
-    /// variable: a parameter of a function in the function does not stand for the variable of that name around it.
+    /// Maps a number in `paths` and a variable to the index in `dependencies`. The variable is part of the key because
+    /// oxlint hashes it: a nested function's parameter is distinct from an outer variable with the same name.
     positions: FxHashMap<(u32, Option<Symbol<'a>>), u32>,
     paths: Paths<'a>,
-    /// Every time that one was found: its position in `dependencies`.
+    /// One entry per `insert` call, including repeats: the index in `dependencies`.
     inserted: Vec<u32>,
-    /// A function that `useState` or `useReducer` returns is named, outside the functions in the function.
+    /// True if a setter returned by `useState` or `useReducer` is referenced outside of nested functions.
     has_set_state_call: bool,
 }
 
@@ -371,16 +373,16 @@ impl<'a> Found<'a> {
         self.inserted.push(at);
     }
 
-    /// The positions in `dependencies` in the order in which oxlint has them, which is that of its hash table. It names what is
-    /// missing in that order, and prints the report where the first is. The same hashes in the same table give the same order.
-    /// `symbols`: [`places_of_symbols`].
+    /// The indices into `dependencies` in the iteration order of oxlint's hash table. oxlint lists the missing
+    /// dependencies in that order and puts the report at the first. Inserting the same hashes into the same kind of
+    /// table reproduces the order. `symbols` comes from [`places_of_symbols`].
     fn order_of_oxlint(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
         let dependency = |at: &u32| Some((&self.dependencies.get(*at as usize)?.0, *at));
         order_in_table(&mut self.inserted.iter().filter_map(dependency), symbols)
     }
 }
 
-/// The numbers of `inserted` in the order of a hash table of oxlint that they are put into one after the other.
+/// Inserts `inserted` one by one into a model of oxlint's hash table, and returns their numbers in its iteration order.
 fn order_in_table<'d, 'a>(
     inserted: &mut dyn Iterator<Item = (&'d Dependency<'a>, u32)>,
     symbols: &[(u32, u32)],
@@ -391,7 +393,7 @@ fn order_in_table<'d, 'a>(
         let place = dependency.symbol.and_then(place_of_symbol);
         let hashed = Hashed {
             dependency,
-            // oxc keeps the number so that `u32::MAX` is 0.
+            // oxc stores the id XORed with `u32::MAX`, so that `u32::MAX` is stored as 0, and hashes the stored value.
             symbol: place
                 .and_then(|it| symbols.binary_search(&it).ok())
                 .map(|it| it as u32 ^ u32::MAX),
@@ -405,7 +407,7 @@ fn order_in_table<'d, 'a>(
     table.iter().collect()
 }
 
-/// The place of each of `declared` in the hash table in which oxlint has them.
+/// The position of each of `declared` in the iteration order of oxlint's hash table.
 fn places_in_table<'a>(
     declared: &[(Dependency<'a>, u32)],
     file: &'a File<'a>,
@@ -427,7 +429,7 @@ fn places_in_table<'a>(
     places
 }
 
-/// Puts `positions`, which are in `declared`, in the order in which oxlint comes to them.
+/// Sorts `positions`, which are indices into `declared`, into the order oxlint visits them.
 fn sort_as_oxlint<'a>(
     positions: &mut [usize],
     declared: &[(Dependency<'a>, u32)],
@@ -440,14 +442,14 @@ fn sort_as_oxlint<'a>(
     }
 }
 
-/// A dependency that is hashed and compared as oxlint's `Dependency`.
+/// A dependency that hashes and compares like oxlint's `Dependency`.
 struct Hashed<'d, 'a> {
     dependency: &'d Dependency<'a>,
     /// oxc's `SymbolId`
     symbol: Option<u32>,
 }
 
-/// As a `str` is hashed.
+/// Hashes `text` the way `str` is hashed.
 fn write_str<H: Hasher>(state: &mut H, text: Name) {
     state.write(text.bytes());
     state.write_u8(0xFF);
@@ -472,13 +474,13 @@ impl PartialEq for Hashed<'_, '_> {
 
 impl Eq for Hashed<'_, '_> {}
 
-/// Where oxc comes to the node that declares the symbol, and where the name is. It numbers the symbols in that order.
+/// The start of the node that declares the symbol, and the start of its name. oxc numbers symbols in that order.
 fn place_of_symbol(symbol: Symbol) -> Option<(u32, u32)> {
     let places = symbol.declarations().filter_map(|declaration| {
         let name = declaration.name_span()?.start;
         let node = match declaration {
             Declaration::Var(_) => declaration.node()?.span().start,
-            // For oxc `this` is not a parameter.
+            // In oxc `this` isn't a parameter.
             Declaration::Param(_) if symbol.name().is("this") => return None,
             Declaration::Param(pat) => {
                 Node::Pat(pat)
@@ -496,10 +498,11 @@ fn place_of_symbol(symbol: Symbol) -> Option<(u32, u32)> {
     places.min()
 }
 
-/// The [`place_of_symbol`] of all symbols, sorted. ESLint has the name of a class and of an enum twice.
+/// The [`place_of_symbol`] of every symbol, sorted. ESLint's scopes have a class's and an enum's name twice.
 fn places_of_symbols<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
     let mut places: Vec<(u32, u32)> = file.symbols().filter_map(place_of_symbol).collect();
-    // What ESLint has no variable for: a member of an enum with a computed name, and the names in `namespace A.B.C`.
+    // Add the symbols that ESLint has no variable for: an enum member with a computed name, and the names in `namespace
+    // A.B.C`.
     for stmt in file
         .stmts_of_kind(StmtTag::Enum)
         .chain(file.stmts_of_kind(StmtTag::Module))
@@ -523,7 +526,7 @@ fn places_of_symbols<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
     places
 }
 
-/// Nothing in `e` makes oxlint forget that it is in what is called.
+/// True if visiting `e` doesn't make oxlint reset its "inside a callee" flag.
 fn keeps_callee_flag(e: Expr) -> bool {
     matches!(
         inner(e).tag(),
@@ -537,8 +540,9 @@ fn keeps_callee_flag(e: Expr) -> bool {
     )
 }
 
-/// oxlint's `is_callee_of_call_expr` when it comes to `member`: it is in what a call calls, and no member access, call or function
-/// is in between or before. `a.b()` reads `a`, and so do `a.b[c]()` and `x[a.b]()`.
+/// The value of oxlint's `is_callee_of_call_expr` flag when it visits `member`. It's true if `member` is inside a
+/// call's callee, and oxlint hasn't visited a member access, call or function since it entered the callee. `a.b()`
+/// reads `a`, and so do `a.b[c]()` and `x[a.b]()`.
 fn is_callee_of_call(member: Expr) -> bool {
     let mut child = member;
     while let Node::Expr(parent) = child.parent() {
@@ -566,7 +570,7 @@ fn is_callee_of_call(member: Expr) -> bool {
     false
 }
 
-/// oxlint's `ExhaustiveDepsVisitor`. `with_parameters`: not only the body.
+/// oxlint's `ExhaustiveDepsVisitor`. With `with_parameters` it covers the parameters as well as the body.
 fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
     let start = match (with_parameters, func.body()) {
         (true, _) => 0,
@@ -598,7 +602,8 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
             symbol: symbol_of(ident),
             chain: SmallVec::new(),
         };
-        // The outermost of `ident.a.b`, and what it is a property of.
+        // `member` ends up as the outermost member expression of `ident.a.b` with its property name, and `source` as
+        // the chain it's a property of.
         let mut member = None;
         let mut at = ident;
         let is_in_tag = ident.is_jsx_tag_name();
@@ -642,7 +647,8 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
     found
 }
 
-/// In a function that a function in `callback` returns: `return () => ..`. `known`: what is known for `callback`.
+/// True if `e` is in a function that's returned from inside `callback`: `return () => ..`. `known` is the memo for
+/// `callback`.
 fn is_inside_effect_cleanup<'a>(
     e: Expr<'a>,
     callback: Func<'a>,
@@ -662,18 +668,18 @@ fn is_inside_effect_cleanup<'a>(
     is_inside == Some(true)
 }
 
-/// What is the same for all calls in a file.
+/// Caches shared by all the calls in a file.
 #[derive(Default)]
 pub(crate) struct Memo<'a> {
-    /// Whether the value of a variable of a component is the same on every render.
+    /// True if a component variable's value is the same on every render.
     is_stable: IdMap<Symbol<'a>, bool>,
-    /// Whether `variable.current` is on either side of an assignment.
+    /// True if `variable.current` appears on either side of an assignment.
     is_current_written: IdMap<Symbol<'a>, bool>,
     /// [`places_of_symbols`]
     places_of_symbols: Option<Vec<(u32, u32)>>,
-    /// The `a.current` of the file, in the order of the source.
+    /// Every `a.current` in the file, in source order.
     currents: Option<Vec<Expr<'a>>>,
-    /// The function around something.
+    /// The enclosing function of a node.
     function_around: AncestorMemo<'a, Func<'a>>,
 }
 
@@ -681,10 +687,11 @@ struct Component<'a> {
     scope: Scope<'a>,
 }
 
-/// What tells whether the value of a variable is the same on every render.
+/// Tells whether a variable's value is the same on every render.
 enum Stability<'a> {
     Known(bool),
-    /// It is, if what the function reads is. With the variable that the function is the value of.
+    /// It's stable if everything the function reads is stable. Also holds the variable that the function is assigned
+    /// to.
     OfFunction(Func<'a>, Option<Symbol<'a>>),
 }
 
@@ -695,7 +702,8 @@ impl<'a> Component<'a> {
             .is_some_and(|it| !self.is_stable_value(it.0, it.1, memo))
     }
 
-    /// The variable, if `dependency` is a dependency unless the value of the variable is stable.
+    /// Returns `dependency`'s variable if it's declared in the component, which makes it a dependency unless its value
+    /// is stable.
     fn variable_of_component(
         &self,
         dependency: &Dependency<'a>,
@@ -754,7 +762,7 @@ impl<'a> Component<'a> {
         })
     }
 
-    /// The variables of the component that `func` reads. `None` if it reads `own`, the variable that it is the value of.
+    /// The component's variables that `func` reads. `None` if it reads `own`, the variable it's assigned to.
     fn variables_read_in(
         &self,
         func: Func<'a>,
@@ -773,9 +781,10 @@ impl<'a> Component<'a> {
         )
     }
 
-    /// oxlint's `is_stable_value`, which takes a function that it is looking at already for stable: so the value of a variable is
-    /// stable unless an unstable one can be reached from it, from a function to what it reads. The functions that read each other
-    /// are found as the strongly connected components of a graph are, so that each function is looked at once in a file.
+    /// oxlint's `is_stable_value`, which treats a function that it's already visiting as stable. So a variable's value
+    /// is stable unless an unstable one is reachable from it, following edges from each function to the variables it
+    /// reads. Functions that read each other are found like strongly connected components (Tarjan's algorithm), so each
+    /// function is visited once per file.
     fn is_stable_value(
         &self,
         symbol: Symbol<'a>,
@@ -787,14 +796,14 @@ impl<'a> Component<'a> {
             reads: Vec<(Symbol<'a>, Declared<'a>)>,
             next: usize,
             number: usize,
-            /// The least number of the functions in `open` that can be reached from it.
+            /// The lowest number among the functions in `open` that are reachable from it.
             lowest: usize,
         }
         if let Some(&known) = memo.is_stable.get(symbol) {
             return known;
         }
         let mut stack: Vec<Frame<'a>> = Vec::new();
-        // The functions that have been entered, and from which one in `stack` can be reached.
+        // The functions that have been entered and from which a function in `stack` is reachable.
         let mut open: Vec<Symbol<'a>> = Vec::new();
         let mut numbers: IdMap<Symbol<'a>, usize> = IdMap::default();
         let mut entering = Some((symbol, declared));
@@ -900,7 +909,8 @@ fn is_declaration_referentially_unique(symbol: Symbol) -> bool {
     }
 }
 
-/// `appended_to`: the array literal, if oxlint offers to put them at its end, and the `is_first` of [`replace_array`].
+/// `appended_to` is the array literal, if oxlint offers to append the missing dependencies to it, and the `is_first`
+/// argument for [`replace_array`].
 fn report_missing<'a, R: Rule>(
     cx: &Cx<'a, R>,
     (node, hook): (Expr<'a>, Name<'a>),
@@ -945,7 +955,7 @@ fn report_missing<'a, R: Rule>(
         .data("dependencies", names)
         .data("mutable", mutable)
         .labels_with(|labels| {
-            // Many texts are noise.
+            // Only label a single dependency. More label texts would be noise.
             if let [(_, name)] = missing {
                 let (hook, name) = (bstr::BStr::new(hook.bytes()), bstr::BStr::new(name));
                 labels.first(format!("{hook} uses `{name}` here"));
@@ -962,8 +972,9 @@ fn report_missing<'a, R: Rule>(
     }
 }
 
-/// Puts `text` in the place of `array`. Of the changes to one array, oxlint makes the one that it comes to first and leaves
-/// the others to the next run. Here the one that starts first is made: the others leave the `[` as it is.
+/// Replaces `array` with `text`. If several fixes change one array, oxlint applies the first one it reaches and leaves
+/// the others to the next pass. We apply the fix that starts first, so every fix but the first keeps the `[` and starts
+/// after it.
 fn replace_array<'a>(fixer: Fixer<'a>, array: Expr<'a>, text: &[u8], is_first: bool) -> Fix {
     let whole = array.span();
     match text {
@@ -974,8 +985,8 @@ fn replace_array<'a>(fixer: Fixer<'a>, array: Expr<'a>, text: &[u8], is_first: b
     }
 }
 
-/// What oxlint puts in the place of `array`: its elements without the one at `removed`, and then `appended`, as oxc prints an
-/// array: each on a line of its own if they are more than two, and without the comments.
+/// oxlint's replacement for `array`: its elements without the one at `removed`, followed by `appended`. It's printed
+/// like oxc prints an array, with each element on its own line if there are more than two, and without comments.
 fn print_array(array: Expr, removed: Option<Span>, appended: &[(Span, Vec<u8>)]) -> Vec<u8> {
     let ExprKind::Array(elements) = array.kind() else {
         return Vec::new();
@@ -1037,7 +1048,7 @@ fn print_element(codegen: &mut Codegen, element: Expr) {
     }
 }
 
-/// `call`: any call. `additional_hooks`: the option.
+/// `node` can be any call. `additional_hooks` is the rule's option.
 pub(crate) fn run<'a, R: Rule>(
     cx: &Cx<'a, R>,
     node: Expr<'a>,
@@ -1093,7 +1104,7 @@ pub(crate) fn run<'a, R: Rule>(
             let Some(dependencies_node) = dependencies_node else {
                 return;
             };
-            // Perhaps it is in the array.
+            // Don't report it if it's listed in the array.
             if let ExprKind::Array(elements) = inner(dependencies_node).kind()
                 && elements.iter().any(|it| inner(it).as_ident() == Some(name))
             {
@@ -1174,7 +1185,7 @@ pub(crate) fn run<'a, R: Rule>(
         return;
     };
 
-    // Each with its number in `found.paths`.
+    // The declared dependencies, each with its number in `found.paths`.
     let mut declared: Vec<(Dependency<'a>, u32)> = Vec::new();
     for element in elements {
         if matches!(element.tag(), ExprTag::Missing) {
@@ -1222,7 +1233,7 @@ pub(crate) fn run<'a, R: Rule>(
         }
     }
 
-    // Their positions in `declared`.
+    // The unnecessary outer-scope dependencies, as indices into `declared`.
     let mut outer: Vec<usize> = Vec::new();
     for (at, (dependency, _)) in declared.iter().enumerate() {
         if let Some(symbol) = dependency.symbol {
@@ -1251,10 +1262,10 @@ pub(crate) fn run<'a, R: Rule>(
             });
     }
 
-    // Their positions in `found.dependencies`.
+    // The undeclared dependencies, as indices into `found.dependencies`.
     let mut undeclared: Vec<usize> = (found.dependencies.iter().enumerate())
         .filter(|(_, (_, number))| found.paths.get(*number).declared == 0)
-        // What is read of `foo.current` counts for `foo`.
+        // A read of `foo.current` counts as a read of `foo`.
         .filter(|(_, (it, number))| {
             let base = (found.paths.get(*number).base, it.symbol);
             !(it.ends_in_current() && found.positions.contains_key(&base))
@@ -1326,8 +1337,8 @@ pub(crate) fn run<'a, R: Rule>(
                 .data("hook", hook)
                 .data("dependency", dependency.text());
         };
-        // The pairs of which one is a property of the other: the positions of the first and of the second in the array, and that of
-        // the property.
+        // The pairs where one dependency is a property of the other: the array indices of the first, of the second, and
+        // of the one that's the property.
         let mut pairs: Vec<(usize, usize, usize)> = Vec::new();
         for (at, (_, number)) in declared.iter().enumerate() {
             let above = paths
@@ -1335,7 +1346,7 @@ pub(crate) fn run<'a, R: Rule>(
                 .filter_map(|it| (it.declared as usize).checked_sub(1));
             pairs.extend(above.map(|other| (at.min(other), at.max(other), at)));
         }
-        // oxlint goes through the pairs of its hash table.
+        // oxlint visits the pairs in its hash table's iteration order.
         if pairs.len() > 1 {
             let places = places_in_table(&declared, cx.file(), memo);
             let place = |at: usize| places.get(at).copied().unwrap_or(0);

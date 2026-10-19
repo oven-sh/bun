@@ -10,8 +10,8 @@ pub struct NoRegexSpaces;
 const MULTIPLE_SPACES: Message =
     Message::new("multipleSpaces", "Spaces are hard to count. Use {{{length}}}.");
 
-/// The first match of `/( {2,})(?: [+*{?]|[^+*{?]|$)/gu` at or after `from`: where the group
-/// starts, its length, and where to go on searching.
+/// Finds the first match of `/( {2,})(?: [+*{?]|[^+*{?]|$)/gu` at or after `from`. Returns the group's start, its
+/// length, and where to resume searching.
 fn next_spaces(pattern: &[u8], mut from: usize) -> Option<(usize, usize, usize)> {
     loop {
         let start = from + strings::index_of(pattern.get(from..)?, b"  ")?;
@@ -29,7 +29,7 @@ fn next_spaces(pattern: &[u8], mut from: usize) -> Option<(usize, usize, usize)>
     }
 }
 
-/// `raw`: the pattern as it is written in the source, from `raw_start`.
+/// `raw` is the pattern's source text, which starts at `raw_start`.
 fn check_regex<'a>(
     node_to_report: Expr<'a>,
     pattern: &'a [u8],
@@ -42,7 +42,7 @@ fn check_regex<'a>(
     else {
         return;
     };
-    // Where the character classes start, each with the greatest end of those up to it.
+    // The character classes sorted by start, each paired with the largest end so far.
     let mut character_classes: Option<Vec<(u32, u32)>> = None;
     let mut is_in_character_class = |index: u32| {
         let classes = character_classes.get_or_insert_with(|| {
@@ -124,8 +124,9 @@ fn check_function<'a>(_: &NoRegexSpaces, e: Expr<'a>, cx: &mut Cx<'a, NoRegexSpa
     check_regex(e, pattern.bytes(), raw, raw_span.start, flags, cx);
 }
 
-/// oxlint takes for a space whatever stands for one, and counts the bytes that they are written with. It passes over what is
-/// repeated, does not ask what `RegExp` is, and reads the pattern of a call without its flags. It points at the spaces.
+/// oxlint treats an escape that matches a space as a space too, and counts the bytes of the source text. It skips
+/// quantified spaces, doesn't check what `RegExp` refers to, and parses a call's pattern without its flags. It points
+/// at the spaces.
 fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoRegexSpaces>) {
     let pattern = match e.kind() {
         ExprKind::Regex(literal) if has_double_space(literal.pattern()) => Pattern::of_literal(e),

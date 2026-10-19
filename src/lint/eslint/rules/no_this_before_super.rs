@@ -21,27 +21,28 @@ struct SegmentInfo<'a> {
 }
 
 struct FuncInfo<'a> {
-    /// It is the constructor of a class that has a valid `extends`.
+    /// True for the constructor of a class that has a valid `extends`.
     is_constructor_of_derived_class: bool,
     code_path: CodePath<'a>,
 }
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The constructor that is checked. Those of the classes in it are checked on their own.
+    /// The constructor being checked. The constructors of classes nested in it are checked separately.
     constructor: Option<Func<'a>>,
-    /// For each of the code paths around the current node, the innermost last.
+    /// One for each code path enclosing the current node, innermost last.
     func_infos: Vec<FuncInfo<'a>>,
-    /// By `Segment::id`, for the segments of the constructors that are checked.
+    /// Keyed by `Segment::id`, for the segments of the constructor being checked.
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
-    /// `winding_switches`
+    /// The result of `winding_switches`, computed on first use.
     winding_switches: Option<Vec<u32>>,
-    /// With a configuration of oxlint: in the arguments of how many `super()` that it takes for called the current node is.
+    /// Only under an oxlint config: the number of enclosing `super()` calls that have the current node in their
+    /// arguments and that oxlint already counts as called.
     called_around: u32,
 }
 
 impl<'a> State<'a> {
-    /// ESLint's `isInConstructorOfDerivedClass`: the innermost code path, if it is one to check.
+    /// ESLint's `isInConstructorOfDerivedClass`: returns the innermost code path if it needs checking.
     fn constructor_of_derived_class(&self) -> Option<CodePath<'a>> {
         let innermost = self.func_infos.last()?;
         innermost.is_constructor_of_derived_class.then_some(innermost.code_path)
@@ -57,8 +58,8 @@ impl<'a> State<'a> {
         !prev_segments.is_empty() && prev_segments.iter().all(|it| self.is_called(*it))
     }
 
-    /// ESLint's `isBeforeCallOfSuper`: the current segments that are reachable, if `super()` is not
-    /// called yet in all of the current segments of a constructor to check.
+    /// ESLint's `isBeforeCallOfSuper`: returns the reachable current segments, if this is a constructor to check and
+    /// `super()` hasn't been called yet in all of its current segments.
     fn segments_before_call_of_super(&self) -> Option<SmallVec<[Segment<'a>; 2]>> {
         let mut segments = self.constructor_of_derived_class()?.current_segments();
         if segments.iter().all(|it| self.is_called(*it)) {
@@ -69,8 +70,8 @@ impl<'a> State<'a> {
     }
 }
 
-/// `contains_this_or_super_in_args` of oxlint: a `this` or a `super` that is an argument, the object of one, what one calls
-/// or the object of that, or such an argument of an argument.
+/// oxlint's `contains_this_or_super_in_args`: true if an argument is `this` or `super`, a member of one, or a call
+/// whose callee is either of those or whose arguments match in turn.
 fn oxlint_contains_this_or_super<'a>(args: List<'a, Expr<'a>>) -> bool {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return false;
@@ -87,7 +88,7 @@ fn oxlint_contains_this_or_super<'a>(args: List<'a, Expr<'a>>) -> bool {
     })
 }
 
-/// Whether there is a `this` or a `super` in `node`.
+/// True if there's a `this` or a `super` in `node`.
 fn has_this_or_super(node: Node<'_>) -> bool {
     let mut todo = vec![node];
     while let Some(node) = todo.pop() {
@@ -99,7 +100,8 @@ fn has_this_or_super(node: Node<'_>) -> bool {
     false
 }
 
-/// Whether neither word is written from the start of `constructor` to the last argument of `call`, but for what is called.
+/// True if the source has neither word between the start of `constructor` and the last argument of `call`, not counting
+/// the callee.
 fn writes_neither_up_to(constructor: Func<'_>, call: Call<'_>) -> bool {
     let (file, callee) = (constructor.file(), call.callee().span());
     let end = call.args().last().map_or(callee.end, |it| it.outer_span().end);
@@ -108,9 +110,8 @@ fn writes_neither_up_to(constructor: Func<'_>, call: Call<'_>) -> bool {
     [before, after].iter().all(|it| !strings::contains(it, b"this") && !strings::contains(it, b"super"))
 }
 
-/// Whether it can be told from the statements of the body alone that there is no `this` or `super`
-/// before `super()` is called: that is a statement of its own there, and there is none in the
-/// parameters, in the types of the signature, in what precedes it and in its arguments.
+/// Fast path that skips the code path analysis: true if `super()` is a top-level statement of the body, and there's no
+/// `this` or `super` in the parameters, the signature's types, the statements before it, or its arguments.
 fn calls_super_first(constructor: Func<'_>) -> bool {
     first_super_statement(constructor).is_some_and(|(mut before, call)| {
         writes_neither_up_to(constructor, call)
@@ -122,8 +123,9 @@ fn calls_super_first(constructor: Func<'_>) -> bool {
     })
 }
 
-/// Where the `switch` statements start whose `default` is not the last case, sorted. Where such a statement is not
-/// reached, ESLint has a segment that is reached and that nothing precedes, so `super()` is not called before it.
+/// Returns the sorted start offsets of the `switch` statements whose `default` isn't the last case. Where such a
+/// statement is unreachable, ESLint still creates a reachable segment without predecessors, so `super()` isn't called
+/// before it.
 fn winding_switches<'a>(file: &'a File<'a>) -> Vec<u32> {
     let is_winding = |statement: &Stmt| match statement.kind() {
         StmtKind::Switch { cases, .. } => {
@@ -166,7 +168,7 @@ impl NoThisBeforeSuper {
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        // For oxlint the fields and the static blocks of a class in the constructor are a part of the constructor.
+        // oxlint treats the fields and static blocks of a class nested in the constructor as part of the constructor.
         if is_oxlint
             && matches!(node, Node::Expr(_) | Node::Member(_))
             && let Some(code_path) = cx.state.constructor_of_derived_class()
@@ -197,9 +199,10 @@ impl NoThisBeforeSuper {
         if !cx.state.func_infos.pop().is_some_and(|it| it.is_constructor_of_derived_class && it.code_path == code_path) {
             return;
         }
-        // ESLint's `onCodePathSegmentLoop` marks the segments of a loop before all of which `super()` is
-        // called. There is no need to: this leaves out a segment if it leaves out all that precede
-        // it, so one that is marked for what precedes it is not looked at, marked or not.
+        // ESLint's `onCodePathSegmentLoop` marks a loop's segment as called once `super()` is called in all of its
+        // predecessors. That isn't needed here: the traversal below skips a segment when it skips all of its
+        // predecessors, so such a segment is never visited, marked or not.
+        //
         // In a `finally` block a node belongs to several segments.
         let mut reported = FxHashSet::default();
         // oxlint reports a constructor once, and points at it.
@@ -234,14 +237,15 @@ impl NoThisBeforeSuper {
         cx.state.seg_info_map.insert(segment.id(), info);
     }
 
-    /// At a `this` or a `super`.
+    /// Called at each `this` and `super`.
     fn on_this_or_super<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(e) = node else {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
         if e.tag() == ExprTag::Super && ast_utils::is_callee(e) {
-            // oxlint takes `super()` for called before its arguments. If it sees a `this` in them, it is never called.
+            // oxlint counts `super()` as called before its arguments run. If it finds a `this` in them, the call never
+            // counts.
             let call = e.parent().as_expr().and_then(Expr::as_call).filter(|_| is_oxlint);
             if !call.is_some_and(|call| oxlint_contains_this_or_super(call.args())) {
                 cx.state.called_around += u32::from(is_oxlint);

@@ -10,7 +10,7 @@ const ONLY_USED_IN_RECURSION: Message = Message::new("", "Parameter `{{param_nam
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The names under which the module exports something. Looked for when there is something to report.
+    /// The names the module exports. Computed lazily, once there's something to report.
     exported_bindings: Option<FxHashSet<Name<'a>>>,
 }
 
@@ -34,7 +34,7 @@ impl Rule for OnlyUsedInRecursion {
         let Some(function) = function_symbol(func) else {
             return;
         };
-        // Asked when a parameter is found.
+        // Computed lazily, once a parameter qualifies.
         let mut known = None;
         let mut is_reassigned = || *known.get_or_insert_with(|| is_function_reassigned(function));
         let parameter_count = func.params().iter().filter(|it| !it.is_rest()).count();
@@ -67,7 +67,7 @@ impl Rule for OnlyUsedInRecursion {
     }
 }
 
-/// The variable that the function is the initializer of, or else what its name declares.
+/// Returns the variable that the function initializes, or else the symbol its own name declares.
 fn function_symbol(func: Func<'_>) -> Option<Symbol<'_>> {
     let declared = match func.owner() {
         Node::Expr(e) => match e.parent() {
@@ -79,7 +79,8 @@ fn function_symbol(func: Func<'_>) -> Option<Symbol<'_>> {
     declared.or_else(|| func.symbol())
 }
 
-/// What oxlint has as the references to a symbol: not the name in a declaration with a value, nor the `a` of `a is T`.
+/// Returns what oxlint counts as references to a symbol: not the name in a declaration with an initializer, nor the `a`
+/// in `a is T`.
 fn symbol_references(symbol: Symbol<'_>) -> impl Iterator<Item = Reference<'_>> {
     symbol.references().filter(|it| {
         !it.is_jsx_pragma()
@@ -91,7 +92,7 @@ fn symbol_references(symbol: Symbol<'_>) -> impl Iterator<Item = Reference<'_>> 
     })
 }
 
-/// The call that the reference is directly in: as an argument, or as what is called.
+/// Returns the call that directly contains the reference, as an argument or as the callee.
 fn call_around(reference: Reference<'_>) -> Option<(Expr<'_>, Call<'_>)> {
     let identifier = reference.expr().filter(|it| !it.is_parenthesized())?;
     let parent = identifier.parent().as_expr()?;
@@ -141,7 +142,7 @@ fn exported_bindings<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     names
 }
 
-/// `last_index`: the index of the parameter, if it is the last.
+/// `last_index`: the parameter's index, if it's the last parameter.
 fn report_parameter<'a>(
     cx: &mut Cx<'a, OnlyUsedInRecursion>,
     func: Func<'a>,
@@ -158,7 +159,7 @@ fn report_parameter<'a>(
     report.fix_dangerously(|fixer| {
         let mut fix = vec![delete_with_preceding_separator(fixer, parameter.span())];
         fix.extend(symbol_references(symbol).map(|it| delete_with_preceding_separator(fixer, it.span())));
-        // The argument of the calls from elsewhere.
+        // Also remove the argument from calls outside the function.
         let function_span = func.estree_span();
         for (call_expr, call) in symbol_references(function).filter_map(call_around) {
             if call.args().len() == parameter_index + 1
@@ -185,7 +186,7 @@ fn report_jsx_property<'a>(
         return;
     }
     report.fix_dangerously(|fixer| {
-        // The property could also be in what is spread.
+        // The property could also come from a spread attribute.
         if symbol_references(symbol).any(is_used_with_spread_attribute) {
             return None;
         }
@@ -195,7 +196,7 @@ fn report_jsx_property<'a>(
     });
 }
 
-/// The attributes of JSX elements that `node` is in, from the inside, those that are spread too.
+/// Returns the JSX attributes that contain `node`, innermost first, including spread attributes.
 fn jsx_attribute_items_around(node: Node<'_>) -> impl Iterator<Item = Prop<'_>> {
     node.ancestors().filter_map(|it| match it {
         Node::Prop(prop) if prop.is_jsx_attribute() => Some(prop),
@@ -245,12 +246,12 @@ fn is_jsx_property_only_used_in_recursion<'a>(symbol: Symbol<'a>, property_name:
     let mut is_used = false;
     for reference in symbol_references(symbol) {
         is_used = true;
-        // It is all that is between the braces.
+        // It has to be the whole content of the braces.
         let Some(identifier) = reference.expr().filter(|it| it.jsx_container_span().is_some() && !it.is_parenthesized()) else {
             return false;
         };
         let node = Node::Expr(identifier);
-        // `a:b` is not an identifier.
+        // `a:b` isn't an identifier.
         let is_same_name = |key: Key<'a>| {
             matches!(key.kind(), KeyKind::Ident(name) if name == property_name && !bun_core::strings::contains_char(name.bytes(), b':'))
         };
@@ -273,7 +274,7 @@ fn is_function_reassigned(function: Symbol) -> bool {
         })
 }
 
-/// What the `A` of `<A>` and of `<A.b.c>` refers to. `<a>` refers to nothing.
+/// Returns what the `A` in `<A>` or `<A.b.c>` refers to. `<a>` doesn't refer to anything.
 fn get_jsx_element_symbol(element: Jsx<'_>) -> Option<Symbol<'_>> {
     let tag = element.tag()?;
     let mut identifier = tag;
@@ -288,7 +289,7 @@ fn is_separator(c: char) -> bool {
     c.is_whitespace() || c == ','
 }
 
-/// Where the whitespace and the commas before `at` start.
+/// Returns the start of the whitespace and commas before `at`.
 fn skip_separators_back(text: &[u8], at: u32) -> u32 {
     let before = text.get(..at as usize).unwrap_or_default();
     before.char_indices().rev().take_while(|it| is_separator(it.2)).last().map_or(at, |it| it.0 as u32)
@@ -301,7 +302,7 @@ fn delete_with_preceding_separator(fixer: Fixer, span: Span) -> Fix {
 fn delete_with_surrounding_separators(fixer: Fixer, span: Span) -> Fix {
     let text = fixer.file().text();
     let after = text.get(span.end as usize..).unwrap_or_default();
-    // Nothing more is deleted if the text ends with separators.
+    // If only separators follow up to the end of the text, none of them are deleted.
     let end = after.char_indices().find(|it| !is_separator(it.2)).map_or(span.end, |it| span.end + it.0 as u32);
     fixer.remove(Span::new(skip_separators_back(text, span.start), end))
 }

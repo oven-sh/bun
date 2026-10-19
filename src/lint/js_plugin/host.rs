@@ -1,4 +1,4 @@
-//! What the linter talks to: loads plugins, and runs their rules on a file.
+//! The linter's interface to JavaScript plugins: loads them and runs their rules on a file.
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
@@ -25,13 +25,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
 pub struct Report {
-    /// The index of the rule among those that were run.
+    /// The rule's index among the rules that were run.
     pub rule: u32,
     pub message: Vec<u8>,
     pub message_id: Option<Box<str>>,
-    /// From 1. `None`: the rule gave something that isn't a number.
+    /// 1-based. `None` if the rule passed something that isn't a number.
     pub line: Option<u32>,
-    /// From 1, in UTF-16 code units. `None`: as for `line`.
+    /// 1-based, in UTF-16 code units. `None` in the same case as `line`.
     pub column: Option<u32>,
     /// `endLine` and `endColumn`.
     pub end: Option<(u32, u32)>,
@@ -45,15 +45,15 @@ pub struct Suggested {
     pub message_id: Option<Box<str>>,
     /// `desc`
     pub message: Vec<u8>,
-    /// `data` as JSON, if the rule gave any.
+    /// `data` as JSON, if the rule passed any.
     pub data: Option<Vec<u8>>,
     pub fix: Fix,
 }
 
-/// Why there are no reports for a file.
+/// Why a file has no reports.
 #[derive(Clone, Debug)]
 pub struct Failure {
-    /// The index of the rule that threw, among those that were run.
+    /// The index of the rule that threw, among the rules that were run.
     pub rule: Option<u32>,
     pub at: ThrownAt,
     pub message: Vec<u8>,
@@ -80,23 +80,23 @@ impl From<Vec<u8>> for Failure {
     }
 }
 
-/// Parses the text of a file once more, on the thread that calls it, and hands over the result. It isn't called back if the text
-/// can't be parsed.
+/// Parses a file's text again on the calling thread and passes the result to the callback. The callback isn't called if
+/// the text can't be parsed.
 pub type ParseAgain<'p> = dyn Fn(&mut dyn for<'f> FnMut(&'f File<'f>)) + Sync + 'p;
 
-/// The JavaScript that a run has loaded, in all realms together.
+/// The JavaScript that a run has loaded, summed over all realms.
 #[derive(Clone, Default, Debug)]
 pub struct Loading {
     pub realms: u32,
-    /// Files. One that two realms load counts twice.
+    /// Files. A file that two realms load counts twice.
     pub modules: u64,
-    /// Their size.
+    /// Their total size.
     pub bytes: u64,
     /// The time it took to load plugins and processors.
     pub milliseconds: f64,
-    /// What only the configuration file has, so that a realm has to run all of that to get at it.
+    /// The things that only the config file has, so a realm has to run the whole file to get them.
     pub need_the_configuration: Vec<Box<[u8]>>,
-    /// How many texts ESLint's own `Linter` was given.
+    /// How many texts were passed to ESLint's own `Linter`.
     pub linted_by_eslint: u64,
     /// [`Engine::sizes`]
     pub sizes: (usize, usize),
@@ -110,13 +110,11 @@ impl Loading {
     }
 }
 
-/// A plugin that is loaded.
 struct Loaded {
-    /// JSON: where it is.
+    /// JSON: its location.
     location: Vec<u8>,
-    /// Only the configuration file has it.
+    /// Only the config file has it.
     needs_the_configuration: bool,
-    /// The number of its first rule.
     first_rule: u32,
     plugin: Arc<Plugin>,
 }
@@ -125,43 +123,43 @@ struct Loaded {
 struct State {
     plugins: Vec<Loaded>,
     rules: u32,
-    /// The selectors that rules have listened for, by their numbers. `None`: it cannot be parsed.
+    /// The selectors that rules have listened for, indexed by number. `None` if it can't be parsed.
     selectors: Vec<Option<Arc<Selector>>>,
-    /// By their text.
+    /// Keyed by selector text.
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
     /// [`Host::rules_that_asked_for_types`]
     asked_for_types: Vec<Arc<Rule>>,
 }
 
-/// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
+/// The start of the error that `getParserServices` in `@typescript-eslint/utils` throws, in every version.
 const ASKS_FOR_TYPES: &[u8] = b"You have used a rule which requires ";
 
-/// The plugins of a run. All threads share it.
+/// A run's plugins, shared by all threads.
 pub struct Host<'e> {
     pub(super) engine: &'e dyn Engine,
     cwd: Vec<u8>,
-    /// Whether [`Host::loading`] is read.
+    /// True if [`Host::loading`] will be read.
     measures: bool,
-    /// Whether a rule [has asked for types](Host::has_asked_for_types).
+    /// True if any rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
     state: Guarded<State>,
 }
 
 pub(super) fn number(json: Option<&Json>) -> Option<u32> {
     match json {
-        // A column of -1, which ESLint has, is `u32::MAX`.
+        // ESLint can have a column of -1, which becomes `u32::MAX`.
         Some(Json::Number(n)) if *n < 0.0 => Some((*n as i64) as u32),
         Some(Json::Number(n)) => Some(*n as u32),
         _ => None,
     }
 }
 
-/// [`Host::for_each`]
+/// The work of [`Host::for_each`].
 struct Each<'e> {
-    /// The heavy ones, and the others.
+    /// The heavy files, then the others.
     lists: [Vec<usize>; 2],
-    /// How many of each are taken.
+    /// How many of each have been taken.
     next: [AtomicUsize; 2],
     work: &'e (dyn Fn(usize) + Sync),
 }
@@ -195,7 +193,7 @@ impl Work for Each<'_> {
     }
 }
 
-/// What [`Host::run_on_block`] is given besides the file.
+/// The arguments of [`Host::run_on_block`] other than the file.
 #[derive(Copy, Clone)]
 struct How<'h> {
     settings: &'h FileSettings,
@@ -208,7 +206,7 @@ const OUT_OF_STEP: &[u8] =
     b"Internal error while running JavaScript plugins. This is a bug in Bun.";
 
 impl<'e> Host<'e> {
-    /// `cwd`: ESLint's `context.cwd`.
+    /// `cwd` is ESLint's `context.cwd`.
     pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
         Host {
             engine,
@@ -219,7 +217,7 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// The same host, which keeps track of what is loaded.
+    /// Returns the same host, which tracks what's loaded if `measures` is set.
     pub fn measuring(self, measures: bool) -> Host<'e> {
         Host { measures, ..self }
     }
@@ -228,7 +226,8 @@ impl<'e> Host<'e> {
         self.state.lock().loading.linted_by_eslint += 1;
     }
 
-    /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
+    /// Returns what has been loaded so far. Unless the host is [measuring](Host::measuring), only the number of realms
+    /// is known.
     pub fn loading(&self) -> Loading {
         Loading {
             sizes: self.engine.sizes(),
@@ -236,7 +235,7 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// Answers what a realm asks for whatever it is called with. Returns whether that is what was asked for.
+    /// Answers the requests that a realm can make during any kind of call. Returns `false` for any other request.
     pub(super) fn serve_any(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
         match asked {
             ask::START => {
@@ -295,8 +294,8 @@ impl<'e> Host<'e> {
         self.engine.busy()
     }
 
-    /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy`: whether the file with that number
-    /// is [`HEAVY`](super::HEAVY).
+    /// Calls `work` with every number below `count`, on threads that have a realm. `is_heavy` tells whether the file
+    /// with that number is [`HEAVY`](super::HEAVY).
     pub fn for_each(
         &self,
         count: usize,
@@ -309,22 +308,22 @@ impl<'e> Host<'e> {
             next: Default::default(),
             work,
         };
-        // Without a realm each fails, and says why.
+        // Without a realm, each file fails with a message that explains why.
         if self.engine.work_off(&each, &mut || ()).is_err() {
             each.finish_here();
         }
     }
 
-    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
+    /// True if `rule` has asked for types, which JavaScript rules can't get. It isn't run on any more files.
     pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
             && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
     }
 
-    /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
+    /// True if `thrown`, the message of an error that `rule` threw, means the rule needs types. From then on the rule
     /// [has asked](Host::has_asked_for_types).
     pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
-        // With an oxlint config the message comes after the class of the error.
+        // With an oxlint config, the error's class precedes the message.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
         if !message.starts_with(ASKS_FOR_TYPES) {
             return false;
@@ -336,7 +335,7 @@ impl<'e> Host<'e> {
         true
     }
 
-    /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
+    /// The rules that [have asked for types](Host::has_asked_for_types), sorted by name.
     pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
         let mut rules = self.state.lock().asked_for_types.clone();
         crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
@@ -344,7 +343,7 @@ impl<'e> Host<'e> {
         rules
     }
 
-    /// The plugins that are known, each with where it is: `[directory, specifier, alias]` of [`Host::load`], or
+    /// The known plugins, each with its location: the `[directory, specifier, alias]` of [`Host::load`], or the
     /// `[location, null, prefix]` of [`Host::load_located`].
     pub fn plugins(&self) -> Vec<(Arc<Plugin>, Json)> {
         let state = self.state.lock();
@@ -353,9 +352,8 @@ impl<'e> Host<'e> {
         state.plugins.iter().filter_map(located).collect()
     }
 
-    /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
-    /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
-    /// plugin has for itself.
+    /// Loads a plugin. `specifier` is a path relative to `directory`, or a package name that's resolved from there.
+    /// `alias` is the prefix of its rules, if that isn't the plugin's own name.
     pub fn load(
         &self,
         directory: &[u8],
@@ -375,7 +373,7 @@ impl<'e> Host<'e> {
         self.load_from(location)
     }
 
-    /// The file that [`Host::load`] would load, as Node.js writes the path. Nothing is loaded.
+    /// Returns the file that [`Host::load`] would load, with the path as Node.js writes it. Doesn't load anything.
     pub fn resolve(&self, directory: &[u8], specifier: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
         let mut message = b"[[".to_vec();
         json_stringify(directory, &mut message);
@@ -391,9 +389,9 @@ impl<'e> Host<'e> {
         file.map(<[u8]>::to_vec).ok_or_else(|| OUT_OF_STEP.to_vec())
     }
 
-    /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
-    /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
-    /// With `described`, which is what the plugin consists of as JSON in a string, nothing is loaded yet.
+    /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location` is its entry in `$jsPlugins`, where the
+    /// script that evaluates such a file records where the plugin is. If it has `described`, a string with JSON that
+    /// describes the plugin's contents, nothing is loaded yet.
     pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
         let entries = location.as_object().unwrap_or_default().iter();
         let place = entries.filter(|it| it.0 != b"described").cloned().collect();
@@ -411,7 +409,7 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// Takes note of the plugin at `location`, which is `described`.
+    /// Registers the plugin at `location`, whose contents are `described`.
     fn register(
         &self,
         location: Vec<u8>,
@@ -453,8 +451,8 @@ impl<'e> Host<'e> {
         Ok(self.register(location, &described, false))
     }
 
-    /// Has `vm` load the plugin at `location`. `place`: its position among the plugins and the number of its first rule, once
-    /// it has them. Returns the description of the plugin.
+    /// Makes `vm` load the plugin at `location`. `place` is its index among the plugins and the number of its first
+    /// rule, once it has them. Returns the plugin's description.
     fn load_in(
         &self,
         vm: &mut dyn Vm,
@@ -479,7 +477,7 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// Given JSON, selectors as text, appends what [`ask::SELECTORS`] says.
+    /// Takes a JSON list of selector strings and appends the answer to [`ask::SELECTORS`].
     fn describe_selectors(&self, texts: &[u8], out: &mut Vec<u8>) {
         let texts = crate::json::parse(texts);
         let mut state = self.state.lock();
@@ -518,7 +516,6 @@ impl<'e> Host<'e> {
         out.push(b']');
     }
 
-    /// The selectors with these numbers.
     fn selectors_at(&self, numbers: impl Iterator<Item = u32>) -> Vec<Option<Arc<Selector>>> {
         let mut numbers = numbers.peekable();
         if numbers.peek().is_none() {
@@ -530,7 +527,7 @@ impl<'e> Host<'e> {
             .collect()
     }
 
-    /// The positions of the plugins that a realm has to load for the rules `enabled`, in ascending order.
+    /// The indices of the plugins that a realm has to load for the rules `enabled`, ascending.
     fn plugins_of(enabled: &[&Configured]) -> Vec<u32> {
         let without_module = enabled.iter().filter(|it| it.rule.location.is_none());
         let mut positions: Vec<u32> = without_module.map(|it| it.rule.plugin).collect();
@@ -539,9 +536,10 @@ impl<'e> Host<'e> {
         positions
     }
 
-    /// Runs the rules `enabled` on `file`. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if
-    /// not all of it. `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is
-    /// part of what a rule does. `parse_again`: for a thread that has no realm. A thread that has one parses the text itself.
+    /// Runs the rules `enabled` on `file`. `physical_path_len` is the length of the prefix of the file's path that is
+    /// ESLint's `physicalFilename`, if that isn't the whole path. `wants_fixes: false` is ESLint's `disableFixes`. It
+    /// doesn't depend on whether anyone reads the fixes, because being asked for a fix is part of what a rule does.
+    /// `parse_again` is used if the calling thread has no realm: the thread that has one then parses the text itself.
     pub fn run_on_block<'a>(
         &self,
         file: &'a File<'a>,
@@ -571,7 +569,7 @@ impl<'e> Host<'e> {
         Ok(reports)
     }
 
-    /// Returns the reports, and the indices of the variables that rules have marked as used.
+    /// Returns the reports and the indices of the variables that rules marked as used.
     fn run_in<'a>(
         &self,
         vm: &mut dyn Vm,
@@ -618,7 +616,7 @@ impl<'e> Host<'e> {
         message.extend_from_slice(if has_mark { &text[3..] } else { text });
 
         let mut nodes = None;
-        // What `code_path::estree::analyze` says about the file.
+        // The result of `code_path::estree::analyze` for the file.
         let mut code_paths: Option<Vec<u32>> = None;
         let reported = RefCell::new(Vec::new());
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
@@ -656,7 +654,7 @@ impl<'e> Host<'e> {
                 }
             }
             ask::LIB_VARIABLES => {
-                // typescript-eslint defines the `const` of `x as const` after the libraries.
+                // typescript-eslint defines the `const` in `x as const` after the libraries.
                 let for_const = LanguageOptions::lib_name_count() as u32;
                 let mut words = vec![for_const + 1, 0];
                 words.extend(file.language().lib_variable_entries());
@@ -764,7 +762,8 @@ impl<'e> Host<'e> {
     }
 }
 
-/// What oxlint takes the file for: 0 a module, 1 a script, 2 CommonJS, and 4 if it can't have JSX. With another configuration 0.
+/// How oxlint treats the file: 0 for a module, 1 for a script, 2 for CommonJS, plus 4 if it can't have JSX. 0 with any
+/// other config.
 fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     if !file.language().is_oxlint {
         return 0;
@@ -781,8 +780,10 @@ fn source_type_for_oxlint<'a>(file: &'a File<'a>) -> u32 {
     source_type | (u32::from(has_no_jsx) << 2)
 }
 
-/// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
-/// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
+/// Reads a plugin's description:
+/// `{ name, isAlias, id, file, export, hasNothing, rules: [{ name, at, type, fixable, hasSuggestions, schema, .. }] }`,
+/// where `..` is `defaultOptions`, `deprecated` and `replacedBy`. The rules are numbered from `first`, in that order.
+/// `position` is the plugin's index. `needs_the_configuration` means no module exports it.
 fn plugin_of(
     described: &Json,
     (position, first): (u32, u32),
@@ -801,7 +802,7 @@ fn plugin_of(
         .get(b"rules")
         .and_then(Json::as_array)
         .unwrap_or_default();
-    // The rules of `--rulesdir` are those of a plugin without a name, and have no prefix.
+    // `--rulesdir` rules belong to a plugin without a name and have no prefix.
     let separator: &[u8] = if name.is_empty() { b"" } else { b"/" };
     let rule = |(i, it): (usize, &Json)| {
         Arc::new(Rule {

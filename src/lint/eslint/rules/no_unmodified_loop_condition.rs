@@ -13,7 +13,7 @@ const LOOP_CONDITION_NOT_MODIFIED: Message = Message::new(
     "'{{name}}' is not modified in this loop.",
 );
 
-/// ESLint's `SENTINEL_PATTERN`, of a `node.type`.
+/// ESLint's `SENTINEL_PATTERN`, tested against a `node.type`.
 fn is_sentinel(node_type: &str) -> bool {
     const SUFFIXES: [&str; 8] = [
         "CallExpression",
@@ -31,30 +31,30 @@ fn is_sentinel(node_type: &str) -> bool {
 /// ESLint's `LoopConditionInfo`.
 struct Condition<'a> {
     reference: Reference<'a>,
-    /// The outermost `BinaryExpression` or `ConditionalExpression` that the reference is in.
+    /// The outermost `BinaryExpression` or `ConditionalExpression` that contains the reference.
     group: Option<Expr<'a>>,
     /// The loop.
     inside: Span,
     /// The `init` of a `for`.
     outside: Option<Span>,
-    /// [`Functions::around`] the loop.
+    /// The result of [`Functions::around`] for the loop.
     function: u32,
     is_modified: bool,
-    /// It is in a conditional expression, with `checkConditionalExpressions`.
+    /// True if it's in a conditional expression and `checkConditionalExpressions` is on.
     is_alone: bool,
 }
 
-/// The functions around nodes.
+/// Memos for finding a node's enclosing function.
 struct Functions<'a> {
     is_oxlint: bool,
     nearest: AncestorMemo<'a, Func<'a>>,
-    /// The function declaration around a node.
+    /// The function declaration enclosing a node.
     declarations: AncestorMemo<'a, Func<'a>>,
 }
 
 impl<'a> Functions<'a> {
-    /// For oxlint what is in a function in a loop is not in the loop: a number for the function that `node` is in, 0
-    /// for what is in none. A static block is none. For ESLint always 0.
+    /// Returns an ID for the function that `node` is in, or 0 outside a function. oxlint doesn't count code in a
+    /// function nested in a loop as part of the loop. A static block isn't a function. Always 0 for ESLint.
     fn around(&mut self, node: Node<'a>) -> u32 {
         if !self.is_oxlint {
             return 0;
@@ -71,16 +71,16 @@ impl<'a> Functions<'a> {
     }
 }
 
-/// References, each with [`Functions::around`] it, sorted by that and by where they are.
+/// References, each with its [`Functions::around`] ID, sorted by ID and then by position.
 type Places = Vec<(u32, Span)>;
 
-/// Where a variable is modified.
+/// The writes to a variable, and the calls that may write to it.
 struct Modifiers<'a> {
     /// The references that write to it.
     all: Vec<Reference<'a>>,
     writes: Places,
-    /// The references to the function declarations that one of these is in. They are looked for when a loop has none of
-    /// `writes` in it.
+    /// The references to the function declarations that contain one of the writes. Computed the first time a loop has
+    /// none of `writes` in it.
     calls: Option<Places>,
 }
 
@@ -118,7 +118,7 @@ impl<'a> Modifiers<'a> {
                     && let Some(variable) = modifier.scope().parent().and_then(|it| it.resolve_name(name.name()))
                     && seen.insert(variable)
                 {
-                    // For oxlint the function has to be called.
+                    // oxlint requires the function to be called.
                     calls.extend(variable.references().filter(|it| !functions.is_oxlint || is_invocation(it)));
                 }
             }
@@ -138,19 +138,20 @@ impl<'a> Condition<'a> {
         inside.start < inside.end && (inside.start < outside.start || outside.end < inside.end)
     }
 
-    /// ESLint's `hasModifierInLoop`, for any of the modifiers: it is in the loop, or in a function
-    /// declaration that is referred to in the loop.
+    /// ESLint's `hasModifierInLoop`, for any of the modifiers: it's in the loop, or in a function declaration that the
+    /// loop references.
     fn has_modifier_in_loop(&self, modifiers: &mut Modifiers<'a>, functions: &mut Functions<'a>) -> bool {
         self.is_any_in_loop(&modifiers.writes) || self.is_any_in_loop(modifiers.calls(functions))
     }
 }
 
-/// What is above a node that is in no call, function or statement yet.
+/// The result of `look_above`, which walks from a node up to the nearest sentinel: a call, function, statement and so
+/// on.
 #[derive(Copy, Clone)]
 struct Above<'a> {
-    /// The loop whose test it is in.
+    /// The loop whose test the node is in.
     statement: Option<Stmt<'a>>,
-    /// The outermost `BinaryExpression` or `ConditionalExpression` that it is, or is in.
+    /// The outermost `BinaryExpression` or `ConditionalExpression` that the node is, or is in.
     group: Option<Expr<'a>>,
     /// [`Condition::is_alone`]
     is_alone: bool,
@@ -160,13 +161,13 @@ struct Above<'a> {
 pub struct State<'a> {
     /// The tests of the loops.
     tests: Vec<Span>,
-    /// `has_dynamic_expressions`
+    /// Caches `has_dynamic_expressions`.
     is_dynamic: IdMap<Expr<'a>, bool>,
     is_oxlint: bool,
 }
 
-/// ESLint's `isWriteReference`. Of the initializers only those of `var` count: they are evaluated
-/// again in each iteration of a loop around them. For oxc what a declaration initializes is no reference.
+/// ESLint's `isWriteReference`. Only a `var`'s initializer counts, because it runs again in each iteration of an
+/// enclosing loop. In oxc, a declaration's initializer doesn't create a reference.
 fn is_write_reference(reference: Reference, is_oxlint: bool) -> bool {
     if reference.is_init() {
         if is_oxlint {
@@ -185,8 +186,8 @@ fn is_write_reference(reference: Reference, is_oxlint: bool) -> bool {
     reference.is_write()
 }
 
-/// oxlint goes on at a call or a member expression that is the whole of an optional chain, and at a member expression
-/// that is written to.
+/// oxlint doesn't stop at a call or member expression that's the root of an optional chain, or at a member expression
+/// that's written to.
 fn is_passed_by_oxlint(node: Node) -> bool {
     let is_updated = |e: Expr| {
         matches!(e.parent(), Node::Expr(parent) if matches!(
@@ -220,7 +221,7 @@ fn has_dynamic_expressions(root: Expr, is_oxlint: bool) -> bool {
 }
 
 impl NoUnmodifiedLoopCondition {
-    /// Walks up from `node`, whose child on the way is `child`.
+    /// Walks up from `node`. `child` is the child the walk came from.
     fn look_above<'a>(&self, mut child: Node<'a>, mut node: Node<'a>, is_oxlint: bool) -> Above<'a> {
         let (mut group, mut is_alone) = (None, false);
         loop {
@@ -257,24 +258,24 @@ impl NoUnmodifiedLoopCondition {
         state: &mut State<'a>,
         functions: &mut Functions<'a>,
     ) -> Option<Condition<'a>> {
-        // oxlint does not look at types.
+        // oxlint ignores references in types.
         if reference.is_init() || state.is_oxlint && !reference.is_value() {
             return None;
         }
         let child = reference.node();
         let node = match child {
             Node::Expr(_) | Node::Pat(_) => utils::estree_parent(child),
-            // The name is a part of it.
+            // The name is part of this node.
             _ => child,
         };
         let Above { statement, group, is_alone } = self.look_above(child, node, state.is_oxlint);
         let statement = statement?;
-        // What is dynamic in a group is so in those around it.
+        // Only the outermost group needs checking: anything dynamic in an inner group is also inside the outer one.
         let is_oxlint = state.is_oxlint;
         let is_dynamic = group
             .is_some_and(|it| *state.is_dynamic.get_or_insert_with(it, || has_dynamic_expressions(it, is_oxlint)));
         if is_dynamic
-            // What nothing defines is not a variable. For oxlint the file has to declare it.
+            // An undefined name isn't a variable. For oxlint the file has to declare it.
             || reference.symbol().is_none() && (is_oxlint || reference.global().is_none())
         {
             return None;
@@ -325,12 +326,12 @@ impl Rule for NoUnmodifiedLoopCondition {
             return;
         }
         utils::sort::sort_unstable_by_key(&mut spans, |it| it.start);
-        // Only the references in the test of a loop are looked at.
+        // Only references in a loop's test matter.
         let mut conditions: Vec<Condition<'a>> = Vec::new();
         let is_oxlint = cx.state.is_oxlint;
         let mut functions =
             Functions { is_oxlint, nearest: AncestorMemo::default(), declarations: AncestorMemo::default() };
-        // Each once: a test can be in another.
+        // A test can be nested in another, so skip the part already visited.
         let mut end = 0u32;
         for test in spans {
             for reference in cx.file().references_within(Span::new(test.start.max(end), test.end)) {
@@ -360,10 +361,11 @@ impl Rule for NoUnmodifiedLoopCondition {
                 modified_groups.insert(group);
             }
         }
-        // It is fine if anything in a group is modified.
+        // A group is fine if anything in it is modified.
         conditions.retain(|it| !it.is_modified && !it.group.is_some_and(|it| modified_groups.contains(it)));
         if is_oxlint {
-            // oxlint reports a variable once in a loop: where it is in no group, or else where it is first.
+            // oxlint reports a variable once per loop: at a reference outside any group if there is one, otherwise at
+            // the first.
             let variable_in_loop = |it: &Condition<'a>| (it.inside.start, it.reference.symbol().map(Symbol::key));
             utils::sort::sort_by_key(&mut conditions, |it| (variable_in_loop(it), it.is_alone, it.group.is_some()));
             let mut last = None;

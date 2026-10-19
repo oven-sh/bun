@@ -7,15 +7,16 @@ use smallvec::SmallVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
 
-/// Where `esquery` passes the ancestors of a node along, this asks the node for its parent.
+/// Where `esquery` passes a node's ancestors along, this gets the parent from the node.
 #[derive(Copy, Clone)]
 pub(super) struct Matcher<'s, 'a> {
     pub(super) program: &'s Program,
     pub(super) dialect: Dialect,
-    /// The node that a `:has()` is asked about. What is in the parentheses does not see above it.
+    /// The node that a `:has()` is being tested on. Selectors inside the parentheses can't see above it.
     pub(super) limit: Option<VNode<'a>>,
     pub(super) stack: bun_core::StackCheck,
-    /// The stack has not held the selector, where `esquery` throws. What [`Matcher::matches`] returns says nothing then.
+    /// Set if the selector didn't fit on the stack, where `esquery` throws. [`Matcher::matches`]'s
+    /// result is meaningless then.
     pub(super) is_too_deep: &'s Cell<bool>,
 }
 
@@ -25,7 +26,7 @@ enum Side {
     Right,
 }
 
-/// The children of a node, in the order of the visitor keys.
+/// A node's children, in visitor key order.
 struct Children<'a> {
     node: VNode<'a>,
     entries: std::slice::Iter<'static, FieldEntry>,
@@ -65,7 +66,8 @@ impl<'s, 'a> Matcher<'s, 'a> {
         node.parent()
     }
 
-    /// What goes from node to node asks before each: or every `:has()` around would come down here again for each of its nodes.
+    /// Loops over nodes check this before each node. Otherwise every enclosing `:has()` would
+    /// descend this far again for each of its nodes.
     #[inline]
     fn goes_on(&self) -> bool {
         !self.is_too_deep.get()
@@ -147,7 +149,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
         matches!(current, Val::Node(found) if found == node)
     }
 
-    /// The fields of the parent of `node` that are lists.
+    /// The list-valued fields of `node`'s parent.
     fn lists_around(&self, node: VNode<'a>) -> impl Iterator<Item = Nodes<'a>> {
         let dialect = self.dialect;
         let parent = self.parent(node);
@@ -269,7 +271,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
         self.test(test, value)
     }
 
-    /// Whether `node`, which is of the type `node_type`, matches the selector `id`.
+    /// True if `node`, whose type is `node_type`, matches selector `id`.
     pub(super) fn matches(&self, id: Id, node: VNode<'a>, node_type: NodeType) -> bool {
         let program = self.program;
         match program.ops.get(id as usize) {
@@ -307,7 +309,8 @@ impl<'s, 'a> Matcher<'s, 'a> {
         }
     }
 
-    /// The rest of [`Matcher::matches`], apart so that what most selectors consist of needs little room on the stack.
+    /// The rest of [`Matcher::matches`], split off so that the ops most selectors consist of need
+    /// little stack space.
     #[inline(never)]
     fn matches_other(&self, op: &Op, node: VNode<'a>, node_type: NodeType) -> bool {
         let program = self.program;
@@ -366,7 +369,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
                         && self.has_adjacent(node, right, Side::Right))
             }
             Op::NthChild(nth) => self.is_nth_child(node, nth),
-            // The others are in `matches`.
+            // `matches` handles the others.
             _ => false,
         }
     }

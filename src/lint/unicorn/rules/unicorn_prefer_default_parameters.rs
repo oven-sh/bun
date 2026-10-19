@@ -62,7 +62,7 @@ impl Rule for PreferDefaultParameters {
     }
 }
 
-/// The statement that is `e;`.
+/// The statement `e;`.
 fn statement_of(e: Expr<'_>) -> Option<Stmt<'_>> {
     match e.parent() {
         Node::Stmt(statement) if statement.tag() == StmtTag::Expr && !e.is_parenthesized() => Some(statement),
@@ -70,7 +70,7 @@ fn statement_of(e: Expr<'_>) -> Option<Stmt<'_>> {
     }
 }
 
-/// What the statement is.
+/// The kind of statement.
 #[derive(Copy, Clone)]
 enum Reassignment<'a> {
     /// `const left_name = param || literal`
@@ -88,7 +88,7 @@ fn is_literal(e: Expr) -> bool {
     )
 }
 
-/// `assignment`: the `left_name = right` that `statement` is. Otherwise that declares `left_name`.
+/// `assignment` is the `left_name = right` in `statement`. If it's `None`, `statement` declares `left_name`.
 fn check_expression<'a>(
     statement: Stmt<'a>,
     left_name: Name<'a>,
@@ -109,7 +109,7 @@ fn check_expression<'a>(
     check_parameter_default(statement, param_name, left_name, default_value, param_ident, reassignment, cx);
 }
 
-/// `param_ident`: where `statement` reads the parameter.
+/// `param_ident` is where `statement` reads the parameter.
 fn check_parameter_default<'a>(
     statement: Stmt<'a>,
     param_name: Name<'a>,
@@ -125,7 +125,7 @@ fn check_parameter_default<'a>(
     if matches!(func.kind(), FnKind::Setter | FnKind::StaticBlock) {
         return;
     }
-    // The last parameter, the first of that name, without a default.
+    // It must be the last parameter, the first with that name, and have no default.
     let Some(param) = func.params().last().filter(|it| !it.is_rest() && it.default().is_none()) else {
         return;
     };
@@ -169,7 +169,7 @@ fn check_parameter_default<'a>(
     });
 }
 
-/// With the indentation before the statement, if it starts its line, a space after it, and the line break.
+/// Also covers the indentation before the statement if it starts its line, a space after it, and the line break.
 fn expand_statement_delete_span(source_text: &[u8], statement_span: Span) -> Span {
     let (mut start, mut end) = (statement_span.start as usize, statement_span.end as usize);
     let before = source_text.get(..start).unwrap_or_default();

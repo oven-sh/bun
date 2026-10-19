@@ -18,16 +18,17 @@ use std::cell::{Cell, OnceCell};
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
 
-/// Indices into one vector of the HIR, grouped by the kind of the node. `ENDS`: one more than there are kinds.
+/// Indices into one HIR vector, grouped by node kind. `ENDS` is the number of kinds plus one.
 pub(crate) struct Grouped<const ENDS: usize> {
     ids: Vec<u32>,
-    /// Where each kind starts in `ids`, and where the last ends.
+    /// The start of each kind in `ids`, plus the end of the last.
     starts: [u32; ENDS],
-    /// A bit for each kind of which there is a node, if there are no more than 64 kinds.
+    /// One bit per kind that has a node, if there are at most 64 kinds.
     present: u64,
 }
 
-/// At `kind + 1`: how many of `kinds` are `kind`. A place for each number that there can be: nothing is asked for each of `kinds`.
+/// At `kind + 1`: how many of `kinds` are `kind`. There's a slot for every possible `u8`, so the loop needs no bounds
+/// check.
 fn count_kinds(kinds: &[u8]) -> [u32; u8::MAX as usize + 2] {
     let mut counts = [0u32; u8::MAX as usize + 2];
     for &kind in kinds {
@@ -39,14 +40,14 @@ fn count_kinds(kinds: &[u8]) -> [u32; u8::MAX as usize + 2] {
 impl<const ENDS: usize> Grouped<ENDS> {
     const KINDS: usize = ENDS - 1;
 
-    /// `tags`: writes the kind of each node of a vector of the HIR, `NOT_IN_TREE` to leave it out.
+    /// `tags` writes the kind of each node in a HIR vector, or `NOT_IN_TREE` to skip it.
     fn new(tags: impl FnOnce(&mut Vec<u8>)) -> Self {
         let mut kinds = Vec::new();
         tags(&mut kinds);
         Grouped::of_kinds(0..kinds.len() as u32, &kinds)
     }
 
-    /// `kind_of(id)`: the kind of the node `id`, which is one of `all`, or `None` to leave it out.
+    /// `kind_of(id)` returns the kind of node `id`, which is one of `all`, or `None` to skip it.
     fn of_ids(
         all: impl ExactSizeIterator<Item = u32> + Clone,
         kind_of: impl Fn(u32) -> Option<usize>,
@@ -61,14 +62,14 @@ impl<const ENDS: usize> Grouped<ENDS> {
         Grouped::of_kinds(all, &kinds)
     }
 
-    /// `kinds`: the kind of each of `all`, `NOT_IN_TREE` to leave it out.
+    /// `kinds` has the kind of each of `all`, or `NOT_IN_TREE` to skip it.
     fn of_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
         let mut counts = [0u32; ENDS];
         counts.copy_from_slice(&count_kinds(kinds)[..ENDS]);
         Grouped::of_counted_kinds(all, kinds.iter().copied(), &counts)
     }
 
-    /// A bit for each kind of which there is one, if there are no more than 64 kinds. `counts`: as below.
+    /// One bit per kind that has a node, if there are at most 64 kinds. `counts` is as below.
     fn present(counts: &[u32; ENDS]) -> u64 {
         let kinds = 0..if Self::KINDS <= 64 { Self::KINDS } else { 0 };
         kinds.fold(0, |present, kind| {
@@ -76,7 +77,7 @@ impl<const ENDS: usize> Grouped<ENDS> {
         })
     }
 
-    /// `counts`: at `kind + 1`, how many of `kinds` are `kind`.
+    /// `counts` has, at `kind + 1`, how many of `kinds` are `kind`.
     fn of_counted_kinds(
         all: impl Iterator<Item = u32>,
         kinds: impl Iterator<Item = u8>,
@@ -87,7 +88,7 @@ impl<const ENDS: usize> Grouped<ENDS> {
         for kind in 0..Self::KINDS {
             starts[kind + 1] += starts[kind];
         }
-        // Where the next of each kind goes. What is left out has no place.
+        // Where the next node of each kind goes. Skipped nodes have no slot.
         let mut next = [u32::MAX; u8::MAX as usize + 1];
         next[..Self::KINDS].copy_from_slice(&starts[..Self::KINDS]);
         let mut ids = vec![0u32; starts[Self::KINDS] as usize];
@@ -105,7 +106,6 @@ impl<const ENDS: usize> Grouped<ENDS> {
         }
     }
 
-    /// Of no nodes.
     fn empty() -> Self {
         Grouped {
             ids: Vec::new(),
@@ -125,17 +125,17 @@ impl<const ENDS: usize> Grouped<ENDS> {
     }
 }
 
-/// The expressions of a file.
+/// A file's expressions.
 struct Exprs {
-    /// Each kind in two parts: first what is not part of an optional chain, then what is.
+    /// Each kind is in two parts: first the expressions outside optional chains, then those that are part of one.
     grouped: Grouped<{ 2 * ExprTag::COUNT + 1 }>,
-    /// A bit for each `ExprTag` of which there is an expression, and for each of which one is part of an optional chain.
+    /// One bit per `ExprTag` that has an expression, and one per `ExprTag` that has one in an optional chain.
     present: u64,
     chained: u64,
 }
 
-/// The expression `id` of a group. None of them is a cast that is synthesized from a JSDoc comment, for which a handle stands
-/// for the operand.
+/// Expression `id` from a group. None of them is a cast synthesized from a JSDoc comment, whose handle would represent
+/// the operand.
 #[inline(always)]
 fn grouped_expr<'a>(file: &'a File<'a>, id: u32) -> Expr<'a> {
     Expr {
@@ -157,8 +157,8 @@ impl Exprs {
         exprs
     }
 
-    /// From the kinds that the binder has noted on its way, if it has. They are those of the HIR, in which a template without
-    /// substitutions is a string.
+    /// Builds the groups from the kinds that the binder recorded along the way, if it did. Those are the HIR's kinds,
+    /// where a template without substitutions is a string.
     fn from_binder(file: &File) -> Option<Exprs> {
         let (kinds, counted) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
         if !file.groups_exprs_as_the_binder() {
@@ -187,7 +187,8 @@ impl Exprs {
                 .filter(is_template)
                 .collect();
             if !moved.is_empty() {
-                // The strings that stay, what is between the two kinds, and the templates of both origins by their index.
+                // The strings that stay, then the kinds between the two, then the templates from both sources sorted by
+                // index.
                 let (start, end) = (
                     grouped.starts[strings] as usize,
                     grouped.starts[templates + 1] as usize,
@@ -246,28 +247,29 @@ impl Exprs {
     }
 }
 
-/// The `Call`s or the `Dot`s of a file by a name: each is in exactly one group.
-/// - `0..NAME_CLASSES`: by the [`name_class`] of the name of a `Dot` that is not private, which is the expression or what it calls.
-/// - `FUNCTIONS..OTHERS`: a `Call` of an identifier, by the class of that, two classes to a group.
+/// A file's `Call`s or `Dot`s by name. Each is in exactly one group:
+/// - `0..NAME_CLASSES`: by the [`name_class`] of a non-private `Dot`'s name. The `Dot` is the expression itself or its
+///   callee.
+/// - `FUNCTIONS..OTHERS`: a `Call` of an identifier, by the identifier's class, two classes to a group.
 /// - `OTHERS`: everything else.
 pub(crate) struct ByName {
-    /// The group of each, in the order of the list of all of them (`File::exprs_of`).
+    /// Each one's group, in the order of the list of all of them (`File::exprs_of`).
     groups: Vec<u8>,
-    /// Places in that list, group by group, ascending in each.
+    /// Indexes into that list, group by group, ascending within each.
     places: Vec<u32>,
-    /// Where each group that is not empty starts in `places`, and how many are in it.
+    /// For each non-empty group: its start in `places`, and its size.
     starts: [u32; ByName::GROUPS],
     counts: [u32; ByName::GROUPS],
-    /// A bit for each group that is not empty.
+    /// One bit per non-empty group.
     present: [u64; 4],
 }
 
-/// The classes of the names of a file.
+/// The classes of a file's names.
 struct Classes<'a> {
     file: &'a File<'a>,
-    /// By the number of the name, for the names that the file numbers itself, from 0 on. `UNKNOWN`: not asked for yet.
+    /// Indexed by atom, for the names that the file numbers itself, starting at 0. `UNKNOWN` if not computed yet.
     known: Vec<u8>,
-    /// Of the other names.
+    /// The classes of all other names.
     others: FxHashMap<u32, u8>,
 }
 
@@ -304,7 +306,7 @@ impl<'a> Classes<'a> {
         self.known[at]
     }
 
-    /// The group of the `Dot` with this name, which is written at `pos`.
+    /// The group of a `Dot` with this name, whose name starts at `pos`.
     #[inline]
     fn of_member(&mut self, name: Atom, pos: u32) -> u8 {
         match self.file.text().get(pos as usize) {
@@ -319,7 +321,7 @@ impl ByName {
     const OTHERS: usize = ByName::FUNCTIONS + NAME_CLASSES / 2;
     const GROUPS: usize = ByName::OTHERS + 1;
 
-    /// `groups`: the group of each.
+    /// `groups` has each one's group.
     fn new(groups: Vec<u8>) -> ByName {
         const { assert!(ByName::GROUPS <= 4 * 64 && NAME_CLASSES < Classes::UNKNOWN as usize) };
         let (mut counts, mut present) = ([0u32; ByName::GROUPS], [0u64; 4]);
@@ -329,7 +331,7 @@ impl ByName {
                 present[group as usize / 64] |= 1 << (group % 64);
             }
         }
-        // A file has few of the groups: nothing is done for the others.
+        // A file has few of the groups, so only the non-empty ones are touched.
         let (mut starts, mut end) = ([0u32; ByName::GROUPS], 0);
         for (word, &present) in present.iter().enumerate() {
             each_bit(present, |bit| {
@@ -396,7 +398,8 @@ impl ByName {
         both.fold(0, |any, (wanted, present)| any | (wanted & present)) != 0
     }
 
-    /// Replaces `found` by those of `all`, which is what has been grouped, that are in one of `groups`, in the order of `all`.
+    /// Replaces `found` with the items of `all` (the list that was grouped) that are in one of `groups`, in `all`'s
+    /// order.
     fn find(&self, groups: [u64; 4], all: &[u32], found: &mut Vec<u32>) {
         found.clear();
         let (mut count, mut total) = (0, 0);
@@ -406,7 +409,7 @@ impl ByName {
                 total += self.counts[64 * word + bit] as usize;
             });
         }
-        // Many of them: to go through all is less than to put those in order.
+        // With this many, scanning the whole list is cheaper than sorting the matches.
         if count > 1 && 4 * total > all.len() {
             found.extend(self.those_of(groups, all));
             return;
@@ -429,7 +432,7 @@ impl ByName {
         debug_assert!(self.those_of(groups, all).eq(found.iter().copied()));
     }
 
-    /// Those of `all`, which is what has been grouped, that are in one of `groups`, by a look at the group of each.
+    /// The items of `all` (the list that was grouped) that are in one of `groups`, found by checking each one's group.
     fn those_of(&self, groups: [u64; 4], all: &[u32]) -> impl Iterator<Item = u32> {
         let is_wanted = move |group: u8| groups[group as usize / 64] >> (group % 64) & 1 != 0;
         let wanted = all
@@ -440,28 +443,28 @@ impl ByName {
     }
 }
 
-/// The expressions, statements, types and patterns of a file by kind, each grouped the first time a rule listens for one. Left
-/// out are the nodes that are not part of the tree, which the parser leaves behind where it has backtracked, and those that are
-/// synthesized from JSDoc comments.
+/// A file's expressions, statements, types and patterns by kind. Each is grouped the first time a rule listens for one.
+/// Nodes that aren't part of the tree, which the parser leaves behind where it backtracked, are skipped, and so are
+/// nodes synthesized from JSDoc comments.
 #[derive(Default)]
 pub(crate) struct ByKind {
     exprs: OnceCell<Exprs>,
     stmts: OnceCell<Grouped<{ StmtTag::COUNT + 1 }>>,
     types: OnceCell<Grouped<{ TypeTag::COUNT + 1 }>>,
     pats: OnceCell<Grouped<{ PatTag::COUNT + 1 }>>,
-    /// `Grouped::present` of these three, which can be known before they are grouped.
+    /// `Grouped::present` for these three, which can be known before they're grouped.
     present_stmts: OnceCell<u64>,
     present_types: OnceCell<u64>,
     present_pats: OnceCell<u64>,
-    /// The `ExprTag::Binary` and the `ExprTag::Unary` by operator.
+    /// The `ExprTag::Binary` and `ExprTag::Unary` expressions by operator.
     binaries: OnceCell<Grouped<{ BinOp::Comma as usize + 2 }>>,
     unaries: OnceCell<Grouped<{ UnOp::PostDec as usize + 2 }>>,
     calls_by_name: OnceCell<Box<ByName>>,
     members_by_name: OnceCell<Box<ByName>>,
-    /// The group `ByName::OTHERS` of each, for a file that is asked for nothing else.
+    /// Each one's `ByName::OTHERS` group, for a file where no other group is needed.
     other_calls: OnceCell<Vec<u32>>,
     other_members: OnceCell<Vec<u32>>,
-    /// A list that `File::named` has filled and that is not in use any more.
+    /// A list that `File::named` filled and that's no longer in use, kept for reuse.
     spare: Cell<Vec<u32>>,
     fns: OnceCell<Vec<u32>>,
     classes: OnceCell<Vec<u32>>,
@@ -480,7 +483,7 @@ pub(crate) struct ByKind {
 }
 
 impl File<'_> {
-    /// Whether the groups of the expressions are made of the kinds that the binder has noted (`Bound::expr_kinds`).
+    /// True if the expression groups are built from the kinds that the binder recorded (`Bound::expr_kinds`).
     pub(crate) fn groups_exprs_as_the_binder(&self) -> bool {
         self.bound.expr_kinds.len() == self.hir.exprs.len()
             && !self.has_synthetic_nodes()
@@ -504,14 +507,14 @@ impl File<'_> {
             ..grouped.starts[2 * tag as usize + 2] as usize]
     }
 
-    /// Those of `exprs_of` that are part of an optional chain.
+    /// The subset of `exprs_of` that's part of an optional chain.
     #[inline(never)]
     pub(crate) fn chained_exprs_of(&self, tag: ExprTag) -> &[u32] {
         self.exprs().grouped.of(2 * tag as usize + 1)
     }
 
-    /// What the binder has counted from `first` on, at `kind + 1` for each kind, of which there is one less than `ENDS`.
-    /// `None`: it has not counted, or the file has nodes that are synthesized, which are counted and are no nodes here.
+    /// The binder's counts starting at `first`, at `kind + 1` for each kind. There are `ENDS - 1` kinds. `None` if it
+    /// didn't count, or if the file has synthesized nodes, which are counted but aren't nodes here.
     #[inline]
     fn counted<const ENDS: usize>(&self, first: usize) -> Option<[u32; ENDS]> {
         let counted = self.bound.kind_counts.get(first..first + ENDS - 1)?;
@@ -520,8 +523,8 @@ impl File<'_> {
         (!self.has_synthetic_nodes()).then_some(counts)
     }
 
-    /// How many statements there are of each kind, if the binder has counted them and all of them are nodes: none is the head
-    /// of a `for` that is an expression, the object of a `with`, or the `B` of `namespace A.B`.
+    /// The number of statements of each kind, if the binder counted them and all of them are nodes. That means none is
+    /// a `for` head that's an expression, a `with` object, or the `B` in `namespace A.B`.
     fn counted_stmts(&self) -> Option<[u32; StmtTag::COUNT + 1]> {
         let counts = self.counted(kind_counts::STMTS)?;
         let heads = *(self.bound.kind_counts).get(kind_counts::HEADS_THAT_ARE_EXPRESSIONS)?;
@@ -529,13 +532,13 @@ impl File<'_> {
             .then_some(counts)
     }
 
-    /// The same for the types: none is an error with an operand that is no node.
+    /// Same for types. None may be an error with an operand that isn't a node.
     fn counted_types(&self) -> Option<[u32; TypeTag::COUNT + 1]> {
         let counts = self.counted(kind_counts::TYPES)?;
         (counts[TypeTag::JSDoc as usize + 1] == 0).then_some(counts)
     }
 
-    /// The same for the patterns, of which those that are missing are no nodes: each is part of something.
+    /// Same for patterns. Missing patterns aren't nodes, and every other pattern has to have a parent.
     fn counted_pats(&self) -> Option<[u32; PatTag::COUNT + 1]> {
         let mut counts = self.counted(kind_counts::PATS)?;
         counts[PatTag::Missing as usize + 1] = 0;
@@ -608,7 +611,7 @@ impl File<'_> {
         })
     }
 
-    /// `op`: a `BinOp` as a number.
+    /// `op` is a `BinOp` as a number.
     #[inline(never)]
     fn binaries_at(&self, op: usize) -> &[u32] {
         self.binaries().of(op)
@@ -627,24 +630,24 @@ impl File<'_> {
         })
     }
 
-    /// `op`: an `UnOp` as a number.
+    /// `op` is an `UnOp` as a number.
     #[inline(never)]
     fn unaries_at(&self, op: usize) -> &[u32] {
         self.unaries().of(op)
     }
 
-    /// Whether the file has an expression of one of these kinds. For a rule that has nothing to do otherwise, and whose listeners
-    /// are not free: those for code paths make the linter walk and analyze the whole file.
+    /// True if the file has an expression of one of these kinds. It's for a rule that otherwise has nothing to do and
+    /// whose listeners aren't free: code path listeners make the linter walk and analyze the whole file.
     pub fn has_exprs(&self, tags: impl IntoIterator<Item = ExprTag>) -> bool {
         tags.into_iter().any(|tag| !self.exprs_of(tag).is_empty())
     }
 
-    /// The same for statements.
+    /// Same for statements.
     pub fn has_stmts(&self, tags: impl IntoIterator<Item = StmtTag>) -> bool {
         tags.into_iter().any(|tag| !self.stmts_of(tag).is_empty())
     }
 
-    /// The same for classes.
+    /// Same for classes.
     pub fn has_classes(&self) -> bool {
         !self.hir.classes.is_empty()
     }
@@ -679,7 +682,8 @@ impl File<'_> {
         self.pats().of(tag as usize)
     }
 
-    /// Which of these kinds the file has: a bit for each, as in [`On`]. Not inlined: they group the nodes the first time.
+    /// Which of these kinds the file has, one bit each, as in [`On`]. Not inlined, because the first call groups the
+    /// nodes.
     #[inline(never)]
     fn present_exprs(&self) -> u64 {
         self.exprs().present
@@ -731,9 +735,9 @@ impl File<'_> {
     }
 }
 
-/// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree. Which these are
-/// is found out once for all rules, by `File::$list`. `$owners`, `$no_owner`: what each is part of, by the binder, and what that
-/// is for one that is part of nothing.
+/// Declares `File::$method`, which calls a function with every `$handle` in the file that's part of the tree.
+/// `File::$list` works out which those are, once for all rules. `$owners` is the binder's list of what each one belongs
+/// to, and `$no_owner` is the value for one that belongs to nothing.
 macro_rules! every {
     ($($method:ident $list:ident $handle:ident $field:ident $owners:expr, $no_owner:expr;)*) => {
         impl<'a> File<'a> {
@@ -742,7 +746,8 @@ macro_rules! every {
                 fn $list(&'a self) -> &'a [u32] {
                     self.by_kind().$field.get_or_init(|| {
                         let all = 0..self.hir.$field.len() as u32;
-                        // In nearly every file all are. That is told without a look at each on its own.
+                        // In nearly every file all of them are in the tree, which can be checked without looking at
+                        // each one separately.
                         if !self.has_synthetic_nodes()
                             && self.hir.import_attributes.is_empty()
                             && have_all_owners(($owners)(self), all.len(), &$no_owner)
@@ -752,7 +757,7 @@ macro_rules! every {
                             );
                             return all.collect();
                         }
-                        // Nearly all are in the tree: room for all of them is made at once.
+                        // Nearly all are in the tree, so reserve room for all of them up front.
                         let mut in_tree = Vec::with_capacity(all.len());
                         in_tree.extend(all.filter(|&id| <$handle as Handle>::from_raw(self, id).is_in_tree()));
                         in_tree
@@ -770,14 +775,14 @@ macro_rules! every {
     };
 }
 
-/// Whether there are `count` of `owners`, and none is `no_owner`.
+/// True if `owners` has `count` items and none is `no_owner`.
 #[inline]
 fn have_all_owners<T: PartialEq>(
     owners: impl ExactSizeIterator<Item = T>,
     count: usize,
     no_owner: &T,
 ) -> bool {
-    // Not left at the first: that way several are compared at once.
+    // No early exit, so that several can be compared at a time.
     owners.len() == count && owners.fold(true, |all, it| all & (it != *no_owner))
 }
 
@@ -807,12 +812,12 @@ every! {
 }
 
 impl<'a> File<'a> {
-    /// The expressions of a kind, in no particular order. For [`Rule::start`] to look closer than [`File::has_exprs`].
+    /// The expressions of a kind, in no particular order. It lets [`Rule::start`] look closer than [`File::has_exprs`].
     pub fn exprs_of_kind(&'a self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> {
         self.exprs_of(tag).iter().map(|&id| grouped_expr(self, id))
     }
 
-    /// `kind`: `Call` or `Dot`.
+    /// `kind` is `Call` or `Dot`.
     fn by_name(&'a self, kind: ExprTag) -> &'a ByName {
         let made = match kind {
             ExprTag::Call => {
@@ -829,7 +834,7 @@ impl<'a> File<'a> {
         made
     }
 
-    /// `by_name`, if it has been made.
+    /// `by_name`, if it's already been built.
     #[inline]
     fn by_name_if_made(&'a self, kind: ExprTag) -> Option<&'a ByName> {
         match kind {
@@ -838,7 +843,7 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The group `ByName::OTHERS` of the `Call`s or the `Dot`s, in the order of `exprs_of`, found without grouping the rest.
+    /// The `ByName::OTHERS` group of the `Call`s or `Dot`s, in `exprs_of` order, found without grouping the rest.
     fn others(&'a self, kind: ExprTag) -> &'a [u32] {
         let text = self.text();
         let is_private = |pos: u32| text.get(pos as usize) == Some(&b'#');
@@ -873,9 +878,9 @@ impl<'a> File<'a> {
         }
     }
 
-    /// Whether one of these groups of the `Call`s or the `Dot`s can have something, told without grouping them: that is left
-    /// until the rule has said that it starts. `may_have_names`: the file may have a name of these groups. If not, only the group
-    /// `OTHERS` of them can have something.
+    /// True if one of these groups of `Call`s or `Dot`s may be non-empty, determined without grouping them. Grouping is
+    /// deferred until the rule has agreed to start. `may_have_names` means the file may contain one of these groups'
+    /// names. If not, only their `OTHERS` group can be non-empty.
     #[inline(never)]
     fn may_have_named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> bool {
         match (self.by_name_if_made(kind), may_have_names) {
@@ -885,7 +890,7 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The `Call`s or the `Dot`s of these groups, in the order of `exprs_of`. The list is for `spare` afterwards.
+    /// The `Call`s or `Dot`s in these groups, in `exprs_of` order. Put the list back into `spare` afterwards.
     #[inline(never)]
     fn named(&'a self, kind: ExprTag, groups: [u64; 4], may_have_names: bool) -> Vec<u32> {
         let mut found = self.by_kind().spare.take();
@@ -903,14 +908,15 @@ impl<'a> File<'a> {
         found
     }
 
-    /// Whether the file may have one of the names that a `Call` or a `Dot` by name of `on` can have.
+    /// True if the file may contain one of the names that `on` selects `Call`s or `Dot`s by.
     #[inline(always)]
     fn may_have_names_of(&self, on: &On) -> bool {
         (on.mentions()).is_none_or(|bits| bits.iter().any(|&bit| self.mentions_bit(u32::from(bit))))
     }
 
-    /// The `Call`s that a rule with this `on` is called with: see [`On::method_calls`] and [`On::function_calls`]. For a rule that
-    /// looks at the calls from [`Rule::start`] or [`Rule::finish`]: `file.calls_on(&On::new().method_calls(&["then"]))`.
+    /// The `Call`s that a rule with this `on` is called with: see [`On::method_calls`] and [`On::function_calls`]. It's
+    /// for a rule that looks at calls from [`Rule::start`] or [`Rule::finish`]:
+    /// `file.calls_on(&On::new().method_calls(&["then"]))`.
     pub fn calls_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
         let (kind, groups) = (ExprTag::Call, on.groups_of_calls());
         let found = match (groups[3] != 0, on.exprs & (1 << kind as u32) != 0) {
@@ -921,28 +927,28 @@ impl<'a> File<'a> {
         found.into_iter().map(|id| grouped_expr(self, id))
     }
 
-    /// The same for statements.
+    /// Like [`File::exprs_of_kind`], for statements.
     pub fn stmts_of_kind(&'a self, tag: StmtTag) -> impl Iterator<Item = Stmt<'a>> {
         self.stmts_of(tag)
             .iter()
             .map(|&id| Stmt::from_raw(self, id))
     }
 
-    /// The same for types.
+    /// Like [`File::exprs_of_kind`], for types.
     pub fn types_of_kind(&'a self, tag: TypeTag) -> impl Iterator<Item = TypeNode<'a>> {
         self.types_of(tag)
             .iter()
             .map(|&id| TypeNode::from_raw(self, id))
     }
 
-    /// The same for functions: what [`Rule::func`] is called with.
+    /// Like [`File::exprs_of_kind`], for functions: everything that [`Rule::func`] is called with.
     pub fn funcs(&'a self) -> impl Iterator<Item = Func<'a>> {
         (0..self.hir.fns.len())
             .map(|i| Func::from_raw(self, i as u32))
             .filter(|it| it.is_in_tree())
     }
 
-    /// The same for classes: what [`Rule::class`] is called with.
+    /// Like [`File::exprs_of_kind`], for classes: everything that [`Rule::class`] is called with.
     pub fn classes(&'a self) -> impl Iterator<Item = Class<'a>> {
         (0..self.hir.classes.len())
             .map(|i| Class::from_raw(self, i as u32))
@@ -973,7 +979,7 @@ impl<'a> File<'a> {
         }
     }
 
-    /// Calls `visit` with every node of the kinds in `tags`, sort by sort, and with its `NodeTags::index_of`.
+    /// Calls `visit` with every node of the kinds in `tags`, sort by sort, along with its `NodeTags::index_of`.
     pub(crate) fn every_node_of(&'a self, tags: NodeTags, visit: &mut dyn FnMut(Node<'a>, u32)) {
         for tag in EXPR_TAGS {
             let kind = NodeTags::from(tag);
@@ -1070,7 +1076,7 @@ impl<'a> File<'a> {
 
 // ───────────────────────────── a rule on a file ─────────────────────────────
 
-/// What a rule is given to start on a file.
+/// The arguments for starting a rule on a file.
 #[doc(hidden)]
 #[derive(Copy, Clone)]
 pub struct Start<'a> {
@@ -1079,20 +1085,20 @@ pub struct Start<'a> {
     severity: Severity,
 }
 
-/// What can be started on a file: a rule, or one of several.
+/// Something that can be started on a file: a rule, or an enum of several.
 pub trait Starts: Send + Sync {
-    /// It at work on a file, after what takes the nodes in no particular order.
+    /// The rule running on a file, once its unordered methods have been called.
     type Run<'r, 'a: 'r>: Running<'a>
     where
         Self: 'r;
 
-    /// Calls what takes the nodes in no particular order. `None`: nothing is left to call.
+    /// Calls the unordered methods. `None` if nothing is left to call.
     #[doc(hidden)]
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Self::Run<'r, 'a>>;
 }
 
-/// For [`rules!`](crate::rules): an arm of a `match` on the rules of a crate is a call of this.
-/// `None`: nothing is left to call.
+/// For [`rules!`](crate::rules): each arm of the `match` on a crate's rules is a call to this. `None` if nothing is
+/// left to call.
 #[doc(hidden)]
 #[inline(never)]
 pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
@@ -1126,7 +1132,7 @@ pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<L
     })
 }
 
-/// Calls `visit` with the number of each bit that is set, from the lowest.
+/// Calls `visit` with the index of each set bit, lowest first.
 #[inline(always)]
 pub(crate) fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
     while bits != 0 {
@@ -1135,7 +1141,8 @@ pub(crate) fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
     }
 }
 
-/// Whether `file` has something that a rule with `on` is called with. Where this is inlined `on` is a constant, or a part of one.
+/// True if `file` has anything that a rule with `on` is called with. Where this is inlined, `on` is a constant or
+/// partly constant.
 #[inline(always)]
 fn has_any_of<'a>(file: &'a File<'a>, on: &On) -> bool {
     let always = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
@@ -1161,7 +1168,7 @@ fn has_any_of<'a>(file: &'a File<'a>, on: &On) -> bool {
     has_any = has_any || on.has(On::OPTIONAL_CHAINS) && file.present_chained() != 0;
     macro_rules! sorts {
         ($($sort:ident $field:ident;)*) => {
-            // Where `on` is no constant: most have none of them.
+            // This helps where `on` isn't a constant: most rules listen to none of these.
             if on.has($(On::$sort)|*) {
                 $(has_any = has_any || on.has(On::$sort) && !file.hir.$field.is_empty();)*
             }
@@ -1183,13 +1190,13 @@ fn has_any_of<'a>(file: &'a File<'a>, on: &On) -> bool {
     has_any
 }
 
-/// What can be part of an optional chain.
+/// The kinds that can be part of an optional chain.
 const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
 
-/// Calls what takes the nodes in no particular order, in the order in which [`Rule`] has the methods.
+/// Calls the unordered methods, in the order [`Rule`] declares them.
 #[inline]
 fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut Cx<'a, R>) {
-    // Those by name where all of the kind would be.
+    // Calls and members selected by name take the slot where the whole kind would be.
     let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
     let named = (calls[3] << ExprTag::Call as u32) | (members[3] << ExprTag::Dot as u32);
     let may_have_names = named != 0 && file.may_have_names_of(on);
@@ -1280,11 +1287,11 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
     }
 }
 
-/// A rule at work on a file, after `call_unordered`.
+/// A rule running on a file, after `call_unordered`.
 #[doc(hidden)]
 pub struct Later<'r, 'a, R: Rule> {
     rule: &'r R,
-    /// What is left to call of `R::ON`.
+    /// The parts of `R::ON` that are still to be called.
     enter: NodeTags,
     exit: NodeTags,
     finishes: bool,
@@ -1314,7 +1321,7 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     }
 }
 
-/// How a rule is found by its name. It is handed around as a `&'static RuleEntry`, never copied.
+/// A rule's entry in the lookup by name. It's passed around as a `&'static RuleEntry`, never copied.
 pub struct RuleEntry {
     pub meta: &'static Meta,
 }
@@ -1332,10 +1339,10 @@ fn nodes_of<'a>(file: &'a File<'a>, tags: NodeTags) -> Vec<Node<'a>> {
     all
 }
 
-/// A rule at work on a file.
+/// A rule running on a file.
 #[doc(hidden)]
 pub trait Running<'a> {
-    /// The kinds of nodes that it is to [enter](Running::enter), and those that it is to [leave](Running::exit).
+    /// The node kinds it should [enter](Running::enter), and those it should [leave](Running::exit).
     fn walks(&self) -> (NodeTags, NodeTags);
     fn enter(&mut self, node: Node<'a>);
     fn exit(&mut self, node: Node<'a>);
@@ -1347,9 +1354,10 @@ pub trait Running<'a> {
 /// The rules that listen for each kind of node.
 #[derive(Default)]
 struct ByTag {
-    /// In the order of the rules.
+    /// In rule order.
     registered: Vec<(NodeTags, u16)>,
-    /// By `NodeTags::index_of`: where those for the kind start in `listeners`. One more than there are kinds.
+    /// Indexed by `NodeTags::index_of`: the start of that kind's rules in `listeners`. It has one more entry than there
+    /// are kinds.
     starts: Vec<u16>,
     listeners: Vec<u16>,
     tags: NodeTags,
@@ -1376,7 +1384,7 @@ impl ByTag {
         }
     }
 
-    /// `kind`: `NodeTags::index_of` a node.
+    /// `kind` is a node's `NodeTags::index_of`.
     #[inline]
     fn of(&self, kind: u8) -> &[u16] {
         let index = kind as usize;
@@ -1384,17 +1392,17 @@ impl ByTag {
     }
 }
 
-/// Calls the listeners that depend on the order of the nodes. `MIXED`: see [`run_rules`].
+/// Calls the listeners that depend on node order. For `MIXED`, see [`run_rules`].
 struct Walk<'w, T, const MIXED: bool> {
     running: &'w mut [T],
-    /// For each of `running`, if `MIXED`: it sees the scopes of typescript-eslint.
+    /// For each of `running`, if `MIXED`: true if it sees typescript-eslint's scopes.
     of_eslint: &'w [bool],
     enter: ByTag,
     exit: ByTag,
 }
 
 impl<T, const MIXED: bool> Walk<'_, T, MIXED> {
-    /// `kind`, here and below: `NodeTags::index_of(node)`.
+    /// `kind`, here and below, is `NodeTags::index_of(node)`.
     #[inline]
     fn enter<'a>(&mut self, node: Node<'a>, kind: u8)
     where
@@ -1424,11 +1432,11 @@ impl<T, const MIXED: bool> Walk<'_, T, MIXED> {
     }
 }
 
-/// Ranges that nest in the order of a walk: by the start, of two that start together the one that ends later first, then by the
-/// rank, then by the place in the list. Returned is the place of each, in the low 32 bits.
+/// Sorts nested ranges into walk order: by start, then for equal starts the one that ends later first, then by rank,
+/// then by index in the list. Returns each one's index in the low 32 bits.
 ///
-/// `starts`: where each starts. `rest`: where the one at a place ends, and its rank. Few start together, so the numbers that
-/// are sorted have the start and the place, and only those few are asked for the rest.
+/// `starts` yields each range's start. `rest` returns the end and rank of the range at an index. Few ranges start
+/// together, so the sorted numbers only have the start and the index, and `rest` is only called for those few.
 pub(crate) fn in_walk_order(
     starts: impl Iterator<Item = u32>,
     rest: &dyn Fn(u32) -> (u32, u8),
@@ -1467,9 +1475,9 @@ pub(crate) fn in_walk_order(
     order
 }
 
-/// Enters and leaves the nodes that are listened for, without walking: the nodes of a file nest, so their spans determine the order.
-/// Only the nodes of the kinds that are listened for are collected, from the vectors they are in, and sorted. The cost depends on
-/// how many of those there are, not on the size of the file.
+/// Enters and leaves the nodes that have listeners, without walking the tree. A file's nodes nest, so their spans
+/// determine the order. Only nodes of the kinds with listeners are collected, from the vectors they're stored in, and
+/// sorted. The cost depends on how many of those there are, not on the size of the file.
 fn walk_listened<'a, T: Running<'a>, const MIXED: bool>(
     file: &'a File<'a>,
     walk: &mut Walk<'_, T, MIXED>,
@@ -1523,7 +1531,7 @@ fn walk_listened<'a, T: Running<'a>, const MIXED: bool>(
             .map_or((0, 0), |it| (it.end, it.rank))
     });
 
-    // The nodes that have been entered and not left, each with its end and its kind.
+    // The nodes that have been entered but not left, each with its end and kind.
     let mut open: Vec<(u32, u8, Node<'a>)> = Vec::new();
     for it in order
         .iter()
@@ -1594,7 +1602,7 @@ pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
 pub struct Enabled<'r, S: Starts> {
     pub rule: &'r S,
     pub severity: Severity,
-    /// For whoever enables it: where it has the rule.
+    /// Not used here. It's the caller's own index for the rule.
     pub place: u32,
 }
 
@@ -1606,9 +1614,9 @@ impl<S: Starts> Clone for Enabled<'_, S> {
 
 impl<S: Starts> Copy for Enabled<'_, S> {}
 
-/// Runs `rules` on `file`. Returns what they report, in no order: see [`sorted`]. `Diagnostic::rule` is an index into `rules`.
+/// Runs `rules` on `file`. Returns their reports unsorted: see [`sorted`]. `Diagnostic::rule` is an index into `rules`.
 ///
-/// `wants_fixes`: whether the fixes and suggestions are going to be read.
+/// `wants_fixes` is true if the fixes and suggestions are going to be read.
 pub(crate) fn run<'a, S: RuleSet>(
     file: &'a File<'a>,
     rules: &[Enabled<'_, S>],
@@ -1623,17 +1631,17 @@ pub(crate) fn run<'a, S: RuleSet>(
     file.sink.diagnostics.take()
 }
 
-/// The places in `diagnostics` in the order of the positions.
+/// The indexes into `diagnostics`, sorted by position.
 ///
-/// `when`: for a tool that runs its rules in another way than ESLint, for each of the rules, in place of what the rule and its
-/// reports say. Empty: as they say.
+/// `when` is for a tool that runs its rules differently from ESLint. It has an entry per rule that overrides what the
+/// rule and its reports specify. If it's empty, those apply.
 pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
-    // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
-    // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
-    // then what is reported when the program ends, rule by rule. 51 bits.
+    // ESLint sorts only by line and column, which leaves reports that start at the same position in the order they were
+    // made: first listeners called on entering a node, outer node first, then listeners called on leaving, inner node
+    // first, then reports made when the program ends, rule by rule. 51 bits.
     let within_start = |it: &Diagnostic| {
-        // The node is what is reported unless the report names another. One that starts earlier is entered before all that
-        // start here, and left after them.
+        // The node is the reported span unless the report specifies another. A node that starts earlier is entered
+        // before all nodes that start here, and left after them.
         let named = it.details.as_deref().and_then(|it| it.listened_on);
         let node = named.filter(|_| when.is_empty()).unwrap_or(it.span);
         let is_outer = u64::from(node.start < it.span.start);
@@ -1651,7 +1659,7 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
             When::Last => (6 << 48) | longer_first,
         }
     };
-    // Where each starts. Its place in the list is the low 32 bits.
+    // Each one's start, with its index in the list in the low 32 bits.
     let starts = diagnostics.iter().zip(0u64..);
     let mut order: Vec<u64> = starts
         .map(|(it, at)| (u64::from(it.span.start) << 32) | at)
@@ -1675,15 +1683,15 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
     order.into_iter().map(|place| place as u32).collect()
 }
 
-/// A bit for each of [`On::ROWS`].
+/// One bit per row of [`On::ROWS`].
 type Rows = [u64; On::ROWS.div_ceil(64)];
 
-/// Those of [`On::ROWS`] for which `file` has something. `wants(sort)`: whether a row of `On::KINDS[sort]` matters: what groups
-/// the nodes of a sort is called only then. `wants_chains`: the same for the row of the optional chains.
+/// The rows of [`On::ROWS`] that `file` has something for. `wants(sort)` returns true if any row of `On::KINDS[sort]`
+/// matters, and a sort's nodes are only grouped in that case. `wants_chains` is the same for the optional chains row.
 #[inline]
 fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: bool) -> Rows {
     let mut rows: Rows = [0; _];
-    // `bits`: of the rows from `first` on.
+    // `bits` covers the rows from `first` on.
     let mut add = |first: usize, bits: u64| {
         rows[first / 64] |= bits << (first % 64);
         if !first.is_multiple_of(64) && first / 64 + 1 < rows.len() {
@@ -1710,7 +1718,7 @@ fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: 
         On::SORTS,
         u64::from(wants_chains && file.present_chained() != 0),
     );
-    // After `optional_chains`, in the order of the bits of `On`.
+    // After `optional_chains`, in the order of `On`'s bits.
     macro_rules! sorts {
         ($($bit:literal $field:ident;)*) => {
             $(add(On::SORTS + $bit, u64::from(!file.hir.$field.is_empty()));)*
@@ -1732,7 +1740,7 @@ fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: 
     rows
 }
 
-/// Calls `visit` with the number of each of `rows`.
+/// Calls `visit` with the index of each row in `rows`.
 #[inline(always)]
 fn each_row(rows: &Rows, mut visit: impl FnMut(usize)) {
     for (word, &bits) in rows.iter().enumerate() {
@@ -1740,13 +1748,14 @@ fn each_row(rows: &Rows, mut visit: impl FnMut(usize)) {
     }
 }
 
-/// Those of `enabled` for which `file` has something: all others would not be started.
+/// The rules in `enabled` that `file` has something for. None of the others would be started.
 pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
     let mut all = RuleBits::EMPTY;
     if *enabled == all {
         return all;
     }
-    // All the words of a row, whichever have a rule that is enabled: how many there are is a constant, so there is no loop.
+    // This checks every word of a row, even those without an enabled rule. The word count is a constant, so there's no
+    // loop.
     let is_wanted = |row: &RuleBits| {
         let both = enabled.0.iter().zip(&row.0);
         both.fold(0, |any, (a, b)| any | (a & b)) != 0
@@ -1769,27 +1778,27 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
     all
 }
 
-/// [`RuleSet::LISTENS`] for the rules of a configuration: in a row a rule is the bit of its place among them, so a row is as
-/// long as they are many, and what is found is in their order.
+/// [`RuleSet::LISTENS`] for a config's rules. In a row, a rule's bit is its place among them, so a row is only as long
+/// as the number of rules, and the results come out in their order.
 #[derive(Clone)]
 pub(crate) struct Listeners {
-    /// How many words a row has.
+    /// Number of words per row.
     words: usize,
-    /// Row after row.
+    /// All rows, one after the other.
     rows: Box<[u64]>,
-    /// For each of `On::KINDS`: a row of it has a rule.
+    /// For each of `On::KINDS`: true if one of its rows has a rule.
     wants: [bool; On::KINDS.len()],
     wants_chains: bool,
 }
 
-/// A set of places.
+/// A bit set of places, i.e. indexes into a config's rules.
 pub(crate) type Places = SmallVec<[u64; 16]>;
 
 impl Listeners {
-    /// `numbers`: those of the rules in `S`, in their order. One can be there several times.
+    /// `numbers` has the rules' numbers in `S`, in the config's order. A number can appear several times.
     pub(crate) fn new<S: RuleSet>(numbers: &[u16]) -> Listeners {
         let words = numbers.len().div_ceil(64);
-        // The last place of each number, and for each place the one before it with the same number.
+        // The last place with each number, and for each place the previous one with the same number.
         let (mut last, mut before) = (vec![None; NUMBERS], vec![None; numbers.len()]);
         let mut on = RuleBits::EMPTY;
         for (place, &number) in numbers.iter().enumerate() {
@@ -1820,7 +1829,7 @@ impl Listeners {
         }
     }
 
-    /// The places of those for which `file` has something: all others would not be started.
+    /// The places of the rules that `file` has something for. None of the others would be started.
     pub(crate) fn of<'a>(&self, file: &'a File<'a>) -> Places {
         if self.words == 0 {
             return Places::new();
@@ -1844,7 +1853,7 @@ impl Listeners {
         }
     }
 
-    /// `rows` of them joined, where a row has `WORDS` words.
+    /// The union of the rows in `rows`, where a row has `WORDS` words.
     fn joined<const WORDS: usize>(&self, rows: &Rows) -> Places {
         let (all_rows, _) = self.rows.as_chunks::<WORDS>();
         let mut all = [0; WORDS];
@@ -1859,8 +1868,9 @@ impl Listeners {
     }
 }
 
-/// `MIXED`: with a configuration of oxlint, some of the rules are rules that oxlint lacks. They see the scopes of
-/// typescript-eslint, and the others those of oxc: before a rule is called the file is told [which](File::ask_scopes_of_eslint).
+/// `MIXED` means that, with an oxlint config, some of the rules are ones that oxlint lacks. Those see
+/// typescript-eslint's scopes and the others see oxc's, so the file is told [which](File::ask_scopes_of_eslint) before
+/// each rule is called.
 fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
     file: &'a File<'a>,
     rules: &'r [Enabled<'r, S>],
@@ -1928,8 +1938,8 @@ fn run_rules<'r, 'a: 'r, S: RuleSet, const MIXED: bool>(
     }
 }
 
-/// Declares the rules of a crate: one module in `rules/` for each, and the list of all of them. `b::Rule = a<true>` is a
-/// rule without a module of its own: `a::Rule<true>`.
+/// Declares a crate's rules: one module in `rules/` for each, and the list of all of them. `b::Rule = a<true>` is a
+/// rule without its own module: `a::Rule<true>`.
 #[macro_export]
 macro_rules! rules {
     ($($module:ident::$rule:ident $(= $of:ident<$($argument:literal),+>)?,)*) => {

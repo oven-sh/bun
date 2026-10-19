@@ -3,7 +3,8 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::{callee_name, is_global_reference};
 
-/// Prefer `AbortSignal.timeout()` to an `AbortController` that only a timer aborts, of which only the signal is used.
+/// Prefer `AbortSignal.timeout()` to an `AbortController` that only a timer aborts and whose signal is its only other
+/// use.
 pub struct PreferTimeoutSignal {
     factories: Box<[Box<[u8]>]>,
 }
@@ -13,7 +14,7 @@ const ONLY_A_TIMER: Message = Message::new(
     "Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
 );
 
-/// Whether `e`, a call, is all that the function does which the global `setTimeout()` gets first.
+/// True if the call `e` is the whole body of the callback passed to the global `setTimeout()`.
 fn is_all_of_a_timer(e: Expr) -> bool {
     let func = match e.parent() {
         Node::Func(func) => func,
@@ -34,7 +35,7 @@ fn is_all_of_a_timer(e: Expr) -> bool {
         })
 }
 
-/// What is done with a controller where `identifier` names it.
+/// How one reference to a controller uses it.
 enum Use {
     Signal,
     AbortedByTimer,

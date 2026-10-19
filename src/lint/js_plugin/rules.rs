@@ -1,4 +1,4 @@
-//! What is known here of a plugin, and what a configuration makes of its rules.
+//! Plugin metadata on this side, and a plugin's rules as a config sets them up.
 
 use super::scopes::ConfiguredGlobals;
 use crate::language::{Global, LanguageOptions, SourceType};
@@ -12,18 +12,18 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// ESLint's `meta.schema`.
 #[derive(Clone, PartialEq, Debug)]
 pub enum Schema {
-    /// There is none: the rule takes no options.
+    /// No schema: the rule takes no options.
     None,
-    /// `false`: the options are not validated.
+    /// `false`: the options aren't validated.
     Any,
-    /// An array of the schemas of the options, or the schema of the array of options.
+    /// An array with one schema per option, or one schema for the whole options array.
     Json(Json),
 }
 
-/// A rule of a plugin.
+/// A plugin's rule.
 #[derive(Debug)]
 pub struct Rule {
-    /// ESLint's `ruleId`: `<plugin>/<rule>`, or `<rule>` of a plugin without a name.
+    /// ESLint's `ruleId`: `<plugin>/<rule>`, or `<rule>` for a plugin without a name.
     pub id: Box<[u8]>,
     /// `meta.type`
     pub kind: Option<Kind>,
@@ -34,29 +34,29 @@ pub struct Rule {
     pub schema: Schema,
     /// `meta.defaultOptions`
     pub default_options: Vec<Json>,
-    /// `meta.deprecated`, if that is true for JavaScript, and `meta.replacedBy`.
+    /// `meta.deprecated`, if it's truthy in JavaScript, and `meta.replacedBy`.
     pub deprecated: Option<Box<(Json, Json)>>,
-    /// No module exports the rule or its plugin: a realm has to run the whole configuration file to get at it.
+    /// No module exports the rule or its plugin, so a realm has to run the whole config file to get it.
     pub needs_the_configuration: bool,
-    /// JSON: the module that exports the rule itself, if there is one. A realm loads that, and not the plugin.
+    /// JSON: the module that exports the rule itself, if there is one. A realm loads that instead of the plugin.
     pub(super) location: Option<Box<[u8]>>,
-    /// The position of its plugin among the plugins.
+    /// Its plugin's index among the plugins.
     pub(super) plugin: u32,
     /// Its number among the rules of all plugins.
     pub(super) index: u32,
 }
 
-/// A plugin that is loaded.
+/// A loaded plugin.
 #[derive(Debug)]
 pub struct Plugin {
     /// The prefix of its rules.
     pub name: Box<[u8]>,
-    /// `{ module, export }`: the file that it is in, as Node.js writes the path, and where in what that exports. `None` for one
-    /// that was found in a configuration.
+    /// `{ module, export }`: the file it's in, with the path as Node.js writes it, and where it is in that file's
+    /// exports. `None` for a plugin that was found in a config.
     pub location: Option<Json>,
     /// `meta.name@meta.version`, as ESLint prints a plugin.
     pub id: Option<Box<[u8]>>,
-    /// It has nothing of what a plugin has: no `meta`, no `rules`.
+    /// It has none of a plugin's properties: no `meta`, no `rules`.
     pub has_nothing: bool,
     /// Sorted by [`Rule::id`].
     pub rules: Vec<Arc<Rule>>,
@@ -91,7 +91,8 @@ pub struct Configured {
     pub(super) json: Box<[u8]>,
 }
 
-/// [`write_json`] that keeps an infinite number, which default options have: as a number too large for a double.
+/// [`write_json`], except that it keeps the infinite numbers that default options can have, by writing a number too
+/// large for a double.
 fn write_option(out: &mut Vec<u8>, value: &Json) {
     write_json_with(out, value, |out, number| match number {
         f64::INFINITY => out.extend_from_slice(b"1e999"),
@@ -102,7 +103,7 @@ fn write_option(out: &mut Vec<u8>, value: &Json) {
 }
 
 impl Configured {
-    /// `options`: ESLint's `context.options`, with the default options of the rule merged in.
+    /// `options` is ESLint's `context.options`, with the rule's default options merged in.
     pub fn new(rule: Arc<Rule>, options: &[Json]) -> Arc<Configured> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let mut json = format!("[{},[", rule.index).into_bytes();
@@ -125,21 +126,21 @@ impl Configured {
     }
 }
 
-/// What a configuration has for the rules other than their options: ESLint's `context.settings` and
-/// `context.languageOptions`.
+/// The data a config gives rules besides their options: ESLint's `context.settings` and `context.languageOptions`.
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
     /// `{ settings, languageOptions, globals, freezes, isLegacy, parser }`
     pub(super) json: Box<[u8]>,
-    /// ESLint's `configGlobals`, or what oxlint defines, in the order of the keys of `globals` in `json`.
+    /// ESLint's `configGlobals`, or what oxlint defines, in the key order of `globals` in `json`.
     pub(super) globals: ConfiguredGlobals,
-    /// JSON: `[{ config, index }, ..]`, the objects of a configuration file that the settings are merged of, if there is
-    /// something in them that JSON cannot say, like a function. A realm takes them from there.
+    /// JSON: `[{ config, index }, ..]`, the config file objects that the settings were merged from. It's only set if
+    /// the settings contain something JSON can't represent, like a function. A realm then takes them from those
+    /// objects.
     pub(super) sources: Option<Box<[u8]>>,
 }
 
-/// Whether there is something in `json` that the configuration file has and JSON has not.
+/// True if `json` contains a value from the config file that JSON can't represent.
 pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
     match json {
         Json::Array(items) => items.iter().any(has_what_json_lacks),
@@ -152,8 +153,8 @@ pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
 }
 
 impl FileSettings {
-    /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order. `parser`:
-    /// `$parser` of the one that `languageOptions.parser` is from.
+    /// `sources` are the `$source`s of the `eslint.config.js` objects that `language` was merged from, in order.
+    /// `parser` is the `$parser` of the object that `languageOptions.parser` came from.
     pub fn from_objects(
         language: &LanguageOptions,
         sources: &[&Json],
@@ -167,7 +168,7 @@ impl FileSettings {
         });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let string = |text: &[u8]| Json::String(text.to_vec());
-        // oxlint only has what `globals` itself says there.
+        // oxlint only puts the entries of `globals` itself there.
         let written = match language.is_oxlint {
             true => &language.own_globals,
             false => &language.globals,
@@ -208,7 +209,7 @@ impl FileSettings {
         let language_options = Json::Object(language_options);
         let settings = match &*language.settings {
             Json::Null => Json::Object(Vec::new()),
-            // A key that begins with `$` is this program's own.
+            // Keys that begin with `$` are Bun's own.
             Json::Object(entries) => {
                 let of_the_user = entries.iter().filter(|it| !it.0.starts_with(b"$"));
                 Json::Object(of_the_user.cloned().collect())

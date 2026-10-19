@@ -1,12 +1,13 @@
-//! Whether a file is refused, and with which message.
+//! Decides whether a file is rejected as unparsable, and with which message.
 //!
-//! ESLint lints no file that its parser throws on: the one message is `Parsing error: ..`. The file here is parsed by TypeScript's
-//! parser, whatever `languageOptions.parser` is, and that accepts more than either of ESLint's parsers:
+//! ESLint doesn't lint a file its parser throws on. Its only message for that file is `Parsing error: ..`. Here every
+//! file is parsed by TypeScript's parser, whatever `languageOptions.parser` is, and it accepts more than either of
+//! ESLint's parsers. These modules add the missing errors:
 //!
 //! - [`typescript_estree`]: what `@typescript-eslint/parser` throws while it converts the tree.
 //! - [`espree`]: what acorn checks as it parses, and how espree words an error.
 //!
-//! It also reports what they do not: see [`is_tolerated`].
+//! TypeScript's parser also reports some errors they don't. See [`is_tolerated`].
 
 mod espree;
 mod order;
@@ -27,49 +28,52 @@ use std::borrow::Cow;
 #[derive(Default)]
 struct SyntaxError {
     at: u32,
-    /// Where oxc's label ends, like [`Diagnostic::end`]: 0 is the end of the token at `at`. ESLint's parsers only have a place.
+    /// The end of oxc's label, encoded like [`Diagnostic::end`]: 0 is the end of the token at `at`. ESLint's parsers
+    /// only report a start position.
     end: u32,
     message: Vec<u8>,
     of_oxc: OfOxc,
 }
 
-/// What oxlint prints about an error beside its message and the place of its first label, and when it prints it.
+/// Everything oxlint prints for an error besides the message and the first label's position, plus what determines the
+/// error's order.
 #[derive(Default)]
 struct OfOxc {
-    /// 1038 for `TS(1038)`. 0: the error has no code.
+    /// 1038 for `TS(1038)`. 0 if the error has no code.
     code: u16,
-    /// What it says at the first label.
+    /// The first label's text.
     first_label: Cow<'static, str>,
-    /// The other labels, in oxlint's order: where each is, and what it says there.
+    /// The other labels' spans and texts, in oxlint's order.
     labels: Vec<(Span, Cow<'static, str>)>,
     help: Cow<'static, str>,
     note: Cow<'static, str>,
     stage: Stage,
-    /// Where the error is in the order in which oxlint prints the errors of a file, if that is not where its last label starts.
-    /// `u32::MAX`: oxc reports it when it is through with the file.
+    /// The offset oxlint sorts this error by when it prints a file's errors, if that isn't the start of the last label.
+    /// `u32::MAX` means oxc reports it after it has finished the file.
     noticed: Option<u32>,
 }
 
-/// Which part of oxc reports an error.
+/// The part of oxc that reports an error.
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 enum Stage {
-    /// The pass that builds the scopes. It reports all that it finds, and does not run on a file that the parser has an error for.
+    /// The semantic pass, which builds the scopes. It reports everything it finds, and doesn't run if the parser
+    /// reported an error.
     #[default]
     Semantic,
-    /// The parser, which goes on.
+    /// The parser, which recovers and continues.
     Parser,
-    /// The parser, which gives up: nothing after it is reported.
+    /// The parser, which gives up. Nothing after this error is reported.
     Fatal,
 }
 
 impl SyntaxError {
-    /// An error of oxc whose first label is `label`.
+    /// An oxc error whose first label is at `label`.
     #[inline(always)]
     fn of_oxc(label: Span, message: impl AsRef<[u8]>) -> SyntaxError {
         Self::of_oxc_with(label, message.as_ref())
     }
 
-    /// One body for the hundred places that make one.
+    /// Out of line so that the hundred or so call sites share one body.
     #[cold]
     #[inline(never)]
     fn of_oxc_with(label: Span, message: &[u8]) -> SyntaxError {
@@ -84,7 +88,8 @@ impl SyntaxError {
         }
     }
 
-    /// "Expected `;` but found `Identifier`". `wanted`: in backticks. `found`: what oxc calls the token at `label`.
+    /// "Expected `;` but found `Identifier`". `wanted` includes its backticks. `found` is oxc's name for the token at
+    /// `label`.
     #[cold]
     #[inline(never)]
     fn expected(label: Span, wanted: &str, found: &[u8]) -> SyntaxError {
@@ -98,7 +103,7 @@ impl SyntaxError {
         Self::of_oxc_with(label, &texts.concat()).says([wanted, " expected"].concat())
     }
 
-    /// oxc takes what ends at `after` for a statement, and gives up at what follows on the line.
+    /// oxc parsed the code ending at `after` as a statement and gives up at whatever follows on the same line.
     #[cold]
     #[inline(never)]
     fn semicolon_after(after: u32) -> SyntaxError {
@@ -125,13 +130,13 @@ impl SyntaxError {
         self
     }
 
-    /// `text`: what it says at the first label.
+    /// Sets the first label's text.
     fn says(mut self, text: impl Into<Cow<'static, str>>) -> SyntaxError {
         self.of_oxc.first_label = text.into();
         self
     }
 
-    /// One more label.
+    /// Adds another label.
     fn and(mut self, label: Span, text: impl Into<Cow<'static, str>>) -> SyntaxError {
         self.of_oxc.labels.push((label, text.into()));
         self
@@ -165,18 +170,20 @@ impl SyntaxError {
     }
 }
 
-/// Whether neither of ESLint's parsers, or not the one of this file, reports `diagnostic`.
+/// True if this file's ESLint parser doesn't report `diagnostic`.
 fn is_tolerated(file: &File, diagnostic: &Diagnostic) -> bool {
-    // They do not look into comments.
+    // ESLint's parsers don't parse JSDoc.
     if file.is_in_jsdoc(diagnostic.start) {
         return true;
     }
     let language = file.language();
     let is_espree = language.parser == Parser::Espree;
     match diagnostic.code {
-        // Octal literals and escapes, `\8`, `08`: errors in strict mode only. TypeScript's parser always reports them.
+        // Octal literals and escapes, `\8`, `08`. They're errors only in strict mode, but TypeScript's parser always
+        // reports them.
         1121 | 1487 | 1488 | 1489 => {
-            // oxlint goes by whether the file has `import` or `export`. It is not refused here for what may pass there.
+            // oxlint decides by whether the file has `import` or `export`. Don't reject a file that oxlint might
+            // accept.
             !language.refuses_what_parser_refuses
                 || is_espree
                     && language.source_type != SourceType::Module
@@ -190,7 +197,8 @@ fn is_tolerated(file: &File, diagnostic: &Diagnostic) -> bool {
     }
 }
 
-/// The first error of TypeScript's parser that counts.
+/// The first error from TypeScript's parser that isn't tolerated. `Some(None)` means the parser failed without a
+/// diagnostic.
 fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
     if !file.has_parse_errors() {
         return None;
@@ -199,13 +207,13 @@ fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
     match of_parser.clone().find(|it| !is_tolerated(file, it)) {
         Some(first) => Some(Some(first)),
         None if of_parser.next().is_some() => None,
-        // It gave up without saying why.
         None => Some(None),
     }
 }
 
-/// The errors of TypeScript's parser that count, in the words of oxc, up to the first at which oxc's parser gives up. Which of
-/// the diagnostics of the file that one is, and the token at which TypeScript's parser has it.
+/// Translates the errors from TypeScript's parser that aren't tolerated into oxc's wording, up to the first one where
+/// oxc's parser gives up. Also returns that one's index in the file's diagnostics and the offset TypeScript's parser
+/// reports it at.
 fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option<(usize, u32)>) {
     match file.has_parse_errors() {
         true => in_words_of_oxc(file, file.hir.diagnostics),
@@ -213,7 +221,7 @@ fn errors_of_parser_for_oxc<'a>(file: &'a File<'a>) -> (Vec<SyntaxError>, Option
     }
 }
 
-/// [`errors_of_parser_for_oxc`], of `diagnostics`.
+/// [`errors_of_parser_for_oxc`] for the given `diagnostics`.
 #[optimize(size)]
 fn in_words_of_oxc<'a>(
     file: &'a File<'a>,
@@ -222,8 +230,8 @@ fn in_words_of_oxc<'a>(
     let of_parser = diagnostics.iter().enumerate();
     let mut of_parser = of_parser.filter(|it| it.1.kind == DiagnosticKind::Parse);
     let mut all = Vec::new();
-    // After a character that it does not know TypeScript's parser is lost, where oxc's lexer goes on. Only what it says about other
-    // such characters still counts.
+    // TypeScript's parser doesn't recover well from an invalid character (1127), but oxc's lexer continues. After the
+    // first one, only errors about other invalid characters are used.
     let mut lost = None;
     for (place, it) in of_parser.clone().filter(|it| !is_tolerated(file, it.1)) {
         if lost.is_some() && it.code != 1127 {
@@ -244,7 +252,7 @@ fn in_words_of_oxc<'a>(
             };
             errors.push(error.stage(Stage::Fatal));
         }
-        // Nothing follows a comment that is not closed.
+        // Nothing can follow an unterminated comment.
         let is_last = it.code == 1010 || errors.iter().any(|it| it.of_oxc.stage == Stage::Fatal);
         all.append(&mut errors);
         if is_last {
@@ -257,7 +265,7 @@ fn in_words_of_oxc<'a>(
     if lost.is_some() {
         return (all, lost);
     }
-    // It gave up without saying why.
+    // The parser failed without a diagnostic.
     if all.is_empty() && of_parser.next().is_none() {
         let error = SyntaxError {
             message: b"Unexpected token".to_vec(),
@@ -305,28 +313,30 @@ pub fn redeclarations<'a>(file: &'a File<'a>) -> usize {
     oxc::count_of_redeclarations(file)
 }
 
-/// Whether the parser of the configuration, which is neither espree nor that of typescript-eslint, may read what is a syntax error
-/// here. The tree has holes then, which no rule expects.
+/// True if the config's parser is neither espree nor typescript-eslint's, and the file has what we consider a syntax
+/// error. That parser may accept the file, but our tree has holes that no rule expects.
 pub fn may_be_misread<'a>(file: &'a File<'a>) -> bool {
     file.language().parser == Parser::Other
         && (error_of_parser(file).is_some()
             || typescript_estree::first_error(file, false).is_some())
 }
 
-/// The message for a file that ESLint's parser throws on. No rule runs on such a file.
+/// The message for a file that ESLint's parser throws on. No rules run on such a file.
 pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
     parse_errors(file).into_iter().next()
 }
 
-/// [`parse_error`], and the others that oxlint prints about the file, in its order. ESLint's parsers throw one.
+/// [`parse_error`], plus any further errors oxlint prints for the file, in oxlint's order. ESLint's parsers throw only
+/// one.
 pub fn parse_errors<'a>(file: &'a File<'a>) -> Vec<LintMessage> {
     parse_errors_and_stage(file).0
 }
 
-/// [`parse_errors`], and whether a parser has them. `false`: oxc has parsed the file, and the pass that builds its scopes has them.
+/// [`parse_errors`], and true if they come from a parser. False means oxc parsed the file and its semantic pass
+/// reported them.
 pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage>, bool) {
     let parser = file.language().parser;
-    // It has no place.
+    // This error has no position.
     if parser == Parser::Espree
         && let Some(message) = espree::editions::refused_options(file)
     {
@@ -362,7 +372,7 @@ pub(super) fn parse_errors_and_stage<'a>(file: &'a File<'a>) -> (Vec<LintMessage
     });
     let one = |it: Option<SyntaxError>| it.into_iter().collect::<Vec<_>>();
     let errors = match (parser, of_parser) {
-        // It converts a tree only if the parser has nothing to say.
+        // typescript-estree converts the tree only if the parser reported no errors.
         (Parser::TypeScript, None) => one(typescript_estree::first_error(file, false)),
         (Parser::Espree, of_parser) => one(espree::first_error(
             file,
@@ -439,9 +449,9 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
     }
 }
 
-/// Whether oxlint says nothing about the file, which it cannot parse: it is JavaScript, and its first comment has `@flow`.
-/// What the pass that builds the scopes has to say about a file that oxc can parse, it prints.
-/// oxc looks at the comments that its lexer has passed. Where it gives up, that's those before the token that is wrong.
+/// True if oxlint silently skips this file, which it can't parse, because it's JavaScript and its first comment has
+/// `@flow`. If oxc can parse the file, oxlint still prints the semantic pass's errors. oxc only sees the comments its
+/// lexer got past, so if it gives up, that's the comments before the bad token.
 pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
     let mut comments = file.comments().map(|it| it.span());
     let first = comments.find(|it| !file.slice(*it).starts_with(b"#!"));
@@ -451,7 +461,7 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
     if !bun_core::strings::contains(file.slice(first), b"@flow") {
         return false;
     }
-    // It goes on after some errors, to the end of the file.
+    // oxc recovers from some errors and continues to the end of the file.
     let gives_up_at = match errors_of_parser_for_oxc(file) {
         (_, Some((_, at))) => Some(at),
         (of_parser, None) if !of_parser.is_empty() => None,
@@ -460,8 +470,8 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
     gives_up_at.is_none_or(|at| first.start < at)
 }
 
-/// Prettier's `isFlowFile`: it has `babel-flow` parse the file in place of `babel`. There is `@flow` or `@noflow` in a comment
-/// before the code, or the name of the file ends with `.js.flow`.
+/// Prettier's `isFlowFile`. If true, Prettier parses the file with `babel-flow` instead of `babel`. That's the case if
+/// a comment before the code has `@flow` or `@noflow`, or the file name ends with `.js.flow`.
 pub fn goes_to_flow(text: &[u8], path: &[u8]) -> bool {
     let after_shebang = match text.starts_with(b"#!") {
         true => bun_core::strings::index_of_any(text, b"\n\r").unwrap_or(text.len()),
@@ -487,37 +497,38 @@ pub fn goes_to_flow(text: &[u8], path: &[u8]) -> bool {
     path.ends_with(b".js.flow")
 }
 
-/// What becomes of a JavaScript file with the syntax of TypeScript: `var a: T`, `a as T`, `interface A {}`, `class A<T> {}`.
+/// How to treat TypeScript syntax in a JavaScript file: `var a: T`, `a as T`, `interface A {}`, `class A<T> {}`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TypesInJavaScript {
-    /// `babel` throws. It is what Prettier takes for a `.js`, `.jsx`, `.mjs` or `.cjs` file and for a `js` block in Markdown.
+    /// `babel` throws. Prettier picks `babel` for a `.js`, `.jsx`, `.mjs` or `.cjs` file and for a `js` block in
+    /// Markdown.
     Refused,
-    /// The file goes to `flow`, `babel-flow`, `typescript` or `babel-ts`, which somebody has asked for by name. So do some of
-    /// Prettier's own tests, for which `babel` is listed as failing: `js/babel-plugins/typescript.js` is `const x: number = 0;`.
+    /// The user explicitly chose `flow`, `babel-flow`, `typescript` or `babel-ts` as the parser. Some of Prettier's own
+    /// tests do too and list `babel` as failing: `js/babel-plugins/typescript.js` is `const x: number = 0;`.
     Tolerated,
 }
 
-/// [`refused_by_prettier`], with a say about types in JavaScript.
+/// True if Prettier refuses to format the file. `types` controls how TypeScript syntax in JavaScript is treated.
 pub fn refused_by_prettier_with<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> bool {
     refusal_of_prettier(file, types).is_some()
 }
 
-/// Why Prettier refuses to format a file.
+/// The reason Prettier refuses to format a file.
 pub struct Refusal {
-    /// Without a place. For a TypeScript file these are the words of Prettier. For a JavaScript file they are those of
-    /// TypeScript's parser or of acorn, where Prettier has Babel's.
+    /// Doesn't include the position. For a TypeScript file this is Prettier's wording. For a JavaScript file it's the
+    /// wording of TypeScript's parser or acorn, where Prettier would print Babel's.
     pub message: Vec<u8>,
-    /// The offset in the text of the file.
+    /// Byte offset in the file.
     pub at: u32,
 }
 
-/// [`refused_by_prettier_with`], with the reason.
+/// Like [`refused_by_prettier_with`], but returns the reason.
 pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
     refusal(file, types, true)
 }
 
-/// Why oxfmt refuses to format a file, which was parsed as for oxlint: what oxc's parser reports. The pass that builds the scopes
-/// does not run, and no regular expression is parsed.
+/// The reason oxfmt refuses to format a file, which is the first error oxc's parser reports. The file must have been
+/// parsed with oxlint's settings. oxfmt doesn't run the semantic pass or parse regular expressions.
 pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>) -> Option<Refusal> {
     let (of_parser, stop) = errors_of_parser_for_oxc(file);
     let all = oxc::errors(file, of_parser, stop.map(|it| it.0), true);
@@ -547,8 +558,8 @@ fn refusal<'a>(
         message: it.message,
         at: it.at,
     };
-    // `import a from "a" assert { .. }` passes. `typescript` accepts it. `babel` does not, but Prettier's own tests have such
-    // JavaScript files formatted, by other parsers, and nobody is served by a refusal.
+    // `import a from "a" assert { .. }` is accepted. `typescript` accepts it. `babel` doesn't, but Prettier's own tests
+    // format such JavaScript files with other parsers, and rejecting them wouldn't help anyone.
     let is_reported = |it: &&Diagnostic| {
         it.kind == DiagnosticKind::Parse && it.code != 2880 && !file.is_in_jsdoc(it.start)
     };
@@ -571,8 +582,8 @@ fn refusal<'a>(
     if file.is_flow() || goes_to_flow(file.text(), file.path()) {
         return of_babel();
     }
-    // Refused even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides of
-    // `export`.
+    // Rejected even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides
+    // of `export`.
     let is_strict = types == TypesInJavaScript::Refused;
     let is_typescript = |it: &&Diagnostic| {
         (is_strict && it.kind == DiagnosticKind::Js
@@ -580,8 +591,8 @@ fn refusal<'a>(
                 && matches!(it.code, 1206 | 8008 | 8013 | 8017 | 8038))
             && !file.is_in_jsdoc(it.start)
     };
-    // `declare module "a" {}`, `declare global {}`, `export as namespace A`: the parser says nothing about them. Babel takes
-    // `declare` for a name, and expects the `{` of `export {}`.
+    // The parser has no diagnostic for `declare module "a" {}`, `declare global {}` or `export as namespace A`. Babel
+    // parses `declare` as an identifier, and after `export` it expects the `{` of `export {}`.
     let of_declaration = |it: Stmt| {
         let start = it.span().start;
         let after_first_token =
@@ -606,7 +617,8 @@ fn refusal<'a>(
         true => file.body().iter().find_map(of_declaration),
         false => None,
     };
-    // Babel throws at once at what it cannot parse. After an early error it goes on, and Prettier throws it at the end.
+    // Babel throws immediately at code it can't parse. It recovers from an early error, and Prettier throws that one at
+    // the end.
     [of_typescript.map(of_diagnostic), of_declaration]
         .into_iter()
         .flatten()

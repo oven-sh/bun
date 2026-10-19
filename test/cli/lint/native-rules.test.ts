@@ -899,8 +899,8 @@ describe.concurrent("comments", () => {
     "react/rules-of-hooks": "error",
   });
 
-  // Both tools' comments count when neither tool's config is there.
-  test.each(["eslint", "oxlint"])("%s-disable in every form", async tool => {
+  // Both tools' comments work when the project has neither tool's config.
+  test.each(["eslint", "oxlint"])("%s-disable works in every form", async tool => {
     const code = `// ${tool}-disable-next-line no-debugger
 debugger;
 debugger; // ${tool}-disable-line no-debugger
@@ -918,38 +918,44 @@ export const a: any = 1;
 debugger;
 `;
     const { stdout, exitCode } = await lint({ "a.ts": code, ...rules }, ["-f", "json"]);
-    // The last comment is for another rule, so it is unused.
+    // The last comment is for another rule, so it's unused.
     expect(problems(stdout)).toEqual(["a.ts:7 no-debugger", "a.ts:14 null", "a.ts:15 no-debugger"]);
     expect(exitCode).toBe(1);
   });
 
-  test.each(["eslint", "oxlint"])("// %s-disable is for the rest of the file, up to the next -enable", async tool => {
-    const code = `debugger;\n// ${tool}-disable no-debugger\ndebugger;\ndebugger;\n// ${tool}-enable no-debugger\ndebugger;\n`;
-    const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
-    expect(problems(stdout)).toEqual(["a.js:1 no-debugger", "a.js:6 no-debugger"]);
-  });
+  test.each(["eslint", "oxlint"])(
+    "// %s-disable applies to the rest of the file, up to the next -enable",
+    async tool => {
+      const code = `debugger;\n// ${tool}-disable no-debugger\ndebugger;\ndebugger;\n// ${tool}-enable no-debugger\ndebugger;\n`;
+      const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
+      expect(problems(stdout)).toEqual(["a.js:1 no-debugger", "a.js:6 no-debugger"]);
+    },
+  );
 
-  test.each(["eslint", "oxlint"])("an unused %s-disable comment is called what it is called", async tool => {
-    const files = {
-      "a.js": `// ${tool}-disable-next-line no-debugger\nexport const a = 1;\n/* ${tool}-enable no-debugger */\n`,
-    };
-    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--report-unused-disable-directives"]);
-    expect(stdout).toContain(
-      `:1:1: Unused ${tool}-disable directive (no problems were reported from 'no-debugger'). [Error]`,
-    );
-    expect(stdout).toContain(
-      `:3:1: Unused ${tool}-enable directive (no matching ${tool}-disable directives were found for 'no-debugger'). [Error]`,
-    );
-    expect(exitCode).toBe(1);
-  });
+  test.each(["eslint", "oxlint"])(
+    "the message about an unused %s-disable comment uses the comment's own prefix",
+    async tool => {
+      const files = {
+        "a.js": `// ${tool}-disable-next-line no-debugger\nexport const a = 1;\n/* ${tool}-enable no-debugger */\n`,
+      };
+      const { stdout, exitCode } = await lint(files, ["-f", "unix", "--report-unused-disable-directives"]);
+      expect(stdout).toContain(
+        `:1:1: Unused ${tool}-disable directive (no problems were reported from 'no-debugger'). [Error]`,
+      );
+      expect(stdout).toContain(
+        `:3:1: Unused ${tool}-enable directive (no matching ${tool}-disable directives were found for 'no-debugger'). [Error]`,
+      );
+      expect(exitCode).toBe(1);
+    },
+  );
 
-  test("the comments of the two can be mixed", async () => {
+  test("eslint- and oxlint- comments can be mixed", async () => {
     const code = `/* oxlint-disable no-debugger */\ndebugger;\n/* eslint-enable no-debugger */\ndebugger;\n`;
     const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
     expect(problems(stdout)).toEqual(["a.js:4 no-debugger"]);
   });
 
-  test("the rules about comments pass over the comments of both", async () => {
+  test("rules about comments skip both tools' directive comments", async () => {
     const code = `// oxlint-disable-next-line no-debugger
 debugger;
 debugger; // oxlint-disable-line no-debugger
@@ -962,7 +968,7 @@ debugger; // eslint-disable-line no-debugger
     const flat = { "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n` };
     const [alone, fixed, withEslint] = await Promise.all([
       lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json"]),
-      // A capital letter would end what the comment does.
+      // Capitalizing a directive comment would break it.
       lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json", "--fix-dry-run"]),
       lint({ "a.js": code, ...flat }, ["-f", "json"]),
     ]);
@@ -1632,7 +1638,7 @@ describe.concurrent("unknown rules", () => {
       `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]`,
       `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, load the plugin with --plugin`,
     ],
-    // The plugin is there already.
+    // The plugin is already built in.
     [
       "react/only-in-the-package",
       `Unknown rule "react/only-in-the-package"\n  react is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "react-js", specifier = "eslint-plugin-react" }]`,
@@ -1641,12 +1647,12 @@ describe.concurrent("unknown rules", () => {
       "typescript/only-in-the-package",
       `Unknown rule "typescript/only-in-the-package"\n  typescript is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "typescript-js", specifier = "@typescript-eslint/eslint-plugin" }]`,
     ],
-    // No package has them.
+    // There's no package that could have these rules.
     ["bun/only-in-the-package", `Unknown rule "bun/only-in-the-package"`],
     ["oxc/only-in-the-package", `Unknown rule "oxc/only-in-the-package"`],
     ["eslint/only-in-the-package", `Unknown rule "eslint/only-in-the-package"`],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
-    // Rules that bun lint leaves out on purpose.
+    // Rules that bun lint deliberately doesn't implement.
     ["indent", `"indent" is a formatting rule\n  bun fmt does that`],
     ["eslint/semi", `"eslint/semi" is a formatting rule\n  bun fmt does that`],
     ["@stylistic/quotes", `"@stylistic/quotes" is a formatting rule\n  bun fmt does that`],
@@ -1883,7 +1889,7 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     }
   });
 
-  test("invalid options print ESLint's message under a line that names the file", async () => {
+  test("invalid options print ESLint's message under a line with the config file's name", async () => {
     const words = `Key "rules": Key "eqeqeq":\n\tValue "smrt" should be equal to one of the allowed values.`;
     const wrong = { eqeqeq: ["error", "smrt"] as Setting };
     const legacy = {

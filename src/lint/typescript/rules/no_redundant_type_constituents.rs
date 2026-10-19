@@ -94,7 +94,7 @@ impl Primitives {
     }
 }
 
-/// What the `typeName` of a [`TypeFlagsWithName`] is made from, when it is reported.
+/// The source of a [`TypeFlagsWithName`]'s `typeName`, which is only built when it's reported.
 #[derive(Copy, Clone)]
 enum Described<'a> {
     TypeNode(TypeNode<'a>),
@@ -116,8 +116,7 @@ impl TypeFlagsWithName<'_> {
     }
 }
 
-/// The constituents of a union or an intersection type as they are written, and for each which of
-/// `parts` its type consists of.
+/// A union or intersection type's constituents as written, and for each one the range of `parts` its type consists of.
 #[derive(Default)]
 struct Constituents<'a> {
     parts: SmallVec<[TypeFlagsWithName<'a>; 8]>,
@@ -156,7 +155,7 @@ fn join<'a>(parts: impl Iterator<Item = TypeFlagsWithName<'a>>) -> Vec<u8> {
 }
 
 fn describe_literal_type(ty: Type) -> Vec<u8> {
-    // tsgolint prints the type. What is printed for a string has quotes, and it quotes that.
+    // tsgolint prints the type. A string's printed form already has quotes, and tsgolint quotes that again.
     if ty.file().language().is_oxlint {
         let text = ty.to_text();
         return if ty.flags().intersects(TypeFlags::STRING_LITERAL) { json_stringify_alloc(&text) } else { text };
@@ -170,7 +169,7 @@ fn describe_literal_type(ty: Type) -> Vec<u8> {
         Some(Literal::Number(value)) => return text::number_to_string(value),
         None => {}
     }
-    // The alias of the type of a name that does not resolve is that name.
+    // When a name doesn't resolve, its type's alias is that name.
     if ty.is_error()
         && let Some(alias_symbol) = ty.alias_symbol()
     {
@@ -198,11 +197,11 @@ fn describe_literal_type(ty: Type) -> Vec<u8> {
 fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
     let is_oxlint = type_node.file().language().is_oxlint;
     let description: &[u8] = match type_node.kind() {
-        // tsgolint has a string without quotes, a template as it is written, and does not say which boolean it is.
+        // tsgolint prints a string without quotes and a template as written, and doesn't say which boolean it is.
         TypeKind::StringLit(value) if is_oxlint => return value.bytes().to_vec(),
         TypeKind::Template(_) if is_oxlint => return type_node.text().to_vec(),
         TypeKind::BoolLit(_) if is_oxlint => b"literal type",
-        // One that does not resolve: `A.B<C, D>`.
+        // A reference that doesn't resolve: `A.B<C, D>`.
         TypeKind::Ref { name, args } if is_oxlint => {
             let names: Vec<&[u8]> = name.parts().map(|it| it.bytes()).collect();
             let args: Vec<Vec<u8>> = args.iter().map(|it| it.ty().to_text()).collect();
@@ -224,7 +223,7 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
         TypeKind::NumberLit(value) => return text::number_to_string(value),
         TypeKind::BoolLit(true) => b"true",
         TypeKind::BoolLit(false) => b"false",
-        // tsgolint has the text of the scanner: hexadecimal stays so, in lower case and without separators.
+        // tsgolint uses the scanner's text: hexadecimal stays hexadecimal, in lower case and without separators.
         TypeKind::BigIntLit { negative: false, .. }
             if is_oxlint && type_node.text().get(..2).is_some_and(|it| it.eq_ignore_ascii_case(b"0x")) =>
         {
@@ -237,7 +236,7 @@ fn describe_literal_type_node(type_node: TypeNode) -> Vec<u8> {
     description.to_vec()
 }
 
-/// The reference to `name`, which does not resolve, that `type_node` has its type `error` from: itself, or the `A` of
+/// Returns the unresolved reference to `name` that gives `type_node` its type `error`: the node itself, or the `A` in
 /// `Partial<A>`.
 fn unresolved_reference<'a>(mut type_node: TypeNode<'a>, error: Type<'a>, name: &[u8]) -> Option<TypeNode<'a>> {
     loop {
@@ -251,15 +250,16 @@ fn unresolved_reference<'a>(mut type_node: TypeNode<'a>, error: Type<'a>, name: 
     }
 }
 
-/// Adds the parts of the type that is written as `type_node`.
+/// Adds the parts of the type written as `type_node`.
 fn get_type_node_type_part_flags<'a>(
     type_node: TypeNode<'a>,
     parts: &mut SmallVec<[TypeFlagsWithName<'a>; 8]>,
 ) {
     let file = type_node.file();
     let is_oxlint = file.language().is_oxlint;
-    // tsgolint asks the type of all but seven keywords and four literals, which is an error for `this` outside of a
-    // class and for all in a `with` statement. `(A)` is a `ParenthesizedType` for it, which is none of them.
+    // tsgolint gets the type of everything except seven keywords and four literals. That's an error for `this` outside
+    // a class and for everything in a `with` statement. For tsgolint `(A)` is a `ParenthesizedType`, which isn't one of
+    // those.
     let is_parenthesized_type = is_oxlint && type_node.is_parenthesized();
     let has_with_statements = is_oxlint && file.has_with_statements();
     let type_flags = match type_node.kind() {
@@ -274,16 +274,16 @@ fn get_type_node_type_part_flags<'a>(
             Keyword::Unknown => Some(TypeFlags::UNKNOWN),
             Keyword::This if is_oxlint => None,
             _ if has_with_statements => None,
-            // One part, with none of the flags that are looked for.
+            // One part, with none of the flags we look for.
             _ => Some(TypeFlags::empty()),
         },
-        // A template without substitutions is no `StringLiteral` for tsgolint.
+        // For tsgolint a template without substitutions isn't a `StringLiteral`.
         TypeKind::StringLit(_) if is_oxlint && type_node.text().starts_with(b"`") => None,
         TypeKind::StringLit(_) => Some(TypeFlags::STRING_LITERAL),
         TypeKind::NumberLit(_) => Some(TypeFlags::NUMBER_LITERAL),
         TypeKind::BigIntLit { .. } => Some(TypeFlags::BIG_INT_LITERAL),
         TypeKind::BoolLit(_) => Some(TypeFlags::BOOLEAN_LITERAL),
-        // The same: an object type.
+        // Likewise for an object type.
         TypeKind::Object(_) | TypeKind::Fn(_) | TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::Mapped(_)
             if !has_with_statements =>
         {
@@ -308,7 +308,7 @@ fn get_type_node_type_part_flags<'a>(
                 described: Described::Type(type_part),
             };
             let node_type = type_node.ty();
-            // tsgolint 7.0 names a type that does not resolve with what is before the dots and with its type arguments.
+            // tsgolint 7.0 prints an unresolved type with its qualifiers and its type arguments.
             if type_node.file().language().is_oxlint
                 && node_type.is_error()
                 && let Some(alias_symbol) = node_type.alias_symbol()
@@ -320,8 +320,8 @@ fn get_type_node_type_part_flags<'a>(
                 });
                 return;
             }
-            // `unionTypePartsUnlessBoolean`: `boolean` is the union `false | true`. For tsgolint only the type of the
-            // keyword is: an alias of `true | false` is another union.
+            // `unionTypePartsUnlessBoolean`: `boolean` is the union `false | true`. For tsgolint that's only true of
+            // the keyword's type, and an alias of `true | false` is a different union.
             let is_boolean_type = match is_oxlint {
                 true => node_type == file.type_checker().get_boolean_type(),
                 false => node_type.has_flags(TypeFlags::BOOLEAN),
@@ -343,7 +343,8 @@ fn is_node_inside_return_type(node: TypeNode) -> bool {
     let Node::Func(func) = node.parent() else {
         return false;
     };
-    // tsgolint's `ast.IsFunctionLike(node.Parent)`: also an index signature, not through the parentheses of `(A | B)`.
+    // tsgolint's `ast.IsFunctionLike(node.Parent)`. It includes an index signature, and it doesn't see through the
+    // parentheses of `(A | B)`.
     match node.file().language().is_oxlint {
         true => !node.is_parenthesized(),
         false => is_function_or_function_type(func),
@@ -362,7 +363,7 @@ fn report_any<'a>(
     cx.report(place(type_node), message).data("container", container).data("typeName", type_name);
 }
 
-/// oxlint points at the parentheses around a constituent.
+/// oxlint's span includes the parentheses around a constituent.
 fn place(type_node: TypeNode) -> Span {
     if type_node.file().language().is_oxlint { type_node.outer_span() } else { type_node.span() }
 }
@@ -400,8 +401,8 @@ impl NoRedundantTypeConstituents {
             has_seen_union_types |= type_part_flags.len() >= 2;
         }
 
-        // `type F = "a" | 2 | "b"; type I = F & string;`: whether all the members of `F` are
-        // assignable to another constituent of `I`.
+        // `type F = "a" | 2 | "b"; type I = F & string;`: check whether all the members of `F` are assignable to
+        // another constituent of `I`.
         if has_seen_union_types {
             let mut type_values_literal = None;
             for (type_ref, type_values) in constituents.iter() {
@@ -416,13 +417,13 @@ impl NoRedundantTypeConstituents {
                     && type_values.iter().all(|it| primitive_of(it).is_some())
                 {
                     let is_oxlint = cx.language().is_oxlint;
-                    // tsgolint names every union with the parts of the first that it reports.
+                    // For every union, tsgolint prints the parts of the first one it reported.
                     let literal = match is_oxlint {
                         true => type_values_literal.get_or_insert_with(|| join(type_values.iter().copied())).clone(),
                         false => join(type_values.iter().copied()),
                     };
                     let report = cx.report(place(type_ref), PRIMITIVE_OVERRIDDEN);
-                    // tsgolint has the two the other way round here.
+                    // tsgolint swaps the two here.
                     match is_oxlint {
                         true => report.data("literal", primitive.name()).data("primitive", literal),
                         false => report.data("literal", literal).data("primitive", primitive.name()),
@@ -459,7 +460,7 @@ impl NoRedundantTypeConstituents {
             return;
         };
         let constituents = Constituents::of(types);
-        // In the order in which they are seen: two of them can be reported at one constituent.
+        // In the order they're seen, because two of them can be reported at the same constituent.
         let mut seen_literal_types = SmallVec::<[Primitive; 4]>::new();
         let mut seen_primitive_types = Primitives::default();
 

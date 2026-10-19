@@ -34,22 +34,22 @@ macro_rules! pretty {
     };
 }
 
-/// The version of ESLint whose behavior this is.
+/// The ESLint version whose behavior this matches.
 const ESLINT_VERSION: &str = "10.12.0";
 
-/// Standard output, or standard error.
+/// Standard output or standard error.
 #[derive(Copy, Clone, Default)]
 pub struct Stream {
     pub is_tty: bool,
     pub colors: bool,
 }
 
-/// The text of a program, in parts.
+/// A program's source text, in parts.
 pub(crate) type Source = &'static [crate::evaluate::Part];
 
 /// A program for the running executable to run: `head`, then `source`.
 pub struct Script<'s> {
-    /// What the program is given, as a declaration.
+    /// The program's input, as a declaration.
     pub head: &'s [u8],
     pub source: Source,
     /// The working directory.
@@ -57,25 +57,27 @@ pub struct Script<'s> {
 }
 
 impl Script<'_> {
-    /// The variables of the environment that steer a `bun` process and are not meant for the one that runs the program. It
-    /// inherits all others: ESLint and Prettier run a configuration file in their own process, so it sees what they were started with.
+    /// Environment variables that control a `bun` process and aren't meant for the one that runs the program. It
+    /// inherits all the others. ESLint and Prettier run a config file in their own process, so it sees the environment
+    /// they were started with.
     pub const NOT_INHERITED: [&'static [u8]; 7] = [
-        // This process has applied these flags. `--cwd=sub` would be applied once more, in `sub`.
+        // This process already applied these flags. `--cwd=sub` would be applied a second time, inside `sub`.
         b"BUN_OPTIONS",
-        // A debugger in every such process, which can wait for its client for ever. Editors set these for all that their terminals start.
+        // These start a debugger in every such process, which can wait for its client forever. Editors set them for
+        // everything their terminals start.
         b"BUN_INSPECT",
         b"BUN_INSPECT_CONNECT_TO",
         b"BUN_INSPECT_NOTIFY",
         b"BUN_INSPECT_PRELOAD",
-        // The channel to what has started this process. The descriptor is not passed on.
+        // The IPC channel to this process's parent. The descriptor isn't passed on.
         b"NODE_CHANNEL_FD",
         b"NODE_CHANNEL_SERIALIZATION_MODE",
     ];
 }
 
-/// What `bun lint` takes from the process that it runs in.
+/// Everything `bun lint` needs from the process it runs in.
 pub struct Environment<'e> {
-    /// The working directory: absolute, and through [`from_native_path`](crate::from_native_path).
+    /// The working directory: absolute, and converted by [`from_native_path`](crate::from_native_path).
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
@@ -87,23 +89,22 @@ pub struct Environment<'e> {
     pub is_github_action: bool,
     /// TypeScript's `lib.*.d.ts`, for the rules that need types.
     pub libs: bun_sema_driver::Libs<'e>,
-    /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
-    /// this is why.
+    /// Runs a script to completion. `Ok` is what it printed to standard output. `Err` is why it failed.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
     /// Runs git and waits for it to exit.
     pub run_git: &'e (dyn Fn(&git::Command) -> Result<git::Finished, git::NotRun> + Sync),
     /// The command line of this process, without the executable.
     pub command_line: &'e [&'e [u8]],
-    /// Where the rules that are written in JavaScript run.
+    /// Runs the rules written in JavaScript.
     pub js_engine: &'e dyn Engine,
-    /// The version of Bun.
+    /// Bun's version.
     pub version: &'e [u8],
-    /// The memory of the machine, or of the container that the process is in, in bytes. 0: it is not known, and the programs of
-    /// a run with types are checked one after the other.
+    /// The memory of the machine, or of the container the process is in, in bytes. 0 if unknown, in which case a run
+    /// with types checks its programs one after the other.
     pub memory: usize,
 }
 
-/// What to print, and the exit code: 0, 1 if there are problems in the code, 2 if linting failed.
+/// The output to print and the exit code: 0, 1 if there are problems in the code, 2 if linting failed.
 #[derive(Default)]
 pub struct Outcome {
     pub stdout: Vec<u8>,
@@ -111,7 +112,7 @@ pub struct Outcome {
     pub exit_code: u8,
 }
 
-/// The variables that tell oxlint that an agent runs it. Any value counts but an empty one.
+/// Environment variables that tell oxlint an agent is running it. Any non-empty value counts.
 const AGENTS_FOR_OXLINT: [&[u8]; 12] = [
     b"AI_AGENT",
     b"CLAUDECODE",
@@ -127,7 +128,7 @@ const AGENTS_FOR_OXLINT: [&[u8]; 12] = [
     b"CURSOR_AGENT",
 ];
 
-/// Whether `agent` would be oxlint's format. `AGENT` alone decides if it is set, as everywhere in Bun.
+/// True if oxlint would default to its `agent` format. If `AGENT` is set, only it decides, like everywhere in Bun.
 fn is_agent_for_oxlint() -> bool {
     let get = |name: &[u8]| bun_core::getenv_z(&bun_core::ZBox::from_bytes(name));
     let has = |name: &[u8], part: &[u8]| get(name).is_some_and(|it| strings::contains(it, part));
@@ -149,26 +150,25 @@ fn invalid_config(loader: &Loader, loaded: &Loaded, error: &[u8]) -> Vec<u8> {
     }
 }
 
-/// Why nothing can be linted: the message. ESLint throws, and exits with 2.
+/// The message for an error that stops the whole run. ESLint throws and exits with 2.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Fatal(pub(crate) Vec<u8>);
 
-/// The threads.
 pub(crate) struct Pool {
     caches: bun_sema_driver::ThreadCaches,
     threads: usize,
 }
 
-/// What it takes to lint a file, beyond what is in this program.
+/// The resources that linting a file needs beyond the native code.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Needs {
     Nothing,
     /// A rule or a processor in JavaScript.
     Engine,
-    /// One for which the engine has to run the configuration file, with all that it imports.
+    /// A rule or processor for which the engine has to run the config file and everything it imports.
     Configuration,
-    /// What makes an engine grow: a file of [`HEAVY`] bytes, or ESLint's own `Linter` with a parser that makes a TypeScript
-    /// program: gigabytes.
+    /// Something that makes an engine's memory grow: a file of at least [`HEAVY`] bytes, or ESLint's own `Linter` with
+    /// a parser that builds a TypeScript program, which takes gigabytes.
     Heavy,
 }
 
@@ -256,7 +256,7 @@ fn needs(target: &Target) -> Needs {
     }
 }
 
-/// Whether a rule that is on for the file has the rule of its package beside it, to which it can hand the file back.
+/// True if a rule that's on for the file can hand the file back to its package's JavaScript version.
 fn may_be_handed_back(target: &Target) -> bool {
     matches!(&target.status, Status::Matched(config) if config.may_hand_back())
 }
@@ -271,8 +271,8 @@ impl Needs {
 }
 
 impl Pool {
-    /// The most that Bun's pool ever has (`get_thread_count`). What there is for each thread is made for as many as are asked
-    /// for, and a `bunfig.toml` can ask.
+    /// The maximum size of Bun's pool (`get_thread_count`). Per-thread state is allocated for every requested thread,
+    /// and a `bunfig.toml` can request any number.
     const MOST: usize = 1024;
 
     pub(crate) fn new(threads: usize) -> Pool {
@@ -295,14 +295,14 @@ impl Pool {
     }
 }
 
-/// `--timing`: how long all threads together have spent on what, in nanoseconds.
+/// `--timing`: total time spent in each phase, summed over all threads, in nanoseconds.
 #[derive(Default)]
 pub(crate) struct Timing {
     is_on: bool,
     pub(crate) read: AtomicU64,
     pub(crate) parse: AtomicU64,
     pub(crate) rules: AtomicU64,
-    /// Files in which `File::mentions` says yes to every name, so that each rule about a name listens.
+    /// Files in which `File::mentions` returns true for every name, so no rule that looks for a name can be skipped.
     pub(crate) without_filter: AtomicU64,
 }
 
@@ -317,7 +317,7 @@ impl Timing {
         }
     }
 
-    /// Adds the time since `started`. Returns the time.
+    /// Adds the time since `started` to `to`. Returns the current time.
     pub(crate) fn add(&self, to: &AtomicU64, started: Option<Instant>) -> Option<Instant> {
         started?;
         to.fetch_add(elapsed(started), Ordering::Relaxed);
@@ -325,7 +325,8 @@ impl Timing {
     }
 }
 
-/// Whether `a.filePath < b.filePath` in JavaScript ([`strings::order_utf16`]) is the order of the bytes for `path`.
+/// True if comparing `path` by bytes gives the same order as `a.filePath < b.filePath` in JavaScript
+/// ([`strings::order_utf16`]).
 fn is_ordered_by_bytes(path: &[u8]) -> bool {
     path.iter().all(|&byte| byte < 0xEE)
 }
@@ -335,24 +336,23 @@ struct Run<'r> {
     environment: &'r Environment<'r>,
     out: Outcome,
     began: Instant,
-    /// Whether it stands in for oxlint, once that is known.
+    /// True if the run emulates oxlint. `None` until that's known.
     is_for_oxlint: Option<bool>,
     /// `--doctor`
     modules: Option<&'r Modules>,
 }
 
-/// What there is to say about the file of suppressions.
+/// Facts to report about the suppressions file.
 #[derive(Default)]
 struct Suppressed {
-    /// It has what does not occur.
+    /// It has unused suppressions.
     has_unused: bool,
-    /// There are errors of rules that it does not have. Only oxlint says so.
+    /// There are errors from rules it doesn't list. Only oxlint reports that.
     has_new: bool,
-    /// It was written. `Some(true)`: it was there before.
+    /// Set if it was written. `Some(true)` if it already existed.
     updated: Option<bool>,
 }
 
-/// What was linted.
 struct Linted {
     results: Vec<FileResult>,
     files: usize,
@@ -374,13 +374,13 @@ impl Run<'_> {
         );
     }
 
-    /// Fails with the exit code that ESLint has for that, or oxlint, which says why on standard output.
+    /// Fails with ESLint's exit code, or with oxlint's, which prints the reason to standard output.
     fn fail(mut self, text: &[u8]) -> Outcome {
         self.failed(text);
         self.out
     }
 
-    /// Says what has gone wrong, and sets the exit code for it.
+    /// Prints the error and sets the exit code.
     fn failed(&mut self, text: &[u8]) {
         match self.is_for_oxlint() {
             true => {
@@ -406,7 +406,7 @@ impl Run<'_> {
         );
     }
 
-    /// Refuses the command line, which both do on standard error.
+    /// Rejects the command line. Both tools print that to standard error.
     fn refuse(mut self, text: &[u8]) -> Outcome {
         self.error(text);
         self.out.exit_code = match self.is_for_oxlint() {
@@ -416,7 +416,7 @@ impl Run<'_> {
         self.out
     }
 
-    /// Refuses a flag of the tool that the run does not stand in for.
+    /// Rejects flags of a tool this run isn't emulating.
     fn refuse_flag(mut self, text: &[u8]) -> Outcome {
         self.error(text);
         self.out.exit_code = 2;
@@ -432,7 +432,7 @@ impl Run<'_> {
     fn format(&self, is_oxlint: bool, is_native: bool) -> Result<Format, Vec<u8>> {
         let name: &[u8] = match &self.options.format {
             Some(name) => &name[..],
-            // An agent is saved from opening the files.
+            // This format shows the code, so an agent doesn't have to open the files.
             None if self.environment.is_ai_agent => b"agent",
             None if is_oxlint && is_agent_for_oxlint() => b"agent",
             None if is_oxlint && self.environment.is_github_action => b"github",
@@ -442,7 +442,7 @@ impl Run<'_> {
         Format::by_name(name, is_oxlint).ok_or_else(|| Format::is_missing(name))
     }
 
-    /// What ESLint's `cli.execute` refuses. `None`: nothing.
+    /// Returns the error for an option combination that ESLint's `cli.execute` rejects.
     fn refusal(&self) -> Option<Vec<u8>> {
         let options = self.options;
         let text: &[u8] = if options.print_config.is_some() && !options.patterns.is_empty() {
@@ -539,7 +539,7 @@ impl Run<'_> {
             });
         };
         let route = loaded.routes(config, &path);
-        // ESLint says itself what is wrong with a configuration for what it lints.
+        // For files that ESLint lints, it reports an invalid config itself.
         if let Some(error) = config.error.as_ref().filter(|_| route != Route::Eslint) {
             return Err(Fatal(invalid_config(loader, &loaded, error)));
         }
@@ -572,7 +572,7 @@ impl Run<'_> {
                 listed: None,
             });
         }
-        // With another parser it shows only when the text is read whether it can be read here.
+        // With another parser, whether the text can be parsed here is only known once it's read.
         if matches!(route, Route::Processor | Route::Language | Route::Eslint)
             || config.language.parser == Parser::Other
         {
@@ -652,7 +652,7 @@ impl Run<'_> {
             ));
         }
         let started = Instant::now();
-        // oxlint says nothing about an argument that matches nothing, as long as there is a file.
+        // oxlint doesn't complain about an argument that matches nothing, as long as some file is found.
         let is_oxlint = loader
             .for_directory(&self.environment.cwd)
             .is_ok_and(|it| it.flavor == Flavor::Oxlint);
@@ -681,7 +681,7 @@ impl Run<'_> {
                 listed: Some(listed.map(|it| it.path).collect()),
             });
         }
-        // ESLint finds out when it comes to the file.
+        // ESLint only notices when it gets to the file.
         let invalid = targets.iter().find_map(|target| match &target.status {
             Status::Matched(config) if target.route() != Route::Eslint => {
                 let error = config.error.as_ref()?;
@@ -736,12 +736,12 @@ impl Run<'_> {
             inferred.files(asking.map(|it| it.path.clone()).collect());
         }
 
-        // Those that need types first. What turns out to be in no program is linted without.
+        // Files that need types go first. Any that turn out to be in no program are linted without types.
         let started = Instant::now();
         let mut without_types: Vec<&Target> = Vec::with_capacity(supported.len());
         let mut with_types: Vec<(&Target, Typed)> = Vec::new();
         let mut rules_without_types: Vec<&'static str> = Vec::new();
-        // The configurations whose rules are in that list. Many files have one.
+        // The configs whose rules are already in that list. Many files share a config.
         let (mut listed, mut last) = (FxHashSet::default(), None);
         for target in &supported {
             let Status::Matched(config) = &target.status else {
@@ -780,7 +780,7 @@ impl Run<'_> {
                 }
             }
         }
-        // oxlint leaves them out too, and says nothing.
+        // oxlint silently skips these too.
         if !rules_without_types.is_empty() && !is_oxlint {
             let count = format!("{}", rules_without_types.len()).into_bytes();
             let (rules, them): (&[u8], &[u8]) = match rules_without_types.len() {
@@ -796,7 +796,7 @@ impl Run<'_> {
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
-        // Those that a rule may hand back to the rule of its package.
+        // Files that a rule may hand back to its package's JavaScript version.
         let may_come =
             (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
         let count = with_engine.count() + may_come.clone().count();
@@ -819,8 +819,8 @@ impl Run<'_> {
         phases.checking = started.elapsed().as_secs_f64();
 
         let started = Instant::now();
-        // What takes longest first, so that no thread begins it when the others are nearly done: what needs JavaScript, then
-        // the largest.
+        // Slowest first, so no thread starts a slow file when the others are nearly done: files that need JavaScript,
+        // then the largest.
         bun_lint::utils::sort::sort_by_cached_key(&mut without_types, |target| {
             std::cmp::Reverse((needs(target), target.size))
         });
@@ -852,7 +852,8 @@ impl Run<'_> {
                 {
                     inferred.begin();
                 }
-                // A thread with a VM that's busy counts as one of `--threads`. It goes on with these files once it's free.
+                // A thread with a VM that's busy counts as one of `--threads`. It continues with these files once it's
+                // free.
                 while worker + context.js_plugins.busy() < pool.threads() && files.lint_plain() {}
             });
         };
@@ -872,7 +873,7 @@ impl Run<'_> {
         if let Some(error) = failure.get_mut().take() {
             return Err(error);
         }
-        // A comment in a file can turn on a rule that needs `eslint`, which only shows when the file is read.
+        // A comment in a file can turn on a rule that needs `eslint`, which is only discovered when the file is read.
         let needs_eslint = context.needs_eslint.lock();
         let found_late = needs_eslint.get(known_to_need_eslint..).unwrap_or_default();
         let found_late: FxHashSet<&[u8]> = found_late.iter().map(|it| &it.0[..]).collect();
@@ -934,7 +935,7 @@ impl Run<'_> {
         let linter = Linter::new(registry.answering_for(options.native_plugin_rules.clone()));
         bun_sema_driver::use_a_pool_of_their_own("Bun Lint");
         let pool = Pool::new(options.threads);
-        // Nothing is started unless a configuration has a plugin in JavaScript.
+        // Nothing starts unless a config has a JavaScript plugin.
         let js_plugins = Host::with_engine(
             environment.js_engine,
             &paths::to_native(environment.cwd.clone()),
@@ -956,7 +957,7 @@ impl Run<'_> {
                 Err(Fatal(error)) => self.fail(&error),
             };
         }
-        // One that cannot be read is reported when a file is linted with it.
+        // An unreadable config is reported when a file is linted with it.
         let of_cwd = loader.for_directory(&environment.cwd).ok();
         let is_oxlint = of_cwd
             .as_ref()
@@ -1044,8 +1045,8 @@ impl Run<'_> {
         if let Some(only) = &only {
             store.provide(only.already_read(false));
         }
-        // Only if it is asked for: to load the libraries and the types takes longer than to lint a small project. A file that
-        // is linted with types has them anyway: `typed::OfFile`.
+        // Opt-in, because loading the libraries and types takes longer than linting a small project. A file that's
+        // linted with types has them anyway. See `typed::OfFile`.
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
         let inferred = (options.infer_globals == Some(true) || by_options)
             .then(|| Inferred::new(environment, pool.threads(), by_options));
@@ -1108,7 +1109,7 @@ impl Run<'_> {
                 _ => None,
             });
             self.out.stdout.push(b'\n');
-            // ESLint prints the same for a rule whoever answers for it.
+            // The printed config is the same whether a rule is built in or runs in JavaScript, so add a note.
             if let FileConfig::Matched(config) = &config {
                 let on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
                 let ids: Vec<&[u8]> = on.map(|it| &it.configured.rule.id[..]).collect();
@@ -1162,7 +1163,7 @@ impl Run<'_> {
             ]);
         }
         for (reason, files) in std::mem::take(&mut *handed_back.lock()) {
-            // That is so until the formatter is there, and says nothing to the user.
+            // This only happens where no formatter is wired up, and means nothing to the user.
             if reason != Reason::NoFormatter {
                 let noun = if files == 1 { "file" } else { "files" };
                 let text = reason.text();
@@ -1209,7 +1210,7 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        // Who lints with `--staged` or `--changed`, or from standard input, knows that the files are few.
+        // With `--staged`, `--changed` or standard input, the user already knows that only a few files are linted.
         let mut without_include = std::mem::take(&mut *without_include.lock());
         if options.only.is_some() || options.stdin || options.silent {
             without_include.clear();
@@ -1235,7 +1236,7 @@ impl Run<'_> {
                 ]
                 .concat(),
             };
-            // With an oxlint config the flag does not choose the project.
+            // With an oxlint config the flag doesn't select the project.
             let or_the_flag: &[u8] = match options.tsconfig.is_some() || is_oxlint {
                 true => b".",
                 false => b" or pass --tsconfig.",
@@ -1316,7 +1317,7 @@ impl Run<'_> {
         ];
         let hint = b"\n  Run bun add -d eslint";
         not_linted(&loader, &environment.cwd, &of(true), because, hint);
-        // An `.eslintrc` has no languages, so it's a parser that reads such a file.
+        // An `.eslintrc` has no languages, so only a custom parser can read such a file.
         let because: &[u8] = b"the parser in your config only works with an eslint.config.js";
         not_linted(&loader, &environment.cwd, &of(false), [because; 2], b"");
         let mut seen: Vec<&Arc<_>> = Vec::new();
@@ -1358,7 +1359,7 @@ impl Run<'_> {
             return self.out;
         }
 
-        // The rules that are about several files look at those that they have something to say about.
+        // Rules that look at several files now revisit the files they have something to report in.
         let started = Instant::now();
         let again: FxHashSet<Vec<u8>> = modules
             .complete(&|count, work| pool.for_each(count, 1, work))
@@ -1396,7 +1397,7 @@ impl Run<'_> {
         }
 
         let (mut fixed, mut fixes) = (0, 0);
-        // Said after the report, which is about all the other files too.
+        // Printed after the report, which also covers all the other files.
         let mut not_written: Vec<Vec<u8>> = Vec::new();
         let mut not_staged: Vec<Vec<u8>> = Vec::new();
         if options.fix {
@@ -1408,7 +1409,8 @@ impl Run<'_> {
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
                 let done = match result.written() {
-                    // Not nothing in its place. Fixes that leave nothing of a file give an empty text, which is written.
+                    // Never write an empty file instead. Fixes that delete everything produce an empty text, which is
+                    // `Some` and gets written.
                     None => Err(b"the fixed code was lost. This is a bug in Bun.".to_vec()),
                     Some(text) => fs::write_atomically(&once, &environment.cwd, &result.path, text),
                 };
@@ -1454,7 +1456,7 @@ impl Run<'_> {
             }
         }
         let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
-        // oxlint reports it like problems, after those of all files.
+        // oxlint reports these like problems, after every file's problems.
         let about_suppressions = match is_oxlint {
             true => format::summary::about_suppressions(has_unused, suppressed.has_new),
             false => None,
@@ -1466,7 +1468,7 @@ impl Run<'_> {
             results.iter_mut().for_each(FileResult::keep_errors_only);
             results.retain(|it| !it.messages.is_empty());
         }
-        // What the command line does not say, the `options` of an `.oxlintrc.json` can.
+        // The `options` of an `.oxlintrc.json` fill in what the command line doesn't set.
         let max_warnings = match options.max_warnings {
             -1 => of_cwd.as_ref().and_then(|it| it.max_warnings).unwrap_or(-1),
             given => given,
@@ -1479,7 +1481,7 @@ impl Run<'_> {
             false => max_warnings,
         };
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
-        // Only these two have something for a file without a problem.
+        // Only these two formats print files without problems.
         if !matches!(format, Format::Json | Format::JsonWithMetadata) {
             results.retain(|it| !it.messages.is_empty());
         }
@@ -1490,14 +1492,14 @@ impl Run<'_> {
             }),
         }
         results.extend(about_suppressions);
-        // oxlint prints what its parser says, without the words that ESLint puts before it.
+        // oxlint prints its parser's message without ESLint's `Parsing error: ` prefix.
         if is_oxlint {
             let messages = results.iter_mut().flat_map(|it| &mut it.messages);
             for message in messages.filter(|it| is_parse_error(it)) {
                 message.message.drain(..b"Parsing error: ".len());
             }
         }
-        // oxlint's formats print what they print when there is no problem.
+        // With `--silent`, oxlint's formats print what they print when there are no problems.
         if is_oxlint && options.silent {
             results.clear();
         }
@@ -1658,7 +1660,7 @@ impl Run<'_> {
         self.out.exit_code = if options.exit_on_fatal_error && counts.fatal_errors > 0 {
             2
         } else if is_oxlint && options.suppress_all && !has_no_files {
-            // To have written the file is a success for oxlint, whatever is left.
+            // oxlint exits 0 once the suppressions file is written, even if problems remain.
             0
         } else {
             u8::from(
@@ -1671,7 +1673,7 @@ impl Run<'_> {
         self.out
     }
 
-    /// What ESLint's `cli.execute` does about `eslint-suppressions.json`.
+    /// Handles `eslint-suppressions.json` the way ESLint's `cli.execute` does.
     fn apply_suppressions(
         &self,
         results: &mut [FileResult],
@@ -1688,9 +1690,10 @@ impl Run<'_> {
         } else {
             suppressions::DEFAULT_FILE_NAME
         };
-        // One file for a run from any directory of the project: the names in it start where bunfig.toml is. Without a word about
-        // where it is, it is the nearest from the working directory up to there, and the names start beside it. A new one is
-        // where ESLint or oxlint, whose configuration there is, would look for it.
+        // One file serves runs from any directory in the project, so its paths are relative to bunfig.toml's directory.
+        // If no location is configured, the nearest file between the working directory and that directory is used, and
+        // its paths are relative to its own directory. With an ESLint or oxlint config, a new file is created where
+        // that tool would look for it.
         let project = options.start_of_bunfig(cwd);
         let start = match &location {
             Some(_) if options.is_suppressions_location_of_flag => cwd.clone(),
@@ -1796,7 +1799,7 @@ impl Run<'_> {
             }
         }
         self.out.stderr.push(b'\n');
-        // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.
+        // A valid file that falls back to the error-recovering parser is a bug in the fast parser.
         let counts = &bun_sema_parser::COUNTS;
         let _ = write!(
             self.out.stderr,
@@ -1817,8 +1820,9 @@ impl Run<'_> {
     }
 }
 
-/// What the configurations of the files that were linted, and their comments, turn on without naming it, or where something else
-/// does the work, and what is left out here on purpose. That it did not run is a note, in every format.
+/// Rules that `bun lint` leaves out on purpose but that the linted files' configs or comments turn on: deprecated
+/// formatting rules, whose job `bun fmt` does, and plugins with no rules here, whose rules oxlint's `categories` turn
+/// on without naming them. Every format prints a note that they didn't run.
 #[derive(Default)]
 struct NotBuiltIn {
     /// [`formatting_rule`]
@@ -1828,7 +1832,7 @@ struct NotBuiltIn {
 }
 
 impl NotBuiltIn {
-    /// Whether the rule `id`, which a comment turns on, is such a rule.
+    /// Records the rule `id`, which a comment turns on, if it's such a rule. Returns whether it is.
     fn takes(&mut self, id: &[u8]) -> bool {
         let rule = formatting_rule(id);
         self.about_layout.extend(rule.map(|it| it.0));
@@ -1874,23 +1878,24 @@ impl NotBuiltIn {
     }
 }
 
-/// How long the parts of a run took, in seconds.
+/// How long each phase of a run took, in seconds.
 #[derive(Default)]
 struct Phases {
     discovery: f64,
-    /// With types.
+    /// Type checking, plus linting the files that need types.
     checking: f64,
     linting: f64,
     formatting: f64,
 }
 
-/// Tells the user that the files at `paths` were not linted. `because`: why, for one file and for more than one.
+/// Tells the user that the files at `paths` weren't linted. `because` is the reason, worded for one file and for
+/// several.
 fn not_linted(loader: &Loader, cwd: &[u8], paths: &[Vec<u8>], because: [&[u8]; 2], hint: &[u8]) {
     if paths.is_empty() {
         return;
     }
     let is_one = paths.len() == 1;
-    // The extensions, the most frequent first, and the first few files.
+    // The extensions, most frequent first, and the first few files.
     let mut kinds: Vec<(&[u8], usize)> = Vec::new();
     for path in paths {
         let name = paths::basename(path);
@@ -1929,8 +1934,7 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
     ]);
 }
 
-/// Does what `bun lint` does. `options.help` and `options.cwd` are for the caller to see to.
-/// What there is to say about a command line that cannot be read, which is `message`.
+/// The outcome for a command line that can't be parsed. `message` is the error.
 pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome {
     let run = Run {
         options: &Options::default(),
@@ -1949,6 +1953,7 @@ pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome
     out
 }
 
+/// Runs `bun lint`. The caller handles `options.help` and `options.cwd`.
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
     let mut options = options.clone();
     let loaded = options.load_pipes(&environment.cwd);

@@ -66,8 +66,7 @@ fn is_rethrown_error(node: Expr) -> bool {
     on_rejected == Some(arrow) && is_thenable(node.file(), object)
 }
 
-/// tsgolint's `isRethrownError`. Its tree has parentheses as nodes, and it takes the first
-/// declaration of the symbol.
+/// tsgolint's `isRethrownError`. Its tree has nodes for parentheses, and it uses the symbol's first declaration.
 fn is_rethrown_error_tsgolint(node: Expr) -> bool {
     if node.as_ident().is_none() || node.is_parenthesized() {
         return false;
@@ -79,7 +78,7 @@ fn is_rethrown_error_tsgolint(node: Expr) -> bool {
         return false;
     };
     match (def, def.node()) {
-        // A name of `catch ({ a })` is declared by a `BindingElement`, not by the `CatchClause`.
+        // A name in `catch ({ a })` is declared by a `BindingElement`, not by the `CatchClause`.
         (Declaration::Var(name), Some(Node::VarDecl(decl))) => {
             def.is_catch_parameter() && decl.pat() == name
         }
@@ -153,7 +152,7 @@ impl OnlyThrowError {
         if self.allow_throwing_unknown && is_type_unknown_type(ty) {
             return;
         }
-        // tsgolint asks this after the type, so a rethrown `undefined` is reported.
+        // tsgolint checks this after the type, so a rethrown `undefined` is reported.
         if is_oxlint && self.allow_rethrowing && is_rethrown_error_tsgolint(node) {
             return;
         }

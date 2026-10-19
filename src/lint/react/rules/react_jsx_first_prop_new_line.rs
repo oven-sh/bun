@@ -40,7 +40,7 @@ impl Rule for JsxFirstPropNewLine {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
-        // Without an attribute upstream says nothing, or throws: `"multiprop"`, a tag of several lines.
+        // Without attributes upstream reports nothing, or throws with `"multiprop"` on a multiline tag.
         let (Some(name), Some(first_node)) = (jsx.tag(), jsx.attrs().first()) else {
             return;
         };
@@ -52,12 +52,12 @@ impl Rule for JsxFirstPropNewLine {
             Configuration::MultilineMultiprop => true,
             Configuration::Multiprop => has_several,
         };
-        // Whether both start on one line.
+        // Check whether both start on the same line.
         if ast_utils::is_on_one_line(file, Span::before(node.start, first_node.span())) != wants_new_line {
             return;
         }
         if !wants_new_line {
-            // The type arguments go with the blanks.
+            // The fix removes the type arguments along with the whitespace.
             cx.report(first_node, PROP_ON_SAME_LINE)
                 .listened_on(node)
                 .fix(|fixer| fixer.replace(name.span().between(first_node.span()), " "));

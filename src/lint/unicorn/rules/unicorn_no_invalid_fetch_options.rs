@@ -12,7 +12,7 @@ const NO_INVALID_FETCH_OPTIONS: Message = Message::new("", "\"body\" is not allo
 pub enum Method {
     Get,
     Head,
-    /// Another one, or one that cannot be told.
+    /// Any other method, or one that can't be determined.
     Unknown,
 }
 
@@ -43,8 +43,8 @@ impl Method {
     }
 }
 
-/// What a variable says about the method, as the value of `method` (`[0]`) and as the `E` of `method: E.A` (`[1]`).
-/// `None`: nothing, the method is what it was before.
+/// Caches the method a variable implies, as the value of `method` (`[0]`) and as the `E` in `method: E.A` (`[1]`).
+/// `None` means it implies nothing, so the method found so far is kept.
 type Known<'a> = [IdMap<Symbol<'a>, Option<Method>>; 2];
 
 impl Rule for NoInvalidFetchOptions {
@@ -126,7 +126,7 @@ fn is_invalid_fetch_options<'a>(properties: List<'a, Prop<'a>>, known: &mut Know
     body.filter(|_| method != Method::Unknown).map(|body| (method, body))
 }
 
-/// `None`: the method is what it was before.
+/// `None` keeps the method found so far.
 fn method_of<'a>(value: Expr<'a>, known: &mut Known<'a>) -> Option<Method> {
     if value.is_parenthesized() {
         return Some(Method::Unknown);
@@ -149,7 +149,7 @@ fn method_of<'a>(value: Expr<'a>, known: &mut Known<'a>) -> Option<Method> {
     })
 }
 
-/// The first string that a member of the enum is initialized with, whichever member is used.
+/// The first string that initializes a member of the enum, regardless of which member is used.
 fn method_of_enum(symbol: Symbol) -> Option<Method> {
     if !symbol.declarations().any(|it| matches!(it, Declaration::Enum(_))) {
         return Some(Method::Unknown);
@@ -197,7 +197,7 @@ fn method_of_variable(symbol: Symbol) -> Option<Method> {
     }
 }
 
-/// The method that the type `"get"` names. Nothing for `` `get` ``.
+/// The method for the type `"get"`. Nothing for `` `get` ``.
 fn string_literal(ty: TypeNode) -> Option<Method> {
     match ty.kind() {
         TypeKind::StringLit(name) if !ty.is_parenthesized() && !ty.text().starts_with(b"`") => {

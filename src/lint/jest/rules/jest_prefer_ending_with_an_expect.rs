@@ -7,7 +7,7 @@ pub struct PreferEndingWithAnExpect<const RUNNER: u8 = { jest::JEST }>(Config);
 
 struct Config {
     additional_test_block_functions: Vec<String>,
-    /// `None`: what has `expect` in its name.
+    /// `None` matches any function with `expect` in its name.
     assert_function_names: Option<Vec<Regex>>,
 }
 
@@ -53,7 +53,7 @@ impl Config {
             let name = jest::get_node_name(call_expr.callee());
             self.additional_test_block_functions.iter().any(|it| it.as_bytes() == name)
         };
-        // Other functions take a function as the second argument too: `vi.mock(.., factory)`.
+        // Other functions also take a callback as their second argument, e.g. `vi.mock(.., factory)`.
         let is_test_block = match jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) {
             Some(parsed_jest_fn) => parsed_jest_fn.kind == JestFnKind::General(JestGeneralFnKind::Test) || is_additional(),
             None => ctx.runner == Runner::Bun && is_additional(),

@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 pub struct PreferExpectTypeOf<const RUNNER: u8 = { jest::VITEST }>;
 
 const PREFER_EXPECT_TYPE_OF: Message = Message::new("", "Type assertions should be done using `toBeTypeOf`.");
-/// Without the page of Vitest about it.
+/// Bun's version. Its `help` omits the link to Vitest's docs.
 const PREFER_EXPECT_TYPE_OF_IN_BUN: Message = Message::new("", "Type assertions should be done using `toBeTypeOf()`.");
 
 impl<const RUNNER: u8> Rule for PreferExpectTypeOf<RUNNER> {

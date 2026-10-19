@@ -35,7 +35,7 @@ const REPLACE_EMPTY_OBJECT_TYPE: Message =
 
 const REPLACEMENTS: [&str; 2] = ["object", "unknown"];
 
-/// `type Name<Params> = ty` in place of the interface.
+/// Replaces the interface with `type Name<Params> = ty`.
 fn replace_interface<'a>(fixer: Fixer<'a>, interface: Interface<'a>, ty: &[u8]) -> Fix {
     let type_params = interface.type_params().angle_brackets_span().unwrap_or_default();
     let text = [
@@ -50,7 +50,7 @@ fn replace_interface<'a>(fixer: Fixer<'a>, interface: Interface<'a>, ty: &[u8]) 
 }
 
 fn is_merged_with_other_declaration<'a>(statement: Stmt<'a>, interface: Interface<'a>) -> bool {
-    // typescript-eslint looks in the scope of the type parameters if there are any, oxlint where the name is.
+    // typescript-eslint looks in the type parameters' scope if there are any, oxlint in the scope that has the name.
     let (scope, name) = (Node::Stmt(statement).scope(), interface.name().name());
     let symbol = if statement.file().language().is_oxlint { scope.resolve_name(name) } else { scope.get_name(name) };
     let Some(symbol) = symbol else {

@@ -1,6 +1,6 @@
-//! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml and
-//! from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error. `react/*` is a
-//! wildcard that turns off every rule of a plugin: see [`expand_wildcards`].
+//! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml
+//! and from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error.
+//! `react/*` is a wildcard that turns off every rule of a plugin. See [`expand_wildcards`].
 
 use crate::bunfig::RuleOfBunfig;
 use crate::cli::{Options, Wildcard};
@@ -65,7 +65,8 @@ impl Mistake {
     }
 }
 
-/// Error message for `id`, which is `name` with the prefix of `plugin`, which has no such rule. Goes after `error: `.
+/// Error message for `id`, which is `name` with `plugin`'s prefix, when the plugin has no such rule. It's printed after
+/// `error: `.
 fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
     let skipped = plugin.name.len() + 1;
     let closest = (plugin.rules.iter())
@@ -95,7 +96,7 @@ fn unknown_rule_of(plugin: &JsPlugin, id: &[u8], name: &[u8]) -> Vec<u8> {
     message
 }
 
-/// Who names a rule that there isn't.
+/// Where an unknown rule name came from.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum NamedBy {
     Bunfig,
@@ -138,7 +139,7 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
                 .or_else(|| Plugin::spelled(prefix).next());
             let hint: Vec<u8> = match (built_in, named_by) {
                 _ if prefix.is_empty() => Vec::new(),
-                // No package has them.
+                // These rules don't come from a package.
                 (Some(Plugin::Eslint | Plugin::Oxc), _) => Vec::new(),
                 (Some(plugin), _) if plugin.is_always_there() => Vec::new(),
                 (Some(_), NamedBy::Explain) => Vec::new(),
@@ -162,7 +163,7 @@ pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) ->
                 (None, NamedBy::Flag) => {
                     b"\n  To use a rule from an ESLint plugin, load the plugin with --plugin".to_vec()
                 }
-                // Whether the plugin is loaded or not, its rules are explained where it is.
+                // Loaded or not, a plugin's rules are documented by the plugin itself.
                 (None, NamedBy::Explain) => {
                     b"\n  --explain has the built-in rules. For a rule from a plugin, see the plugin's docs".to_vec()
                 }
@@ -190,11 +191,11 @@ pub(crate) fn invalid_severity(rule: &[u8], written: &Json) -> Vec<u8> {
     message
 }
 
-/// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an unknown
-/// rule, an invalid severity, or options the rule doesn't take. Turning off a rule that Bun left out on purpose is fine.
-/// `plugins`: the JavaScript plugins that are loaded.
-/// `only_of_plugins`: there is a configuration file, whose tool has its own words about the other rules. `Some(true)`: it is
-/// ESLint, which does not look at a rule that is off.
+/// Returns the first mistake in `[lint.rules]`, `--rule`, `-A` / `-W` / `-D` or the `rules` of `[[lint.overrides]]`: an
+/// unknown rule, an invalid severity, or options the rule doesn't accept. Turning off a rule that Bun left out on
+/// purpose is fine. `plugins` holds the loaded JavaScript plugins. `only_of_plugins` is set if there's a config file,
+/// whose tool has its own messages for the other rules. `Some(true)` means the tool is ESLint, which doesn't validate a
+/// rule that's off.
 pub(crate) fn check_rules(
     linter: &Linter,
     options: &Options,
@@ -363,7 +364,7 @@ fn check(
     Ok(())
 }
 
-/// Severity that `[lint.categories]` sets for rules in oxlint's `category`.
+/// Returns the severity that `[lint.categories]` sets for rules in oxlint's `category`.
 fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
     let is_about =
         |name: &[u8]| name == category || name == b"all" && CATEGORIES.contains(&category);
@@ -373,7 +374,7 @@ fn severity_in(options: &Options, category: &[u8]) -> Option<Severity> {
 
 const TYPESCRIPT: &[u8] = b"**/*.{ts,mts,cts,tsx}";
 
-/// Whether TypeScript files get type information in this run.
+/// Controls whether TypeScript files get type information in this run.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Types {
     /// `--type-aware`, `typeAware = true` or `--type-check`.
@@ -495,7 +496,7 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
     split
 }
 
-/// Every built-in rule available in native mode, with the ID it's reported under.
+/// Returns every built-in rule available in native mode, with the ID it's reported under.
 fn native_rules(registry: &Registry) -> impl Iterator<Item = (&'static Meta, Vec<u8>)> {
     let all = registry.all().iter().map(|it| it.meta);
     let with_id = all.map(|meta| (meta, RuleId::Known(meta).to_vec()));
@@ -542,13 +543,14 @@ pub(crate) fn categories(registry: &Registry, options: &Options) -> Vec<Json> {
     objects
 }
 
-/// IDs of all rules in the plugin named `prefix`: a loaded JavaScript plugin, or a built-in one under any of its spellings.
-/// Empty if there's no such plugin.
+/// Returns the IDs of all rules in the plugin named `prefix`: a loaded JavaScript plugin, or a built-in one under any
+/// of its spellings. Empty if there's no such plugin.
 fn rules_of_plugin(registry: &Registry, js_plugins: &[NamedPlugin], prefix: &[u8]) -> Vec<Vec<u8>> {
     if let Some((plugin, _)) = js_plugins.iter().find(|it| *it.0.name == *prefix) {
         return plugin.rules.iter().map(|it| it.id.to_vec()).collect();
     }
-    // `react/rules-of-hooks` is accepted as a name for the react-hooks rule, but `react/*` is eslint-plugin-react alone.
+    // `react/rules-of-hooks` is accepted as a name for the react-hooks rule, but `react/*` covers only
+    // eslint-plugin-react.
     let own = Plugin::spelled(prefix).find(|it| it.prefix().as_bytes() == prefix);
     let is_in_plugin = |meta: &Meta| match own {
         Some(own) => meta.plugin == own,
@@ -562,7 +564,7 @@ fn rules_of_plugin(registry: &Registry, js_plugins: &[NamedPlugin], prefix: &[u8
         .collect()
 }
 
-/// The plugin name closest to `prefix`, for a "Did you mean" hint. `None` if nothing is close.
+/// Returns the plugin name closest to `prefix`, for a "Did you mean" hint. `None` if nothing is close.
 fn similar_plugin<'a>(
     registry: &Registry,
     js_plugins: &'a [NamedPlugin],
@@ -577,7 +579,7 @@ fn similar_plugin<'a>(
     (closest.filter(|it| it.0 <= prefix.len().max(3) / 3)).map(|it| it.1)
 }
 
-/// The first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
+/// Returns the first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
 pub(crate) fn first_wildcard(options: &Options) -> Option<&Wildcard> {
     let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
     options.wildcards.iter().chain(of_overrides).next()
@@ -589,8 +591,8 @@ pub(crate) const WILDCARDS: &[u8] = b"$wildcards";
 /// Moves the [`WILDCARDS`] of each config object into a new object that turns off every rule of those plugins. The new
 /// object matches the same files and goes first, so the single rules of the original object override it.
 ///
-/// Call after [`split_pairs`]. A wildcard is about one plugin, so `"@typescript-eslint/*"` must not turn `no-unused-vars` off
-/// in JavaScript files, which naming `@typescript-eslint/no-unused-vars` does.
+/// Call after [`split_pairs`]. A wildcard covers one plugin, so `"@typescript-eslint/*"` must not turn `no-unused-vars`
+/// off in JavaScript files, which naming `@typescript-eslint/no-unused-vars` does.
 pub(crate) fn expand_wildcards(
     registry: &Registry,
     js_plugins: &[NamedPlugin],

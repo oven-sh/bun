@@ -11,7 +11,7 @@ pub struct NoUnderscoreDangle {
     allow_function_params: bool,
     allow_in_array_destructuring: bool,
     allow_in_object_destructuring: bool,
-    /// An option of oxlint alone.
+    /// Only oxlint has this option.
     allow_in_using_declarations: bool,
     enforce_in_class_fields: bool,
     enforce_in_method_names: bool,
@@ -26,8 +26,8 @@ fn has_dangling_underscore(identifier: &[u8]) -> bool {
     identifier != b"_" && (identifier.starts_with(b"_") || identifier.ends_with(b"_"))
 }
 
-/// Whether the name that is written at `written` can have a dangling underscore. It can be private, and an escape can stand for
-/// an underscore: `\u005f`, `\u{5f}`.
+/// Fast check: true if the name at `written` may have a dangling underscore. It can be private, and an underscore can
+/// be written as an escape: `\u005f`, `\u{5f}`.
 #[inline]
 fn may_dangle(text: &[u8], written: Span) -> bool {
     matches!(text.get(written.start as usize), Some(b'_' | b'#' | b'\\'))
@@ -126,7 +126,7 @@ impl NoUnderscoreDangle {
         {
             return;
         }
-        // A name that is bound twice is one variable, which goes by its first binding.
+        // A name that's bound twice is one variable, and only its first binding counts.
         let mut seen: FxHashSet<Name<'a>> = FxHashSet::default();
         pat.for_each_binding(&mut |binding| {
             let Some(name) = binding.as_ident() else {
@@ -170,7 +170,7 @@ impl NoUnderscoreDangle {
         }
         let place = match e.member_name() {
             Some(name) if cx.language().is_oxlint => name.span(),
-            // It says nothing about `a[_b]`.
+            // oxlint doesn't report `a[_b]`.
             None if cx.language().is_oxlint => return,
             _ => e.span(),
         };
@@ -204,9 +204,9 @@ impl NoUnderscoreDangle {
         }
     }
 
-    /// `at`: the method or the class field with the name `key`.
+    /// `at` is the method or class field named `key`.
     fn check_key<'a>(&self, key: Key<'a>, at: Span, cx: &mut Cx<'a, Self>) {
-        // ESTree's `key.name`. In `[a]() {}` it is `a`.
+        // ESTree's `key.name`. In `[a]() {}` it's `a`.
         let name = match key.kind() {
             KeyKind::Ident(name) | KeyKind::Private(name) => name,
             KeyKind::Computed(e) => match e.as_ident() {
@@ -216,7 +216,7 @@ impl NoUnderscoreDangle {
             _ => return,
         };
         if self.is_unexpected(strings::without_prefix(name.bytes(), b"#")) {
-            // oxlint has the name without the `#`.
+            // oxlint prints the name without the `#`.
             match cx.language().is_oxlint {
                 true => cx
                     .report(key.inner_span(cx.file()), UNEXPECTED_UNDERSCORE)

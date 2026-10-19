@@ -1,16 +1,16 @@
-//! Applies the fixes of messages: ESLint's `SourceCodeFixer.applyFixes` and `Linter.verifyAndFix`.
+//! Applies messages' fixes: ESLint's `SourceCodeFixer.applyFixes` and `Linter.verifyAndFix`.
 
 use super::{LintMessage, LintResult, RuleId};
 
 /// ESLint's `MAX_AUTOFIX_PASSES`.
 pub const MAX_AUTOFIX_PASSES: usize = 10;
 
-/// What [`apply_fixes`] returns.
+/// The result of [`apply_fixes`].
 pub struct Fixed {
-    /// Whether any message had a fix that was to be applied.
+    /// True if any message had a fix that should be applied.
     pub is_fixed: bool,
     pub output: Vec<u8>,
-    /// The messages that are not fixed, sorted by position.
+    /// The messages that weren't fixed, sorted by position.
     pub remaining: Vec<LintMessage>,
     /// The rules whose fixes are in `output`.
     pub applied: Vec<RuleId>,
@@ -64,9 +64,9 @@ pub fn apply_fixes(
             remaining.push(message);
             continue;
         }
-        // A range can go beyond the text, as for `String.prototype.slice`.
+        // A range can extend past the text, as with `String.prototype.slice`.
         output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..start.min(text.len())]);
-        // ESLint's "Remove BOM": the mark that the fix brings replaces the one that is there.
+        // ESLint's "Remove BOM": the mark in the fix replaces the existing one.
         if start == MARK.len() && text.starts_with(MARK) && fix.text.starts_with(MARK) {
             output.clear();
         }
@@ -90,16 +90,16 @@ pub fn apply_fixes(
     }
 }
 
-/// What [`verify_and_fix`] returns.
+/// The result of [`verify_and_fix`].
 pub struct FixReport {
-    /// Whether the text has changed.
+    /// True if the text changed.
     pub is_fixed: bool,
     /// Number of fixes applied to produce `output`, over all passes.
     pub fixes: usize,
     pub output: Vec<u8>,
-    /// What is left to report, about `output`.
+    /// The remaining messages, which are about `output`.
     pub result: LintResult,
-    /// The fixes undo each other, so fixing was given up. ESLint warns about it.
+    /// The fixes undo each other, so fixing stopped. ESLint warns about it.
     pub is_circular: bool,
     /// Rules whose fixes were applied in the pass that [broke the syntax](breaks_syntax). `output` is the text before
     /// that pass.
@@ -110,7 +110,8 @@ fn is_fatal(result: &LintResult) -> bool {
     !result.messages.is_empty() && result.messages.iter().all(|it| it.is_fatal)
 }
 
-/// The text cannot be parsed. What is said about a comment with a configuration that cannot be read is fatal, too.
+/// True if the text can't be parsed. The message about an unreadable config comment is fatal too, but isn't a parse
+/// error.
 pub fn is_parse_error(message: &LintMessage) -> bool {
     message.is_fatal && message.message.starts_with(b"Parsing error: ")
 }
@@ -124,14 +125,14 @@ pub fn breaks_syntax(result: &LintResult, tolerated_before: usize) -> bool {
         || result.tolerated_errors > tolerated_before
 }
 
-/// oxlint's error for a name that is declared twice. It isn't from oxc's parser, which takes such a text.
+/// oxlint's error for a name that's declared twice. It doesn't come from oxc's parser, which accepts such code.
 pub fn is_redeclaration(message: &LintMessage) -> bool {
     message.message.starts_with(b"Parsing error: Identifier `")
         && message.message.ends_with(b"` has already been declared")
 }
 
-/// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` says whether
-/// earlier passes had already changed it, and `fixes` is how many fixes they applied.
+/// The report to return when a pass's fixes are rolled back. `before` is the text before that pass. `was_fixed` tells
+/// whether earlier passes had already changed it, and `fixes` is how many fixes they applied.
 fn without_the_last_pass(
     before: Vec<u8>,
     (rules, was_fixed, fixes): (Vec<RuleId>, bool, usize),
@@ -147,9 +148,9 @@ fn without_the_last_pass(
     }
 }
 
-/// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, ten times at most.
-/// `lint` parses and lints the given text. Its second argument is `true` if fixes have just produced that text. Unlike
-/// ESLint, this rolls back a pass whose fixes [break the syntax](breaks_syntax).
+/// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, at most ten times. `lint` parses and
+/// lints the given text. Its second argument is `true` if fixes have just produced that text. Unlike ESLint, this rolls
+/// back a pass whose fixes [break the syntax](breaks_syntax).
 pub fn verify_and_fix(
     text: &[u8],
     should_fix: &dyn Fn(&LintMessage) -> bool,

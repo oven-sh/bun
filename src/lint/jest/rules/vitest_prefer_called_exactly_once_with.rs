@@ -40,7 +40,7 @@ impl Rule for PreferCalledExactlyOnceWith {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // The bodies of the callbacks of tests are reached from the statements that call the tests.
+        // Test callback bodies are reached through the statements that call the tests.
         check_block_body(cx.file().body(), cx);
     }
 }
@@ -51,17 +51,17 @@ enum MatcherKind {
     ToHaveBeenCalledWith,
 }
 
-/// An `expect(a).toHaveBeenCalledOnce()` or an `expect(a).toHaveBeenCalledWith(..)`, and the other if it has been found.
+/// One of `expect(a).toHaveBeenCalledOnce()` and `expect(a).toHaveBeenCalledWith(..)`, plus the other once it's found.
 struct TrackingExpectPair<'a> {
     first: MatcherKind,
     span_to_substitute: Span,
-    /// The lines of the other.
+    /// The other call's lines.
     span_to_remove: Option<Span>,
     /// The `expect(a).toHaveBeenCalledWith(..)`.
     called_with: Option<Call<'a>>,
 }
 
-/// The arguments as they are written, with `, ` between.
+/// The arguments' source text, joined with `, `.
 fn text_of_arguments<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
     let mut text = Vec::new();
     for (i, argument) in arguments.iter().enumerate() {
@@ -72,7 +72,7 @@ fn text_of_arguments<'a>(arguments: List<'a, Expr<'a>>) -> Vec<u8> {
 }
 
 fn check_block_body<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, PreferCalledExactlyOnceWith>) {
-    // With the bodies of the callbacks of tests and suites, however deep.
+    // Also checks the callback bodies of tests and suites, at any depth.
     let mut pending = vec![statements];
     while let Some(statements) = pending.pop() {
         check_statements(statements, &mut pending, cx);
@@ -85,7 +85,7 @@ fn check_statements<'a>(
     cx: &Cx<'a, PreferCalledExactlyOnceWith>,
 ) {
     let file = cx.file();
-    // By what is expected, as it is written.
+    // Keyed by the source text of `expect`'s arguments.
     let mut variables_expected: FxHashMap<Vec<u8>, TrackingExpectPair<'a>> = FxHashMap::default();
     for statement in statements {
         let StmtKind::Expr(expression) = statement.kind() else {
@@ -144,7 +144,7 @@ fn check_statements<'a>(
             expects.span_to_remove = Some(get_source_code_line_span(statement.span(), file));
             expects.called_with = expects.called_with.or(called_with);
         } else {
-            // The same again, or a third.
+            // The same matcher again, or a third call.
             variables_expected.remove(&variable_expected_name);
         }
     }
@@ -202,7 +202,7 @@ fn get_identifier_and_matcher_to_be_expected(
     Some((text_of_arguments(expect_call.expect_arguments?), matcher))
 }
 
-/// From the start of the line to the character after the statement, which is taken to be the line break.
+/// Spans from the start of the line to one character past the statement, assumed to be the line break.
 fn get_source_code_line_span(statement_span: Span, file: &File) -> Span {
     let before = file
         .text()

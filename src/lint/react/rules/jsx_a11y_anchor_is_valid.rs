@@ -8,9 +8,9 @@ use bun_lint::rule::Plugin;
 
 /// Enforce that anchors have a valid `href` and are not used in place of buttons for attaching click logic.
 pub struct AnchorIsValid {
-    /// Besides `a`.
+    /// In addition to `a`.
     components: Vec<String>,
-    /// Besides `href`.
+    /// In addition to `href`.
     special_link: Vec<String>,
     no_href: bool,
     invalid_href: bool,

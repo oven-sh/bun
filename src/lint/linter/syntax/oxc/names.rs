@@ -1,8 +1,9 @@
 //! Redeclarations, found the way oxc's `SemanticBuilder` finds them.
 //!
-//! oxc gives each declaration flags, and a set of flags that it can't share a scope with (`SymbolFlags`, as in tsc's binder). It
-//! declares in source order and reports a clash on the spot. For JavaScript it has further checks, which run when the
-//! declaration ends. All of it is replayed here, on the few files in which the parser has seen that a name may be declared twice.
+//! oxc gives each declaration flags, plus a set of flags it can't share a scope with (`SymbolFlags`, as in tsc's
+//! binder). It declares names in source order and reports a clash immediately. For JavaScript it has further checks,
+//! which run when the declaration ends. This file replays all of that, but only on the few files where the parser saw
+//! that a name may be declared twice.
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
@@ -67,7 +68,7 @@ mod excludes {
         flag::VALUE & !(flag::FUNCTION | flag::CLASS | flag::REGULAR_ENUM | flag::VALUE_MODULE);
 }
 
-/// One declaration of a symbol: its own flags, and where its name is.
+/// One declaration of a symbol: its own flags and the span of its name.
 #[derive(Copy, Clone)]
 struct Declared {
     flags: u32,
@@ -75,7 +76,7 @@ struct Declared {
 }
 
 struct Bound {
-    /// The flags of all its declarations, and the name of the first.
+    /// The combined flags of all its declarations, and the name span of the first.
     all: Declared,
     /// `Scoping::symbol_redeclarations`: empty, or every declaration.
     declarations: SmallVec<[Declared; 2]>,
@@ -90,16 +91,16 @@ struct Binder<'a> {
     /// Even in TypeScript, report an import that isn't `import type` and clashes with a variable, a function or a
     /// class. oxc leaves that to the type checker, which can tell whether the import is a type.
     imports_are_values: bool,
-    /// The scope of the file.
+    /// The file's top-level scope.
     top: u32,
     symbols: Vec<Bound>,
     bindings: FxHashMap<Key<'a>, usize>,
-    /// `SemanticBuilder::hoisting_variables`: what a `var` has passed through on its way to the function.
+    /// `SemanticBuilder::hoisting_variables`: the scopes each `var` was hoisted through on its way to the function.
     hoisting: FxHashMap<Key<'a>, usize>,
     errors: Vec<SyntaxError>,
 }
 
-/// oxc has one scope where there are two here: for the file, and for a `catch` clause and its block.
+/// oxc has one scope where we have two: for the file, and for a `catch` clause and its block.
 fn id_of(scope: Scope, top: u32) -> u32 {
     match scope.kind() {
         ScopeKind::Global | ScopeKind::Module => top,
@@ -120,7 +121,7 @@ fn holds_vars(scope: Scope) -> bool {
     )
 }
 
-/// `get_module_instance_state(..).is_instantiated()`: the namespace has more than types in it.
+/// `get_module_instance_state(..).is_instantiated()`: true if the namespace contains more than types.
 fn is_instantiated<'a>(module: Module<'a>) -> bool {
     if !module.has_body() || !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
@@ -137,7 +138,7 @@ fn is_instantiated<'a>(module: Module<'a>) -> bool {
         symbols.iter().any(|symbol| symbol.name() == name)
     };
     body.iter().any(|it| match it.kind() {
-        // What it exports is looked up among its own statements.
+        // Each exported name is looked up among the namespace's own statements.
         StmtKind::ExportNamed(export) if !export.has_from() => export.items().iter().any(|item| {
             let target = body.iter().find(|&it| declares(it, item.local().name()));
             target.is_none_or(of_statement)
@@ -147,7 +148,7 @@ fn is_instantiated<'a>(module: Module<'a>) -> bool {
 }
 
 impl<'a> Binder<'a> {
-    /// `noticed`: where oxc is when it reports the error, if not at `second`.
+    /// `noticed` is how far oxc has read when it reports the error, if that isn't `second`.
     fn report(&mut self, name: Name<'a>, first: Span, second: Span, noticed: Option<u32>) {
         let error = SyntaxError::redeclared("Identifier", name.bytes(), first, second);
         self.errors.push(match noticed {
@@ -199,7 +200,7 @@ impl<'a> Binder<'a> {
         symbol
     }
 
-    /// The scopes from `scope` up to the one that holds its `var`s, which is the last.
+    /// The scopes from `scope` up to and including the one that holds its `var`s.
     fn up_to_function(&self, scope: Scope<'a>) -> SmallVec<[u32; 8]> {
         let mut ids: SmallVec<[u32; 8]> = SmallVec::new();
         for it in scope.chain() {
@@ -214,7 +215,7 @@ impl<'a> Binder<'a> {
         ids
     }
 
-    /// `VariableDeclarator::bind` for a name that `var` declares in `scope`.
+    /// `VariableDeclarator::bind` for a name declared with `var` in `scope`.
     fn declare_var(&mut self, scope: Scope<'a>, name: Name<'a>, span: Span) -> usize {
         let declared = Declared {
             flags: flag::FUNCTION_SCOPED,
@@ -242,7 +243,7 @@ impl<'a> Binder<'a> {
         symbol
     }
 
-    /// The declaration before the last one.
+    /// The second-to-last declaration.
     fn previous(&self, symbol: usize) -> Option<Declared> {
         self.symbols[symbol]
             .declarations
@@ -251,7 +252,7 @@ impl<'a> Binder<'a> {
             .copied()
     }
 
-    /// `check_variable_declarator_redeclaration`, for one name. `declarator`: the span of the `a = 1` of `var a = 1`.
+    /// `check_variable_declarator_redeclaration`, for one name. `declarator` is the span of `a = 1` in `var a = 1`.
     fn check_var(&mut self, scope: Scope<'a>, name: Name<'a>, symbol: usize, declarator: Span) {
         let is_top = self.id(scope) == self.top;
         if (is_top || scope.kind() == ScopeKind::Function) && !(self.is_module && is_top) {
@@ -291,7 +292,7 @@ impl<'a> Binder<'a> {
         if self.is_typescript {
             return;
         }
-        // Annex B.3.2.1: outside strict code a plain function in a block is a variable of the function around, too.
+        // Annex B.3.2.1: in sloppy mode, a plain function in a block is also a variable of the enclosing function.
         if is_plain && !holds_vars(scope) && !is_strict {
             let target = self
                 .up_to_function(scope)
@@ -367,10 +368,10 @@ impl<'a> Binder<'a> {
                     return;
                 }
             }
-            // Two parameters with one name are `duplicate_parameter`.
+            // `duplicate_parameters` handles two parameters with the same name.
             Declaration::Param(_) if name.is("this") => return,
             Declaration::Param(_) => (flag::FUNCTION_SCOPED, excludes::FUNCTION_SCOPED),
-            // A declaration that meets the name of a function expression takes its place.
+            // A declaration with the same name as a function expression shadows it.
             Declaration::Fn(func) if func.kind() != FnKind::Decl => return,
             Declaration::Fn(func) => {
                 let scope = self.file.scope_at(span.start);
@@ -417,7 +418,7 @@ impl<'a> Binder<'a> {
         self.declare(here, Declared { flags, span }, excludes);
     }
 
-    /// `check_import_value_redeclarations`, when oxc is through with the file.
+    /// `check_import_value_redeclarations`, which oxc runs after it has finished the file.
     fn check_imports(&mut self) {
         if !self.imports_are_values && (self.is_typescript || !self.is_module) {
             return;
@@ -446,7 +447,7 @@ impl<'a> Binder<'a> {
     }
 }
 
-/// What a module declares at the top, in the order in which oxc goes through it.
+/// A module's top-level names, in the order oxc iterates over them.
 fn names_of_file_in_order_of_oxc<'a>(file: &'a File<'a>) -> Vec<Name<'a>> {
     let declared = file.top_level_scope().symbols().map(|it| it.name());
     let declared: Vec<Name<'a>> = declared.collect();
@@ -462,8 +463,9 @@ fn import_flag(is_type_only: bool) -> u32 {
     }
 }
 
-/// Whether the declarations of `symbol`, which has several, can clash. Not those that many files have: overloads, namespaces
-/// that merge, a type and a value of one name, a `var` that is declared again or has the name of a parameter.
+/// True if `symbol`'s declarations (it has several) can clash. Filters out the harmless cases that many files have:
+/// overloads, merged namespaces, a type and a value with the same name, a `var` that's declared again or shares a
+/// parameter's name.
 fn may_clash(symbol: Symbol, is_typescript: bool) -> bool {
     type Kinds = DeclarationKinds;
     let kinds = symbol.declaration_kinds();
@@ -492,8 +494,8 @@ fn may_clash(symbol: Symbol, is_typescript: bool) -> bool {
     })
 }
 
-/// The names that more than one declaration may declare in one of oxc's scopes. Each name is bound on its own, so no other name
-/// has to be replayed.
+/// The names that may have more than one declaration in one of oxc's scopes. Names are bound independently, so no other
+/// name has to be replayed.
 fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     let mut names = FxHashSet::default();
     let is_typescript = !file.is_javascript();
@@ -503,8 +505,8 @@ fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
             .filter(|&it| may_clash(it, is_typescript))
             .map(|it| it.name()),
     );
-    // What a block declares meets what goes through the block on its way up to the function: a `var`, and outside strict code a
-    // function of JavaScript.
+    // A block's declaration can clash with a name hoisted through the block on its way up to the function: a `var`, or
+    // in sloppy JavaScript a function.
     let functions_go_up = file.is_javascript() && source_type(file) != SourceType::Module;
     let goes_through = file.has_names_that_leave_blocks();
     if !goes_through && !functions_go_up && !file.has_stmts([StmtTag::Try]) {
@@ -530,12 +532,12 @@ fn candidates<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     names
 }
 
-/// A declaration: where its name is, the name, and the scope that it is declared in.
+/// A declaration with its name's span, its name, and the scope it's declared in.
 type Found<'a> = (Span, Name<'a>, Declaration<'a>, Scope<'a>);
 
 /// "Identifier `a` has already been declared"
 pub(super) fn redeclarations<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
-    // Where no rule makes the variables of every file, the parser has looked out for a name that may be declared twice.
+    // If no rule needs every file's scopes, the parser tracks whether any name may be declared twice.
     if file.language().parser_tracks_names && !file.has_rare_syntax(rare::MAY_REDECLARE) {
         return Vec::new();
     }
@@ -551,7 +553,7 @@ fn replay<'a>(file: &'a File<'a>, imports_are_values: bool) -> Vec<SyntaxError> 
     let mut all: Vec<Found<'a>> = Vec::new();
     #[expect(
         clippy::iter_over_hash_type,
-        reason = "what is found is put in the order of the text below"
+        reason = "the results are sorted by source position below"
     )]
     for name in candidates(file) {
         for symbol in file.symbols_named(name) {
@@ -582,14 +584,14 @@ fn replay<'a>(file: &'a File<'a>, imports_are_values: bool) -> Vec<SyntaxError> 
     binder.errors
 }
 
-/// The members of `class` that have the name of the member before them of that name: `check_duplicate_class_elements`, for
-/// names that are not private.
+/// `check_duplicate_class_elements` for non-private names. Reports each member of `class` together with the previous
+/// member of the same name.
 fn repeated_members<'a>(class: Class<'a>, errors: &mut Vec<(u32, SyntaxError)>) {
     let file = class.file();
     let mut last: FxHashMap<&'a [u8], (Member<'a>, Span)> = FxHashMap::default();
     let is_accessor = |it: Member<'a>| matches!(it.kind(), MemberKind::Getter | MemberKind::Setter);
     let is_static = |it: Member<'a>| it.flags().contains(Flags::STATIC);
-    // `PropertyKey::name`, and where the key is, without brackets.
+    // `PropertyKey::name`, and the key's span without brackets.
     let name_of = |it: Member<'a>| {
         let Some(key) = it.key() else {
             let keyword = it.constructor_keyword()?;
@@ -616,7 +618,7 @@ fn repeated_members<'a>(class: Class<'a>, errors: &mut Vec<(u32, SyntaxError)>) 
     for member in class.members() {
         let is_element = match member.kind() {
             MemberKind::Property => true,
-            // What has no body is only a type to oxc.
+            // oxc treats a member without a body as type-only.
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
                 member.func().is_some_and(|it| it.has_body())
             }
@@ -640,7 +642,7 @@ fn repeated_members<'a>(class: Class<'a>, errors: &mut Vec<(u32, SyntaxError)>) 
     }
 }
 
-/// Two members of a class with one name, in TypeScript. oxc looks for them when it is through with the file, class by class.
+/// Two class members with the same name, in TypeScript. oxc checks this class by class after it has finished the file.
 pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let hir = &file.hir;
     let mut errors: Vec<(u32, SyntaxError)> = Vec::new();
@@ -648,7 +650,8 @@ pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         return Vec::new();
     }
     for (i, raw) in hir.classes.iter().enumerate() {
-        // The names by the low bits of their numbers. Two that share a bit can be one name, or a getter and its setter.
+        // A 256-bit filter keyed by the low bits of each name's atom. Two members that hit the same bit may have the
+        // same name, or be a getter and its setter.
         let (mut seen, mut may_repeat) = ([0u64; 4], false);
         for it in hir.members.get(raw.members.range()).unwrap_or_default() {
             match it.key {
@@ -657,7 +660,7 @@ pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                     may_repeat |= seen[word] & bit != 0;
                     seen[word] |= bit;
                 }
-                // `1n`, which has the name of `1`.
+                // `1n`, which has the same name as `1`.
                 hir::PropKey::None => may_repeat |= it.flags.contains(Flags::LITERAL_NAME),
                 // `[null]`, `[1n]` and `[/a/]` are names to oxc.
                 hir::PropKey::Computed(e) => {
@@ -678,7 +681,7 @@ pub(super) fn class_members<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     errors.into_iter().map(|it| it.1).collect()
 }
 
-/// `oxc_span::best_match`, two edits away at most. Of two that are as close it is the first.
+/// `oxc_span::best_match`, with an edit distance of at most two. On a tie the first candidate wins.
 pub(super) fn closest<'a>(
     needle: &[u8],
     candidates: impl Iterator<Item = &'a [u8]>,
@@ -700,7 +703,7 @@ pub(super) fn closest<'a>(
     best.map(|it| it.0)
 }
 
-/// What oxc says about the exports of a JavaScript module.
+/// oxc's errors for the exports of a JavaScript module.
 pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(rare::ODD_EXPORT) {
         return Vec::new();
@@ -710,7 +713,7 @@ pub(super) fn exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     errors
 }
 
-/// `export { a }` where nothing declares `a`, which the pass that builds the scopes reports.
+/// `export { a }` where nothing declares `a`. The semantic pass reports this.
 fn undeclared_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut errors = Vec::new();
     if !file.is_javascript() || source_type(file) != SourceType::Module {
@@ -740,8 +743,8 @@ fn undeclared_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     errors
 }
 
-/// A name that a JavaScript module exports twice, and a second `default`. oxc's parser reports them when it is through with the
-/// file, also with one that it has given up. Nothing is asked of the scopes, and the tree can have holes.
+/// A name that a JavaScript module exports twice, and a second `default`. oxc's parser reports these at the end of the
+/// file, even if it gave up on the file. This doesn't use the scopes, and the tree may have holes.
 #[optimize(size)]
 pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     let mut errors = Vec::new();
@@ -749,17 +752,17 @@ pub(super) fn duplicate_exports<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         return errors;
     }
     let hir = &file.hir;
-    // By a default import or a named one.
+    // True if a default or named import binds `name`.
     let is_imported = |name: Name<'a>| {
         hir.imports.iter().any(|it| {
             let named = hir.import_specs.get(it.named.range()).unwrap_or_default();
             it.default == name.atom() || named.iter().any(|it| it.local == name.atom())
         })
     };
-    // `ModuleRecord::exported_bindings`, and each name with the place that another has taken from it.
+    // `ModuleRecord::exported_bindings`, and for each repeated name the span that a later export overwrote.
     let mut last: FxHashMap<&'a [u8], Span> = FxHashMap::default();
     let mut replaced: Vec<(&'a [u8], Span)> = Vec::new();
-    // The `default`s of what the module exports itself, and of what it hands on from another.
+    // The `default` exports of the module's own bindings, and the ones it re-exports from other modules.
     let (mut own_defaults, mut other_defaults): (Vec<Span>, Vec<Span>) = (Vec::new(), Vec::new());
     let mut export = |name: &'a [u8], span: Span| {
         if let Some(before) = last.insert(name, span) {

@@ -30,7 +30,7 @@ impl Rule for JsxPropsNoSpreadMulti {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint goes by the name of the file.
+        // oxlint decides by the file name.
         (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
@@ -54,11 +54,11 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
         return;
     }
     let mut identifiers: FxHashMap<Name<'a>, Vec<Span>> = FxHashMap::default();
-    // Those that are the same are in the same list.
+    // Keyed by hash, so equal member expressions are in the same list.
     let mut member_expressions: FxHashMap<u64, Vec<(Expr<'a>, Span)>> = FxHashMap::default();
     let is_oxlint = cx.language().is_oxlint;
     for &(argument, span) in &spread_attrs {
-        // oxlint looks through `a!`, `a as T` and the like, and compares member expressions as well.
+        // oxlint looks through `a!`, `a as T` and the like, and also compares member expressions.
         let seen = if is_oxlint {
             get_inner_expression(argument)
         } else {
@@ -119,8 +119,8 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     }
 }
 
-/// The same number for what [`is_same_member_expression`] takes for the same: of all that it compares, so that few
-/// others have the same number.
+/// Returns the same hash for member expressions that [`is_same_member_expression`] treats as equal. It hashes
+/// everything that function compares, so collisions are rare.
 fn hash_of_names(member: Expr) -> u64 {
     let mut hasher = FxHasher::default();
     let mut pending: SmallVec<[Expr; 8]> = smallvec![member];
@@ -137,7 +137,7 @@ fn hash_of_names(member: Expr) -> u64 {
                 pending.push(obj);
             }
             ExprKind::Ident(name) | ExprKind::String(name) => hasher.write(name.bytes()),
-            // `` `a` `` is `"a"`.
+            // `` `a` `` equals `"a"`.
             ExprKind::Template(template) => match template.as_static() {
                 Some(value) => hasher.write(value.bytes()),
                 None => pending.extend(template.exprs()),

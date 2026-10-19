@@ -349,7 +349,7 @@ pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
     out
 }
 
-/// Appends `c` to a class, escaped if it means something there.
+/// Appends `c` to a class, escaped if it's special there.
 fn push_class_member(pattern: &mut Vec<u8>, c: &[u8]) {
     if matches!(c, b"\\" | b"]" | b"[" | b"-" | b"^" | b"!") {
         pattern.push(b'\\');
@@ -357,9 +357,9 @@ fn push_class_member(pattern: &mut Vec<u8>, c: &[u8]) {
     pattern.extend_from_slice(c);
 }
 
-/// globset's `parse_class` for the class that starts at `open`. It has no escapes, and a `]` or `-` right after the `[` is a member.
-/// Appends the class to `pattern` and returns the index after the `]`. `Ok(None)` means the class isn't closed, `Err` means
-/// it has a reversed range like `z-a`.
+/// globset's `parse_class` for the class that starts at `open`. It has no escapes, and a `]` or `-` right after the `[`
+/// is a member. Appends the class to `pattern` and returns the index after the `]`. `Ok(None)` means the class isn't
+/// closed, and `Err` means it has a reversed range like `z-a`.
 pub fn from_globset_class(
     written: &[u8],
     open: usize,

@@ -13,7 +13,7 @@ const UNEXPECTED_LABEL_IN_BREAK: Message =
 const UNEXPECTED_LABEL_IN_CONTINUE: Message =
     Message::new("unexpectedLabelInContinue", "Unexpected label in continue statement.");
 
-/// Where a labeled statement, a `break` or a `continue` is reported. oxlint points at the label.
+/// Where to report a labeled statement, `break` or `continue`. oxlint reports at the label.
 fn place(stmt: Stmt) -> Span {
     match stmt.label().filter(|_| stmt.file().language().is_oxlint) {
         Some(label) => label.span(),
@@ -22,7 +22,7 @@ fn place(stmt: Stmt) -> Span {
 }
 
 impl NoLabels {
-    /// Whether a label on `body` is allowed.
+    /// True if a label on `body` is allowed.
     fn allows(&self, body: Stmt) -> bool {
         match body.tag() {
             StmtTag::Switch => self.allow_switch,
@@ -51,7 +51,8 @@ impl NoLabels {
         }
     }
 
-    /// In source order: before (`is_entered`) and after what is in a labeled statement, and at a `break` or a `continue`.
+    /// Called in source order: before (`is_entered`) and after the contents of a labeled statement, and at a `break` or
+    /// `continue`.
     fn visit<'a>(&self, node: Node<'a>, is_entered: bool, cx: &mut Cx<'a, Self>) {
         let Node::Stmt(stmt) = node else {
             return;
@@ -72,7 +73,7 @@ impl Rule for NoLabels {
         .stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue])
         .enter(NodeTags::new().stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue]))
         .exit(NodeTags::new().stmts(&[StmtTag::Labeled]));
-    /// For each name, whether the labels of that name around the current statement are allowed, the innermost last.
+    /// For each name, whether each enclosing label with that name is allowed, innermost last.
     type State<'a> = FxHashMap<Name<'a>, Vec<bool>>;
 
     fn new(options: &Options) -> Self {
@@ -86,7 +87,7 @@ impl Rule for NoLabels {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().stmts(&[StmtTag::Labeled]);
         if !self.allow_loop && !self.allow_switch {
-            // Whatever has the label.
+            // No label is allowed, so it doesn't matter which statement has it.
             on = on.stmts(&[StmtTag::Break, StmtTag::Continue]);
         } else if file.has_stmts([StmtTag::Labeled]) && file.has_stmts([StmtTag::Break, StmtTag::Continue]) {
             on = on

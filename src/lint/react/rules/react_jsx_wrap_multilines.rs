@@ -63,7 +63,7 @@ impl Rule for JsxWrapMultilines {
         }
     }
 
-    /// upstream's `check`. Where it looks, a `(` before the JSX is one around it.
+    /// upstream's `check`. In every position it checks, a `(` before the JSX is a parenthesis around it.
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(place) = self.place_of(node) else {
             return;
@@ -117,7 +117,7 @@ impl JsxWrapMultilines {
         }
     }
 
-    /// As what one of upstream's listeners hands `node` to `check`.
+    /// Returns the `type` that one of upstream's listeners passes to `check` along with `node`.
     fn place_of(&self, node: Expr<'_>) -> Option<Place> {
         match node.parent() {
             Node::Expr(parent) => match parent.kind() {
@@ -127,7 +127,8 @@ impl JsxWrapMultilines {
                 }
                 ExprKind::Cond { test, .. } if test == node => None,
                 ExprKind::Cond { .. } if self.condition != Wrap::Ignore => Some(Place::Condition),
-                // Without `condition`, the branches of what is declared or assigned are checked as that.
+                // Without `condition`, the branches of a declared or assigned `?:` are checked as a declaration or
+                // assignment.
                 ExprKind::Cond { .. } => declaration_or_assignment(parent),
                 _ => declaration_or_assignment(node),
             },
@@ -143,7 +144,7 @@ impl JsxWrapMultilines {
     }
 }
 
-/// `node` is the `init` of a `VariableDeclarator` or the `right` of an `AssignmentExpression`.
+/// Returns the `type` if `node` is a `VariableDeclarator`'s `init` or an `AssignmentExpression`'s `right`.
 fn declaration_or_assignment(node: Expr<'_>) -> Option<Place> {
     match node.parent() {
         Node::VarDecl(_) => Some(Place::Declaration),
@@ -157,7 +158,7 @@ fn declaration_or_assignment(node: Expr<'_>) -> Option<Place> {
     }
 }
 
-/// The fix of `parens-new-line` for JSX without parentheses.
+/// The `parens-new-line` fix for JSX without parentheses.
 #[cold]
 #[inline(never)]
 fn wrap_on_new_lines<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Option<Fix> {
@@ -173,7 +174,7 @@ fn wrap_on_new_lines<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Option<Fix> {
     let column = file.position(span.start).column as usize;
     // In column 1 upstream throws: `" ".repeat(-1)`.
     let closing_column = if column > 0 { column.checked_sub(2)? } else { 0 };
-    // Of a comment that is its text, without `//` or `/*`.
+    // A comment's `value` is its text without the `//` or `/*`.
     let value = token_before.value();
     let mut fixed = strings::trim_js_whitespace(value).to_vec();
     if !matches!(value, b"{" | b"[") {

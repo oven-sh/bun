@@ -27,32 +27,32 @@ fn is_class_component(node: Expr<'_>, pragmas: &Pragmas<'_>) -> bool {
     get_parent_es6_component(node, pragmas).is_some() || get_parent_es5_component(node, pragmas).is_some()
 }
 
-/// `"key" in parent && parent.key`, of the parent of the `FunctionExpression` `function`.
+/// `"key" in parent && parent.key`, for the parent of the `FunctionExpression` `function`.
 fn has_key<'a>(parent: Node<'a>, function: Node<'a>) -> bool {
     let is_function = |it| normalize(Node::Expr(it)) == function;
     match parent {
-        // The parent of a decorator is a `Decorator`.
+        // A decorator's parent is a `Decorator`.
         Node::Member(member) => !member.decorators().any(is_function),
         Node::Prop(_) => estree_type_name(parent) == "Property",
-        // The parent of a default is an `AssignmentPattern`.
+        // A default value's parent is an `AssignmentPattern`.
         Node::PatProp(property) => !property.default().is_some_and(is_function),
         _ => false,
     }
 }
 
-/// What is found first on the way up from a `this.state`.
+/// The first relevant ancestor of a `this.state`.
 #[derive(Copy, Clone)]
 enum Around<'a> {
-    /// A call of `this.setState`, in whose first argument it is.
+    /// A `this.setState` call that has it in its first argument.
     SetState,
-    /// A method, or a function that is the value of a property: `key.name`.
+    /// A method, or a function that's a property's value, with its `key.name`.
     Method(Option<&'a [u8]>),
-    /// A `VariableDeclarator`: `id.name`.
+    /// A `VariableDeclarator`, with its `id.name`.
     Variable(Option<&'a [u8]>),
 }
 
 impl<'a> Around<'a> {
-    /// Whether `current`, in which `child` is, is one of these.
+    /// Returns what `current`, the parent of `child`, is, if it's one of these.
     fn of(child: Node<'a>, current: Node<'a>) -> Option<Around<'a>> {
         match current {
             Node::Expr(call) if is_set_state_call(call) => {
@@ -74,7 +74,7 @@ impl<'a> Around<'a> {
     }
 }
 
-/// Where the first arguments of the calls of `this.setState` start, and where they end, each in order.
+/// The sorted starts and the sorted ends of the first arguments of all `this.setState` calls.
 #[derive(Default)]
 struct FirstArguments {
     starts: Vec<u32>,
@@ -82,17 +82,17 @@ struct FirstArguments {
 }
 
 impl FirstArguments {
-    /// In how many of them `offset` is. Two of them are apart, or one is in the other.
+    /// Returns how many of them contain `offset`. Any two are either disjoint or nested.
     fn around(&self, offset: u32) -> usize {
         let started = self.starts.partition_point(|it| *it <= offset);
         started.saturating_sub(self.ends.partition_point(|it| *it <= offset))
     }
 }
 
-/// What changes `methods`, or asks it.
+/// Something that updates upstream's `methods` or looks a name up in it.
 #[derive(Copy, Clone)]
 enum Event<'a> {
-    /// A `this.state`, and the `methodName` that it is kept under.
+    /// A `this.state`, and the `methodName` it's stored under.
     State(Expr<'a>, Option<&'a [u8]>),
     Call(Expr<'a>),
 }
@@ -105,32 +105,33 @@ impl Event<'_> {
     }
 }
 
-/// An element of `vars` that has a `variableName`.
+/// An entry of `vars` that has a `variableName`.
 struct Variable<'a> {
     variable_name: &'a [u8],
-    /// The number of the scope.
+    /// The scope's id.
     scope: usize,
-    /// Where the node starts at which it is added.
+    /// The start of the node at which upstream adds it.
     since: u32,
     node: Span,
 }
 
 impl<'a> Variable<'a> {
-    /// Those of `vars`, which is in the order of the fields, with the name of `identifier`.
+    /// Returns the entries of `vars` with `identifier`'s name. `vars` is sorted by its fields in declaration order.
     fn named<'v>(vars: &'v [Variable<'a>], identifier: Option<Name<'_>>) -> &'v [Variable<'a>] {
         let name = identifier.map_or(&[][..], Name::bytes);
         let rest = vars.get(vars.partition_point(|it| it.variable_name < name)..).unwrap_or_default();
         rest.get(..rest.partition_point(|it| it.variable_name == name)).unwrap_or_default()
     }
 
-    /// Those of `named` of the scope `scope` that are added before `offset`.
+    /// Returns the entries of `named` in the scope `scope` that were added before `offset`.
     fn added_before<'v>(named: &'v [Variable<'a>], scope: usize, offset: u32) -> &'v [Variable<'a>] {
         let rest = named.get(named.partition_point(|it| it.scope < scope)..).unwrap_or_default();
         rest.get(..rest.partition_point(|it| it.scope == scope && it.since < offset)).unwrap_or_default()
     }
 }
 
-/// Above the `BinaryExpression`s around an identifier: whether that is the `value` or the `object` of its parent.
+/// Skips the `BinaryExpression`s around an identifier, then returns whether the result is its parent's `value` or
+/// `object`.
 fn is_value_or_object<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
     let current = current.as_expr();
     Some(match parent {
@@ -142,7 +143,7 @@ fn is_value_or_object<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
         },
         Node::Prop(property) => property.value() == current && estree_type_name(parent) == "Property",
         Node::Member(member) => member.init() == current,
-        // The `object` of a `with` is in a scope of its own.
+        // A `with` statement's `object` is in a different scope.
         _ => false,
     })
 }
@@ -194,7 +195,7 @@ impl Rule for NoAccessStateInSetstate {
         let pragmas = Pragmas::new(file);
         let (mut events, mut vars) = (Vec::new(), Vec::new());
         let mut around = AncestorMemo::default();
-        // The scopes say what is in a component: they are asked last.
+        // `is_class_component` needs the scopes, so it's checked last.
         for node in states {
             match around.find_with(Node::Expr(node), estree_parent, Around::of) {
                 Some(Around::SetState) if is_class_component(node, &pragmas) => {
@@ -234,8 +235,8 @@ impl Rule for NoAccessStateInSetstate {
     }
 }
 
-/// `CallExpression`, for all calls, in the order of the source. `events`: what the `this.state` add to `methods`, if
-/// they are in a component.
+/// The `CallExpression` listener, for all calls in source order. `events`: what each `this.state` adds to `methods`, if
+/// it's in a component.
 fn follow_methods<'a>(
     mut events: Vec<Event<'a>>,
     first_arguments: &FirstArguments,
@@ -243,7 +244,7 @@ fn follow_methods<'a>(
     cx: &Cx<'a, NoAccessStateInSetstate>,
 ) {
     let is_in_set_state = |it: &Expr<'a>| first_arguments.around(it.span().start) > 0;
-    // Only such a call reports.
+    // Only such a call can report.
     if !cx.file().exprs_of_kind(ExprTag::Call).any(|it| is_in_set_state(&it)) {
         return;
     }
@@ -287,7 +288,7 @@ fn follow_methods<'a>(
     }
 }
 
-/// `Identifier`, for all that are in a first argument of `this.setState`.
+/// The `Identifier` listener, for every identifier in a first argument of `this.setState`.
 fn follow_vars<'a>(
     vars: &mut [Variable<'a>],
     first_arguments: &FirstArguments,
@@ -313,7 +314,8 @@ fn follow_vars<'a>(
             report(named, Node::Expr(node));
         }
     }
-    // What a pattern binds is no expression. A parameter comes before all that is added in its scope.
+    // A pattern's bindings aren't expressions, so they're handled here. A parameter comes before anything added in its
+    // scope.
     for statement in cx.file().stmts_of_kind(StmtTag::Var) {
         if first_arguments.around(statement.span().start) == 0 {
             continue;

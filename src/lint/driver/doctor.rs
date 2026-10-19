@@ -1,7 +1,7 @@
-//! `--doctor` tells someone coming from ESLint, oxlint, Prettier or oxfmt what to expect before they switch. It loads the
-//! config and finds files the way a real run does, but it doesn't lint, format or write anything.
+//! `--doctor` tells someone coming from ESLint, oxlint, Prettier or oxfmt what to expect before they switch. It loads
+//! the config and finds files the way a real run does, but it doesn't lint, format or write anything.
 //!
-//! To say what runs where, it asks the same code that decides in a real run: each file's [`ResolvedConfig`] and
+//! To report what runs where, it uses the same code that decides in a real run: each file's [`ResolvedConfig`] and
 //! [`Route`], and the plugins' [`Host`]. [`watching`] records which packages a config file needs while it loads.
 
 mod packages;
@@ -208,7 +208,7 @@ impl Reason {
         }
     }
 
-    /// True if not running these rules loses nothing, so the report only names a few. `-f json` lists them all.
+    /// True if not running these rules loses nothing, so the report only lists a few. `-f json` lists them all.
     fn is_harmless(self) -> bool {
         matches!(self, Reason::Formatting | Reason::NeedsTypes)
     }
@@ -284,8 +284,8 @@ impl Rules {
     }
 }
 
-/// Where a plugin comes from, for display: its package name, or its file path relative to `cwd` if it isn't in a package.
-/// `location` comes from [`Host::plugins`].
+/// Where a plugin comes from, for display: its package name, or its file path relative to `cwd` if it isn't in a
+/// package. `location` comes from [`Host::plugins`].
 fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
     let file = |path: &[u8]| {
         let path = paths::from_native(path);
@@ -309,8 +309,9 @@ fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-/// Some packages never export the plugin object their own configs use (eslint-plugin-unicorn is one), so `location` only
-/// names the config file. Then the plugin comes from the package the config loaded whose name gives its prefix.
+/// Some packages never export the plugin object their own configs use (eslint-plugin-unicorn is one), so `location`
+/// only has the config file. In that case the plugin comes from the package, among those the config loaded, whose name
+/// shortens to its prefix.
 fn package_of_prefix(location: &Json, loaded: &[Vec<u8>]) -> Option<Vec<u8>> {
     let [place, _, Json::String(prefix)] = location.as_array()? else {
         return None;

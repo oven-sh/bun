@@ -8,22 +8,22 @@ use crate::utils::ast_utils::is_on_one_line;
 use crate::utils::directives::match_directives_pattern;
 use bun_core::strings;
 
-/// Replaces `span` by `text`.
+/// Replaces `span` with `text`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Fix {
     pub span: Span,
     pub text: Vec<u8>,
 }
 
-/// How much a change that `--fix` does not make can be trusted: oxlint's `FixKind`. ESLint knows the first only.
+/// The safety level of a change that `--fix` doesn't apply: oxlint's `FixKind`. ESLint only has the first kind.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum SuggestionKind {
-    /// It may change what the program does: `--fix-suggestions` makes it.
+    /// It may change what the program does. `--fix-suggestions` applies it.
     #[default]
     Suggestion,
-    /// It may break the program: `--fix-dangerously` makes it.
+    /// It may break the program. `--fix-dangerously` applies it.
     DangerousFix,
-    /// Both flags together make it.
+    /// Only both flags together apply it.
     DangerousSuggestion,
 }
 
@@ -33,13 +33,13 @@ pub struct Around<'t> {
     span: Span,
     /// `span` with the spaces and tabs on both sides of it.
     pub with_blanks: Span,
-    /// Nothing comes before it on its first line.
+    /// True if nothing comes before it on its first line.
     pub starts_line: bool,
     /// The length of the line break after it. `None` if something else follows on its last line, 0 at the end of the text.
     pub line_break: Option<u32>,
 }
 
-/// Only spaces and tabs, and the `\r` of a `\r\n`.
+/// True if the line has only spaces, tabs and the `\r` of a `\r\n`.
 fn is_blank_line(line: &[u8]) -> bool {
     line.iter().all(|byte| matches!(byte, b' ' | b'\t' | b'\r'))
 }
@@ -65,9 +65,9 @@ impl<'t> Around<'t> {
         }
     }
 
-    /// The whole lines that `span` is on, with the last line break, if nothing else is on them. Removing that leaves no empty
-    /// line behind, which `bun fmt --check` would complain about. An empty line next to them goes too if it would end up
-    /// first or last in a block or in the file, or next to another empty line.
+    /// Returns the whole lines that `span` is on, including the last line break, if nothing else is on them. Removing
+    /// that doesn't leave an empty line behind, which `bun fmt --check` would complain about. An adjacent empty line is
+    /// included if it would end up first or last in a block or in the file, or next to another empty line.
     pub fn whole_lines(&self) -> Option<Span> {
         let line_break = self.line_break.filter(|_| self.starts_line)?;
         let lines = Span::new(self.with_blanks.start, self.with_blanks.end + line_break);
@@ -75,7 +75,7 @@ impl<'t> Around<'t> {
             self.text.get(..lines.start as usize)?,
             self.text.get(lines.end as usize..)?,
         );
-        // The line before, where it starts, and the line after, where it ends.
+        // The previous line with its start offset, and the next line with its length.
         let previous = before.strip_suffix(b"\n").map(|rest| {
             let start = strings::last_index_of_char(rest, b'\n').map_or(0, |at| at + 1);
             (rest.get(start..).unwrap_or_default(), start as u32)
@@ -100,7 +100,8 @@ impl<'t> Around<'t> {
         }
     }
 
-    /// What to remove so that `span` leaves no empty line, no space at the end of a line and no doubled space behind.
+    /// Returns the span to remove so that removing `span` doesn't leave an empty line, trailing whitespace or a doubled
+    /// space behind.
     pub fn without_leftovers(&self) -> Span {
         if let Some(lines) = self.whole_lines() {
             return lines;
@@ -108,7 +109,7 @@ impl<'t> Around<'t> {
         if self.line_break.is_some() {
             return self.with_blanks;
         }
-        // The spaces after it go, unless they are all that keeps two words apart.
+        // Remove the spaces after it too, unless they're all that separates two words.
         let before = self
             .text
             .get(..self.span.start as usize)
@@ -122,7 +123,7 @@ impl<'t> Around<'t> {
     }
 }
 
-/// The longest string that JavaScript has, in V8: `" ".repeat(n)` throws beyond it.
+/// V8's maximum string length. `" ".repeat(n)` throws beyond it.
 pub const MAX_STRING_LENGTH: u64 = (1 << 29) - 24;
 
 /// True if `content` has a file-level `@tag` such as `@ts-nocheck` or `@license`. The tag must be a whole word, so
@@ -263,8 +264,7 @@ fn is_about_what_follows(comment: &Token) -> bool {
     comment.text().starts_with(b"/**") || is_about_the_next_line(comment)
 }
 
-/// Makes [`Fix`]es, as ESLint's `fixer`. Each method takes a node, a token, a comment or a
-/// [`Span`].
+/// Creates [`Fix`]es, like ESLint's `fixer`. Each method takes a node, a token, a comment or a [`Span`].
 #[derive(Copy, Clone)]
 pub struct Fixer<'a> {
     file: &'a File<'a>,
@@ -281,8 +281,9 @@ impl<'a> Fixer<'a> {
         self.file
     }
 
-    /// `byte`, `count` times: the only way to a text whose length a number in the options decides. `None`: it would be longer than
-    /// [`MAX_STRING_LENGTH`]. See [`Cx::repeat_count`](crate::context::Cx::repeat_count).
+    /// Returns `byte` repeated `count` times, or `None` if that would be longer than [`MAX_STRING_LENGTH`]. Rules must
+    /// use this for any text whose length comes from a number in the options. See
+    /// [`Cx::repeat_count`](crate::context::Cx::repeat_count).
     pub fn repeat(self, byte: u8, count: u64) -> Option<Vec<u8>> {
         (count <= MAX_STRING_LENGTH).then(|| vec![byte; count as usize])
     }
@@ -441,13 +442,12 @@ impl<'a> Fixer<'a> {
     }
 }
 
-/// What the function given to [`Report::fix`](crate::context::Report::fix) returns.
+/// The return type of the function passed to [`Report::fix`](crate::context::Report::fix).
 pub trait IntoFix {
-    /// ESLint's `mergeFixes`: one fix that does what all of them do. `None` if there are none, or
-    /// if two overlap.
+    /// ESLint's `mergeFixes`: merges all the fixes into one. Returns `None` if there are none, or if two overlap.
     fn into_fix(self, file: &File) -> Option<Fix>;
 
-    /// The one that was made first.
+    /// Returns the fix that was created first.
     fn first_fix(&self) -> Option<&Fix>;
 }
 
@@ -511,12 +511,12 @@ impl<const N: usize> IntoFix for [Fix; N] {
     }
 }
 
-/// ESLint's `SourceCodeFixer.applyFixes`: applies those of `fixes` that do not overlap an earlier
-/// one, and returns the new text. `None` if nothing is applied.
+/// ESLint's `SourceCodeFixer.applyFixes`: applies the `fixes` that don't overlap an earlier one, and returns the new
+/// text, or `None` if nothing was applied.
 pub fn apply_fixes(text: &[u8], fixes: &mut Vec<&Fix>) -> Option<Vec<u8>> {
     crate::utils::sort::sort_by_key(fixes, |fix| (fix.span.start, fix.span.end));
     let mut out = Vec::with_capacity(text.len());
-    // ESLint starts at -1, so that an insertion at 0 does not conflict with nothing.
+    // ESLint starts at -1, so that an insertion at 0 doesn't count as a conflict.
     let mut last: i64 = -1;
     let mut at = 0usize;
     let mut applied = false;
@@ -525,7 +525,7 @@ pub fn apply_fixes(text: &[u8], fixes: &mut Vec<&Fix>) -> Option<Vec<u8>> {
         if last >= start as i64 || start > end {
             continue;
         }
-        // A range can go beyond the text, as for `String.prototype.slice`.
+        // A range can extend past the end of the text, as with `String.prototype.slice`.
         let start = start.min(text.len());
         out.extend_from_slice(&text[at.min(start)..start]);
         out.extend_from_slice(&fix.text);

@@ -13,15 +13,15 @@ const NO_NON_NULL_ASSERTED_NULLISH_COALESCING: Message = Message::new(
 const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "Remove the non-null assertion.");
 
-/// Where the first of what gives a variable a value ends.
+/// Caches the end of the first thing that assigns a value to each variable.
 #[derive(Default)]
 pub struct State<'a> {
     of_variables: IdMap<Symbol<'a>, Option<u32>>,
-    /// By the name, for the names that nothing in the file declares. `None` until it is asked for.
+    /// Keyed by name, for names the file doesn't declare. `None` until first use.
     of_globals: Option<FxHashMap<Name<'a>, u32>>,
 }
 
-/// Whether `variable` is given a value by something that ends before `end`.
+/// True if something that ends before `end` assigns a value to `variable`.
 fn has_assignment_before<'a>(variable: Symbol<'a>, end: u32, state: &mut State<'a>) -> bool {
     let first = state.of_variables.get_or_insert_with(variable, || {
         let declarators = variable.declarations().filter_map(|declaration| match (declaration, declaration.node()) {
@@ -70,7 +70,7 @@ impl Rule for NoNonNullAssertedNullishCoalescing {
         if let ExprKind::Ident(name) = operand.kind() {
             let has_assignment = match operand.symbol() {
                 Some(variable) => has_assignment_before(variable, end, &mut cx.state),
-                // To ESLint it is a variable without definitions.
+                // For ESLint it's a variable without definitions.
                 None if is_configured_global(cx.file(), name.bytes()) => {
                     let file = cx.file();
                     let first_writes = cx.state.of_globals.get_or_insert_with(|| {

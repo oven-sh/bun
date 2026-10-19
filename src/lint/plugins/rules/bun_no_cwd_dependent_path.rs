@@ -5,9 +5,9 @@ use bun_lint::rule::Plugin;
 use bun_lint::utils::eslint_utils::{ReferenceKind, Trace};
 use bun_lint_oxlint::ast_util::callee_name;
 
-/// Disallow a relative path that is written out where the working directory of the process decides what it means.
+/// Disallow a literal relative path where it's resolved against the process's working directory.
 ///
-/// That is in the functions of `node:fs`, in `path.resolve()`, `Bun.file()` and `Bun.write()`.
+/// That's the case in the `node:fs` functions, `path.resolve()`, `Bun.file()` and `Bun.write()`.
 pub struct NoCwdDependentPath {
     functions: Box<[Box<[u8]>]>,
 }
@@ -17,12 +17,12 @@ const WORKING_DIRECTORY: Message = Message::new(
     "{{path}} is relative to the working directory of the process. Resolve it from `import.meta.dirname`.",
 );
 
-/// The functions of `node:fs` whose second parameter is a path too.
+/// The `node:fs` functions whose second parameter is also a path.
 const TWO_PATHS: [&str; 8] = ["copyFile", "copyFileSync", "cp", "cpSync", "link", "linkSync", "rename", "renameSync"];
-/// Their first parameter is relative to the second.
+/// The first parameter of these is relative to the second.
 const SYMLINK: [&str; 2] = ["symlink", "symlinkSync"];
 
-/// A trace map of `node:fs`: whatever function of it is called, also of its `promises`.
+/// A trace map for `node:fs` that matches a call of any of its functions, including those in `promises`.
 struct FileSystem;
 
 impl<'m> Trace<'m> for FileSystem {
@@ -35,9 +35,9 @@ impl<'m> Trace<'m> for FileSystem {
     }
 
     fn get(&self, name: &[u8]) -> Option<(&'m str, &'m dyn Trace<'m>)> {
-        // The default export is the module itself, which the tracker knows if it is not told otherwise.
+        // The default export is the module itself. The tracker handles that as long as the map has no `default` entry.
         match name {
-            // And a pattern is no path.
+            // `glob` takes a pattern, not a path.
             b"default" | b"glob" | b"globSync" => return None,
             b"promises" => return Some(("promises", &FileSystem)),
             _ => {}
@@ -51,7 +51,7 @@ const FILE_SYSTEM: Each<'static> =
     Each { names: &["node:fs", "fs", "node:fs/promises", "fs/promises"], then: &FileSystem };
 const PATH: Each<'static> = Each { names: &["node:path", "path"], then: &Each { names: &["resolve"], then: &CALLED } };
 
-/// Whether a path that starts with `start` is relative. Not `/a`, `\\a\b`, `C:\a`, `file:///a`.
+/// True if a path that starts with `start` is relative. False for `/a`, `\\a\b`, `C:\a` and `file:///a`.
 fn is_relative(start: &[u8]) -> bool {
     let (colon, slash) = (strings::index_of_char(start, b':'), strings::index_of_char(start, b'/'));
     let has_scheme = colon.is_some_and(|colon| slash.is_none_or(|slash| colon < slash));
@@ -93,7 +93,7 @@ impl Rule for NoCwdDependentPath {
             }
         }
         if PATH.names.iter().any(|it| file.mentions(it)) {
-            // An absolute path among them is where `resolve()` starts from.
+            // If any argument is absolute, `resolve()` starts from it instead of the working directory.
             for arguments in calls_of_modules(file, &PATH).into_iter().filter_map(|it| arguments_of(it.0)) {
                 if arguments.iter().all(is_relative_path) {
                     report(arguments.first());

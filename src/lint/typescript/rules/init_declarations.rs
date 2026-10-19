@@ -7,7 +7,7 @@ use bun_lint_eslint::rules::init_declarations::{
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
     config: Config,
-    /// Without options, upstream hands its context to ESLint's rule, which then reads no mode and reports nothing.
+    /// Without options, upstream passes its context to ESLint's rule, which then finds no mode and reports nothing.
     has_mode: bool,
 }
 
@@ -59,7 +59,7 @@ impl InitDeclarations {
             report.data("idName", found.name);
             return;
         }
-        // For oxlint the type annotation is part of it.
+        // oxlint's span includes the type annotation.
         if cx.language().is_oxlint {
             let report = cx.report(decl.binding_span(), found.message);
             report
@@ -67,7 +67,7 @@ impl InitDeclarations {
                 .data("idName", found.name);
             return;
         }
-        // Without the type annotation: as many columns as the name is long.
+        // Without the type annotation: the span is as many columns wide as the name is long.
         let pat = decl.pat();
         let report = cx.report(pat, found.message).data("idName", found.name);
         if pat.text() != found.name.bytes() {

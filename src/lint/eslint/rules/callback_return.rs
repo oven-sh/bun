@@ -5,7 +5,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Require `return` statements after callbacks.
 pub struct CallbackReturn {
     callbacks: Vec<Box<[u8]>>,
-    /// The calls whose callee can be written as one of them.
+    /// Matches the calls whose callee could be one of them.
     on: On,
 }
 
@@ -37,12 +37,12 @@ fn is_callback_expression<'a>(call: Expr<'a>, statement: Option<Stmt<'a>>) -> bo
         || matches!(expression.kind(), ExprKind::Binary { op, right, .. } if op != BinOp::Comma && right == call)
 }
 
-/// What decides about the calls in it.
+/// The enclosing node that decides whether the calls inside it are fine.
 #[derive(Copy, Clone)]
 enum Around<'a> {
     /// A `return`, or an arrow function.
     Returned,
-    /// The closest block, with whether it is the body of a function.
+    /// The closest block, and whether it's a function body.
     Block(List<'a, Stmt<'a>>, bool),
 }
 

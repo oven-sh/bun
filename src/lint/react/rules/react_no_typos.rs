@@ -32,7 +32,7 @@ const NO_PROP_TYPES_BINDING: Message =
 const NO_REACT_BINDING: Message =
     Message::new("noReactBinding", "`'react'` imported without a local `React` binding.");
 
-/// `Object.keys(require("prop-types"))` of prop-types 15.8.1
+/// `Object.keys(require("prop-types"))` in prop-types 15.8.1
 const PROP_TYPES: [&str; 22] = [
     "array",
     "bigint",
@@ -67,7 +67,7 @@ struct Packages<'a> {
     react: Option<Name<'a>>,
 }
 
-/// What the imports up to the one that starts at `start` make of the two names.
+/// The two names after all the imports up to the one that starts at `start`.
 struct Imported<'a> {
     start: u32,
     packages: Packages<'a>,
@@ -75,17 +75,17 @@ struct Imported<'a> {
 
 pub struct State<'a> {
     components: Components<'a>,
-    /// The imports of `prop-types` and of `react` that have a specifier, in the order of the source.
+    /// The imports of `prop-types` and `react` that have a specifier, in source order.
     imports: OnceCell<SmallVec<[Imported<'a>; 2]>>,
 }
 
-/// What upstream does about a property of a component. All of it is known before the component is asked for.
+/// An action upstream takes for one property of a component. It's computed before the component lookup.
 enum Finding<'a> {
-    /// The key, which is one of `STATIC_CLASS_PROPERTIES` but for the case.
+    /// The key, which differs from one of `STATIC_CLASS_PROPERTIES` only in case.
     Casing(Span),
     /// The properties of the value of `propTypes`, `contextTypes` or `childContextTypes`.
     PropObject(List<'a, Prop<'a>>, Packages<'a>),
-    /// `node_key_name` is `method` but for the case, or without the `static` that it needs.
+    /// `node_key_name` differs from `method` only in case, or lacks the `static` it needs.
     LifecycleMethod { node: Node<'a>, node_key_name: Cow<'a, [u8]>, method: &'static str, is_static: bool },
 }
 
@@ -116,7 +116,7 @@ impl Rule for NoTypos {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.kind() {
-            // upstream's `MemberExpression`, which does nothing but in an `AssignmentExpression`.
+            // upstream's `MemberExpression` listener, which only does something inside an `AssignmentExpression`.
             ExprKind::Assign { target, value, .. } => {
                 for node in [target, value] {
                     member_expression(node, e, value, cx);
@@ -145,7 +145,7 @@ impl Rule for NoTypos {
         }
     }
 
-    /// upstream's `PropertyDefinition` and `MethodDefinition`.
+    /// upstream's `PropertyDefinition` and `MethodDefinition` listeners.
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let mut is_component = None;
         for member in class.members() {
@@ -176,7 +176,7 @@ fn first_specifier(import: Import<'_>) -> Option<Name<'_>> {
     first.or_else(|| import.named().first().map(ImportSpec::local)).map(Ident::name)
 }
 
-/// upstream's `MemberExpression`, for the left or the right of `parent`, whose right is `right`.
+/// upstream's `MemberExpression` listener, for the left or right side of `parent`, whose right side is `right`.
 fn member_expression<'a>(node: Expr<'a>, parent: Expr<'a>, right: Expr<'a>, cx: &mut Cx<'a, NoTypos>) {
     if !matches!(node.tag(), ExprTag::Dot | ExprTag::Index) {
         return;
@@ -184,7 +184,7 @@ fn member_expression<'a>(node: Expr<'a>, parent: Expr<'a>, right: Expr<'a>, cx: 
     let Some(finding) = Finding::of_property_casing(Node::Expr(node), Some(right), cx) else {
         return;
     };
-    // A `ChainExpression` is around the whole of an optional chain. A default is in an `AssignmentPattern`.
+    // An optional chain is wrapped in a `ChainExpression`. A default value is inside an `AssignmentPattern`.
     if node.is_chain_root() || parent.is_assignment_target() {
         return;
     }
@@ -200,7 +200,8 @@ fn member_expression<'a>(node: Expr<'a>, parent: Expr<'a>, right: Expr<'a>, cx: 
     }
 }
 
-/// upstream's `ObjectExpression`, for an argument of a call or a `new`. What `isES5Component` holds for is in the list.
+/// upstream's `ObjectExpression` listener, for an argument of a call or a `new`. Anything that satisfies
+/// `isES5Component` is in the component list, so there's no lookup.
 fn object_expression<'a>(node: Expr<'a>, cx: &Cx<'a, NoTypos>) {
     let ExprKind::Object(properties) = node.kind() else {
         return;
@@ -217,7 +218,7 @@ fn object_expression<'a>(node: Expr<'a>, cx: &Cx<'a, NoTypos>) {
 }
 
 impl<'a> State<'a> {
-    /// The two names when ESLint's walk gets to `position`.
+    /// Returns the two names as they are when ESLint's traversal reaches `position`.
     fn packages_at(&self, file: &'a File<'a>, position: u32) -> Packages<'a> {
         let imports = self.imports.get_or_init(|| imports_of(file));
         let before = imports.partition_point(|it| it.start < position);
@@ -225,7 +226,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// upstream's `ImportDeclaration`, but for the reports.
+/// upstream's `ImportDeclaration` listener, minus the reports.
 fn imports_of<'a>(file: &'a File<'a>) -> SmallVec<[Imported<'a>; 2]> {
     let mut statements: SmallVec<[Stmt<'a>; 2]> = file
         .stmts_of_kind(StmtTag::Import)
@@ -263,7 +264,7 @@ impl<'a> Finding<'a> {
         cx: &Cx<'a, NoTypos>,
     ) -> Option<Finding<'a>> {
         let property_name = get_property_name(property)?;
-        // No character outside ASCII becomes one of the letters of these names in lower case.
+        // No non-ASCII character lowercases to a letter in these names.
         let class_prop =
             *STATIC_CLASS_PROPERTIES.iter().find(|it| property_name.eq_ignore_ascii_case(it.as_bytes()))?;
         if property_name != class_prop.as_bytes() {
@@ -276,8 +277,8 @@ impl<'a> Finding<'a> {
         (packages.prop_types.is_some() || packages.react.is_some()).then_some(Finding::PropObject(properties, packages))
     }
 
-    /// upstream's `reportErrorIfLifecycleMethodCasingTypo`. A key that is a number, for which upstream throws, is like
-    /// no method.
+    /// upstream's `reportErrorIfLifecycleMethodCasingTypo`. Upstream throws on a numeric key. Here it just doesn't
+    /// match any method.
     fn of_lifecycle_method_casing(property: Property<'a>) -> Option<Finding<'a>> {
         let node = property.node();
         let node_key_name = get_property_name(node).map(Cow::Borrowed).or_else(|| get_key_value(node))?;
@@ -287,7 +288,7 @@ impl<'a> Finding<'a> {
             .then_some(Finding::LifecycleMethod { node, node_key_name, method, is_static })
     }
 
-    /// `typo`: what a wrong case of one of `STATIC_CLASS_PROPERTIES` is called.
+    /// `typo`: the message for a wrongly cased `STATIC_CLASS_PROPERTIES` name.
     fn report(self, typo: Message, cx: &Cx<'a, NoTypos>) {
         match self {
             Finding::Casing(property_key) => {
@@ -306,17 +307,17 @@ impl<'a> Finding<'a> {
     }
 }
 
-/// `node.type === "MemberExpression"`, for a node that is reached from above.
+/// `node.type === "MemberExpression"`. Seen from its parent, the root of an optional chain is a `ChainExpression`.
 fn is_member_expression(node: Expr<'_>) -> bool {
     ast_utils::is_member_expression(node) && !node.is_chain_root()
 }
 
-/// `astUtil.isCallExpression(node)`, for a node that is reached from above.
+/// `astUtil.isCallExpression(node)`. Seen from its parent, the root of an optional chain is a `ChainExpression`.
 fn is_call_expression(node: Expr<'_>) -> bool {
     node.tag() == ExprTag::Call && !node.is_chain_root()
 }
 
-/// The values of the properties of an `ObjectExpression`, each of which is for `checkValidProp`.
+/// Returns the property values of an `ObjectExpression`, each of which goes to `checkValidProp`.
 fn values_of<'a>(properties: List<'a, Prop<'a>>) -> impl Iterator<Item = Expr<'a>> {
     properties.iter().filter(|it| it.kind() != PropKind::Spread).filter_map(Prop::value)
 }
@@ -341,7 +342,7 @@ fn check_valid_prop_type<'a>(member: Expr<'a>, cx: &Cx<'a, NoTypos>) {
     }
 }
 
-/// upstream's `checkValidCallExpression`. `pending`: what `checkValidProp` is still to be called with.
+/// upstream's `checkValidCallExpression`. `pending`: the nodes still to be passed to `checkValidProp`.
 fn check_valid_call_expression<'a>(node: Expr<'a>, pending: &mut SmallVec<[Expr<'a>; 8]>) {
     let Some(call) = node.as_call() else {
         return;
@@ -378,7 +379,7 @@ impl<'a> Packages<'a> {
         }
     }
 
-    /// upstream's `checkValidProp`, where one of the two names is known.
+    /// upstream's `checkValidProp`, if at least one of the two names is known.
     fn check_valid_prop(self, node: Expr<'a>, pending: &mut SmallVec<[Expr<'a>; 8]>, cx: &Cx<'a, NoTypos>) {
         if is_call_expression(node) {
             check_valid_call_expression(node, pending);

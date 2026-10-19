@@ -1,15 +1,15 @@
-//! One function of the file as the tree that Bun's parser would hand to the React Compiler, so that
-//! the compiler's own lowering (`src/react_compiler/lowering`) reads it.
+//! Converts one function of the file to the tree that Bun's parser would hand to the React
+//! Compiler, so that the compiler's own lowering (`src/react_compiler/lowering`) can read it.
 //!
-//! What differs from the tree of the parser:
-//! - Nothing has been folded, dropped or lowered: it is the source, without its types.
-//! - A `Loc` is not an offset. It is an index into [`Converted::spans`], which has the range of the
-//!   node. The indices grow in source order, which is all that the lowering asks of a `Loc`. What
-//!   the compiler reports has the `Loc` it was given: [`Converted::span_of`].
-//! - A `Ref` is an index into [`Converted::symbols`], which has the symbols that the function
-//!   mentions, and no others.
-//! - JSX is a call as the classic runtime has it, `createElement(tag, props, ...children)`, which
-//!   keeps the attributes in their order. The lowering makes a `JsxExpression` of it again.
+//! Differences from the parser's tree:
+//! - Nothing has been folded, dropped or lowered. It's the source without its types.
+//! - A `Loc` isn't an offset. It's an index into [`Converted::spans`], which has the node's range.
+//!   The indices grow in source order, which is all the lowering needs from a `Loc`. The compiler's
+//!   diagnostics carry the `Loc`s they were given, and [`Converted::span_of`] maps them back.
+//! - A `Ref` is an index into [`Converted::symbols`], which has only the symbols that the function
+//!   mentions.
+//! - JSX is a classic-runtime call, `createElement(tag, props, ...children)`, which keeps the
+//!   attributes in order. The lowering turns it back into a `JsxExpression`.
 
 use crate::compile::Flavor;
 use bun_alloc::{Arena, AstAlloc, AstVec};
@@ -30,14 +30,15 @@ use bun_lint::span::Span;
 use bun_react_compiler::hir::VariableBinding;
 use rustc_hash::FxHashMap;
 
-/// Why there is no tree.
+/// Why a function couldn't be converted.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Refusal {
-    /// The thread has not the stack for it.
+    /// Not enough stack left on this thread.
     TooDeep,
-    /// Upstream's lowering throws an error without a place for one, which the plugin for ESLint drops.
+    /// Upstream's lowering throws an error without a location for a `this` parameter, and the
+    /// ESLint plugin drops it.
     ThisParameter,
-    /// `using`, which oxlint's compiler leaves alone without a word.
+    /// `using`, which oxlint's compiler silently skips.
     Using,
 }
 
@@ -52,7 +53,7 @@ pub(crate) struct Converted {
     pub(crate) root: Root,
     pub(crate) spans: Vec<Span>,
     pub(crate) symbols: Vec<JsSymbol>,
-    /// For each of `symbols`: it is bound outside of the function, or nowhere.
+    /// For each of `symbols`: true if it's bound outside the function, or not bound at all.
     pub(crate) is_outside: Vec<bool>,
     pub(crate) import_bindings: Vec<(Ref, VariableBinding)>,
     /// The tag of `<>`.
@@ -65,34 +66,34 @@ pub(crate) struct Converted {
     /// [`Host::parentheses`](bun_react_compiler::Host::parentheses)
     pub(crate) parentheses: Vec<(Loc, Loc)>,
     pub(crate) wrapped_defaults: Vec<WrappedDefault>,
-    /// Each `new Date()` and `Date()`, which is in the tree as `Date.now()`. In the order of the source.
+    /// Each `new Date()` and `Date()`, which the tree has as `Date.now()`. In source order.
     pub(crate) clock_reads: Vec<Span>,
 }
 
-/// A default that has parentheses or a cast around it. oxc's lowering calls it by the outermost of them.
+/// A default value wrapped in parentheses or a cast. oxc's lowering names it after the outermost wrapper.
 #[derive(Copy, Clone)]
 pub(crate) struct WrappedDefault {
-    /// Where Bun's lowering, which does not see them, has it.
+    /// The span that Bun's lowering reports, since it doesn't see the wrappers.
     pub(crate) inner: Span,
     pub(crate) whole: Span,
     pub(crate) kind: &'static str,
 }
 
-/// What the lowering that the flavor has records, and Bun's does not.
+/// A diagnostic that the flavor's own lowering records and Bun's doesn't.
 pub(crate) enum Recorded {
-    /// The `arguments` of a function is read.
+    /// A read of a function's implicit `arguments`.
     ImplicitArguments(Span),
-    /// The `import` of `import(..)`.
+    /// The `import` in `import(..)`.
     DynamicImport(Span),
-    /// JSX that is the default of a parameter or in a pattern. Bun's lowering sees a call, which can be evaluated earlier
-    /// if its operands can.
+    /// JSX as the default of a parameter or in a pattern. Bun's lowering sees a call, which can be
+    /// evaluated earlier if its operands can.
     DefaultIsJsx { span: Span, is_fragment: bool },
-    /// An `<fbt>` with more than one `<fbt:plural>` in it, however deep. To Bun's lowering JSX is a call, and it knows
-    /// nothing of fbt.
+    /// An `<fbt>` with more than one `<fbt:plural>` in it, at any depth. Bun's lowering sees JSX as
+    /// a call and knows nothing about fbt.
     DuplicateFbtTags {
         /// `fbt` or `fbs`
         tag: &'static str,
-        /// The `plural`
+        /// `enum`, `plural` or `pronoun`
         name: &'static str,
         places: Vec<Span>,
     },
@@ -104,7 +105,7 @@ const FBT_TAGS: [&str; 3] = ["enum", "plural", "pronoun"];
 struct FbtTags<'a> {
     file: &'a File<'a>,
     tag: &'static str,
-    /// Upstream looks for the name, which can also be that of an attribute. oxc's fork looks at tags.
+    /// Upstream searches for the name, which can also be an attribute's. oxc's fork only checks tags.
     also_attributes: bool,
     places: [Vec<Span>; 3],
 }
@@ -139,7 +140,7 @@ impl<'a> Visitor<'a> for FbtTags<'a> {
 }
 
 impl Converted {
-    /// The range of the node that had `Loc { start: index }`.
+    /// The range of the node that was given `Loc { start: index }`.
     pub(crate) fn span_of(&self, index: u32) -> Option<Span> {
         self.spans.get(index as usize).copied()
     }
@@ -156,7 +157,7 @@ pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
     arena: &'x Arena,
     flavor: Flavor,
-    /// The range of the function that is compiled.
+    /// The range of the function being compiled.
     root: Span,
     spans: Vec<Span>,
     symbols: Vec<JsSymbol>,
@@ -175,7 +176,7 @@ pub(crate) struct Converter<'a, 'x> {
     stack: bun_core::StackCheck,
 }
 
-/// `func` has a body. An AST allocator scope is entered, and lasts as long as what is returned.
+/// `func` must have a body. The caller must have entered an AST allocator scope that outlives the result.
 pub(crate) fn convert<'a>(
     file: &'a File<'a>,
     arena: &Arena,
@@ -210,14 +211,14 @@ pub(crate) fn convert<'a>(
         true => Root::Arrow(converter.arrow(func)?),
         false => Root::Function(converter.function(func)?),
     };
-    // Of `(x as A) as B`, which is there twice, the outer one, which is the later one.
+    // `(x as A) as B` is recorded twice with the same start. Keep the outer cast, which was pushed later.
     let mut casts = converter.casts;
     casts.reverse();
     bun_lint::utils::sort::sort_by_key(&mut casts, |it| it.0.start);
     casts.dedup_by_key(|it| it.0.start);
     let mut defaults = converter.defaults;
     bun_lint::utils::sort::sort_by_key(&mut defaults, |it| it.0.start);
-    // Of `((x) as A)` likewise.
+    // Same for `((x) as A)`.
     let mut parentheses = converter.parentheses;
     parentheses.reverse();
     bun_lint::utils::sort::sort_by_key(&mut parentheses, |it| it.0.start);
@@ -243,7 +244,7 @@ fn leak<T>(list: AstVec<T>) -> StoreSlice<T> {
 }
 
 impl<'a> Converter<'a, '_> {
-    // ───────────────────────────── places ─────────────────────────────
+    // ──────────────────────────── locations ───────────────────────────
 
     fn loc(&mut self, span: Span) -> Loc {
         let index = self.spans.len() as i32;
@@ -251,7 +252,7 @@ impl<'a> Converter<'a, '_> {
         Loc { start: index }
     }
 
-    /// Calls `then` one level further down.
+    /// Calls `then` if there's enough stack left to recurse.
     fn nested<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
         match self.stack.is_safe_to_recurse() {
             true => then(self),
@@ -306,7 +307,7 @@ impl<'a> Converter<'a, '_> {
             Some(Declaration::ImportSpec(spec)) => {
                 let module = StoreStr::new(spec.import().spec().bytes());
                 let imported: &[u8] = match spec.imported().bytes() {
-                    // oxc's compiler knows that it is as incompatible as the other.
+                    // oxc's compiler knows that this one is just as incompatible as `useVirtualizer`.
                     b"useWindowVirtualizer"
                         if self.flavor == Flavor::Oxlint
                             && spec.import().spec().is("@tanstack/react-virtual") =>
@@ -328,7 +329,7 @@ impl<'a> Converter<'a, '_> {
         };
         let kind = match declaration {
             _ if import.is_some() => SymbolKind::Import,
-            // All that the lowering asks of it is that it is not a local.
+            // The lowering only needs to know that it isn't a local.
             _ if is_outside => SymbolKind::Other,
             Some(declaration @ Declaration::Var(_)) if declaration.is_catch_parameter() => {
                 SymbolKind::CatchIdentifier
@@ -361,7 +362,7 @@ impl<'a> Converter<'a, '_> {
         made
     }
 
-    /// What the identifier `expr`, which is named `name`, refers to.
+    /// Returns what the identifier `expr`, named `name`, refers to.
     fn ref_of_identifier(&mut self, expr: Expr<'a>, name: Name<'a>) -> Ref {
         match expr.symbol() {
             Some(symbol) => self.ref_of_symbol(symbol),
@@ -384,9 +385,10 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── functions ─────────────────────────────
 
-    /// The parameters, whether the last is a rest parameter, and what the body is to start with.
+    /// The parameters, whether the last one is a rest parameter, and statements to put at the start
+    /// of the body.
     fn args(&mut self, func: Func<'a>) -> Converts<(StoreSlice<G::Arg>, bool, AstVec<JsStmt>)> {
-        // A `this` parameter is a type. oxc's lowering does not see it either.
+        // A `this` parameter is only a type, and oxc's lowering doesn't see it either. Upstream's rejects it.
         if self.flavor == Flavor::Eslint && func.this_param().is_some() {
             return Err(Refusal::ThisParameter);
         }
@@ -404,8 +406,9 @@ impl<'a> Converter<'a, '_> {
     fn arg(&mut self, param: Param<'a>, first: &mut AstVec<JsStmt>) -> Converts<G::Arg> {
         let mut binding = self.binding(param.pat())?;
         let default = self.default(&binding, param.pat(), param.default())?;
-        // oxc's lowering takes a parameter apart as a declaration does, which can have a variable that a
-        // function in it assigns. Upstream's does that for the `...rest` of an object, Bun's for nothing.
+        // oxc's lowering destructures a parameter like a declaration, which supports variables that
+        // a nested function assigns. Upstream's only does that for an object's `...rest`, and Bun's
+        // never does.
         let is_taken_apart_in_body = match (self.flavor, param.pat().kind()) {
             (Flavor::Oxlint, PatKind::Object(_) | PatKind::Array(_)) => is_assigned(param.pat()),
             (Flavor::Eslint, PatKind::Object(props)) => props
@@ -423,7 +426,8 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    /// `({ a }) => ..` as `(t) => { let { a } = t; .. }`: the `t`. The declaration is added to `first`.
+    /// Rewrites `({ a }) => ..` as `(t) => { let { a } = t; .. }`. Returns the `t` and adds the
+    /// declaration to `first`.
     fn declared_in_body(
         &mut self,
         binding: Binding,
@@ -448,8 +452,8 @@ impl<'a> Converter<'a, '_> {
         Binding::alloc(self.arena, B::Identifier { r#ref }, loc)
     }
 
-    /// The body, after `first`, and whether it is an expression. The `Loc` of the body is what the
-    /// lowering takes for that of the function.
+    /// The body, with `first` in front, and whether it's an expression. The lowering uses the
+    /// body's `Loc` as the function's.
     fn body(
         &mut self,
         func: Func<'a>,
@@ -470,13 +474,14 @@ impl<'a> Converter<'a, '_> {
         Ok((G::FnBody { loc, stmts }, is_expression))
     }
 
-    /// Upstream's compiler fails on a function expression that refers to itself by its name. oxc's does not: the
-    /// name is as good as one from outside.
+    /// Upstream's compiler fails on a function expression that refers to itself by name. oxc's
+    /// doesn't: it treats the name like one from outside.
     fn has_its_name_from_outside(&self, func: Func<'a>) -> bool {
         self.flavor == Flavor::Oxlint && func.kind() == FnKind::Expr
     }
 
-    /// The function that is compiled keeps its name: it says what the function is.
+    /// The function being compiled keeps its name, because the name determines what kind of
+    /// function it is.
     fn is_without_its_name(&self, func: Func<'a>) -> bool {
         self.has_its_name_from_outside(func) && func.estree_span() != self.root
     }
@@ -531,7 +536,7 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    /// A function expression, an arrow function, or the value of a method, at `span`.
+    /// Converts a function expression, an arrow function, or a method's value, at `span`.
     fn function_expr(&mut self, func: Func<'a>, span: Span) -> Converts<JsExpr> {
         let loc = self.loc(span);
         Ok(match func.is_arrow() {
@@ -670,7 +675,7 @@ impl<'a> Converter<'a, '_> {
         Ok(JsExpr::init(E::EString::init(value), self.loc(span)))
     }
 
-    /// `at`: the place to give a key that is not computed, in place of its own.
+    /// `at` overrides the span of a key that isn't computed.
     fn key(&mut self, key: Key<'a>, at: Option<Span>) -> Converts<(JsExpr, flags::PropertySet)> {
         let span = at.unwrap_or_else(|| key.inner_span(self.file));
         let number = |name: Name<'a>| std::str::from_utf8(name.bytes()).ok()?.parse::<f64>().ok();
@@ -696,7 +701,7 @@ impl<'a> Converter<'a, '_> {
             KeyKind::ComputedString(name) => {
                 let span = key.inner_span(self.file);
                 let flags = match self.flavor {
-                    // oxc's lowering takes it for a key that is not computed. Upstream's cannot destructure by it.
+                    // oxc's lowering treats it as a non-computed key. Upstream's can't destructure by it.
                     Flavor::Oxlint => flags::PROPERTY_NONE,
                     Flavor::Eslint => computed,
                 };
@@ -725,7 +730,7 @@ impl<'a> Converter<'a, '_> {
                 ..G::Property::default()
             });
         }
-        // Upstream has the whole of a method where the lowering has its key and its function.
+        // Upstream uses the whole method's span where the lowering has the key's and the function's.
         let is_function = matches!(kind, PropKind::Method | PropKind::Getter | PropKind::Setter);
         let (key, mut flags) = match prop.key() {
             Some(key) => {
@@ -766,7 +771,7 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── classes ─────────────────────────────
 
-    /// The compiler refuses a class. It looks into one for what it refers to.
+    /// The compiler rejects a class, but still looks inside for what it references.
     fn class(&mut self, class: Class<'a>) -> Converts<G::Class> {
         self.nested(|this| {
             let class_name = class.name().map(|name| LocRef {
@@ -790,7 +795,7 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    /// `None`: it is there for the types alone.
+    /// `None` if the member only exists for types.
     fn member(&mut self, member: Member<'a>) -> Converts<Option<G::Property>> {
         if member.is_signature() {
             return Ok(None);
@@ -872,7 +877,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn expr_at(&mut self, expr: Expr<'a>, span: Span) -> Converts<JsExpr> {
-        // What is only there for the types has no node in this tree.
+        // Type-only syntax has no node in this tree.
         if let ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. } = expr.kind()
         {
             return self.expr(inner);
@@ -906,7 +911,7 @@ impl<'a> Converter<'a, '_> {
             ExprKind::False => JsExpr::init(E::Boolean { value: false }, loc),
             ExprKind::Number(value) => JsExpr::init(E::Number::new(value), loc),
             ExprKind::String(value) => JsExpr::init(E::EString::init(value.bytes()), loc),
-            // oxc's lowering has them. To the compiler one primitive is as good as another.
+            // oxc's lowering supports them. The compiler treats all primitives alike, so a number will do.
             ExprKind::BigInt(_) if self.flavor == Flavor::Oxlint => {
                 JsExpr::init(E::Number::new(0.0), loc)
             }
@@ -933,7 +938,7 @@ impl<'a> Converter<'a, '_> {
             ExprKind::TaggedTemplate(call) => {
                 let tag = self.expr(call.callee())?;
                 match call.template().map(Expr::kind) {
-                    // oxc's lowering has the tag and the substitutions as operands, as a call has.
+                    // oxc's lowering treats the tag and the substitutions as operands, like a call's.
                     Some(ExprKind::Template(template))
                         if self.flavor == Flavor::Oxlint && !template.exprs().is_empty() =>
                     {
@@ -1045,7 +1050,7 @@ impl<'a> Converter<'a, '_> {
             ExprKind::Assign { op, target, value } => {
                 let recorded = self.recorded.len();
                 let (left, right) = (self.expr(target)?, self.expr(value)?);
-                // No lowering has these, and none looks into them.
+                // No lowering supports these, and none looks inside them.
                 if matches!(op, Some(BinOp::And | BinOp::Or | BinOp::Nullish)) {
                     self.recorded.truncate(recorded);
                 }
@@ -1096,7 +1101,7 @@ impl<'a> Converter<'a, '_> {
             }
             ExprKind::ImportMeta => JsExpr::init(E::ImportMeta {}, loc),
             ExprKind::NewTarget => JsExpr::init(E::NewTarget { range: Range::NONE }, loc),
-            // Returned above.
+            // Handled above.
             ExprKind::Fn(_)
             | ExprKind::As { .. }
             | ExprKind::Satisfies { .. }
@@ -1134,9 +1139,9 @@ impl<'a> Converter<'a, '_> {
         ))
     }
 
-    /// A tagged template has its text as it is written, unless that has an escape. Bun's lowering
-    /// refuses the template then, by the `\`, and oxc's does not. The text, which is left out, plays
-    /// no part in the analysis.
+    /// A tagged template keeps its raw text, unless the text has an escape. Bun's lowering rejects
+    /// a template when it sees the `\`, and oxc's doesn't, so for oxlint the text is dropped. It
+    /// plays no part in the analysis.
     fn template(&mut self, template: Template<'a>, tag: Option<JsExpr>) -> Converts<E::Template> {
         let is_oxlint = self.flavor == Flavor::Oxlint;
         let contents = |i: usize| match (tag.is_some(), template.cooked(i)) {
@@ -1166,7 +1171,7 @@ impl<'a> Converter<'a, '_> {
 
     fn jsx_tag(&mut self, tag: Expr<'a>) -> Converts<JsExpr> {
         match tag.kind() {
-            // A name that starts with a small letter is that of an element of the host.
+            // A name that starts with a lowercase letter is a host element.
             ExprKind::Ident(name) if !name.bytes().first().is_some_and(u8::is_ascii_uppercase) => {
                 self.string(name.bytes(), tag.span())
             }
@@ -1328,7 +1333,7 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            // What is there for the types alone.
+            // Type-only declarations.
             StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {
                 JsStmt::alloc(S::TypeScript::default(), loc)
             }
@@ -1339,7 +1344,7 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            // The compiler looks at neither.
+            // The compiler doesn't look at enums or namespaces.
             StmtKind::Enum(it) => JsStmt::alloc(
                 S::Enum {
                     name: LocRef {
@@ -1388,7 +1393,7 @@ impl<'a> Converter<'a, '_> {
                     init: init.map(|it| self.stmt(it)).transpose()?,
                     test: match (test, self.flavor) {
                         (Some(it), _) => Some(self.expr(it)?),
-                        // Both lowerings go on as for `while (true)`. Upstream's records a Todo as well.
+                        // Both lowerings continue as for `while (true)`. Upstream's also records a Todo.
                         (None, Flavor::Oxlint) => {
                             Some(JsExpr::init(E::Boolean { value: true }, loc))
                         }
@@ -1483,7 +1488,8 @@ impl<'a> Converter<'a, '_> {
                             self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()));
                         let mut binding = param.map(|it| self.binding(it.pat())).transpose()?;
                         let mut first: AstVec<JsStmt> = AstAlloc::vec();
-                        // Upstream's compiler fails on a parameter that a function refers to. oxc's does not.
+                        // Upstream's compiler fails on a `catch` parameter that a nested function
+                        // refers to. oxc's doesn't.
                         if self.flavor == Flavor::Oxlint
                             && param.is_some_and(|it| is_captured_pattern(it.pat(), stmt))
                         {
@@ -1553,7 +1559,7 @@ impl<'a> Converter<'a, '_> {
                     loc,
                 )
             }
-            // None of these can be in a function. The compiler says so of this one.
+            // None of these can appear in a function. The compiler reports that for an `ExportClause`.
             StmtKind::Import(_)
             | StmtKind::ImportEquals(_)
             | StmtKind::ExportNamed(_)
@@ -1565,7 +1571,7 @@ impl<'a> Converter<'a, '_> {
     }
 }
 
-/// A pattern with a variable that is assigned somewhere.
+/// True if the pattern binds a variable that's reassigned somewhere.
 fn is_assigned(pat: Pat<'_>) -> bool {
     let mut is_assigned = false;
     pat.for_each_binding(&mut |name| {
@@ -1576,7 +1582,7 @@ fn is_assigned(pat: Pat<'_>) -> bool {
     is_assigned
 }
 
-/// A pattern of `stmt` with a variable that a function in `stmt` refers to.
+/// True if `pat`, a pattern in `stmt`, binds a variable that a function nested in `stmt` refers to.
 fn is_captured_pattern<'a>(pat: Pat<'a>, stmt: Stmt<'a>) -> bool {
     let around = Node::Stmt(stmt).enclosing_function().map(Func::span);
     let mut is_captured = false;
@@ -1588,7 +1594,8 @@ fn is_captured_pattern<'a>(pat: Pat<'a>, stmt: Stmt<'a>) -> bool {
     is_captured
 }
 
-/// `new Date()`, `Date()`. To oxlint's compiler it is as impure as `Date.now()`, which is the one that Bun's knows.
+/// `new Date()` or `Date()`. oxlint's compiler treats it as impure like `Date.now()`, which is the
+/// only one Bun's knows.
 fn is_clock_read(call: Call<'_>) -> bool {
     let callee = call.callee();
     call.args().is_empty()
@@ -1644,7 +1651,7 @@ fn binary_op(op: BinOp) -> OpCode {
     }
 }
 
-/// `op`: that of `a op= b`.
+/// `op` is the operator in `a op= b`.
 fn assign_op(op: Option<BinOp>) -> OpCode {
     match op {
         Some(BinOp::Add) => OpCode::BinAddAssign,
@@ -1662,7 +1669,7 @@ fn assign_op(op: Option<BinOp>) -> OpCode {
         Some(BinOp::And) => OpCode::BinLogicalAndAssign,
         Some(BinOp::Or) => OpCode::BinLogicalOrAssign,
         Some(BinOp::Nullish) => OpCode::BinNullishCoalescingAssign,
-        // No other operator can be written before a `=`.
+        // No other operator can come before a `=`.
         _ => OpCode::BinAssign,
     }
 }

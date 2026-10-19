@@ -4,11 +4,12 @@ use bun_lint::prelude::*;
 /// Disallow specified warning terms in comments.
 pub struct NoWarningComments {
     terms: Vec<Term>,
-    /// They are looked for at the start of a comment, and not anywhere in it.
+    /// True if the terms only match at the start of a comment, not anywhere in it.
     is_at_start: bool,
-    /// What can be before them at the start beside whitespace, without capitals.
+    /// The characters, lowercased, that may precede a term at the start, in addition to whitespace.
     decoration: Vec<u8>,
-    /// What each starts with, without capitals, if they are looked for at the start and none takes a regular expression.
+    /// Each term's first byte, lowercased. `None` unless the terms match at the start and none needs a regular
+    /// expression.
     first_bytes: Option<Vec<u8>>,
 }
 
@@ -17,9 +18,9 @@ struct Term {
     matcher: Matcher,
 }
 
-/// What tells that a comment has a term in the configured location.
+/// Tests whether a comment has a term in the configured location.
 enum Matcher {
-    /// The term without capitals. It and the decoration are of ASCII, so it takes no regular expression.
+    /// The lowercased term. It and the decoration are ASCII, so no regular expression is needed.
     Ascii(Vec<u8>),
     Pattern(Box<Regex>),
 }
@@ -50,7 +51,7 @@ fn is_self_config(value: &[u8]) -> bool {
     false
 }
 
-/// The words of `comment` with one space between them, as many as fit in `CHAR_LIMIT`.
+/// Returns the words of `comment` joined by single spaces, as many as fit in `CHAR_LIMIT`.
 fn comment_to_display(comment: &[u8]) -> Vec<u8> {
     let mut shown = Vec::new();
     let mut shown_len = 0;
@@ -85,7 +86,7 @@ fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
     let Some(first) = term.first() else {
         return true;
     };
-    // The bytes that a character starts with that is `first` but for its case.
+    // The first bytes of the characters that equal `first` ignoring case.
     let starts = [*first, first.to_ascii_uppercase(), text::first_byte_of_other_case(*first)];
     let mut at = 0;
     while let Some(found) = strings::index_of_any(value.get(at..).unwrap_or_default(), &starts) {
@@ -102,7 +103,7 @@ fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
 }
 
 impl NoWarningComments {
-    /// `rest` without the one `/[\s<decoration>]/iu` that it starts with.
+    /// Strips one leading `/[\s<decoration>]/iu` from `rest`.
     fn after_space_or_decoration<'t>(&self, rest: &'t [u8]) -> Option<&'t [u8]> {
         match strings::js_whitespace_len(rest) {
             0 => (self.decoration.iter()).find_map(|c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c))),
@@ -122,7 +123,7 @@ impl NoWarningComments {
         true
     }
 
-    /// Whether after `/^[\s<decoration>]*/iu` there can be a term in `value`, by its first byte.
+    /// Fast check: true if, judging by the first byte, a term may follow `/^[\s<decoration>]*/iu` in `value`.
     fn may_start_with_a_term(&self, first_bytes: &[u8], value: &[u8]) -> bool {
         let mut rest = value;
         while let Some(first) = rest.first() {
@@ -198,7 +199,7 @@ impl Rule for NoWarningComments {
             if comment.kind() == TokenKind::Shebang {
                 continue;
             }
-            // With the `*/` of a block, which can only make it look closer.
+            // `rest` includes a block comment's `*/`, which can only cause a false positive here.
             if let (Some(first_bytes), [b'/', b'/' | b'*', rest @ ..]) = (&self.first_bytes, comment.text())
                 && !self.may_start_with_a_term(first_bytes, rest)
             {
@@ -210,7 +211,7 @@ impl Rule for NoWarningComments {
                 continue;
             }
             let shown = comment_to_display(value);
-            // oxlint says one thing about a comment.
+            // oxlint reports a comment only once.
             let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
             for term in matches.take(count) {
                 cx.report(comment, UNEXPECTED_COMMENT)

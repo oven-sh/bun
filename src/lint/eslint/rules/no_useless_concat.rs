@@ -6,7 +6,7 @@ pub struct NoUselessConcat;
 const UNEXPECTED_CONCAT: Message =
     Message::new("unexpectedConcat", "Unexpected string concatenation of literals.");
 
-/// The operands, if `e` is a `+`.
+/// Returns the operands, if `e` is a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     match e.as_binary() {
         Some((BinOp::Add, left, right)) => Some((left, right)),
@@ -27,7 +27,7 @@ impl Rule for NoUselessConcat {
         let Some((mut left, mut right)) = as_concatenation(e) else {
             return;
         };
-        // oxlint does not see through parentheses.
+        // oxlint doesn't look through parentheses.
         let is_oxlint = cx.language().is_oxlint;
         let sees = |e: Expr| !(is_oxlint && e.is_parenthesized());
         // `foo + "a" + "b"`

@@ -170,7 +170,7 @@ pub struct Member<'a> {
 }
 
 impl<'a> Member<'a> {
-    /// The key as written in the source, without its quotes.
+    /// The key's source text, without its quotes.
     pub fn raw_key(self) -> &'a [u8] {
         self.name.written()
     }

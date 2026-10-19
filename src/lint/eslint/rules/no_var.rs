@@ -53,7 +53,7 @@ fn scope_node_span(statement: Stmt<'_>) -> Span {
             {
                 return it.span();
             }
-            // The body of a function is a `BlockStatement`. A `StaticBlock` is not a scope node.
+            // A function's body is a `BlockStatement`. A `StaticBlock` isn't a scope node.
             Node::Func(func)
                 if func.kind() != FnKind::StaticBlock && matches!(child, Node::Stmt(_)) =>
             {
@@ -103,10 +103,10 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
         })
 }
 
-/// What the fixes of a file find out.
+/// Per-file caches for the fixes.
 #[derive(Default)]
 pub struct State<'a> {
-    /// Where a function is called first.
+    /// The start offset of each function's first call.
     first_calls: RefCell<IdMap<Symbol<'a>, u32>>,
     /// ESLint's `isInLoop`
     loops: RefCell<AncestorMemo<'a, bool>>,
@@ -114,7 +114,7 @@ pub struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    /// Where the first call of `function` starts.
+    /// Returns the start offset of the first call to `function`.
     fn first_call(&self, function: Symbol<'a>) -> u32 {
         *self
             .first_calls
@@ -139,7 +139,7 @@ impl<'a> State<'a> {
         is_in_loop == Some(true)
     }
 
-    /// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start`: where the declarator starts.
+    /// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start` is the declarator's start offset.
     fn has_unsafe_hoisted_function_reference(
         &self,
         variable: Symbol<'a>,
@@ -185,8 +185,8 @@ impl<'a> State<'a> {
             return false;
         }
 
-        // What takes no look at the references comes first: those of a variable that is declared once
-        // are then looked at for one declaration.
+        // The checks that don't need the references come first. After them every variable is declared once, so its
+        // references are only scanned for one declaration.
         let variables = Node::Stmt(statement).declared_symbols();
         let is_never_let = |variable: &Symbol<'a>| {
             variable.scope().kind() == ScopeKind::Global
@@ -236,7 +236,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// The `var` of `statement`, which modifiers can precede.
+/// Returns the `var` keyword of `statement`, which can come after modifiers.
 fn var_keyword(statement: Stmt<'_>) -> Option<Span> {
     let source = statement.file().text();
     let start = match statement.modifiers().last() {
@@ -249,8 +249,8 @@ fn var_keyword(statement: Stmt<'_>) -> Option<Span> {
         .then(|| Span::new(start, start + 3))
 }
 
-/// oxlint's `is_written_to`: something is assigned to one of the variables after the declaration. A default value
-/// counts as that, and the rest element of an array pattern is not looked at.
+/// oxlint's `is_written_to`: true if one of the variables is assigned after the declaration. A default value counts as
+/// an assignment, and an array pattern's rest element isn't checked.
 fn oxlint_is_written_to(pat: Pat) -> bool {
     let mut pending: SmallVec<[Pat; 8]> = smallvec![pat];
     while let Some(pat) = pending.pop() {
@@ -286,16 +286,16 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
     false
 }
 
-/// The fix of oxlint 1.87. There is none if a variable is referred to outside of what the declaration is in. It is
-/// `const` if nothing is assigned later and all have a value. All of the declaration is replaced, so that no other fix
-/// changes it in the same pass.
+/// oxlint 1.87's fix. There's none if a variable is referenced outside the declaration's parent. The keyword is `const`
+/// if nothing is assigned later and every variable has an initializer. The fix replaces the whole declaration, so that
+/// no other fix changes it in the same pass.
 fn fix_as_oxlint<'a>(
     fixer: Fixer<'a>,
     statement: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
 ) -> Option<Fix> {
     let var = var_keyword(statement)?;
-    // A variable does not leave the file. The default value of a parameter is outside of the body of the function.
+    // A variable can't escape the file. A parameter's default value is outside the function's body.
     let around = match statement.parent() {
         _ if statement.is_exported() => Some(statement.span()),
         Node::Stmt(parent) => Some(parent.span()),
@@ -308,7 +308,7 @@ fn fix_as_oxlint<'a>(
         let mut leaves = false;
         for declaration in declarations {
             declaration.pat().for_each_binding(&mut |pat| {
-                // That a parameter gets its default value is no reference for it.
+                // oxlint doesn't count a parameter getting its default value as a reference.
                 leaves |= pat.symbol().is_some_and(|it| {
                     it.references()
                         .any(|it| !around.contains(it.span()) && !(is_body && it.is_init()))

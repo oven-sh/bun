@@ -19,7 +19,7 @@ const REQUIRE_V_FLAG: Message = Message::new("requireVFlag", "Use the 'v' flag."
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
-/// `text` with the first `from` in it, at or after `start`, replaced by `to`.
+/// Returns `text` with the first `from` at or after `start` replaced with `to`.
 fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>> {
     let at = start + strings::index_of_char_usize(text.get(start..)?, from)?;
     let mut replaced = text.to_vec();
@@ -27,8 +27,8 @@ fn replace_first(text: &[u8], start: usize, from: u8, to: u8) -> Option<Vec<u8>>
     Some(replaced)
 }
 
-/// oxlint's `resolve_flags`: those of the characters `u` and `v` that are in the flags that `e` is. `None` if it does not know
-/// them. `seen` has the identifiers on the way.
+/// oxlint's `resolve_flags`: returns which of `u` and `v` are in the flags that `e` evaluates to, or `None` if it can't
+/// tell. `seen` has the identifiers followed so far.
 fn resolve_flags<'a>(e: Expr<'a>, seen: &mut SmallVec<[Expr<'a>; 4]>) -> Option<SmallVec<[u8; 2]>> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
@@ -110,7 +110,7 @@ impl RequireUnicodeRegexp {
         if self.requires_v() { b'v' } else { b'u' }
     }
 
-    /// The flag that it takes the place of.
+    /// The flag that it replaces.
     fn other_flag(&self) -> u8 {
         if self.require_flag == Some(UnicodeFlag::U) { b'v' } else { b'u' }
     }
@@ -146,7 +146,7 @@ impl Rule for RequireUnicodeRegexp {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint looks at what is called, not at what the variable is that is called.
+        // oxlint goes by the callee's name without resolving the variable.
         if let ExprKind::Call(call) | ExprKind::New(call) = e.kind() {
             let args = call.args();
             if !is_regexp_callee(call.callee()) || args.iter().any(|it| it.tag() == ExprTag::Spread) {

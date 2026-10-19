@@ -1,4 +1,4 @@
-//! ESLint's `Variable`, one for one: see [the guide](super#eslints-variables).
+//! ESLint's `Variable`, one to one. See [the guide](super#eslints-variables).
 
 use super::{Declaration, DeclarationKinds, Reference, Scope, ScopeKind, Symbol};
 use crate::ast::{Class, File, Name, Node};
@@ -6,22 +6,22 @@ use crate::language::SourceType;
 use crate::utils::oxlint::source_type;
 use bun_sema::atom::known;
 
-/// What a [`Variable`] is here.
+/// How a [`Variable`] is represented here.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum VariableKind<'a> {
-    /// What the file declares. For the name of a class declaration: the variable in the scope around the class.
+    /// Declared by the file. For a class declaration's name, this is the variable in the scope around the class.
     Declared(Symbol<'a>),
-    /// The variable that a class declaration has for its name in its own scope, which is what the name means in the class.
-    /// `outer`: the symbol, which is in the scope around.
+    /// The variable a class declaration has for its name in its own scope, which is what the name resolves to inside
+    /// the class. `outer` is the symbol, which lives in the enclosing scope.
     NameInClass { class: Class<'a>, outer: Symbol<'a> },
-    /// A variable of the global scope that the file does not declare: [`File::global`].
+    /// A global-scope variable that the file doesn't declare: [`File::global`].
     Global(Name<'a>),
-    /// With a configuration of oxlint, the `arguments` at the top level of a file that is CommonJS by its name. For
-    /// typescript-eslint that is the scope of a function.
+    /// With an oxlint config, the `arguments` at the top level of a file whose name makes it CommonJS.
+    /// typescript-eslint treats that scope as a function scope.
     ArgumentsOfFile,
 }
 
-/// ESLint's `Variable`. From [`Reference::variable`], [`Scope::variable`] and [`Scope::find_variable`].
+/// ESLint's `Variable`. Returned by [`Reference::variable`], [`Scope::variable`] and [`Scope::find_variable`].
 #[derive(Copy, Clone)]
 pub struct Variable<'a> {
     file: &'a File<'a>,
@@ -52,14 +52,14 @@ fn is_name_of_class(symbol: Symbol) -> bool {
     (symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME)
 }
 
-/// The class declaration that declares `symbol` and that `from` is in.
+/// Returns the class declaration that declares `symbol` and contains `from`.
 fn class_around<'a>(symbol: Symbol<'a>, from: Scope<'a>) -> Option<Class<'a>> {
     if !is_name_of_class(symbol) {
         return None;
     }
     let declared_in = symbol.scope();
     symbol.declarations().find_map(|it| match it {
-        // The name of a class expression is declared in the scope of the class, once.
+        // A class expression's name is declared only once, in the class's own scope.
         Declaration::Class(class) => (class.scope())
             .filter(|inside| *inside != declared_in && inside.contains(from))
             .map(|_| class),
@@ -77,7 +77,8 @@ impl<'a> Variable<'a> {
         self.kind
     }
 
-    /// What the file declares under the name, if anything. In a class that is the symbol around it.
+    /// Returns the symbol the file declares under this name, if any. For `NameInClass` that's the symbol in the
+    /// enclosing scope.
     pub fn symbol(self) -> Option<Symbol<'a>> {
         match self.kind {
             VariableKind::Declared(symbol) | VariableKind::NameInClass { outer: symbol, .. } => {
@@ -110,7 +111,7 @@ impl<'a> Variable<'a> {
         }
     }
 
-    /// `variable.defs`. A global variable and an `arguments` have none.
+    /// `variable.defs`. Empty for a global variable and for `arguments`.
     pub fn declarations(self) -> impl Iterator<Item = Declaration<'a>> + 'a {
         let all = self.symbol().into_iter().flat_map(Symbol::declarations);
         all.filter(move |it| match (self.kind, it) {
@@ -127,7 +128,8 @@ impl<'a> Variable<'a> {
             Some(symbol) => list.of_variable(symbol.index),
             None => list.unresolved_named(self.name().atom()),
         };
-        // All of them, unless the name is that of a class, or of a global variable that is only a type or only a value.
+        // Every candidate matches, unless the name belongs to a class, or to a global variable that's only a type or
+        // only a value.
         let is_all = match self.kind {
             VariableKind::Declared(symbol) => !is_name_of_class(symbol),
             VariableKind::ArgumentsOfFile => true,
@@ -139,7 +141,7 @@ impl<'a> Variable<'a> {
 }
 
 impl<'a> File<'a> {
-    /// The variable of the global scope that the file does not declare: [`File::global`].
+    /// Returns the global-scope variable `name` that the file doesn't declare: [`File::global`].
     pub fn global_variable(&'a self, name: &[u8]) -> Option<Variable<'a>> {
         self.global(name)?;
         let kind = VariableKind::Global(self.name(self.atoms.intern(name)));
@@ -148,8 +150,8 @@ impl<'a> File<'a> {
 }
 
 impl<'a> Symbol<'a> {
-    /// The variable that it is for what is written in `from`: in a class declaration that it is the name of, the one in the scope
-    /// of the class.
+    /// Returns the variable this symbol is for code in `from`. Inside a class declaration that it names, that's the one
+    /// in the class's scope.
     pub fn variable_in(self, from: Scope<'a>) -> Variable<'a> {
         let kind = match class_around(self, from) {
             Some(class) => VariableKind::NameInClass { class, outer: self },
@@ -205,8 +207,8 @@ impl<'a> Scope<'a> {
         Some(Variable { file, kind })
     }
 
-    /// eslint-utils' `findVariable(scope, name)`, ESLint's `getVariableByName`: the first of the scopes from this one outwards
-    /// that has a variable of that name decides.
+    /// eslint-utils' `findVariable(scope, name)`, ESLint's `getVariableByName`. Walks outward from this scope and
+    /// returns the first variable with that name.
     pub fn find_variable(self, name: Name<'a>) -> Option<Variable<'a>> {
         self.chain().find_map(|it| it.variable(name))
     }

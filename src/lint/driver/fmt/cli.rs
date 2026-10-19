@@ -1,5 +1,5 @@
-//! The command line of `bun fmt`: that of Prettier, but that files are written unless a flag
-//! says otherwise, and what `bun check` has (`--threads`, `--timing`, `--cwd`).
+//! `bun fmt`'s command line: Prettier's flags, except that files are written unless a flag says otherwise, plus the
+//! ones shared with `bun check` (`--threads`, `--timing`, `--cwd`).
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
@@ -228,7 +228,7 @@ pub const HELP: Help = Help {
 
 const _: () = assert!(
     HELP.describes_every_flag(),
-    "A flag of `bun fmt` has no description, so `--help --all` leaves it out."
+    "A `bun fmt` flag has no description, so `--help --all` would skip it."
 );
 
 pub(crate) const PARAMS: &[Param] = clap::concat_params!(
@@ -248,7 +248,7 @@ pub enum Precedence {
     #[default]
     CliOverride,
     FileOverride,
-    /// The command line counts only if there is no configuration file.
+    /// The command line only applies if there's no configuration file.
     PreferFile,
 }
 
@@ -287,53 +287,54 @@ impl Override {
     }
 }
 
-/// What the command line says.
+/// The parsed command line.
 #[derive(Clone, Debug)]
 pub struct Options {
     /// Files, directories and patterns.
     pub patterns: Vec<Vec<u8>>,
     pub check: bool,
-    /// What follows `-c`, which is `--check` for Prettier and `--config <path>` for oxfmt, and
-    /// whether `--check` is there too.
+    /// The argument after `-c`, which is `--check` for Prettier and `--config <path>` for oxfmt, and whether `--check`
+    /// was passed too.
     after_short_c: Option<(Vec<u8>, bool)>,
     pub list_different: bool,
     pub write: bool,
-    /// The flags of which oxfmt takes one, once: as they follow each other on the command line, by their long names.
+    /// The mode flags, of which oxfmt accepts only one, once. By long name, in command-line order.
     modes: Vec<&'static [u8]>,
     pub stdin_filepath: Option<Vec<u8>>,
     pub config: Option<Vec<u8>>,
     /// True if [`Options::config`] comes from bunfig.toml.
     is_config_of_bunfig: bool,
-    /// `false`: `--no-config`.
+    /// False for `--no-config`.
     pub config_lookup: bool,
     pub disable_nested_config: bool,
     pub editorconfig: bool,
     pub config_precedence: Precedence,
-    /// `None`: `.gitignore` and `.prettierignore`.
+    /// `None` means `.gitignore` and `.prettierignore`.
     pub ignore_path: Option<Vec<Vec<u8>>>,
     /// Number of leading `ignore_path` entries that come from bunfig.toml.
     ignore_paths_of_bunfig: usize,
     /// Filled by [`Options::load_pipes`].
     pub(crate) pipes: fs::NamedPipes,
-    /// Lines of an ignore file that is in the working directory.
+    /// Treated as lines of an ignore file in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
-    /// How many of them, the first, are of bunfig.toml: lines of an ignore file that is where that file is.
+    /// The number of leading entries that came from bunfig.toml. Those are treated as lines of an ignore file in that
+    /// file's directory.
     pub ignore_patterns_of_bunfig: usize,
-    /// The bunfig that was read, or would have been: a path from the working directory.
+    /// The bunfig that was read, or would have been, relative to the working directory.
     pub bunfig: Vec<u8>,
-    /// It has a `[fmt]` section, which was read.
+    /// True if it has a `[fmt]` section, which was read.
     pub has_section_of_bunfig: bool,
-    /// `bun --config=<path>` names it.
+    /// True if it was passed with `bun --config=<path>`.
     pub is_bunfig_named: bool,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
     pub error_on_unmatched_pattern: bool,
-    /// Nothing is said about a file that there is no parser for.
+    /// Silently skip files that have no parser.
     pub ignore_unknown: bool,
-    /// Files that Prettier or oxfmt would format and this formatter cannot are no error.
+    /// Files that Prettier or oxfmt would format but this formatter can't aren't an error.
     pub allow_unsupported: bool,
-    /// `--flavor oxfmt`, or `false`: `--flavor prettier`.
+    /// `Some(true)` for `--flavor oxfmt`, `Some(false)` for `--flavor prettier`.
     pub is_like_oxfmt: Option<bool>,
     /// Add `[fmt]` to bunfig.toml.
     pub init: bool,
@@ -354,13 +355,13 @@ pub struct Options {
     pub help: bool,
     /// With `help`, list every flag.
     pub all: bool,
-    /// `0`: the number of cores.
+    /// `0` means one per core.
     pub threads: usize,
     pub timing: bool,
     pub cwd: Option<Vec<u8>>,
-    /// Nothing is written. What would be written is parsed and compared with what is there.
+    /// Don't write anything. Parse what would be written and compare it with the original.
     pub debug_check: bool,
-    /// Prints the files that would be formatted, and formats nothing.
+    /// Print the files that would be formatted, without formatting.
     pub list_files: bool,
 }
 
@@ -415,7 +416,7 @@ impl Default for Options {
     }
 }
 
-/// The name in a configuration file of the option that a flag sets.
+/// The config-file name of the option that a flag sets.
 pub(crate) fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
     Some(match flag {
         b"print-width" => b"printWidth",
@@ -457,8 +458,8 @@ pub(crate) fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
 }
 
 impl Options {
-    /// Takes in the flag that is called `name`. `value`: `None` for a flag that takes none.
-    /// `is_on`: it is not written `--no-..`.
+    /// Applies the flag `name`. `value` is `None` for a flag that doesn't take one. `is_on` is false if it's written
+    /// `--no-..`.
     pub(crate) fn set(
         &mut self,
         name: &'static [u8],
@@ -483,7 +484,7 @@ impl Options {
             b"list-different" => self.list_different = is_on,
             b"write" => self.write = is_on,
             b"stdin-filepath" => self.stdin_filepath = owned(),
-            // `--no-config` is read as the opposite of a flag that takes a value.
+            // `--no-config`, which negates a flag that takes a value, is handled in `with`.
             b"config" => (self.config, self.is_config_of_bunfig) = (owned(), false),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"list-files" => self.list_files = is_on,
@@ -566,9 +567,9 @@ impl Options {
         Ok(())
     }
 
-    /// True for `bun fmt --parser x` with no paths. Like Prettier, that formats standard input, which has no file name
-    /// then. An empty `--stdin-filepath` is no name either. It must never fall back to the working directory: one parser
-    /// would rewrite every file there.
+    /// True for `bun fmt --parser x` with no paths. Like Prettier, that formats standard input, which then has no file
+    /// name. An empty `--stdin-filepath` doesn't count as a name either. It must never fall back to the working
+    /// directory, because one parser would rewrite every file there.
     pub(crate) fn formats_unnamed_stdin(&self) -> bool {
         let only_reports = self.doctor || self.list_files;
         self.patterns.is_empty()
@@ -577,13 +578,13 @@ impl Options {
             && self.format.iter().any(|it| it.0 == b"parser")
     }
 
-    /// As `--no-config --no-editorconfig`.
+    /// Same as `--no-config --no-editorconfig`.
     pub(crate) fn ignore_configuration(&mut self) {
         self.config_lookup = false;
         self.editorconfig = false;
     }
 
-    /// The same command line as oxfmt reads it, if that is another way.
+    /// The same command line as oxfmt would parse it, if that's different.
     pub(crate) fn as_oxfmt_reads_it(&self) -> Option<Options> {
         let (path, checks) = self.after_short_c.as_ref()?;
         let mut options = self.clone();
@@ -594,7 +595,7 @@ impl Options {
         Some(options)
     }
 
-    /// Why the tool refuses the flags that say what the run does, in its words.
+    /// The tool's own error message if it rejects this combination of mode flags.
     pub(crate) fn refusal_of_modes(&self, is_oxfmt: bool) -> Option<Vec<u8>> {
         let of_debug_check = || {
             (self.write && self.debug_check)
@@ -605,7 +606,7 @@ impl Options {
                 .then(|| b"Cannot use --check and --list-different together.".to_vec())
                 .or_else(of_debug_check);
         }
-        // The second is what oxfmt stops at, whatever follows.
+        // oxfmt stops at the second one, whatever follows.
         let &[first, second, ..] = &self.modes[..] else {
             return of_debug_check();
         };
@@ -627,13 +628,13 @@ impl Options {
         })
     }
 
-    /// `args`: what follows `format` on the command line.
+    /// `args` is everything after `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
     }
 
-    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
-    /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
+    /// `self` has the options parsed from the bunfig at `path`, which is relative to the working directory. Paths in it
+    /// are relative to [`Options::start_of_bunfig`]. `is_named` becomes [`Options::is_bunfig_named`].
     pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
         self.bunfig = paths::from_native(path);
         self.has_section_of_bunfig = true;
@@ -665,14 +666,14 @@ impl Options {
         self.pipes.load(cwd, &named)
     }
 
-    /// The bunfig.toml above the working directory whose `[fmt]` was found.
+    /// The bunfig.toml in a parent of the working directory, if its `[fmt]` section was read.
     pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
         let is_above = paths::dirname(&self.bunfig) != b"." && !self.is_bunfig_named;
         (is_above && self.has_section_of_bunfig).then_some(&self.bunfig)
     }
 
-    /// Where the paths and the patterns in bunfig.toml start: where the file is. `--config` can name a file that is kept
-    /// anywhere, and then it is the working directory.
+    /// The directory that paths and patterns in bunfig.toml are relative to, which is the file's directory. A file
+    /// passed with `--config` can live anywhere, so then it's the working directory.
     pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
         match self.is_bunfig_named {
             true => cwd.to_vec(),
@@ -680,10 +681,11 @@ impl Options {
         }
     }
 
-    /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::format`].
+    /// Like [`Options::parse`], but flags that aren't passed keep their value from `defaults`, which come from
+    /// [`crate::bunfig::format`].
     pub fn parse_over(mut defaults: Options, args: &[&[u8]]) -> Result<Options, UsageError> {
         let alone = Options::parse(args)?;
-        // `--config` and `--no-config` are refused together. Either takes the place of what is there.
+        // `--config` and `--no-config` are rejected together. Either one replaces the default.
         if alone.config.is_some() || !alone.config_lookup {
             (defaults.config, defaults.config_lookup) = (None, true);
         }
@@ -695,7 +697,7 @@ impl Options {
 
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
-        // The one flag that takes a value and has an opposite.
+        // The only flag that takes a value and can be negated.
         let args = args.iter().copied().filter(|arg| {
             let is_no_config = *arg == b"--no-config";
             options.config_lookup &= !is_no_config;

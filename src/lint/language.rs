@@ -1,5 +1,4 @@
-//! ESLint's `languageOptions` and `settings`: what the configuration says about the code of a
-//! file.
+//! ESLint's `languageOptions` and `settings`: what the config tells the linter about a file's code.
 
 use crate::linter::globals::{ConfigGlobals, Tables, environment};
 use crate::options::Json;
@@ -12,8 +11,8 @@ use std::sync::{Arc, OnceLock};
 pub enum SourceType {
     Module,
     Script,
-    /// A script whose top level is the body of a function: `return` is allowed there, and what is
-    /// declared there is not global.
+    /// A script whose top level is a function body: `return` is allowed there, and top-level declarations aren't
+    /// global.
     CommonJs,
 }
 
@@ -24,12 +23,12 @@ pub enum Global {
     Readonly,
     /// `"writable"`, `"writeable"`, `true`
     Writable,
-    /// `"off"`: it does not exist.
+    /// `"off"`: the variable doesn't exist.
     Off,
 }
 
 impl Global {
-    /// ESLint's `normalizeConfigGlobal` of a string.
+    /// ESLint's `normalizeConfigGlobal` for a string.
     pub fn of(value: &[u8]) -> Option<Global> {
         Some(match value {
             b"off" => Global::Off,
@@ -50,8 +49,8 @@ impl Global {
     }
 }
 
-/// `languageOptions.parser`. All code is parsed by the same parser here. Which one ESLint would
-/// use matters where the two differ in what they tell the rules.
+/// `languageOptions.parser`. Bun parses all code with one parser. Which parser ESLint would use only matters where the
+/// two give rules different information.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Parser {
     /// ESLint's default.
@@ -61,23 +60,25 @@ pub enum Parser {
     Other,
 }
 
-/// Whether the globals of a file are what the types of its program declare: [`File::inferred_globals`](crate::ast::File).
+/// Controls whether a file's globals come from the declarations in its program's types. See
+/// [`File::inferred_globals`](crate::ast::File).
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum InferGlobals {
     #[default]
     No,
-    /// They, and what the configuration has.
+    /// The inferred globals are added to the config's.
     Besides,
-    /// They, and of the configuration what `globals` itself has. For a file that is in no program: the configuration.
+    /// The inferred globals plus the config's own `globals` entries, without its `env`s. A file that isn't in any
+    /// program uses the config.
     Instead,
-    /// For JavaScript. The options of the project say which tables of the linter are in the place of the configuration:
-    /// no file of the project is read for it. The types are asked when a name is about to be reported that no table
-    /// has: [`File::is_declared_by_types`](crate::ast::File). For TypeScript: the configuration.
+    /// JavaScript files only. The project's options pick which of the linter's tables replace the config's globals, so
+    /// none of the project's files are read. The types are only consulted when a name that's in no table is about to be
+    /// reported: [`File::is_declared_by_types`](crate::ast::File). TypeScript files use the config.
     ByOptions,
 }
 
 impl InferGlobals {
-    /// Whether they are inferred for a file that is JavaScript, or is not.
+    /// True if globals are inferred for a file, given whether it's JavaScript.
     pub fn is_for(self, is_javascript: bool) -> bool {
         match self {
             InferGlobals::No => false,
@@ -87,8 +88,8 @@ impl InferGlobals {
     }
 }
 
-/// What `$env` and `globals` of `languageOptions` make: the fields of [`LanguageOptions`] about them. Most of the configurations
-/// of a run have the same, and `all` is long.
+/// The [`LanguageOptions`] fields computed from `$env` and `globals` in `languageOptions`. Most configs in a run share
+/// the same values, and `all` is long.
 #[derive(Clone, Debug)]
 pub(crate) struct GlobalsOfOptions {
     all: Arc<Vec<(Box<[u8]>, Global)>>,
@@ -99,19 +100,19 @@ pub(crate) struct GlobalsOfOptions {
 }
 
 impl GlobalsOfOptions {
-    /// `whose`: whose environments `$env` names.
+    /// `whose` selects the tool whose environment tables `$env` refers to.
     pub(crate) fn new(language_options: &Json, whose: Tables) -> GlobalsOfOptions {
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         let mut written_globals: Vec<Box<[u8]>> = Vec::new();
         let mut envs: Vec<Box<[u8]>> = Vec::new();
         let mut own_globals: Vec<(Box<[u8]>, Global)> = Vec::new();
-        // `env` of an `.eslintrc` or an `.oxlintrc.json`.
+        // `env` from an `.eslintrc` or an `.oxlintrc.json`.
         for (name, is_enabled) in language_options
             .get(b"$env")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            // oxlint has an `es6` of its own.
+            // oxlint has its own `es6` table.
             let name: &[u8] = match whose {
                 Tables::Today | Tables::Eslint8 if name == b"es6" => b"es2015",
                 _ => name,
@@ -138,7 +139,7 @@ impl GlobalsOfOptions {
         crate::utils::sort::sort_unstable(&mut written_globals);
         crate::utils::sort::sort_unstable(&mut envs);
         crate::utils::sort::sort_by(&mut own_globals, |a, b| a.0.cmp(&b.0));
-        // The last of two entries with the same name counts.
+        // If two entries have the same name, the last one wins.
         globals.reverse();
         crate::utils::sort::sort_by(&mut globals, |a, b| a.0.cmp(&b.0));
         let mut env_behind_off: Vec<(Box<[u8]>, Global)> = Vec::new();
@@ -164,20 +165,22 @@ pub struct LanguageOptions {
     /// The year: 2015, 2016, .. For ES3 and ES5, 3 and 5.
     pub ecma_version: u32,
     pub source_type: SourceType,
-    /// `languageOptions.globals`. Sorted by name. What the ECMAScript version defines is not
-    /// listed here.
+    /// `languageOptions.globals`, sorted by name. The globals that the ECMAScript version defines aren't listed.
     pub globals: Arc<Vec<(Box<[u8]>, Global)>>,
-    /// The names that `globals` itself turns on, without those of an `env`. Sorted.
+    /// The names that `globals` itself enables, not those from an `env`. Sorted.
     pub written_globals: Vec<Box<[u8]>>,
-    /// With an oxlint config: what an `env` says about each variable that `globals` turns off. See
+    /// With an oxlint config: the `env` setting of each variable that `globals` turns off. See
     /// [`File::global`](crate::ast::File::global).
     pub env_behind_off: Vec<(Box<[u8]>, Global)>,
-    /// The names in `env` that are on. Sorted. oxlint shows them to JavaScript plugins, and defines their variables for these.
+    /// The enabled `env` names, sorted. oxlint exposes them to JavaScript plugins and defines their variables for those
+    /// plugins.
     pub envs: Vec<Box<[u8]>>,
-    /// `globals` itself: with what it turns off, without what an `env` defines. Sorted by name.
+    /// The entries of `globals` itself, including the ones it turns off and excluding what an `env` defines. Sorted by
+    /// name.
     pub own_globals: Vec<(Box<[u8]>, Global)>,
     pub parser: Parser,
-    /// It is `@babel/eslint-parser`, which analyzes the scopes itself: see [`LanguageOptions::has_function_scope_at_top_level`].
+    /// The parser is `@babel/eslint-parser`, which does its own scope analysis. See
+    /// [`LanguageOptions::has_function_scope_at_top_level`].
     pub is_babel: bool,
     /// `parserOptions.ecmaFeatures.globalReturn`
     pub global_return: bool,
@@ -185,15 +188,14 @@ pub struct LanguageOptions {
     pub implied_strict: bool,
     /// `parserOptions.ecmaFeatures.jsx`
     pub jsx: bool,
-    /// `parserOptions.sourceType`, which is what `@typescript-eslint/parser` goes by.
+    /// `parserOptions.sourceType`, which is what `@typescript-eslint/parser` reads.
     pub parser_source_type: Option<SourceType>,
-    /// `parserOptions.lib`, in lower case: the libraries of TypeScript whose declarations are
-    /// known. `None` if it is not configured.
+    /// `parserOptions.lib`, lowercased: the TypeScript libraries whose declarations are available. `None` if it isn't
+    /// configured.
     pub lib: Option<Vec<Box<[u8]>>>,
-    /// `parserOptions.jsxPragma`: what a JSX element refers to. `React` unless configured, `None`
-    /// if it is `null`.
+    /// `parserOptions.jsxPragma`: the name a JSX element refers to. Defaults to `React`. `None` if it's `null`.
     pub jsx_pragma: Option<Box<[u8]>>,
-    /// `parserOptions.jsxFragmentName`: what a JSX fragment refers to.
+    /// `parserOptions.jsxFragmentName`: the name a JSX fragment refers to.
     pub jsx_fragment_name: Option<Box<[u8]>>,
     /// `parserOptions.emitDecoratorMetadata`
     pub emit_decorator_metadata: bool,
@@ -201,13 +203,14 @@ pub struct LanguageOptions {
     pub experimental_decorators: bool,
     /// `parserOptions.isolatedDeclarations`
     pub isolated_declarations: bool,
-    /// `parserOptions.project`, `projectService` or `programs` ask for types.
+    /// `parserOptions.project`, `projectService` or `programs` requests types.
     pub wants_types: bool,
-    /// A file that `parser` throws on is refused, with its message: [`parse_error`](crate::linter::parse_error). `false` with a
-    /// configuration of oxlint, which has a parser of its own and no `parser`: only what cannot be parsed here is refused.
+    /// Reject a file that `parser` would throw on, with that parser's message:
+    /// [`parse_error`](crate::linter::parse_error). `false` with an oxlint config, because oxlint has its own parser
+    /// and no `parser` option. Then only files that Bun can't parse are rejected.
     pub refuses_what_parser_refuses: bool,
-    /// The configuration is one of oxlint: where a rule of oxlint does something else than the rule of ESLint or of the plugin
-    /// that it is a port of, oxlint is followed.
+    /// The config is an oxlint config. Where an oxlint rule behaves differently from the ESLint or plugin rule it's a
+    /// port of, follow oxlint.
     pub is_oxlint: bool,
     /// There's no ESLint or oxlint config, so no rule has to match an installed package's behavior.
     pub stands_alone: bool,
@@ -216,46 +219,45 @@ pub struct LanguageOptions {
     /// [`File::new`](crate::ast::File::new) picks one, so [`File::language`](crate::ast::File::language) is correct for
     /// the file. See [`LanguageOptions::follow_the_runtime`].
     pub without_module_syntax: Option<Box<LanguageOptions>>,
-    /// With a configuration of oxlint. The scopes are those of oxc where they differ from typescript-eslint's: `namespace A.B { }`
-    /// is a namespace `B` that is declared in the scope of a namespace `A`; outside strict code a function that JavaScript
-    /// declares in a block is a variable of the function around; the name in a closing tag of JSX is a reference; the type of
-    /// the parameter of a `catch` and the options of an import type are visited. Not for a plugin in JavaScript, which oxlint
-    /// hands the scopes of typescript-eslint, nor for `rules_that_oxlint_lacks`: a file has
-    /// [two analyses](crate::semantic#two-analyses) there.
+    /// With an oxlint config. Scopes follow oxc where it differs from typescript-eslint: `namespace A.B { }` is a
+    /// namespace `B` declared in the scope of a namespace `A`; outside strict code, a function that JavaScript declares
+    /// in a block is a variable of the enclosing function; the name in a JSX closing tag is a reference; the type of a
+    /// `catch` parameter and the options of an import type are visited. This doesn't apply to JavaScript plugins, which
+    /// oxlint gives typescript-eslint's scopes, or to `rules_that_oxlint_lacks`. In those cases a file has [two
+    /// analyses](crate::semantic#two-analyses).
     pub has_scopes_of_oxc: bool,
-    /// With a configuration of oxlint: the rules that are on and that oxlint could only run as rules of a plugin in JavaScript.
+    /// With an oxlint config: the enabled rules that oxlint could only run as JavaScript plugin rules.
     pub rules_that_oxlint_lacks: Vec<&'static crate::rule::Meta>,
     /// A rule is on that can't run without types.
     pub has_rule_that_requires_types: bool,
-    /// With a configuration of oxlint in which no rule makes the variables of every file: the parser looks out for a name that may
-    /// be declared twice, which is an error for oxlint. See `Dialect::oxc_names`.
+    /// With an oxlint config where no rule forces every file's variables to be built: the parser itself watches for
+    /// names that may be declared twice, which is an error in oxlint. See `Dialect::oxc_names`.
     pub parser_tracks_names: bool,
-    /// The configuration is one of ESLint 8: what only that has a say about. There `/* eslint-env mocha */` defines the variables of
-    /// an environment, and espree reads the edition of the language that is configured and no later one.
+    /// Set for an ESLint 8 config: the settings that only ESLint 8 has. There, `/* eslint-env mocha */` defines an
+    /// environment's variables, and espree only accepts syntax up to the configured `ecmaVersion`.
     pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
-    /// The major version of ESLint whose defaults, places and texts those of its rules are: 8 with the configuration files of
-    /// ESLint 8; 9 with an `eslint.config.js` for which an `eslint` before 10 is installed; else 10, also with a configuration of
-    /// oxlint, where [`is_oxlint`](Self::is_oxlint) decides.
+    /// The ESLint major version whose rule defaults, report positions and messages are used: 8 with ESLint 8 config
+    /// files, 9 with an `eslint.config.js` if the installed `eslint` is older than 10, and 10 otherwise. It's also 10
+    /// with an oxlint config, where [`is_oxlint`](Self::is_oxlint) decides instead.
     pub eslint_major: u8,
-    /// oxlint looks at no other file than the one that it lints: it does so only with its plugin `import`.
+    /// Don't read any file other than the one being linted. oxlint only does that with its `import` plugin.
     pub without_modules: bool,
     pub infers_globals: InferGlobals,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
     pub settings: Arc<Json>,
-    /// Computed from the fields above the first time it is asked for. They must not change after
-    /// that.
+    /// Computed lazily from the fields above, which must not change afterwards.
     #[doc(hidden)]
     pub config_globals: OnceLock<ConfigGlobals>,
 }
 
-/// What the parser is told about a file: arguments of `bun_sema_parser::summarize_as`.
+/// The per-file parser settings, passed to `bun_sema_parser::summarize_as`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ParseOptions {
-    /// Whose reading of the syntax counts where parsers differ: that of acorn for espree.
+    /// The parser whose behavior to follow where parsers disagree about syntax. For espree that's acorn.
     pub dialect: Dialect,
-    /// The language, if it is not the one that the name of the file stands for.
+    /// The language, if it differs from what the file name implies.
     pub script_kind: Option<ScriptKind>,
     pub experimental_decorators: bool,
     pub every_file_is_a_module: bool,
@@ -286,12 +288,13 @@ fn source_type_of(value: Option<&Json>) -> Option<SourceType> {
 }
 
 impl LanguageOptions {
-    /// The variables that oxlint's `addGlobals` defines for a plugin, in its order: for each `env` that is on what can only be read and then
-    /// what can be written, then what `globals` has. A name that `globals` has is only there, and not at all if it's `"off"`. Unlike
-    /// oxlint's own rules, plugins only have `Array` and the like if the `env` called `builtin` is on. oxlint goes through the `env`s and
-    /// through `globals` in the order of a hash map. Here it's by their names.
-    /// A native rule that has to answer as a rule of a plugin does asks this, and not `File::global`, which
-    /// has the variables of oxlint's own rules.
+    /// The variables that oxlint's `addGlobals` defines for a plugin, in its order: for each enabled `env` the
+    /// read-only variables and then the writable ones, followed by the entries of `globals`. A name in `globals` only
+    /// appears in that last group, and not at all if it's `"off"`. Unlike oxlint's own rules, plugins only get `Array`
+    /// and the like if the `builtin` env is on. oxlint iterates the `env`s and `globals` in hash map order. Here
+    /// they're sorted by name.
+    /// A native rule that has to behave like a plugin rule uses this instead of `File::global`, which has the variables
+    /// of oxlint's own rules.
     pub fn globals_of_oxlint_plugins(&self) -> Vec<(Box<[u8]>, Global)> {
         let own = &self.own_globals;
         let is_own = |name: &[u8]| own.binary_search_by(|it| (*it.0).cmp(name)).is_ok();
@@ -302,7 +305,7 @@ impl LanguageOptions {
             let variables: Vec<_> = variables.filter(|it| !is_own(it.0)).collect();
             for wanted in [Global::Readonly, Global::Writable] {
                 for &(name, setting) in variables.iter().filter(|it| it.1 == wanted) {
-                    // The one that is there keeps its place.
+                    // An existing entry keeps its position.
                     let at = *index_of.entry(name).or_insert_with(|| {
                         all.push((name.into(), setting));
                         all.len() - 1
@@ -327,7 +330,7 @@ impl LanguageOptions {
         }
     }
 
-    /// ESLint's `validateLanguageOptions`. `Err`: the message, which ESLint prefixes with
+    /// ESLint's `validateLanguageOptions`. `Err` holds the message, which ESLint prefixes with
     /// `Key "languageOptions": `.
     pub fn validate_json(language_options: &Json) -> Result<(), Vec<u8>> {
         match language_options.get(b"ecmaVersion") {
@@ -394,19 +397,19 @@ impl LanguageOptions {
         }
     }
 
-    /// From ESLint's `languageOptions` and `settings` after all configuration objects are merged.
-    /// What is missing has ESLint's default. What is invalid is ignored.
+    /// Built from ESLint's `languageOptions` and `settings` after all config objects are merged. Missing options get
+    /// ESLint's defaults, and invalid ones are ignored.
     ///
-    /// `$env` is the `env` of an `.eslintrc`: the variables of each environment that is `true` are
-    /// globals, which `globals` overrides.
+    /// `$env` is the `env` of an `.eslintrc`. The variables of each environment that's `true` become globals, which
+    /// `globals` can override.
     ///
-    /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"`
-    /// or `"typescript"`, each with or without `@version`. Any other is [`Parser::Other`].
+    /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"` or `"typescript"`,
+    /// each with or without `@version`. Anything else is [`Parser::Other`].
     pub fn from_json(language_options: &Json, settings: &Json) -> LanguageOptions {
         Self::from_json_for(language_options, Arc::new(settings.clone()), Tables::Today)
     }
 
-    /// The same. `whose`: whose environments `$env` names.
+    /// Like [`LanguageOptions::from_json`]. `whose` selects the tool whose environment tables `$env` refers to.
     pub(crate) fn from_json_for(
         language_options: &Json,
         settings: Arc<Json>,
@@ -416,7 +419,8 @@ impl LanguageOptions {
         Self::from_json_with(language_options, settings, globals)
     }
 
-    /// The same. `globals`: [`GlobalsOfOptions::new`] of `language_options`, for who has made it before.
+    /// Like [`LanguageOptions::from_json`], for a caller that already has [`GlobalsOfOptions::new`] of
+    /// `language_options`.
     pub(crate) fn from_json_with(
         language_options: &Json,
         settings: Arc<Json>,
@@ -558,7 +562,7 @@ impl LanguageOptions {
         other
     }
 
-    /// oxlint's `ctx.globals().is_enabled(name)`: `globals` itself has `name`, and not as `"off"`.
+    /// oxlint's `ctx.globals().is_enabled(name)`: `globals` itself lists `name`, and not as `"off"`.
     pub fn is_written_global(&self, name: &[u8]) -> bool {
         self.written_globals
             .binary_search_by(|it| (**it).cmp(name))
@@ -583,18 +587,18 @@ impl LanguageOptions {
         }
     }
 
-    /// ESLint's `scopeManager.isGlobalReturn()`: between the global scope and the code of the file
-    /// is the scope of a function. For Babel's parser `"commonjs"` alone does not make one: there `const { Symbol } = a;` at the
-    /// top level defines the global variable.
+    /// ESLint's `scopeManager.isGlobalReturn()`: there's a function scope between the global scope and the file's code.
+    /// With Babel's parser, `"commonjs"` by itself doesn't create one, so `const { Symbol } = a;` at the top level
+    /// defines the global variable.
     pub fn has_function_scope_at_top_level(&self) -> bool {
         self.global_return || (self.scope_source_type() == SourceType::CommonJs && !self.is_babel)
     }
 
-    /// What to tell the parser about the file at `path`.
+    /// The parser settings for the file at `path`.
     pub fn parse_options(&self, path: &[u8]) -> ParseOptions {
         let by_name = ScriptKind::from_file_name(path);
         let script_kind = match self.parser {
-            // `getScriptKind` of typescript-estree
+            // typescript-estree's `getScriptKind`
             Parser::TypeScript | Parser::Other => match by_name {
                 Some(_) => None,
                 None => Some(if self.jsx {
@@ -603,7 +607,7 @@ impl LanguageOptions {
                     ScriptKind::Ts
                 }),
             },
-            // For the espree of ESLint 8 the name of a file says nothing.
+            // ESLint 8's espree ignores the file name.
             Parser::Espree => match by_name {
                 Some(_) if self.eslint_8.is_none() => None,
                 _ => Some(if self.jsx {

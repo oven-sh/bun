@@ -1,15 +1,15 @@
-//! What eslint-plugin-react-hooks 7.1.1 reports for a diagnostic of the compiler.
+//! Renders a compiler diagnostic the way eslint-plugin-react-hooks 7.1.1 reports it.
 //!
-//! One report at the first place of the diagnostic, and none if that has no place. Everything else is text in the message, which
-//! is the compiler's `printErrorMessage(source, { eslint: true })`: the reason after a heading, the description, and for each
-//! place a frame of @babel/code-frame 7 with what is said about it.
+//! The plugin makes one report at the diagnostic's first location, or none if that location is missing. Everything else
+//! is text in the message, which is the compiler's `printErrorMessage(source, { eslint: true })`: a heading with the
+//! reason, the description, and for each location a @babel/code-frame 7 frame with that location's message.
 //!
-//! The plugin reads `.ts` and `.tsx` files with Babel's parser and all others with hermes-parser, whose places know neither the
-//! name of the file nor an offset. So only in the former is the name of the file above each frame, and only there do the rules
-//! about dependencies suggest a list.
+//! The plugin parses `.ts` and `.tsx` files with Babel's parser and all others with hermes-parser, whose locations have
+//! neither a file name nor an offset. So only `.ts` and `.tsx` files get the file name above each frame, and only there
+//! do the dependency rules suggest a list.
 //!
-//! The compiler that the plugin bundles is written in TypeScript, and older than the one here. Where only the words differ, or
-//! the order of a list, [`render`] has those of the plugin.
+//! The compiler bundled with the plugin is written in TypeScript and is older than the one here. Where only the wording
+//! or the order of a list differs, [`render`] produces the plugin's version.
 
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::oxlint::{find, property_around};
@@ -45,7 +45,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
         ErrorCategory::MemoDependencies | ErrorCategory::EffectExhaustiveDependencies
     );
     let has_list = is_read_by_babel || !is_about_dependencies;
-    // The plugin does not say where a function accesses a ref.
+    // The plugin doesn't say where a function accesses a ref.
     let is_of_plugin = |it: &&Detail| {
         !matches!(it, Detail::Error { message: Some(said), .. }
             if finding.category == ErrorCategory::Refs
@@ -107,7 +107,7 @@ pub(crate) fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Option<Report
                 message: said,
             } => (place_of(file, finding, *span), said.as_deref()),
         };
-        // `CompilerError.invariant()` says the reason where nothing else is to be said.
+        // `CompilerError.invariant()` repeats the reason if there's no other message.
         let said = match said {
             _ if is_error_detail => reason,
             None if finding.category == ErrorCategory::Invariant => reason,
@@ -172,9 +172,9 @@ fn suggested(suggestion: &Suggestion) -> Suggested {
     }
 }
 
-// ───────────────────────────── where the plugin's compiler has other words ─────────────────────────────
+// ───────────────────────── where the plugin's compiler words things differently ─────────────────────────
 
-/// A computed key in a pattern: the compiler there marks the property.
+/// For a computed key in a pattern, the plugin's compiler points at the whole property.
 fn place_of<'a>(file: &'a File<'a>, finding: &Finding, at: Span) -> Span {
     let is_computed_key = finding.category == ErrorCategory::Todo
         && finding.reason
@@ -210,8 +210,9 @@ fn reason_of<'a, 'f>(file: &'a File<'a>, finding: &'f Finding, at: Span) -> &'f 
     }
 }
 
-/// Whether it is a `CompilerErrorDetail` there, not a `CompilerDiagnostic`: it has one place, at which the reason is said again,
-/// and its message ends with an empty line. Here, what is thrown is a diagnostic whatever it is there.
+/// True if the plugin's compiler makes this a `CompilerErrorDetail` rather than a `CompilerDiagnostic`. That has one
+/// location, where the reason is repeated, and its message ends with an empty line. Here, anything thrown is a
+/// diagnostic, whatever it is in the plugin's compiler.
 fn is_error_detail(finding: &Finding, reason: &str) -> bool {
     match finding.category {
         ErrorCategory::Invariant => matches!(
@@ -234,12 +235,12 @@ fn is_error_detail(finding: &Finding, reason: &str) -> bool {
     }
 }
 
-// ───────────────────────────── lists of dependencies ─────────────────────────────
+// ──────────────────────────────── dependency lists ───────────────────────────────
 
 const INFERRED_DEPENDENCIES: &str = "Inferred dependencies: `";
 const UPDATE_DEPENDENCIES: &str = "Update dependencies";
 
-/// The `[a, b.c]` of the hint that has the list.
+/// The `[a, b.c]` in the hint that lists the inferred dependencies.
 fn inferred_dependencies(detail: &Detail) -> Option<&str> {
     let Detail::Hint { message } = detail else {
         return None;
@@ -261,7 +262,7 @@ fn missing_dependency(detail: &Detail) -> Option<&[u8]> {
     rest.get(..strings::index_of_char_usize(rest, b'`')?)
 }
 
-/// The variable and the properties of `a.b?.c`, each with whether a `?.` leads to it.
+/// The variable and properties of `a.b?.c`, each with a flag for whether it follows a `?.`.
 fn parts(dependency: &[u8]) -> Vec<(bool, &[u8])> {
     let mut is_optional = false;
     let parts = strings::split(dependency, b".").map(|part| {
@@ -274,8 +275,8 @@ fn parts(dependency: &[u8]) -> Vec<(bool, &[u8])> {
     parts.collect()
 }
 
-/// The order of the inferred dependencies there, which compares names with `localeCompare`. Here they are in the order of the
-/// bytes.
+/// The plugin's order for inferred dependencies, which compares names with `localeCompare`. The compiler here sorts
+/// them by bytes.
 fn compare_dependencies(a: &[u8], b: &[u8]) -> Ordering {
     let (a, b) = (parts(a), parts(b));
     if let (Some(a), Some(b)) = (a.first(), b.first())
@@ -297,7 +298,7 @@ fn compare_dependencies(a: &[u8], b: &[u8]) -> Ordering {
     Ordering::Equal
 }
 
-/// `list`, which is `[a, b.c]`, in that order.
+/// Writes `list`, which looks like `[a, b.c]`, sorted in that order.
 fn write_dependencies(out: &mut Vec<u8>, list: &str) {
     let Some(inner) = list.strip_prefix('[').and_then(|it| it.strip_suffix(']')) else {
         return out.extend_from_slice(list.as_bytes());
@@ -311,7 +312,7 @@ fn write_dependencies(out: &mut Vec<u8>, list: &str) {
 
 // ───────────────────────────── the frame ─────────────────────────────
 
-/// ESLint's `context.filename`: as the system writes it.
+/// ESLint's `context.filename`, with the platform's path separators.
 fn write_path(out: &mut Vec<u8>, path: &[u8]) {
     let from = out.len();
     out.extend_from_slice(path);
@@ -324,11 +325,11 @@ fn write_path(out: &mut Vec<u8>, path: &[u8]) {
 
 const LINES_ABOVE: u32 = 2;
 const LINES_BELOW: u32 = 3;
-/// Of a range of more lines than these, only the start and the end are shown.
+/// A range with more lines than this only shows its start and end.
 const MAX_LINES: u32 = 10;
 const ABBREVIATED_LINES: u32 = 5;
 
-/// `printCodeFrame`. `false`, and nothing is written, where that throws.
+/// `printCodeFrame`. Returns false without writing anything where that throws.
 fn write_frame(
     out: &mut Vec<u8>,
     file: &File,
@@ -350,7 +351,8 @@ fn write_frame(
     if end.line.saturating_sub(start.line) < MAX_LINES {
         return code_frame::write(out, file, &frame);
     }
-    // It cuts rows, of which a line of the range has two. As many lines have at least as many rows.
+    // Upstream cuts by rendered rows, and a line inside the range renders as two. Rendering N lines gives at least N
+    // rows, which are then trimmed to N.
     let (first_rows, last_rows) = (
         LINES_ABOVE + ABBREVIATED_LINES,
         LINES_BELOW + ABBREVIATED_LINES,

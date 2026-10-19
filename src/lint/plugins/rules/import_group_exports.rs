@@ -64,9 +64,9 @@ impl Rule for GroupExports {
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        // Of values, of types.
+        // [value exports, type exports]
         let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
-        // Those of each source, in the order in which the sources come, and where each source is.
+        // Exports with a source, grouped by source in first-seen order. `places` maps each source to its index.
         let mut source_records: [Vec<(Name<'a>, Spans)>; 2] = [Vec::new(), Vec::new()];
         let mut places: FxHashMap<(usize, Name<'a>), usize> = FxHashMap::default();
         let is_oxlint = cx.language().is_oxlint;
@@ -75,7 +75,8 @@ impl Rule for GroupExports {
                 StmtKind::ExportNamed(export) => {
                     let kind = usize::from(export.is_type_only());
                     match export.spec().filter(|_| export.has_from()) {
-                        // The original keeps them by name in an object, of which that is no key. oxlint has a map.
+                        // The plugin keys a plain object by source, and assigning to `__proto__` doesn't add a key.
+                        // oxlint uses a map.
                         Some(source) if !is_oxlint && source.is("__proto__") => {}
                         Some(source) => {
                             let records = &mut source_records[kind];
@@ -95,7 +96,7 @@ impl Rule for GroupExports {
                 _ => {}
             }
         }
-        // oxlint reports one sort after the other, and those with a source in the order of its hash map.
+        // oxlint reports one kind after the other, and exports with a source in its hash map's order.
         for span in nodes.iter().filter(|it| it.len() > 1).flatten() {
             cx.report(*span, ES_MODULE);
         }
@@ -114,10 +115,11 @@ impl Rule for GroupExports {
     }
 }
 
-/// Whether upstream's `accessorChain` is `exports.a`, `module.exports` or `module.exports.a`. A name in brackets is as
-/// one after a dot, and the chain begins after what is neither a member nor a name: `f().exports[a]`.
+/// True if upstream's `accessorChain` is `exports.a`, `module.exports` or `module.exports.a`. A name in brackets counts
+/// like one after a dot, and the chain starts after anything that's neither a member access nor an identifier:
+/// `f().exports[a]`.
 fn has_exporting_accessor_chain(left: Expr) -> bool {
-    // From the last to the first. `None`: what is in the brackets is no name.
+    // In reverse order. `None` means the bracketed expression isn't an identifier.
     let mut chain: SmallVec<[Option<&[u8]>; 5]> = SmallVec::new();
     let mut node = left;
     while chain.len() <= 3
@@ -146,7 +148,7 @@ fn has_exporting_accessor_chain(left: Expr) -> bool {
     )
 }
 
-/// oxlint's: `exports.a`, `module.exports`, `module.exports.a`
+/// oxlint's version: `exports.a`, `module.exports`, `module.exports.a`
 fn is_commonjs_export(left: Expr) -> bool {
     let Some(object) = left.object() else {
         return false;

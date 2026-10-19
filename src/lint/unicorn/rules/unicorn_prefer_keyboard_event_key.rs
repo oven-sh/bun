@@ -44,7 +44,7 @@ impl Rule for PreferKeyboardEventKey {
 
 type Context<'a> = Cx<'a, PreferKeyboardEventKey>;
 
-/// The innermost function around `node`, or `node` itself, that is the second argument of `a.addEventListener(..)`.
+/// The innermost function at or around `node` that's the second argument of `a.addEventListener(..)`.
 fn find_add_event_listener_callback<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, Func<'a>>) -> Option<Func<'a>> {
     known.find(node, |child, parent| {
         let (callback, call) = (child.as_expr()?, parent.as_expr()?.as_call()?);
@@ -56,7 +56,7 @@ fn find_add_event_listener_callback<'a>(node: Node<'a>, known: &mut AncestorMemo
     })
 }
 
-/// Whether the identifier `expr` is the first parameter of the callback around `node`.
+/// True if the identifier `expr` is the first parameter of the callback around `node`.
 fn is_event_parameter<'a>(expr: Expr<'a>, node: Node<'a>, cx: &mut Context<'a>) -> bool {
     expr.tag() == ExprTag::Ident
         && !expr.is_parenthesized()
@@ -106,7 +106,7 @@ fn check_binding_property<'a>(prop: PatProp<'a>, cx: &mut Context<'a>) {
     if !value_name.is_any(&DEPRECATED_PROPERTIES) {
         return;
     }
-    // What the pattern that it is in is the whole of.
+    // The node that owns the outermost enclosing pattern.
     let mut owner = prop.parent();
     while matches!(owner, Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_)) {
         owner = owner.parent();

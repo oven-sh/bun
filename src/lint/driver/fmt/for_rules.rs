@@ -1,8 +1,8 @@
-//! `bun fmt` for the rules of `bun lint` that hold a file against its formatted text: see [`bun_lint::formats`].
+//! Runs `bun fmt` for the `bun lint` rules that compare a file with its formatted text. See [`bun_lint::formats`].
 //!
-//! `prettier/prettier` stands in for the rule of `eslint-plugin-prettier` 5, which asks the Prettier of the project
-//! (`eslint-plugin-prettier.js`, `worker.mjs`). Whatever could make the text another one than that Prettier's is a
-//! [`Reason`], never a text.
+//! `prettier/prettier` replaces the `eslint-plugin-prettier` 5 rule, which calls the project's Prettier
+//! (`eslint-plugin-prettier.js`, `worker.mjs`). Anything that could make our output differ from that Prettier's returns
+//! a [`Reason`] instead of text.
 
 use super::cli::Options;
 use super::config::{self, Configs, Flavor};
@@ -21,13 +21,13 @@ use bun_sema::session::Session;
 use bun_threading::Guarded;
 use std::sync::Arc;
 
-/// The options of a rule, and what is read once for all files that are held against them.
+/// One rule's options, plus the state that's read once and shared by every file checked with them.
 struct Set<'e> {
     like: Like,
     options: Option<Json>,
     uses_configuration: bool,
     file_info_options: Option<Json>,
-    /// `Err`: nothing is formatted with them.
+    /// `Err` means no file can be formatted with these options.
     read: Result<Read<'e>, Reason>,
 }
 
@@ -35,11 +35,11 @@ struct Read<'e> {
     configs: Configs<'e>,
     ignored: Ignored,
     with_node_modules: bool,
-    /// `allowUnsupported` of `[fmt]`, which is for `bun/format`.
+    /// `allowUnsupported` from `[fmt]`. Only `bun/format` uses it.
     allows_unsupported: bool,
 }
 
-/// The names in `plugins`. `Err`: one of them is no name, or that of a plugin that may print the files in another way.
+/// Returns the names in `plugins`. `Err` if an entry isn't a string or is a plugin that could change how files print.
 fn plugins_of(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
     let plugins = json.and_then(|it| it.get(b"plugins"));
     let names = plugins.and_then(Json::as_array).unwrap_or_default().iter();
@@ -51,13 +51,13 @@ fn plugins_of(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
         .collect()
 }
 
-/// The command line of `bun fmt` that says what the options of the rule say. `defaults`: of its flags, which Prettier
-/// knows nothing of.
+/// Builds the `bun fmt` command line equivalent to the rule's options. `defaults` supplies `bun fmt`'s own flags, which
+/// Prettier doesn't have.
 fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options, Reason> {
     let defaults = defaults.filter(|_| request.like == Like::BunFormat);
     let mut options = defaults.cloned().unwrap_or_default();
     let file_info = |key: &[u8]| request.file_info_options.and_then(|it| it.get(key));
-    // `resolveConfig(file, { editorconfig: true })`, or nothing.
+    // `resolveConfig(file, { editorconfig: true })`, or no config at all.
     if !request.uses_configuration {
         options.ignore_configuration();
     }
@@ -72,7 +72,7 @@ fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options
                 .collect::<Result<_, _>>()?,
         ),
         Some(_) => return Err(Reason::Option),
-        // The plugin passes `.prettierignore`, so `.gitignore` does not count.
+        // The plugin passes `.prettierignore`, so `.gitignore` isn't read.
         None if request.like == Like::InstalledPrettier => Some(vec![b".prettierignore".to_vec()]),
         None => options.ignore_path.take(),
     };
@@ -99,7 +99,7 @@ impl<'e> Set<'e> {
     ) -> Set<'e> {
         let read = command_line(request, defaults).and_then(|options| {
             let configs = Configs::owning(options.clone(), environment);
-            // Prettier does not know the configuration files of oxfmt.
+            // Prettier doesn't read oxfmt's config files.
             let is_for_another =
                 request.like == Like::InstalledPrettier && configs.flavor == Flavor::Oxfmt;
             if is_for_another || configs.check().is_err() {
@@ -135,7 +135,7 @@ impl<'e> Set<'e> {
     }
 }
 
-/// The directory of the `eslint-plugin-prettier` that the file at `module` is of, and its version.
+/// Returns the directory and version of the `eslint-plugin-prettier` package that contains the file `module`.
 fn plugin_of(module: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
     paths::ancestors(paths::dirname(module)).find_map(|directory| {
         let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
@@ -146,18 +146,18 @@ fn plugin_of(module: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
     })
 }
 
-/// The same for the one that is found from `cwd`.
+/// Same, for the package that resolves from `cwd`.
 fn plugin_from(cwd: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
     let plugin = paths::ancestors(cwd)
         .map(|it| paths::join(it, b"node_modules/eslint-plugin-prettier"))
         .find(|it| fs::is_file(&paths::join(it, b"package.json")))?;
     let version = tailwind::version_of_package(b"eslint-plugin-prettier", cwd)?;
-    // Where a package manager has linked it from, its dependencies are beside it.
+    // Resolve a package manager's symlink, because the plugin's dependencies sit next to the real directory.
     Some((fs::real_path(&plugin).unwrap_or(plugin), version))
 }
 
-/// Whether `eslint-plugin-prettier` and the `prettier` that it loads are of the versions that are followed here.
-/// `module`: [`Request::package_module`]. Without it the plugin is looked for from `cwd`.
+/// Checks that `eslint-plugin-prettier` and the `prettier` it loads are versions that `bun fmt` matches. `module` is
+/// [`Request::package_module`]. Without it, the plugin is resolved from `cwd`.
 fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
     let found = module.map_or_else(|| plugin_from(cwd), plugin_of);
     let (plugin, [5, _, _]) = found.ok_or(Reason::PluginNotFound)? else {
@@ -169,15 +169,15 @@ fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
     }
 }
 
-/// [`Formats`], for a run of `bun lint`.
+/// Implements [`Formats`] for one `bun lint` run.
 pub struct ForRules<'e> {
     environment: &'e Environment<'e>,
-    /// What `[fmt]` of bunfig.toml says.
+    /// The `[fmt]` section of bunfig.toml.
     defaults: Option<&'e Options>,
-    /// There are one or two in a run.
+    /// A run has one or two.
     sets: Guarded<Vec<Arc<Set<'e>>>>,
     scratches: Guarded<Vec<Scratches>>,
-    /// See [`check_packages`], by [`Request::package_module`]. There is one in nearly every run.
+    /// Cached [`check_packages`] results, keyed by [`Request::package_module`]. Nearly every run has just one.
     packages: Guarded<Vec<(Option<Vec<u8>>, Result<(), Reason>)>>,
 }
 
@@ -232,7 +232,7 @@ impl<'e> ForRules<'e> {
         if is_in_node_modules || ignored.ignores_file(path, &None) {
             return Ok(Formatted::Skipped);
         }
-        // A block that a processor has found. The plugin leaves those of a file alone that Prettier formats whole.
+        // A block extracted by a processor. The plugin skips blocks from files that Prettier formats as a whole.
         if request.path != path {
             return match Kind::with_options(path, &FormatOptions::default()) {
                 Some(
@@ -272,7 +272,7 @@ impl<'e> ForRules<'e> {
         }
         let kind = Kind::with_options(path, &resolved.options);
         tailwind::only_where_sorted(&mut resolved.options, kind);
-        // As `bun fmt`, which then leaves the classes as they are.
+        // `bun fmt` does the same, and then doesn't sort the classes.
         if *allows_unsupported
             && (resolved.options.tailwind.as_deref()).is_some_and(|it| !it.orders.has_tailwind())
         {
@@ -283,8 +283,8 @@ impl<'e> ForRules<'e> {
         let names = (&Interner::new_in(&names) as &dyn Intern, &names);
         let formatted = format(path, request.text, &resolved, names, &mut scratch, false);
         self.scratches.lock().push(scratch);
-        // Tailwind is asked in a process of its own, which takes about a second. `bun fmt` asks once, about all
-        // files. Here it would be once for each file that has a class that no file before it has.
+        // Asking Tailwind means spawning a process, which takes about a second. `bun fmt` does that once for all files.
+        // Here it would happen for every file with a class that no earlier file had.
         if (resolved.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
             return Err(Reason::Classes);
         }

@@ -1,4 +1,4 @@
-//! One function through the compiler.
+//! Runs one function through the compiler.
 
 use crate::convert::{Converted, Recorded, Refusal, Root, WrappedDefault, convert};
 use crate::finding::{Detail, Finding, Suggestion};
@@ -16,27 +16,28 @@ use bun_react_compiler::hir::environment_config::ExhaustiveEffectDepsMode;
 use bun_react_compiler::lowering::FunctionNode;
 use bun_react_compiler::{Categories, EnvironmentConfig};
 
-/// Whose rules the compiler runs for. The two have their own forks of it, and look for other functions.
+/// Which tool's rules the compiler runs for. Each tool has its own fork of the compiler and compiles different
+/// functions.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Flavor {
-    /// `react/*` of oxlint
+    /// oxlint's `react/*`
     Oxlint,
-    /// `react-hooks/*` of eslint-plugin-react-hooks
+    /// eslint-plugin-react-hooks' `react-hooks/*`
     Eslint,
 }
 
-/// The state for one file.
+/// Per-file state.
 pub(crate) struct Compiler<'a> {
     file: &'a File<'a>,
     flavor: Flavor,
     wanted: Categories,
     config: EnvironmentConfig,
-    /// What the trees and the compiler allocate.
+    /// Memory for the converted trees and the compiler.
     arena: bun_alloc::Arena,
 }
 
-/// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `stands_alone` we don't follow the plugin
-/// where that would make a rule useless.
+/// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `stands_alone` we don't follow
+/// the plugin where that would make a rule useless.
 fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
     let is_oxlint = flavor == Flavor::Oxlint;
     EnvironmentConfig {
@@ -59,7 +60,7 @@ fn config_of(flavor: Flavor, stands_alone: bool) -> EnvironmentConfig {
         validate_no_freezing_known_mutable_functions: true,
         validate_no_void_use_memo: true,
         validate_no_capitalized_calls: Some(match is_oxlint || stands_alone {
-            // Globals that oxc's compiler knows and Bun's does not.
+            // Globals that oxc's compiler knows and Bun's doesn't.
             true => vec!["BigInt".to_owned(), "Symbol".to_owned()],
             false => Vec::new(),
         }),
@@ -86,15 +87,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// oxc's `pipeline::compile_fn::<false>`. `Err`: the diagnostics of the failed attempt. What the
-    /// pipeline logs is appended to `logged` in both cases.
+    /// oxc's `pipeline::compile_fn::<false>`. `Err` has the failed attempt's diagnostics. Whatever the pipeline logs is
+    /// appended to `logged` in both cases.
     pub(crate) fn compile_fn(
         &mut self,
         func: Func<'a>,
         fn_type: ReactFunctionType,
         logged: &mut Vec<Finding>,
     ) -> Result<(), Vec<Finding>> {
-        // Nothing of a function is in use after it. A heap for each costs more than the small ones need.
+        // Nothing from the previous function is still in use. Most functions are small, so a new heap for each would
+        // cost more than it's worth.
         let _ = self.arena.reset_retain_with_limit(8 * 1024 * 1024);
         let arena = &self.arena;
         let mut allocator = ASTMemoryAllocator::borrowing(arena);
@@ -153,7 +155,8 @@ impl<'a> Compiler<'a> {
                 )
             }
         });
-        // What the lowering says of the call that the JSX is in the tree.
+        // The JSX is a call in the converted tree, and this is the lowering's diagnostic for that call. `recorded`
+        // already has the right one.
         let is_said_already = |it: &Finding| {
             it.reason.starts_with(CANNOT_BE_REORDERED)
                 && converted.recorded.iter().any(|recorded| {
@@ -201,7 +204,8 @@ fn implicit_arguments(span: Span) -> Finding {
 
 const CANNOT_BE_REORDERED: &str = "(BuildHIR::node.lowerReorderableExpression) Expression type `";
 
-/// `a || b` is a `BinaryExpression` in Bun's tree, by which the lowering calls it.
+/// `a || b` is a `BinaryExpression` in Bun's tree, so that's what the lowering calls it. ESTree has a
+/// `LogicalExpression`.
 fn with_kind_of_estree<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding {
     if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
         && let Some(rest) = rest.strip_prefix("BinaryExpression")
@@ -227,7 +231,7 @@ fn with_what_is_around(wrapped: &[WrappedDefault], mut finding: Finding) -> Find
     finding
 }
 
-/// A `CompilerError.throwTodo()` or the like of upstream's lowering
+/// A `CompilerError.throwTodo()` or similar from upstream's lowering.
 fn todo(reason: String, span: Span) -> Finding {
     Finding {
         category: ErrorCategory::Todo,
@@ -261,9 +265,9 @@ fn duplicate_fbt_tags(tag: &str, name: &str, places: &[Span]) -> Finding {
     }
 }
 
-/// What the compiler says where it has not the stack for a function.
+/// The diagnostic for a function that's nested too deeply for the stack.
 fn too_deep() -> Finding {
-    // Without a place of its own: it is reported where the function starts.
+    // It has no span, so it's reported at the start of the function.
     Finding {
         category: ErrorCategory::Todo,
         reason: "Support functions of this size".to_owned(),
@@ -296,7 +300,7 @@ fn suggestions(converted: &Converted, all: Option<Vec<CompilerSuggestion>>) -> V
     all.into_iter().flatten().filter_map(converted).collect()
 }
 
-/// What the compiler says of `Date.now()` where the source has `new Date()`.
+/// The description, with `Date.now` changed back to `Date` where the source has `new Date()`.
 fn description_of(converted: &Converted, it: &CompilerDiagnostic) -> Option<String> {
     let description = it.description.as_deref()?;
     let place = span_of(converted, it.primary_location().copied());

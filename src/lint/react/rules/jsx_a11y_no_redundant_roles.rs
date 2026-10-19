@@ -63,7 +63,7 @@ impl NoRedundantRoles {
 fn get_redundant_implicit_role(element: &[u8], jsx_el: Jsx, explicit_role: &[u8]) -> Option<&'static str> {
     let is_explicit = |implicit_role: &&str| explicit_role.eq_ignore_ascii_case(implicit_role.as_bytes());
     match element {
-        // Their roles depend on what they are in.
+        // Their roles depend on their ancestors.
         b"header" | b"footer" | b"main" | b"address" => None,
         b"body" => Some("document").filter(is_explicit),
         b"img" => get_img_implicit_role(jsx_el).filter(is_explicit),

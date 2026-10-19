@@ -258,7 +258,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
   });
 });
 
-describe.concurrent("writes nothing if another tool's config file is in use", () => {
+describe.concurrent("--init in a project with another tool's config", () => {
   const flat = "export default [];\n";
   test.each<[Command, Record<string, string>, string[], string]>([
     ["lint", { "eslint.config.js": flat }, [], "eslint.config.js"],
@@ -276,7 +276,7 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
     ["fmt", { ".oxfmtrc.json": "{}" }, [], ".oxfmtrc.json"],
     ["fmt", { ".oxfmtrc.jsonc": "{}", "sub/a.js": "" }, ["--cwd", "sub"], "../.oxfmtrc.jsonc"],
     ["fmt", { "config/mine.json": "{}" }, ["--config", "config/mine.json"], "config/mine.json"],
-  ])("bun %s: %j %j", async (command, files, args, shown) => {
+  ])("bun %s writes nothing if the config file is in use: %j %j", async (command, files, args, shown) => {
     using dir = tempDir("bun-init-section", files);
     expect(await run(String(dir), command, "--init", ...args)).toEqual({
       stdout: `Using ${shown}. bunfig.toml is not needed.\n`,
@@ -295,7 +295,7 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
     ["fmt", { "package.json": '{ "devDependencies": { "prettier": "3.0.0" } }' }],
     ["fmt", { ".editorconfig": "root = true\n" }],
     ["fmt", { ".prettierrc": "{}", "args": "--no-config" }],
-  ])("still writes bunfig.toml, bun %s: %j", async (command, { args, ...files }) => {
+  ])("bun %s still writes bunfig.toml if no config file is in use: %j", async (command, { args, ...files }) => {
     using dir = tempDir("bun-init-section", files);
     const result = await run(String(dir), command, "--init", ...(args ? [args] : []));
     expect(result.stdout).toBe(`Created bunfig.toml with a [${command}] section\n`);
@@ -314,7 +314,7 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
 });
 
 // Uncomments each commented-out line, one at a time and then all together.
-describe.concurrent("the commented-out lines work when uncommented", () => {
+describe.concurrent("the commented-out lines that --init writes work when uncommented", () => {
   const commented = (text: string) => text.split("\n").flatMap((line, at) => (line.startsWith("# ") ? [at] : []));
   const variants = (text: string) =>
     [[], ...commented(text).map(at => [at]), commented(text)].map(lines => {

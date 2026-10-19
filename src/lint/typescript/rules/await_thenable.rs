@@ -34,7 +34,7 @@ const INVALID_PROMISE_AGGREGATOR_INPUT: Message = Message::new(
 );
 const REMOVE_AWAIT: Message = Message::new("removeAwait", "Remove unnecessary `await`.");
 
-/// Removes the first `await` in `node`, and what is before the next token or comment.
+/// Removes the first `await` in `node`, plus the whitespace before the next token or comment.
 fn remove_await_token(fixer: Fixer, node: Span) -> Option<Fix> {
     let file = fixer.file();
     let await_token = file.tokens_in(node).find(is_await_keyword)?;
@@ -61,12 +61,12 @@ fn contains_non_awaitable_type<'a>(ty: Type<'a>, node: Expr<'a>) -> bool {
     union_constituents(ty).iter().any(|part| needs_to_be_awaited(node, part) == Awaitable::Never)
 }
 
-/// Whether one of upstream's `getValueTypesOfArrayLike(type)` contains a type that is not awaitable.
+/// True if one of upstream's `getValueTypesOfArrayLike(type)` contains a non-awaitable type.
 fn has_non_awaitable_value_type<'a>(ty: Type<'a>, node: Expr<'a>) -> bool {
     if ty.is_tuple_type() {
         return ty.get_type_arguments().iter().any(|it| contains_non_awaitable_type(it, node));
     }
-    // tsgolint takes the number index type of any type, and the type argument only without one.
+    // tsgolint uses any type's number index type, and falls back to the type argument only if there isn't one.
     if node.file().language().is_oxlint {
         if let Some(number_index_type) = ty.get_number_index_type() {
             return contains_non_awaitable_type(number_index_type, node);
@@ -80,7 +80,7 @@ fn has_non_awaitable_value_type<'a>(ty: Type<'a>, node: Expr<'a>) -> bool {
 }
 
 fn is_invalid_promise_aggregator_input<'a>(node: Expr<'a>, ty: Type<'a>) -> bool {
-    // What is not an array, a tuple or an iterable is a type error already.
+    // Anything that isn't an array, a tuple or an iterable is already a type error.
     is_iterable(ty) && union_constituents(ty).iter().any(|part| has_non_awaitable_value_type(part, node))
 }
 
@@ -105,7 +105,7 @@ fn is_promise_matcher_of_bun_test(node: Expr) -> bool {
 
 impl AwaitThenable {
     fn check_await<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // `check_variable_declaration` sees to it: both can report at the same place, the declaration first.
+        // `check_variable_declaration` handles that case. Both can report at the same location, the declaration first.
         let is_disposed = matches!(node.parent(), Node::VarDecl(it) if it.var_kind() == VarKind::AwaitUsing);
         if !is_disposed {
             self.check_await_expression(node, cx);
@@ -121,7 +121,7 @@ impl AwaitThenable {
         {
             return;
         }
-        // oxlint points at what is awaited.
+        // oxlint points at the awaited expression.
         let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
         let keyword = Span::new(node.span().start, node.span().start + "await".len() as u32);
         let labels = |labels: &mut Details| {
@@ -156,7 +156,7 @@ impl AwaitThenable {
         if !is_promise_aggregator_method(node) {
             return;
         }
-        // In tsgolint a range has the parentheses.
+        // In tsgolint a range includes the parentheses.
         let is_oxlint = cx.language().is_oxlint;
         if let ExprKind::Array(elements) = argument.kind() {
             for element in elements.iter().filter(|element| !element.is_missing()) {
@@ -188,9 +188,8 @@ impl AwaitThenable {
         if is_type_any_type(ty) || ty.is_unresolved() || some_part_has_well_known_symbol(ty, "asyncIterator") {
             return;
         }
-        // The suggestion breaks the code for a sync iterable of promises: the variable of the loop
-        // is not awaited.
-        // oxlint points at what is iterated over.
+        // The suggestion breaks the code for a sync iterable of promises, because the loop variable isn't awaited.
+        // oxlint points at the iterated expression.
         let head = get_for_statement_head_loc(node);
         cx.report(if cx.language().is_oxlint { right.outer_span() } else { head }, FOR_AWAIT_OF_NON_ASYNC_ITERABLE)
             .comments_apply_at(head)
@@ -217,7 +216,7 @@ impl AwaitThenable {
                 self.check_await_expression(init, cx);
                 continue;
             }
-            // With several declarators it is left to the user.
+            // With several declarators, the user has to fix it by hand.
             let fix_or_suggest = match declarations.len() {
                 1 => FixOrSuggest::Suggest,
                 _ => FixOrSuggest::None,

@@ -1,4 +1,4 @@
-//! What a [`Config`](super::Config) computes once and all threads share.
+//! Values that a [`Config`](super::Config) computes once and shares between threads.
 
 use crate::js_plugin::{Configured, Rule};
 use crate::language::GlobalsOfOptions;
@@ -11,13 +11,13 @@ type Resolved = Vec<(Box<[u32]>, Arc<OnceLock<Arc<ResolvedConfig>>>)>;
 type JsInstances = Vec<(Arc<[Json]>, Arc<Configured>)>;
 
 pub(super) struct Cache {
-    /// By the indices of the objects that are merged. Sorted.
+    /// Keyed by the indices of the merged objects. Sorted.
     resolved: RwLock<Resolved>,
-    /// What has been made of the rules of JavaScript plugins, by the options as they are written.
+    /// The configured JavaScript plugin rules, keyed by the options as written.
     js_rules: RwLock<JsInstances>,
-    /// For each rule, by its index in the registry: the options that its schema allows.
+    /// Indexed by a rule's index in the registry: the options known to pass its schema.
     valid: RwLock<Vec<Vec<Arc<[Json]>>>>,
-    /// By `$env` and `globals` of `languageOptions`.
+    /// Keyed by `$env` and `globals` in `languageOptions`.
     globals: RwLock<Vec<(Option<Json>, Option<Json>, GlobalsOfOptions)>>,
 }
 
@@ -54,11 +54,11 @@ impl Cache {
                 }
             }
         });
-        // Not under the lock: it takes the other ones. A thread that wants the same waits for it.
+        // Not under the lock, because `make` takes the other locks. A thread that wants the same entry waits for it.
         Arc::clone(place.get_or_init(|| Arc::new(make())))
     }
 
-    /// [`GlobalsOfOptions::new`] of `language_options`, which is what `make` does.
+    /// Returns [`GlobalsOfOptions::new`] for `language_options`, which is what `make` computes.
     pub(super) fn globals(
         &self,
         language_options: &Json,
@@ -82,7 +82,7 @@ impl Cache {
         made
     }
 
-    /// Whether `options` are [known](Cache::set_valid) to be what the schema of the rule at `index` of the registry allows.
+    /// True if `options` are [known](Cache::set_valid) to pass the schema of the rule at `index` in the registry.
     pub(super) fn is_valid(&self, index: usize, options: &Arc<[Json]>) -> bool {
         let valid = self.valid.read();
         (valid.get(index)).is_some_and(|all| all.iter().any(|it| it == options))

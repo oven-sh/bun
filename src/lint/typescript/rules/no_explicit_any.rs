@@ -21,13 +21,13 @@ const SUGGEST_UNKNOWN: Message = Message::new(
 const UNEXPECTED_ANY: Message =
     Message::new("unexpectedAny", "Unexpected any. Specify a different type.");
 
-/// typescript-eslint's `isNodeRestElementInFunction`, of what has the type annotation.
+/// typescript-eslint's `isNodeRestElementInFunction`, applied to the node that has the type annotation.
 fn is_rest_element_in_function(node: Node) -> bool {
     matches!(node, Node::Param(param) if param.is_rest() && !param.is_parameter_property())
 }
 
-/// The parent of `ty` in ESTree, if that is a type: not a `TSTypeParameterInstantiation`, a
-/// `TSTypeAnnotation`, a `TSNamedTupleMember`, a `TSOptionalType` or a `TSRestType`.
+/// Returns `ty`'s parent in ESTree if that's a type, so not a `TSTypeParameterInstantiation`, a `TSTypeAnnotation`, a
+/// `TSNamedTupleMember`, a `TSOptionalType` or a `TSRestType`.
 fn parent_type(ty: TypeNode<'_>) -> Option<TypeNode<'_>> {
     match ty.parent() {
         Node::Type(parent) => match parent.tag() {
@@ -39,14 +39,14 @@ fn parent_type(ty: TypeNode<'_>) -> Option<TypeNode<'_>> {
         {
             element.parent().as_type()
         }
-        // ESTree has the constraint of `K in C` as a child of the `TSMappedType`.
+        // In ESTree the constraint of `K in C` is a child of the `TSMappedType`.
         Node::TypeParam(param) => param.parent().as_type().filter(|it| it.tag() == TypeTag::Mapped),
         _ => None,
     }
 }
 
-/// typescript-eslint's `isNodeDescendantOfRestElementInFunction`. For oxlint it can be anywhere in the type of a rest
-/// parameter.
+/// typescript-eslint's `isNodeDescendantOfRestElementInFunction`. For oxlint it can be anywhere in a rest parameter's
+/// type.
 fn is_descendant_of_rest_element_in_function(any: TypeNode) -> bool {
     if any.file().language().is_oxlint {
         return Node::Type(any).ancestors().any(|it| matches!(it, Node::Param(param) if param.is_rest()));
@@ -77,7 +77,7 @@ impl NoExplicitAny {
         }
         let parent = ty.parent();
         let report = cx.report(ty, UNEXPECTED_ANY).hint("unknown is the safe choice where the type is not known.");
-        // oxlint suggests nothing, and knows no `PropertyKey`.
+        // oxlint has no suggestions, and doesn't know `PropertyKey`.
         if cx.language().is_oxlint {
             if self.fixes_to_unknown {
                 let unknown = if is_rest_element_in_function(parent) { "unknown[]" } else { "unknown" };

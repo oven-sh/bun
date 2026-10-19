@@ -3,14 +3,14 @@
 use super::has_room_on_the_stack;
 use crate::types::{IdSet, SyntaxKind, Type, TypeFlags};
 
-/// `getTypeName(typeChecker, type)`: `string` for what is a string, which is also a string literal
-/// type, a union of those, an intersection with one, and a type parameter that extends one.
-/// For any other type, [`Type::to_text`].
+/// `getTypeName(typeChecker, type)`: `string` for any string type, which includes a string literal type, a union of
+/// those, an intersection with one, and a type parameter that extends one. For any other type, [`Type::to_text`].
 pub fn get_type_name(ty: Type) -> Vec<u8> {
     get_type_name_in(ty, &mut IdSet::new())
 }
 
-/// `on_the_way`: the type parameters whose constraints `ty` is in. `<T extends U, U extends T>` has no end.
+/// `on_the_way` holds the type parameters whose constraints led to `ty`. Without it, `<T extends U, U extends T>` would
+/// never terminate.
 fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> Vec<u8> {
     if !has_room_on_the_stack() {
         return ty.to_text();
@@ -38,7 +38,7 @@ fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> Vec<u
     ty.to_text()
 }
 
-/// `getTypeFromTypeNode(declaration.constraint)` for the first declaration of the type parameter.
+/// `getTypeFromTypeNode(declaration.constraint)` for the type parameter's first declaration.
 fn declared_constraint(ty: Type<'_>) -> Option<Type<'_>> {
     let type_param_decl = ty.get_symbol()?.declarations().next()?;
     if type_param_decl.kind() != SyntaxKind::TypeParameter {

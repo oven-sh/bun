@@ -1,13 +1,13 @@
-//! ESLint's `CodePathAnalyzer`, driven by the walk over the nodes of this crate.
+//! ESLint's `CodePathAnalyzer`, driven by a walk over this crate's nodes.
 //!
-//! ESLint decides what to do from the type of an ESTree node and from which child of its parent
-//! it is. Each function here that has the name of one of ESLint's does the same from the nodes
-//! that exist here. For an ESTree node that does not exist here and that matters to the analysis
-//! (`ChainExpression`, `CatchClause`, the name after a `.`), entering and leaving it is part of
-//! entering or leaving the node that stands for it.
+//! ESLint decides what to do based on an ESTree node's type and which child of its parent it is.
+//! Each function here that's named after one of ESLint's does the same with this crate's nodes.
+//! Some ESTree nodes that matter to the analysis don't exist here (`ChainExpression`,
+//! `CatchClause`, the name after a `.`). Entering and leaving one of those happens as part of
+//! entering or leaving the node that represents it.
 //!
-//! Most nodes are nothing to the analysis. What is known about a node when it is entered is kept
-//! in a few flags, so that neither its children nor leaving it have to look at it again.
+//! Most nodes are irrelevant to the analysis. What's learned about a node on entry is saved in a
+//! few flags, so that neither its children nor its exit have to inspect it again.
 
 use super::matters::Matters;
 use super::reach::Reach;
@@ -23,29 +23,29 @@ use bun_sema::atom::Atom;
 use bun_sema::hir;
 
 bitflags::bitflags! {
-    /// What is known about a node that has been entered.
+    /// Facts about a node that has been entered.
     #[derive(Copy, Clone, PartialEq, Eq)]
     struct Is: u16 {
-        /// An expression that ESTree has as a pattern: all or a part of the target of an
-        /// assignment.
+        /// An expression that's a pattern in ESTree: all or part of an assignment target.
         const PATTERN = 1 << 0;
         /// Part of an optional chain, up to its outermost expression.
         const IN_CHAIN = 1 << 1;
-        /// It continues the optional chain that its parent is part of.
+        /// Continues the optional chain its parent is part of.
         const CONTINUES_CHAIN = 1 << 2;
-        /// The outermost expression of an optional chain: ESTree has a `ChainExpression` around it.
+        /// The outermost expression of an optional chain, which ESTree wraps in a
+        /// `ChainExpression`.
         const CHAIN_ROOT = 1 << 3;
         /// The value of a `PropertyDefinition`.
         const FIELD_INITIALIZER = 1 << 4;
-        /// All or a part of the name of a JSX element.
+        /// All or part of a JSX element's name.
         const JSX_NAME = 1 << 5;
-        /// Not a node of ESTree, and nothing to the analysis.
+        /// Not an ESTree node, and irrelevant to the analysis.
         const ABSENT = 1 << 6;
-        /// Which of its children a node is matters: see `place_of_expr` and `preprocess`.
+        /// It matters which of its children a node is. See `place_of_expr` and `preprocess`.
         const PLACES_CHILDREN = 1 << 7;
-        /// There is something to do when it is left, besides telling what has changed.
+        /// Leaving it takes more work than just emitting pending segment changes.
         const HAS_EXIT = 1 << 8;
-        /// There is something to do after it has been left.
+        /// There's work to do after it has been left.
         const HAS_POSTPROCESS = 1 << 9;
         /// A code path starts with it and ends after it.
         const HAS_CODE_PATH = 1 << 10;
@@ -63,13 +63,13 @@ pub(super) struct Builder<'s, 'a> {
     file: &'a File<'a>,
     /// Where the graphs are built.
     store: &'s Store,
-    /// The states of the code paths that have started and not ended.
+    /// The states of the code paths that have started but not ended.
     pub(super) states: Vec<State>,
-    /// Those of code paths that have ended, to be used again.
+    /// States of ended code paths, kept for reuse.
     spare_states: Vec<State>,
-    /// The nodes that have been entered and not left.
+    /// The nodes that have been entered but not left.
     ancestors: Vec<Frame<'a>>,
-    /// Whether the rules have been told about everything that has changed.
+    /// True if every segment change so far has been emitted to the rules.
     is_settled: bool,
 }
 
@@ -143,7 +143,7 @@ pub(super) fn is_breakable(stmt: Stmt) -> bool {
     stmt.is_loop() || stmt.tag() == StmtTag::Switch
 }
 
-/// What an expression continues, if it is part of an optional chain.
+/// The sub-expression that `e` continues, if `e` is part of an optional chain.
 fn chain_operand(e: Expr) -> Option<Expr> {
     match e.kind() {
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
@@ -153,7 +153,7 @@ fn chain_operand(e: Expr) -> Option<Expr> {
     }
 }
 
-/// Whether the `!` of `e` directly follows an optional chain, as in `a?.b!`.
+/// True if the `!` of `e` directly follows an optional chain, as in `a?.b!`.
 fn is_non_null_after_chain(e: Expr) -> bool {
     let mut e = e;
     while let ExprKind::NonNull(operand) = e.kind() {
@@ -165,14 +165,14 @@ fn is_non_null_after_chain(e: Expr) -> bool {
     e.chain() != Chain::No
 }
 
-/// Whether ESLint starts a code path for `func`.
+/// True if ESLint starts a code path for `func`.
 pub(super) fn has_code_path(func: Func) -> bool {
     func.has_body() && func.kind() != FnKind::StaticBlock
 }
 
-/// Whether the first child that `node` has in ESTree is an `Identifier` that does not exist here
-/// and for which `isIdentifierReference` holds. It holds for every name that ESLint does not
-/// know to be something else, which includes all the names in the syntax of TypeScript.
+/// True if `node`'s first child in ESTree is an `Identifier` that doesn't exist here and that
+/// passes `isIdentifierReference`. Every name passes unless ESLint knows it's something else, so
+/// all the names in TypeScript-only syntax pass.
 pub(super) fn starts_with_identifier_reference(node: Node) -> bool {
     let is_identifier =
         |key: Option<Key>| key.is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)));
@@ -188,7 +188,8 @@ pub(super) fn starts_with_identifier_reference(node: Node) -> bool {
         Node::TypeParam(_) => true,
         Node::TupleElem(element) => element.name().is_some(),
         Node::EnumMember(member) => is_identifier(member.key()),
-        // The key of a `MethodDefinition` or a `PropertyDefinition` is known not to be a reference.
+        // ESLint knows that the key of a `MethodDefinition` or `PropertyDefinition` isn't a
+        // reference.
         Node::Member(member) => {
             let is_definition = matches!(member.parent(), Node::Class(_))
                 && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT);
@@ -205,7 +206,7 @@ pub(super) fn starts_with_identifier_reference(node: Node) -> bool {
     }
 }
 
-/// `isIdentifierReference` for an identifier that is bound.
+/// `isIdentifierReference` for a binding identifier.
 pub(super) fn is_binding_a_reference(pat: Pat) -> bool {
     match pat.parent() {
         Node::PatProp(prop) => !prop.is_rest(),
@@ -215,7 +216,7 @@ pub(super) fn is_binding_a_reference(pat: Pat) -> bool {
     }
 }
 
-/// What `e` is because of which child of `parent` it is.
+/// The flags `e` gets from being a particular child of `parent`.
 fn place_of_expr<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
     match parent.node {
         Node::Expr(parent_expr) => match parent_expr.kind() {
@@ -264,8 +265,8 @@ fn place_of_expr<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
     }
 }
 
-/// Whether `node` is nothing to the analysis, provided that it is not in a `try` statement and
-/// that it does not matter which child of its parent it is. This is what most nodes are.
+/// True if `node` is irrelevant to the analysis, provided it isn't in a `try` statement and it
+/// doesn't matter which child of its parent it is. That's true of most nodes.
 #[inline]
 fn is_plain(node: Node) -> bool {
     use hir::ExprKind as K;
@@ -301,8 +302,8 @@ fn is_plain(node: Node) -> bool {
     }
 }
 
-/// What is known about a parameter or a part of a pattern, which ESTree has as an
-/// `AssignmentPattern` if it has a default value.
+/// The flags for a parameter or a part of a pattern, which is an `AssignmentPattern` in ESTree if
+/// it has a default value.
 #[inline]
 fn with_default(default: Option<Expr>) -> Is {
     match default {
@@ -398,8 +399,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         self.spare_states.push(state);
     }
 
-    /// Whether a code path other than the outermost has started with the node that has been entered
-    /// last.
+    /// True if the last node entered started a code path other than the outermost.
     fn has_started_inner_code_path(&self) -> bool {
         self.states.len() > 1
             && matches!(self.ancestors.last(), Some(it) if it.is.intersects(Is::HAS_CODE_PATH | Is::FIELD_INITIALIZER))
@@ -410,8 +410,8 @@ impl<'s, 'a> Builder<'s, 'a> {
         matches!(self.states.last(), Some(state) if state.is_before_first_throwable(self.store))
     }
 
-    /// Leaving a node that may throw. If it is an `Identifier` of ESTree for which
-    /// `isIdentifierReference` holds, what changes is told to the rules with the next node.
+    /// Called when leaving a node that may throw. If it's an ESTree `Identifier` that passes
+    /// `isIdentifierReference`, the resulting segment changes are emitted with the next node.
     #[inline]
     fn leave_throwable(&mut self, cx: &Cx<'_, 'a>) {
         self.is_settled = false;
@@ -422,7 +422,7 @@ impl<'s, 'a> Builder<'s, 'a> {
 
     // ───────────────────────────── entering ─────────────────────────────
 
-    /// `preprocess`: what follows from which child of `parent` the node `cx.node` is.
+    /// `preprocess`: updates the state based on which child of `parent` the node `cx.node` is.
     fn preprocess(&mut self, parent: Frame<'a>, cx: &mut Cx<'_, 'a>) {
         let (store, node) = (cx.store(), cx.node);
         let Some(state) = self.states.last_mut() else {
@@ -578,8 +578,8 @@ impl<'s, 'a> Builder<'s, 'a> {
         }
     }
 
-    /// `processCodePathToEnter`, without the last step. `is`: what is known from the parent.
-    /// Returns what else is known.
+    /// `processCodePathToEnter`, without the last step. `is` has the flags derived from the parent.
+    /// Returns the additional flags.
     fn enter_expr(
         &mut self,
         e: Expr<'a>,
@@ -593,7 +593,8 @@ impl<'s, 'a> Builder<'s, 'a> {
             self.forward_current_to_head(cx);
             cx.keeps_function_expression = false;
         }
-        // That it may throw matters in a `try` statement, and none starts inside an expression.
+        // Whether it may throw only matters in a `try` statement, and a `try` can't start inside an
+        // expression.
         let may_throw = match self.states.last() {
             Some(state) if state.is_in_try() => Is::HAS_EXIT,
             _ => Is::empty(),
@@ -631,7 +632,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             _ => return Is::empty(),
         };
         if more.contains(Is::IN_CHAIN) && !is.contains(Is::CONTINUES_CHAIN) {
-            // The `ChainExpression` is entered.
+            // Enter the `ChainExpression`.
             more |= Is::CHAIN_ROOT | Is::HAS_POSTPROCESS;
             if let Some(state) = self.states.last_mut() {
                 state.push_chain_context();
@@ -681,7 +682,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         more
     }
 
-    /// `processCodePathToEnter`, without the last step. Returns what is known about `stmt`.
+    /// `processCodePathToEnter`, without the last step. Returns the flags for `stmt`.
     fn enter_stmt(&mut self, stmt: Stmt<'a>, parent: Option<Node<'a>>, cx: &mut Cx<'_, 'a>) -> Is {
         if stmt.tag() == StmtTag::Fn
             && let StmtKind::Fn(func) = stmt.kind()
@@ -730,7 +731,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         Is::HAS_EXIT | Is::PLACES_CHILDREN
     }
 
-    /// `enterNode`, up to where it calls the listeners of the node.
+    /// `enterNode`, up to where it calls the node's listeners.
     #[inline]
     fn enter(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         let is_placed = matches!(self.ancestors.last(), Some(parent) if parent.is.contains(Is::PLACES_CHILDREN));
@@ -818,7 +819,7 @@ impl<'s, 'a> Builder<'s, 'a> {
 
     // ───────────────────────────── leaving ─────────────────────────────
 
-    /// `isIdentifierReference` for an identifier that is an expression.
+    /// `isIdentifierReference` for an identifier expression.
     fn is_identifier_reference(&self, is: Is) -> bool {
         if is.contains(Is::JSX_NAME) {
             return false;
@@ -826,7 +827,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         if !is.contains(Is::PATTERN) {
             return true;
         }
-        // In an `ArrayPattern` or a `RestElement` it is not.
+        // It isn't one in an `ArrayPattern` or a `RestElement`.
         match self.ancestors.iter().rev().nth(1).map(|parent| parent.node) {
             Some(Node::Expr(parent)) => !matches!(parent.tag(), ExprTag::Array | ExprTag::Spread),
             Some(Node::Prop(parent)) => parent.kind() != PropKind::Spread,
@@ -851,14 +852,14 @@ impl<'s, 'a> Builder<'s, 'a> {
                 if is.contains(Is::JSX_NAME) {
                     return false;
                 }
-                // The name is a node of ESTree, which is entered and left here.
+                // The name is an ESTree node, which is entered and left here.
                 if is.contains(Is::IN_CHAIN) && e.is_optional() {
                     state.make_optional_right(store);
                     self.forward_current_to_head(cx);
                 }
                 self.leave_throwable(cx);
             }
-            // The names of a `MetaProperty` are references to ESLint.
+            // ESLint treats the names of a `MetaProperty` as references.
             ExprTag::Call
             | ExprTag::ImportCall
             | ExprTag::Index
@@ -926,7 +927,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         false
     }
 
-    /// `leaveNode`, before it calls the listeners of the node.
+    /// `leaveNode`, up to where it calls the node's listeners.
     #[inline]
     fn before_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         let Some(&Frame { is, .. }) = self.ancestors.last() else {
@@ -961,7 +962,7 @@ impl<'s, 'a> Builder<'s, 'a> {
                     }
                     true
                 }
-                // The `AssignmentPattern` is left.
+                // Leave the `AssignmentPattern`.
                 Node::Param(_) | Node::PatElem(_) | Node::PatProp(_) => {
                     if let Some(state) = self.states.last_mut() {
                         state.pop_fork_context(store);
@@ -976,7 +977,7 @@ impl<'s, 'a> Builder<'s, 'a> {
         }
     }
 
-    /// `leaveNode`, after it has called them: `postprocess`.
+    /// `leaveNode`, after it has called the listeners: `postprocess`.
     #[inline]
     fn after_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         if let Some(Frame { is, .. }) = self.ancestors.pop()
@@ -1002,7 +1003,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             if is_call_without_arguments {
                 state.make_optional_right(cx.store());
             }
-            // The `ChainExpression` is left.
+            // Leave the `ChainExpression`.
             if is.contains(Is::CHAIN_ROOT) {
                 state.pop_chain_context(cx.store());
                 self.forward_current_to_head(cx);
@@ -1017,7 +1018,7 @@ impl<'s, 'a> Builder<'s, 'a> {
 
 // ───────────────────────────── the walk ─────────────────────────────
 
-/// A step of the walk of a file for the rules.
+/// One step of the walk, for the rules to act on.
 #[derive(Copy, Clone)]
 pub enum Step<'a> {
     /// Call the listeners for entering the node.
@@ -1058,9 +1059,10 @@ impl<'a> Recorder<'_, 'a> {
             .after_exit(node, &mut |event| steps.push(Step::Event(event)));
     }
 
-    /// `ast::walk::walk_node` for each of `nodes`, the last first, without what does not matter.
+    /// `ast::walk::walk_node` for each of `nodes`, last one first, skipping whatever doesn't
+    /// matter.
     ///
-    /// `is_shallow`: it does not go into what has a code path of its own.
+    /// With `is_shallow` it doesn't descend into anything that has its own code path.
     fn walk(&mut self, nodes: Vec<Node<'a>>, matters: Option<&Matters>, is_shallow: bool) {
         enum Todo<'a> {
             Enter(Node<'a>),
@@ -1076,7 +1078,7 @@ impl<'a> Recorder<'_, 'a> {
                 }
             };
             self.enter(node);
-            // Where nothing has thrown yet in a `try` block, every name matters.
+            // Until something may have thrown in a `try` block, every name matters.
             let is_left_out = matters.is_some_and(|it| it.is_nothing_in(node))
                 && !self.builder.is_before_first_throwable()
                 || is_shallow && self.builder.has_started_inner_code_path();
@@ -1092,12 +1094,12 @@ impl<'a> Recorder<'_, 'a> {
     }
 }
 
-/// Walks and analyzes `file`. Returns what to tell the rules, in order: the events, and the nodes
-/// of the kinds `enter` and `exit`, which are those that a rule listens for.
+/// Walks and analyzes `file`. Returns, in order, the events plus the nodes whose kinds are in
+/// `enter` and `exit`, which are the kinds that rules listen for.
 ///
-/// Like ESLint, it analyzes the whole file before the first listener is called: a rule sees the
-/// finished graph from the first event on, with the segments that follow the current one and
-/// those that lead back to it from the end of a loop.
+/// Like ESLint, it analyzes the whole file before the first listener is called. So a rule sees the
+/// finished graph from the first event on, including the segments that follow the current one and
+/// those that loop back to it.
 pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'a> {
     let statements = file.hir.stmts.len();
     file.lazy.code_paths.clear(statements);
@@ -1119,12 +1121,12 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
     }
 }
 
-/// [`steps`] for the code path that starts with `root` alone: the file, a function, a static block
-/// or the initializer of a field.
+/// [`steps`] for only the code path that starts at `root`: the file, a function, a static block or
+/// a field initializer.
 ///
-/// `is_shallow`: without what is in the code paths in it.
+/// With `is_shallow` the contents of nested code paths are skipped.
 ///
-/// What has been analyzed before stays valid.
+/// Earlier results stay valid.
 pub(super) fn steps_of<'a>(
     root: Node<'a>,
     enter: NodeTags,
@@ -1140,7 +1142,7 @@ pub(super) fn steps_of<'a>(
         enter,
         exit,
     };
-    // What makes a code path start depends on what is around it.
+    // Whether a node starts a code path depends on its parent.
     let (around, first) = match root {
         Node::Func(func) => match func.owner() {
             owner @ Node::Member(_) => (Some((owner, Is::empty())), root),
@@ -1160,7 +1162,7 @@ pub(super) fn steps_of<'a>(
     }
 }
 
-/// The loop in which `node` is the first node of the next iteration: `isLoopingTarget` of ESLint's
+/// The loop whose next iteration starts at `node`. It's `isLoopingTarget` from ESLint's
 /// `no-unreachable-loop`.
 fn loop_with_target(node: Node<'_>) -> Option<Stmt<'_>> {
     let node = match node {
@@ -1186,8 +1188,9 @@ fn loop_with_target(node: Node<'_>) -> Option<Stmt<'_>> {
     is_target.then_some(parent)
 }
 
-/// Analyzes the code path of `node` alone, which is a function or the file, without the functions
-/// in it. Returns whether its end can be reached, and fills in `reach` for its statements and cases.
+/// Analyzes only the code path of `node`, which is a function or the file, skipping nested
+/// functions. Returns true if its end is reachable, and fills in `reach` for its statements and
+/// cases.
 pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
     let (file, store) = (node.file(), &Store::default());
     let (enter, exit) = match reach {
@@ -1217,9 +1220,9 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
     let Some(reach) = reach else {
         return is_end_reachable;
     };
-    // The code paths that have started and not ended. That of `node` is the first of the store.
+    // The code paths that have started but not ended. `node`'s is the first one in the store.
     let mut paths = vec![0];
-    // The loops, each with the segment that it goes back to for its next iteration.
+    // Each loop, paired with the segment it jumps back to for its next iteration.
     let mut loops: Vec<(u32, Stmt)> = Vec::new();
     for step in recorder.steps {
         match step {
@@ -1233,7 +1236,8 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
                     Event::SegmentStart(segment, node) => {
                         loops.extend(loop_with_target(node).map(|it| (segment.id(), it)));
                     }
-                    // Not from the right side of a `for`-`in` or a `for`-`of`.
+                    // Only from a statement, which excludes the right side of a `for`-`in` or
+                    // `for`-`of`.
                     Event::SegmentLoop(_, to, Node::Stmt(from)) => {
                         for &(_, it) in loops.iter().filter(|it| it.0 == to.id()) {
                             if from == it || from.tag() == StmtTag::Continue {
@@ -1244,7 +1248,7 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
                     _ => {}
                 }
             }
-            // The code path of a function declaration has started already.
+            // A function declaration's code path has already started.
             Step::Enter(Node::Stmt(stmt)) => {
                 let is_inside = matches!(stmt.kind(), StmtKind::Fn(func) if has_code_path(func));
                 if let Some(&path) = paths.iter().rev().nth(usize::from(is_inside)) {

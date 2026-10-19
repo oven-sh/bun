@@ -95,7 +95,7 @@ fn check<'a>(_: &PreferNegativeIndex, e: Expr<'a>, cx: &mut Cx<'a, PreferNegativ
         return;
     }
     cx.report(e, PREFER_NEGATIVE_INDEX).fix(|fixer| {
-        // With the blank after it.
+        // Including the space after it.
         let with_blank = |span: Span| match fixer.file().text().get(span.end as usize) {
             Some(b' ') => Span::new(span.start, span.end + 1),
             _ => span,
@@ -117,7 +117,7 @@ fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
             return false;
         }
         return match (left.kind(), right.kind()) {
-            // Whatever they are of.
+            // Only the indexes are compared, not the objects.
             (ExprKind::Index { index: left_index, .. }, ExprKind::Index { index: right_index, .. }) => {
                 (left, right) = (left_index, right_index);
                 continue;
@@ -152,14 +152,14 @@ fn get_prototype_callee_type(expression: Expr) -> TypeOptions {
     }
 }
 
-/// The `a.length` of `a.length - 1 - 2`, where each number is not 0. `binary_expr`: not in parentheses.
+/// The `a.length` in `a.length - 1 - 2`, where no number is 0. `binary_expr` must not be parenthesized.
 fn get_binary_left_expr(binary_expr: Expr<'_>) -> Option<Expr<'_>> {
     let mut at = binary_expr;
     while let ExprKind::Binary { op: BinOp::Sub, left, right } = at.kind() {
         if !matches!(right.kind(), ExprKind::Number(n) if n != 0.0) || right.is_parenthesized() {
             return None;
         }
-        // One pair of parentheses is looked into.
+        // Looks through at most one pair of parentheses.
         if left.tag() == ExprTag::Binary && left.parens().len() <= 1 {
             at = left;
             continue;

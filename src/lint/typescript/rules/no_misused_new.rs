@@ -10,8 +10,7 @@ const ERROR_MESSAGE_INTERFACE: Message = Message::new(
     "Interfaces cannot be constructed, only classes.",
 );
 
-/// Whether the return type of `func` is a reference to `parent`, the name of the class or the
-/// interface.
+/// True if `func`'s return type is a reference to `parent`, the name of the class or interface.
 fn is_matching_parent_type<'a>(parent: Option<Ident<'a>>, func: Func<'a>) -> bool {
     let (Some(parent), Some(ty)) = (parent, func.return_type()) else {
         return false;
@@ -20,7 +19,7 @@ fn is_matching_parent_type<'a>(parent: Option<Ident<'a>>, func: Func<'a>) -> boo
         if name.as_ident().is_some_and(|it| it.name() == parent.name()))
 }
 
-/// `key.name === name`: of an `Identifier`, also in brackets, or a `PrivateIdentifier`.
+/// `key.name === name` for an `Identifier`, even in brackets, or a `PrivateIdentifier`.
 fn is_key_named(key: Key, name: &str) -> bool {
     match key.kind() {
         KeyKind::Ident(it) => it.is(name),

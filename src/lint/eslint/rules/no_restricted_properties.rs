@@ -7,7 +7,7 @@ type Text = Box<[u8]>;
 /// Disallow certain properties on certain objects.
 #[derive(Default)]
 pub struct NoRestrictedProperties {
-    /// By the name of the object, then by the name of the property.
+    /// Keyed by object name, then by property name.
     restricted_properties: FxHashMap<Text, FxHashMap<Text, Restriction>>,
     globally_restricted_objects: FxHashMap<Text, Restriction>,
     globally_restricted_properties: FxHashMap<Text, Restriction>,
@@ -22,12 +22,12 @@ struct Restriction {
 #[derive(Copy, Clone)]
 enum Found<'r> {
     ObjectProperty(&'r Restriction),
-    /// All the properties of an object.
+    /// All of an object's properties.
     Object(&'r Restriction),
     Property(&'r Restriction),
 }
 
-/// Where an access can be reported.
+/// The spans an access can be reported at.
 #[derive(Copy, Clone)]
 struct Places {
     eslint: Span,
@@ -42,7 +42,7 @@ impl Places {
         Places { eslint: at, object: None, property: at, access: at }
     }
 
-    /// `key`: of the property of a pattern.
+    /// `key` is the key of a property in the pattern.
     fn of_pattern(pattern: Span, key: Option<Span>) -> Places {
         Places { eslint: pattern, ..Places::everywhere(key.unwrap_or(pattern)) }
     }
@@ -63,7 +63,7 @@ impl Restriction {
         self.allowed.as_ref().is_some_and(|allowed| allowed.iter().any(|it| **it == *name))
     }
 
-    /// `before`, the allowed names and a `.`. Empty if no names are configured.
+    /// Returns `before`, the allowed names and a `.`, or nothing if no names are configured.
     fn allowed_message(&self, before: &[&[u8]]) -> Vec<u8> {
         let Some(allowed) = &self.allowed else {
             return Vec::new();
@@ -83,7 +83,7 @@ impl Restriction {
 }
 
 impl NoRestrictedProperties {
-    /// The restriction that an access to the property of the object violates.
+    /// Returns the restriction that accessing this property of this object violates.
     fn find(&self, object_name: Option<&[u8]>, property_name: &[u8]) -> Option<Found<'_>> {
         let matched_object_property = object_name.and_then(|name| match self.restricted_properties.get(name) {
             Some(properties) => properties.get(property_name).map(Found::ObjectProperty),
@@ -117,7 +117,7 @@ impl NoRestrictedProperties {
             Found::ObjectProperty(matched) | Found::Object(matched) => {
                 let allowed = matched.allowed_message(&[&b" Only these properties are allowed: "[..]]);
                 let object = object_name.map_or(&b""[..], Name::bytes);
-                // oxlint names what is restricted, in one.
+                // oxlint prints the restricted `object.property` as one name.
                 let object = match found {
                     Found::ObjectProperty(_) if cx.language().is_oxlint => [object, b".", &property_name].concat(),
                     _ => object.to_vec(),
@@ -191,7 +191,7 @@ impl NoRestrictedProperties {
         }
     }
 
-    /// An `ObjectPattern` in a declaration or a parameter.
+    /// Checks an `ObjectPattern` in a declaration or a parameter.
     fn check_binding_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(properties) = pat.kind() else {
             return;
@@ -215,7 +215,7 @@ impl NoRestrictedProperties {
         }
     }
 
-    /// An `ObjectPattern` in an assignment.
+    /// Checks an `ObjectPattern` in an assignment.
     fn check_assignment_pattern<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(properties) = e.as_object() else {
             return;
@@ -235,7 +235,7 @@ impl NoRestrictedProperties {
         }
     }
 
-    /// `interface I extends a.b`, `class C implements a.b`: typescript-eslint has the name as a
+    /// Checks `interface I extends a.b` and `class C implements a.b`, where typescript-eslint parses the name as a
     /// `MemberExpression`.
     fn check_heritage<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let TypeKind::Ref { name, .. } = ty.kind() else {

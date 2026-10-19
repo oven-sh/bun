@@ -26,7 +26,7 @@ impl Rule for NoNestedTernary {
         let Some((test, yes, no)) = e.as_cond() else {
             return;
         };
-        // The innermost is what is reported.
+        // Only the innermost one is reported.
         if [test, yes, no].into_iter().any(|it| get_inner_expression(it).tag() == ExprTag::Cond) {
             return;
         }

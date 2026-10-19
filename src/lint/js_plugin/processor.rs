@@ -1,8 +1,8 @@
-//! ESLint's `processor`: it takes blocks of code out of a file, and maps what is reported about them back. See
+//! ESLint's `processor`: it extracts blocks of code from a file and maps the reports about them back. See
 //! `worker/processor.js`.
 //!
-//! [`Host::process`] calls the two functions of the processor. Whoever calls it lints the blocks in between. Messages cross as
-//! ESLint's JSON: [`write_messages`], [`read_messages`].
+//! [`Host::process`] calls the processor's two functions, and its caller lints the blocks in between. Messages are
+//! passed as ESLint's JSON: [`write_messages`], [`read_messages`].
 
 use super::engine::Vm;
 use super::host::{Host, number};
@@ -20,17 +20,17 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// What the program is called with, after those of [`wire::call`].
+/// Call kinds, numbered after those in [`wire::call`].
 mod call {
-    /// The id of the [`Processor`](super::Processor), the length of the path, the path, the text.
+    /// The [`Processor`](super::Processor)'s id, the path's length, the path, the text.
     pub(super) const PREPROCESS: u32 = 10;
-    /// The same with JSON for the text: for each block the messages.
+    /// The same, with JSON instead of the text: each block's messages.
     pub(super) const POSTPROCESS: u32 = 11;
     /// JSON: `[id, location]`.
     pub(super) const LOAD_PROCESSOR: u32 = 12;
 }
 
-/// The first byte of what a call returns, after those of [`wire::result`].
+/// A first byte of a call's result, numbered after those in [`wire::result`].
 const NEEDS_PROCESSOR: u8 = b'3';
 
 const OUT_OF_STEP: &[u8] =
@@ -38,26 +38,26 @@ const OUT_OF_STEP: &[u8] =
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 
-/// How a file that an `eslint.config.js` is for is linted.
+/// How a file covered by an `eslint.config.js` is linted.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Route {
-    /// It is JavaScript or TypeScript as it is.
+    /// It's plain JavaScript or TypeScript.
     Native,
     /// It's in another [language](crate::languages) that Bun parses itself, and all the rules that are on are built in.
     Language,
-    /// A processor takes blocks out of it, each of which goes its own way.
+    /// A processor extracts blocks from it, and each block gets its own route.
     Processor,
     /// The `Linter` of the project's installed `eslint` lints it. The file has a `language` that Bun can't parse, a
     /// rule for that language that isn't built in, or an unknown parser and a name that doesn't look like JavaScript.
     Eslint,
-    /// Not at all: it is for a processor or for `eslint`, and the configuration is not ESLint's or the package is not installed.
+    /// It isn't linted. It needs a processor or `eslint`, but the config isn't ESLint's or the package isn't installed.
     Unsupported,
 }
 
 /// ESLint's `processor`.
 #[derive(Debug)]
 pub struct Processor {
-    /// No module exports it: a realm has to run the whole configuration file to get at it.
+    /// No module exports it, so a realm has to run the whole config file to get it.
     pub needs_the_configuration: bool,
     id: u32,
     /// `[id, location]`
@@ -65,7 +65,8 @@ pub struct Processor {
 }
 
 impl Processor {
-    /// `location`: what the script that evaluates an `eslint.config.js` says about where the processor is, in `$processor`.
+    /// `location` is the `$processor` value, in which the script that evaluates an `eslint.config.js` records where the
+    /// processor is.
     pub fn new(location: &Json) -> Arc<Processor> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let mut json = format!("[{id},").into_bytes();
@@ -81,17 +82,17 @@ impl Processor {
     }
 }
 
-/// A piece of code that a processor has found in a file.
+/// A piece of code that a processor extracted from a file.
 #[derive(Debug)]
 pub enum Block {
-    /// It is linted as the file itself would be without the processor.
+    /// It's linted the way the file itself would be without the processor.
     Unnamed(Vec<u8>),
-    /// `path`: that of the file, as if that were a directory, and in it the number of the block and the name that the processor
-    /// gives it.
+    /// `path` is the file's path, treated as a directory, followed by the block's number and the name that the
+    /// processor gives it.
     Named { path: Vec<u8>, text: Vec<u8> },
 }
 
-/// Finds the rule that is called so.
+/// Finds a rule by name.
 pub(crate) type FindRule<'f> = dyn Fn(&[u8]) -> RuleId + 'f;
 
 fn text_of(json: Option<&Json>) -> Option<String> {
@@ -176,8 +177,8 @@ fn message_of(json: &Json, offsets: &Utf16OffsetTable, find_rule: &FindRule) -> 
     }
 }
 
-/// ESLint's `_distinguishSuppressedMessages` for `messages`, an array of its messages about `text`: those that are shown, and
-/// those that are not.
+/// ESLint's `_distinguishSuppressedMessages` for `messages`, an array of its messages about `text`. Returns the shown
+/// messages and the suppressed ones.
 pub fn read_messages(
     messages: &Json,
     text: &[u8],
@@ -192,8 +193,8 @@ pub fn read_messages(
         .partition(|it| it.suppressions.is_empty())
 }
 
-/// Appends what ESLint has before `_distinguishSuppressedMessages`: `shown` and `suppressed`, which are about `text` and
-/// sorted by position, as one array.
+/// Appends what ESLint has before `_distinguishSuppressedMessages`: `shown` and `suppressed` merged into one array.
+/// Both are about `text` and sorted by position.
 pub fn write_messages(
     out: &mut Vec<u8>,
     shown: &[LintMessage],
@@ -222,9 +223,9 @@ pub fn write_messages(
 }
 
 impl Host<'_> {
-    /// ESLint's `_verifyWithFlatConfigArrayAndProcessor` for the file at `path`. `lint`: given whether the processor
-    /// has `supportsAutofix`, and the blocks, returns JSON: for each block what [`write_messages`] writes. Or what is thrown.
-    /// Returns ESLint's messages about `text`, for [`read_messages`].
+    /// ESLint's `_verifyWithFlatConfigArrayAndProcessor` for the file at `path`. `lint` gets whether the processor has
+    /// `supportsAutofix` and the blocks. It returns JSON with what [`write_messages`] writes for each block, or the
+    /// thrown error. Returns ESLint's messages about `text`, for [`read_messages`].
     pub fn process(
         &self,
         processor: &Processor,
@@ -233,14 +234,15 @@ impl Host<'_> {
         lint: &mut (dyn FnMut(bool, Vec<Block>) -> Result<Vec<u8>, Vec<u8>> + Send),
     ) -> Result<Json, Vec<u8>> {
         let mut outcome = Err(OUT_OF_STEP.to_vec());
-        // Both calls are for the same realm: a processor remembers the blocks of a file.
+        // Both calls have to go to the same realm, because a processor remembers a file's blocks.
         self.engine.with_vm(text.len(), &mut |vm| {
             outcome = self.process_in(vm, processor, path, text, lint);
         })?;
         outcome
     }
 
-    /// Calls `vm` with `rest` for the file at `path`, after it has loaded the processor if it has not yet. Returns JSON.
+    /// Calls `vm` with `rest` for the file at `path`, loading the processor first if the realm doesn't have it yet.
+    /// Returns JSON.
     fn call_processor(
         &self,
         vm: &mut dyn Vm,
@@ -291,7 +293,7 @@ impl Host<'_> {
         let (Some(found), Some(supports_autofix)) = (parts.pop(), parts.pop()) else {
             return Err(OUT_OF_STEP.to_vec());
         };
-        // The processor has thrown: that is all there is to say about the file.
+        // The processor threw, so that error is the file's only message.
         let Some(supports_autofix) = supports_autofix.as_bool() else {
             return Ok(Json::Array(vec![found]));
         };

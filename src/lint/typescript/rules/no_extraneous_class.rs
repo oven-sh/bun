@@ -11,13 +11,13 @@ pub struct NoExtraneousClass {
 const EMPTY: Message = Message::new("empty", "Unexpected empty class.");
 const ONLY_CONSTRUCTOR: Message = Message::new("onlyConstructor", "Unexpected class with only a constructor.");
 const ONLY_STATIC: Message = Message::new("onlyStatic", "Unexpected class with only static properties.");
-/// What oxlint suggests.
+/// oxlint's suggestion.
 const REMOVE_CLASS: Message = Message::new("removeClass", "Remove the class.");
 
 impl NoExtraneousClass {
-    /// For oxlint a constructor, a static block and an index signature are not static, and a class has only a
-    /// constructor if that is its only member. It points at the name, of a class expression too, and at an empty class,
-    /// after decorators from `class` on.
+    /// For oxlint a constructor, a static block and an index signature aren't static, and a class counts as
+    /// constructor-only if the constructor is its only member. It points at the name, even for a class expression. For
+    /// an empty class it points at the whole class, starting at `class` if there are decorators.
     fn check_as_oxlint<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let members = class.members();
         let whole = match class.decorators().next() {
@@ -56,7 +56,7 @@ impl NoExtraneousClass {
             ),
             false => report,
         };
-        // oxlint suggests to remove an empty class declaration without decorators, with its `export`.
+        // oxlint suggests removing an empty class declaration without decorators, along with its `export`.
         if let Node::Stmt(statement) = class.owner()
             && members.is_empty()
             && class.decorators().next().is_none()

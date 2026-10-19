@@ -4,12 +4,12 @@ use bun_lint::rule::Plugin;
 use bun_lint::utils::eslint_utils::TraceMap;
 use bun_lint_oxlint::ast_util::is_global_reference;
 
-/// Require a request that is made with axios to have a `timeout` or a `signal`.
+/// Require an axios request to have a `timeout` or a `signal`.
 ///
 /// See `timeout` ("default is `0` (no timeout)"), `signal` and `cancelToken` in "Request Config", and "Request method
-/// aliases" and "Config Defaults", in the documentation of axios.
+/// aliases" and "Config Defaults", in the axios documentation.
 pub struct AxiosNoUnboundedRequests {
-    /// What takes what `axios` takes.
+    /// Other exports that take the same arguments as `axios`.
     clients: Exports,
 }
 
@@ -19,7 +19,7 @@ const NO_TIMEOUT: Message = Message::new(
 );
 const NO_LIMIT: Message = Message::new("noLimit", "`timeout: {{value}}` means no time limit.");
 
-/// `axios()`, and its methods that take a configuration.
+/// `axios()`, and its methods that take a config.
 const AXIOS: TraceMap<'static, ()> = TraceMap::new(&[
     ("create", CALLED),
     ("delete", CALLED),
@@ -37,7 +37,7 @@ const AXIOS: TraceMap<'static, ()> = TraceMap::new(&[
 .call(());
 const MODULES: TraceMap<'static, ()> = TraceMap::new(&[("axios", AXIOS)]);
 
-/// Which of `arguments` is the configuration, if that can be told.
+/// The index of the config in `arguments`, if it can be determined.
 fn position_of_configuration<'a>(method: &str, arguments: List<'a, Expr<'a>>) -> Option<usize> {
     match method {
         "create" | "request" => Some(0),
@@ -60,7 +60,7 @@ fn sets_no_limit(timeout: Expr) -> bool {
     }
 }
 
-/// `axios.defaults.timeout = 1000`, also of an instance.
+/// `axios.defaults.timeout = 1000`, on `axios` or on an instance.
 fn sets_default_timeout(e: Expr) -> bool {
     let ExprKind::Assign { target, .. } = e.kind() else {
         return false;
@@ -89,7 +89,7 @@ fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, AxiosNoUnboundedRequ
             return;
         }
         Some(ExprKind::Object(properties)) => properties,
-        // What it has is not to be seen here.
+        // The config isn't an object literal, so its properties are unknown.
         Some(_) => return,
     };
     let find = |name: &str| {

@@ -12,12 +12,12 @@ pub struct NoMethodSetState<const METHOD: usize = 0> {
     mode: Mode,
 }
 
-/// What upstream calls `makeNoMethodSetStateRule` with, and what oxlint's three rules differ in.
+/// The arguments upstream passes to `makeNoMethodSetStateRule`, plus what differs between oxlint's three rules.
 struct Method {
     rule: &'static str,
-    /// The second counts from React 16.3 on: `shouldCheckUnsafeCb`.
+    /// The second name only counts from React 16.3 on: `shouldCheckUnsafeCb`.
     names: &'static [&'static str],
-    /// upstream takes a private name for its text.
+    /// upstream treats a private name like the plain name.
     private_names: &'static [&'static str],
     oxlint: Message,
     oxlint_wants_jsx: bool,
@@ -51,7 +51,7 @@ const NO_SET_STATE: Message = Message::new("noSetState", "Do not use setState in
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Those of the method that count.
+    /// The method's names that count for this file.
     names: &'static [&'static str],
     function_count: LifecycleWalk<'a>,
     walks: Walks<'a>,
@@ -80,7 +80,7 @@ impl<const METHOD: usize> Rule for NoMethodSetState<METHOD> {
         if !is_candidate {
             return None;
         }
-        // oxlint knows no `"detect"` and no `defaultVersion`.
+        // oxlint doesn't support `"detect"` or `defaultVersion`.
         let check_unsafe_prefix = method.names.len() > 1
             && match is_oxlint {
                 true => supports_unsafe_lifecycle_prefix(file),
@@ -101,7 +101,7 @@ impl<const METHOD: usize> Rule for NoMethodSetState<METHOD> {
             }
             return;
         }
-        // oxlint wants a component around the method, and does not count a function that is the parent of the call.
+        // oxlint requires a component around the method, and doesn't count a function that's the call's parent.
         if let Some(callee) = callee_of_this_set_state(e)
             && let Some(function_count) = function_count_before_lifecycle_component(e, names, &mut cx.state.function_count)
             && (function_count <= 1 || self.mode == Mode::DisallowInFunc)

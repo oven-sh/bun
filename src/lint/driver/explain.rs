@@ -25,8 +25,8 @@ macro_rules! pretty {
     };
 }
 
-/// Every page: a NUL, its [name](Meta::page), a newline, then its Markdown. That's the description on one line, an empty
-/// line, then the rest.
+/// Every page: a NUL, its [name](Meta::page), a newline, then its Markdown. That's the description on one line, an
+/// empty line, then the rest.
 fn pages() -> &'static [u8] {
     bun_zstd::embed_compressed!(codegen "lint-rule-pages.txt")
 }
@@ -49,8 +49,8 @@ fn page_of(meta: &Meta) -> Option<&'static [u8]> {
     Some(&page[..strings::index_of_char_usize(page, 0).unwrap_or(page.len())])
 }
 
-/// Severity and options that the default config has for each rule it mentions. It sets options for some rules that are off,
-/// which apply once the user turns the rule on.
+/// Severity and options that the default config has for each rule it mentions. It sets options for some rules that are
+/// off, which apply once the user turns the rule on.
 struct Defaults(FxHashMap<(Plugin, &'static str), (Severity, Arc<[Json]>)>);
 
 impl Defaults {

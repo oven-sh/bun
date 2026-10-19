@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 
 /// Enforce that all elements that require alternative text have meaningful information to relay back to the end user.
 pub struct AltText {
-    /// For each kind of element the components that are checked like it. `None`: the kind is not checked.
+    /// For each kind of element, the components that are checked like it. `None` means that kind isn't checked.
     img: Option<Vec<String>>,
     object: Option<Vec<String>>,
     area: Option<Vec<String>>,
@@ -59,7 +59,7 @@ impl Rule for AltText {
             custom_tags.as_ref().is_some_and(|custom_tags| *name == *tag || is_custom(custom_tags))
         };
         let is_input = |custom_tags: &Vec<String>| is_input_with_type_image(&name, jsx_el) || is_custom(custom_tags);
-        // The three with one message are told apart by the help.
+        // The three kinds that share a message differ only in the help text.
         let (message, help) = if is(b"img", &self.img) {
             (img_rule(jsx_el), "")
         } else if is(b"object", &self.object) {

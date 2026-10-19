@@ -1,4 +1,4 @@
-//! The file system.
+//! File system helpers.
 
 use crate::paths;
 use bun_core::ZStr;
@@ -14,7 +14,8 @@ pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
     [error.name(), b": ", error.msg().unwrap_or(b"unknown error")].concat()
 }
 
-/// `path` with a NUL behind it. One that no system takes is the empty path, which nothing is at.
+/// Returns `path` with a trailing NUL. A path that's too long for any system becomes the empty path, where nothing
+/// exists.
 fn terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     match path.len() < MAX_PATH_BYTES {
         true => z(path, buffer),
@@ -22,8 +23,9 @@ fn terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     }
 }
 
-/// The same for the calls that are libuv's on Windows (`stat`, `lstat`, `realpath`, `rename`), which hands the path to the system
-/// as it is. There 260 characters are the most, unless the path is written as Node writes every path.
+/// Same, for the calls that go through libuv on Windows (`stat`, `lstat`, `realpath`, `rename`). libuv passes the path
+/// to the system unchanged, which limits it to 260 characters unless it's in the namespaced form that Node uses for
+/// every path.
 fn for_libuv<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     match cfg!(windows) && path.len() >= 240 {
         true => terminated(&paths::namespaced(path), buffer),
@@ -84,7 +86,7 @@ pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
     lstat(path).map(|(kind, size, _)| (kind, size))
 }
 
-/// What the link at `path` leads to. `Ok(None)`: neither a file nor a directory.
+/// Returns what the symlink at `path` resolves to. `Ok(None)` if that's neither a file nor a directory.
 pub(crate) fn end_of_link(path: &[u8]) -> bun_sys::Result<Option<Kind>> {
     let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))?;
     Ok(match bun_sys::kind_from_mode(found.st_mode as _) {
@@ -139,7 +141,7 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
         if size > bun_lint::fix::MAX_STRING_LENGTH {
             return Err(too_large());
         }
-        // One more, so that the end of the file is seen without growing.
+        // One extra byte, so the read that detects the end of the file doesn't grow the buffer.
         let mut text = Vec::with_capacity((size as usize).min(64 << 20) + 1);
         file.read_to_end_into(&mut text)?;
         return Ok(text);
@@ -196,7 +198,7 @@ impl NamedPipes {
     }
 }
 
-/// Fills `start` from the start of the file at `path`, and returns what has been read.
+/// Reads the beginning of the file at `path` into `start`. Returns the bytes that were read.
 pub(crate) fn read_start<'a>(path: &[u8], start: &'a mut [u8]) -> &'a [u8] {
     let read = File::openat(Fd::cwd(), path, O::RDONLY, 0).and_then(|file| file.read_all(start));
     start.get(..read.unwrap_or(0)).unwrap_or_default()
@@ -210,12 +212,12 @@ pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
 
 pub(crate) struct Entry {
     pub(crate) name: Vec<u8>,
-    /// Not a link to one: like `fs.Dirent.isDirectory()`.
+    /// False for a symlink to a directory, like `fs.Dirent.isDirectory()`.
     pub(crate) is_directory: bool,
     pub(crate) is_link: bool,
 }
 
-/// A directory that has been listed, and is still open.
+/// A listed directory that's still open.
 pub(crate) struct Listing {
     directory: bun_sys::Dir,
     /// In no particular order.
@@ -223,7 +225,8 @@ pub(crate) struct Listing {
 }
 
 impl Listing {
-    /// The size of the file called `name` in the directory. 0 if it cannot be told. `None`: a link to what [`list`] leaves out.
+    /// Returns the size of the file `name` in the directory, or 0 if it can't be determined. `None` for a symlink to
+    /// something that [`list`] skips.
     pub(crate) fn size_of(&self, name: &[u8]) -> Option<u64> {
         self.size_and_identity_of(name).map(|it| it.0)
     }
@@ -243,7 +246,7 @@ impl Listing {
     }
 }
 
-/// Lists the directory at `path`. `None` if it cannot be listed.
+/// Lists the directory at `path`. `None` if it can't be listed.
 pub(crate) fn list(path: &[u8]) -> Option<Listing> {
     let directory = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(path).ok()?);
     let mut found = Vec::new();
@@ -251,7 +254,7 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
         let kind = match entry.kind {
-            // The file system does not tell with the name.
+            // This file system doesn't report the kind along with the name.
             EntryKind::Unknown => {
                 match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
                     Ok(found) => bun_sys::kind_from_mode(found.st_mode as _),
@@ -260,7 +263,7 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
             }
             kind => kind,
         };
-        // To open a pipe can take for ever, and neither it nor a socket or a device is a file to read.
+        // Opening a pipe can block forever, and pipes, sockets and devices aren't files to read anyway.
         if !matches!(
             kind,
             EntryKind::File | EntryKind::Directory | EntryKind::SymLink
@@ -279,7 +282,7 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
     })
 }
 
-/// `path` without links, with every name as its directory has it.
+/// Returns `path` with symlinks resolved and every name spelled as its directory stores it.
 pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = path_buffer_pool::get();
     let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer);
@@ -295,13 +298,13 @@ fn temporary_name() -> String {
     format!(".{:016x}{count:x}.tmp", bun_core::fast_random())
 }
 
-/// Gives the file at `from` the name `to`, in place of what has it.
+/// Renames the file at `from` to `to`, replacing any file there.
 fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     let (from, to) = (
         paths::to_native(from.to_vec()),
         paths::to_native(to.to_vec()),
     );
-    // On Windows this one also replaces a file that somebody is reading. Not every file system has it.
+    // On Windows, this call can also replace a file that's open for reading. Not every file system supports it.
     bun_sys::renameat(
         Fd::cwd(),
         terminated(&from, &mut path_buffer_pool::get()),
@@ -322,22 +325,23 @@ fn remove(path: &[u8]) {
     let _ = bun_sys::unlinkat(Fd::cwd(), terminated(&path, &mut path_buffer_pool::get()));
 }
 
-/// The tags of a file, its ACL, its label: what a file that takes its name does not take over. `None`: they cannot be read.
+/// Returns a file's extended attributes: tags, ACL, security label. A file renamed over it doesn't inherit them. `None`
+/// if they can't be read.
 #[cfg(unix)]
 fn attributes(file: &File) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
     bun_sys::extended_attributes(file.handle()).ok()
 }
 
-/// What the file at a path is like.
+/// A file's metadata before it's replaced.
 struct Before {
     stat: bun_sys::Stat,
     #[cfg(unix)]
     attributes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
 }
 
-/// Writes a file next to the one at `real`, which then takes its name. `old`: what the latter is like. `false`: nothing has
-/// changed: nothing can be added to the directory, the new file would belong to somebody else or be without an attribute of the
-/// old one, or the old one is in use.
+/// Writes a temporary file next to the one at `real`, then renames it over `real`. `old` is the existing file's
+/// metadata. Returns `false` if nothing changed: the directory isn't writable, the new file would have a different
+/// owner or lack one of the old file's attributes, or the old file is in use.
 fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     let before = &old.stat;
     let directory = &real[..real.len() - paths::basename(real).len()];
@@ -355,14 +359,14 @@ fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
         if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
             return Ok(false);
         }
-        // The directory gives a new file a label, and an ACL if it has one for that: the same as it gave the old one.
+        // The directory gives a new file its label and default ACL, normally the same ones it gave the old file.
         #[cfg(unix)]
         {
             if old.attributes.is_none() || attributes(&file) != old.attributes {
                 return Ok(false);
             }
         }
-        // What `umask` has taken away.
+        // Restore the bits that `umask` cleared.
         if cfg!(unix) && created.st_mode as bun_sys::Mode & 0o7777 != mode {
             bun_sys::fchmod(file.handle(), mode)?;
         }
@@ -422,8 +426,9 @@ fn overwrite(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     Err(why)
 }
 
-/// Replaces the text of the file at `real`, a path of the system without links: by a file that takes its name, so that nobody
-/// reads a part of `text`, where that leaves all else as it is. Otherwise in place, as ESLint and Prettier write every file.
+/// Replaces the text of the file at `real`, a native path with symlinks resolved. Renames a new file over it, so no
+/// reader sees partial text, if that preserves everything else about the file. Otherwise overwrites it in place, like
+/// ESLint and Prettier always do.
 fn write_through(real: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     let is_replaced = || -> bun_sys::Result<bool> {
         // If you can't write a file, you shouldn't be able to replace it either.
@@ -480,9 +485,9 @@ fn leads_out(cwd: &[u8], path: &[u8], real: &[u8]) -> bool {
 #[derive(Default)]
 pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
 
-/// Replaces the text of the file at `path`, which exists. What links to the file still does. `Err`: why it is not written.
-/// A link below `cwd`, the working directory, is not followed out of the repository: nobody reads the links of a checkout.
-/// A file that is in `written` already is left as it is.
+/// Replaces the text of the existing file at `path`. Links to the file stay intact. `Err` is the reason it wasn't
+/// written. A symlink inside `cwd`, the working directory, isn't followed out of the repository, because nobody reviews
+/// the symlinks in a checkout. A file that's already in `written` is skipped.
 pub(crate) fn write_atomically(
     written: &Written,
     cwd: &[u8],
@@ -496,8 +501,9 @@ pub(crate) fn write_atomically(
             .map_err(|error| describe(&error))
     };
     let mut real = resolve()?;
-    // NTFS keeps a file that is open and has lost its name to another in a directory of its own. That is where this one is if
-    // another thread, which has reached it by another path, has replaced it since it was opened here. The new one has the name.
+    // When an open file is renamed over, NTFS moves it to a special directory. The real path points there if another
+    // thread, which reached the file by a different path, replaced it after it was opened here. Resolving again finds
+    // the new file.
     if cfg!(windows) && leads_out(cwd, path, &real) {
         real = resolve()?;
     }
@@ -550,7 +556,7 @@ fn identity_if_stream(found: &bun_sys::Stat) -> Option<Identity> {
 /// Writes `text` to `stream`, which is what `path` resolved to. Doesn't create, replace or truncate anything.
 fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Result<(), Vec<u8>> {
     // `/dev/stdout` has no real path when it's a pipe, but everything in a repository has one. So a path inside `cwd`
-    // with no real path is refused only if `cwd` is in a repository. `/dev/stdout` still works from `/` and `/dev`.
+    // with no real path is rejected only if `cwd` is in a repository. `/dev/stdout` still works from `/` and `/dev`.
     let real = real_path(path);
     let is_refused = match &real {
         Some(real) => leads_out(cwd, path, real),

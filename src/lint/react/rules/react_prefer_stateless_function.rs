@@ -29,7 +29,7 @@ fn is_valid_pair<'a>(ctor_param: Param<'a>, super_arg: Expr<'a>) -> bool {
     super_arg.as_ident().is_some_and(|name| ctor_param.pat().as_ident() == Some(name))
 }
 
-/// upstream's `isRedundantSuperCall`, for the function of a constructor. `false` for one without a body.
+/// Upstream's `isRedundantSuperCall`, for a constructor's function. False if it has no body.
 fn is_redundant_super_call(constructor: Func<'_>) -> bool {
     let body = constructor.body_statements().filter(|it| it.len() == 1).and_then(List::first);
     let Some(StmtKind::Expr(e)) = body.map(Stmt::kind) else {
@@ -44,7 +44,7 @@ fn is_redundant_super_call(constructor: Func<'_>) -> bool {
     };
     let is_spread_arguments = super_args.len() == 1
         && matches!(super_args.first().map(Expr::kind), Some(ExprKind::Spread(it)) if it.is_ident("arguments"));
-    // No argument is the identifier `this`, which a parameter `this` is.
+    // A `this` parameter is an `Identifier` named `this`, which no argument can match.
     let is_passing_through = || {
         constructor.this_param().is_none()
             && ctor_params.len() == super_args.len()
@@ -64,7 +64,7 @@ fn has_other_properties(node: Node<'_>) -> bool {
     })
 }
 
-/// Whether something can be in a call of `createClass`.
+/// True if the file may contain a `createClass` call.
 fn mentions_create_class<'a>(file: &'a File<'a>) -> bool {
     util_pragma::mentions_create_class(file, get_create_class_from_context(file))
 }
@@ -73,8 +73,8 @@ fn is_props_or_context(name: Option<&[u8]>) -> bool {
     matches!(name, Some(b"props" | b"context"))
 }
 
-/// Whether the first `MethodDefinition` or `Property` that the block of a scope around `statement` is directly in is
-/// called `render`.
+/// Walks the scopes enclosing `statement` up to the first one whose block is a direct child of a `MethodDefinition` or
+/// `Property`. True if that parent is named `render`.
 fn is_in_render(statement: Stmt<'_>) -> bool {
     let block_node = Node::Stmt(statement).scope().chain().find_map(|scope| {
         let block = Some(scope.node()).filter(|it| matches!(it, Node::Func(_) | Node::Class(_)))?;
@@ -91,7 +91,7 @@ fn is_in_render(statement: Stmt<'_>) -> bool {
 }
 
 impl PreferStatelessFunction {
-    /// The nodes at which a listener of upstream marks a component as one that cannot be a function.
+    /// The nodes where one of upstream's listeners marks a component as unable to be a function.
     fn marks<'a>(&self, file: &'a File<'a>, components: &Components<'a>) -> Queue<'a> {
         let mut queue = Queue::default();
         let mut mark = |node: Node<'a>| queue.push(At::enter(node), 0, node);
@@ -105,7 +105,7 @@ impl PreferStatelessFunction {
             }
         }
 
-        // VariableDeclarator, MemberExpression: all of `this` but `props` and `context`
+        // VariableDeclarator, MemberExpression: any use of `this` other than `props` and `context`
         for this in file.exprs_of_kind(ExprTag::This) {
             match this.parent() {
                 parent @ Node::VarDecl(declarator) => {
@@ -189,7 +189,7 @@ impl Rule for PreferStatelessFunction {
         let file = cx.file();
         let mut components = Components::new(file);
         let pragmas = *components.pragmas();
-        // Only such a class is reported, and what is in a call of `createClass`.
+        // Only classes like this and `createClass` components can be reported.
         let is_candidate = |it: Class| is_es6_component(it, &pragmas) && !has_other_properties(Node::Class(it));
         if !mentions_create_class(file) && !file.classes().any(is_candidate) && !may_have_explicit_components(file) {
             return;

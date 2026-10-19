@@ -16,7 +16,7 @@ fn is_matching_identifier<'a>(e: Expr<'a>, name: Name<'a>) -> bool {
     e.as_ident() == Some(name)
 }
 
-/// The `arr` of `name < arr.length`.
+/// Returns the `arr` in `name < arr.length`.
 fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<Expr<'a>> {
     let ExprKind::Binary {
         op: BinOp::Lt,
@@ -31,7 +31,7 @@ fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<
     }
     let object = match right.kind() {
         ExprKind::Dot { obj, name, .. } if name.name().is("length") => obj,
-        // For oxlint `a["length"]`, not `a[length]`.
+        // oxlint also accepts `a["length"]`, but not `a[length]`.
         ExprKind::Index { obj, index, .. } if test.file().language().is_oxlint => {
             match index.kind() {
                 ExprKind::String(key) if key.is("length") => obj,
@@ -46,7 +46,8 @@ fn is_less_than_length_expression<'a>(test: Expr<'a>, name: Name<'a>) -> Option<
     (!right.is_chain_root()).then_some(object)
 }
 
-/// oxlint looks at a loop only if the array is a name or a member in which the index is not used: `a`, `a.b`, `a[b]`.
+/// oxlint only checks a loop whose array is a name or a member expression that doesn't use the index: `a`, `a.b`,
+/// `a[b]`.
 fn oxlint_looks_at<'a>(array: Expr<'a>, index_var: Symbol<'a>) -> bool {
     !array.is_parenthesized()
         && matches!(array.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index)
@@ -55,7 +56,8 @@ fn oxlint_looks_at<'a>(array: Expr<'a>, index_var: Symbol<'a>) -> bool {
             .any(|it| array.span().contains(it.span()))
 }
 
-/// For oxlint what is in parentheses is nothing that it knows, unless it is assigned to.
+/// True if a part of the loop header that oxlint matches is parenthesized. oxlint doesn't look through parentheses,
+/// except around an assignment target.
 fn oxlint_minds_parentheses<'a>(init: Expr<'a>, test: Expr<'a>, update: Expr<'a>) -> bool {
     let value = update.as_assign().map(|(_, _, value)| value);
     let right = test.right();
@@ -73,7 +75,7 @@ fn oxlint_minds_parentheses<'a>(init: Expr<'a>, test: Expr<'a>, update: Expr<'a>
     parts.into_iter().flatten().any(Expr::is_parenthesized)
 }
 
-/// What oxc has around a node, as far as oxlint asks.
+/// The kind of a node's parent in oxc's AST, as far as oxlint distinguishes them.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Around {
     Delete,
@@ -86,7 +88,8 @@ enum Around {
     Other,
 }
 
-/// What is around `at`, which is an expression or a property of a pattern, and whether `at` is assigned to there.
+/// Returns the kind of `at`'s oxc parent, the parent itself, and whether `at` is assigned to there. `at` is an
+/// expression or a property of a pattern.
 fn oxc_parent(at: Node<'_>) -> Option<(Around, Node<'_>, bool)> {
     let is_pattern = |it: Node| matches!(it, Node::Expr(it) if it.is_assignment_target());
     let parent = at.parent();
@@ -109,7 +112,7 @@ fn oxc_parent(at: Node<'_>) -> Option<(Around, Node<'_>, bool)> {
             _ => (Around::Other, parent, false),
         },
         (Node::Expr(e), Node::Prop(prop)) if is_pattern(prop.parent()) => match prop.kind() {
-            // With its default it is one node.
+            // In oxc a shorthand property and its default are one node.
             PropKind::Shorthand => (Around::Pattern, prop.parent(), true),
             _ => (Around::Other, parent, prop.value() == Some(e)),
         },
@@ -118,8 +121,8 @@ fn oxc_parent(at: Node<'_>) -> Option<(Around, Node<'_>, bool)> {
     })
 }
 
-/// What oxlint takes for an assignment to `member`: it looks at the two nodes around it. There parentheses are nodes, but
-/// for those around what is assigned to.
+/// oxlint's test for an assignment to `member`, which looks at the two nearest ancestors. Parentheses count as
+/// ancestors, except around an assignment target.
 fn oxlint_is_assignee(member: Expr) -> bool {
     let mut around = [Around::Other; 2];
     let (mut at, mut parentheses) = (Node::Expr(member), 0);
@@ -246,7 +249,7 @@ impl Rule for PreferForOf {
             return;
         }
         if is_index_only_used_with_array(body, index_var, array) {
-            // oxlint points at what is between the parentheses.
+            // oxlint reports everything between the parentheses.
             let place = if is_oxlint {
                 Span::new(init.span().start, update.span().end)
             } else {

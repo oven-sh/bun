@@ -5,13 +5,13 @@ use crate::span::Spanned;
 use bun_sema::hir;
 use std::marker::PhantomData;
 
-/// The children of a node that come in a list: arguments, statements, members.
+/// A node's list of children: arguments, statements, members.
 #[derive(Copy, Clone)]
 pub struct List<'a, T> {
     file: &'a File<'a>,
     start: u32,
     len: u32,
-    /// The elements are `Hir::ids[start..]`, not `start..` themselves.
+    /// True if the elements are `Hir::ids[start..]` rather than the ids `start..` themselves.
     is_indirect: bool,
     of: PhantomData<T>,
 }
@@ -59,7 +59,7 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         T::from_raw(self.file, id)
     }
 
-    /// The ids of the elements, if they are listed in `Hir::ids` and none of them is left out.
+    /// The elements' ids, if they're stored in `Hir::ids` and none of them is skipped.
     #[inline]
     pub(crate) fn listed_ids(self) -> Option<&'a [u32]> {
         match self.is_indirect && !self.file.has_synthetic_nodes() {
@@ -120,9 +120,9 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     }
 }
 
-/// For a list whose elements are in the order of the source and do not overlap. Each takes the logarithm of its length.
+/// For a list whose elements are in source order and don't overlap. Each lookup is O(log n).
 impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
-    /// How many elements start at or before `offset`, those that lists leave out too.
+    /// The number of elements that start at or before `offset`, including the synthetic ones that iteration skips.
     fn count_until(self, offset: u32) -> u32 {
         let (mut from, mut to) = (0, self.len);
         while from < to {
@@ -135,7 +135,7 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         from
     }
 
-    /// The whole list, or if it is long and `offset` is given, only the last element that starts at or before `offset`.
+    /// The whole list, or if it's long and `offset` is given, only the last element that starts at or before `offset`.
     #[inline]
     pub(super) fn near(self, offset: Option<u32>) -> Iter<'a, T> {
         match offset {
@@ -154,13 +154,13 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         all
     }
 
-    /// The element that `offset` is in.
+    /// The element that contains `offset`.
     pub fn around(self, offset: u32) -> Option<T> {
         let it = self.at(self.count_until(offset).checked_sub(1)?);
         (offset < it.span().end && !it.is_synthetic()).then_some(it)
     }
 
-    /// [`List::around`], and what [`List::before`] says of where that element starts.
+    /// [`List::around`], plus the element before it, as [`List::before`] would return for its start.
     pub fn around_with_previous(self, offset: u32) -> Option<(T, Option<T>)> {
         let at = self.count_until(offset).checked_sub(1)?;
         let it = self.at(at);
@@ -172,8 +172,8 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         Some((it, before.next_back()))
     }
 
-    /// The index of the element that starts at `start`. It counts the elements before it in a file that has nodes which are
-    /// synthesized from JSDoc comments.
+    /// The index of the element that starts at `start`. In a file with nodes synthesized from JSDoc comments, it has to
+    /// count the preceding elements one by one.
     pub fn index_of_start(self, start: u32) -> Option<usize> {
         let at = self.count_until(start).checked_sub(1)?;
         let it = self.at(at);
@@ -224,7 +224,7 @@ pub struct Iter<'a, T> {
     list: List<'a, T>,
     front: u32,
     back: u32,
-    /// Whether some elements may be synthesized from JSDoc comments, which are left out.
+    /// True if some elements may be synthesized from JSDoc comments. Those are skipped.
     hides: bool,
 }
 
@@ -262,7 +262,7 @@ impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     }
 }
 
-/// In a file that has nodes which are synthesized from JSDoc comments.
+/// The slow path for a file with nodes synthesized from JSDoc comments.
 impl<'a, T: Handle<'a>> Iter<'a, T> {
     #[inline(never)]
     fn next_written(&mut self) -> Option<T> {

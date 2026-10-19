@@ -1,7 +1,7 @@
 //! Assignment targets, checked the way oxc's parser checks them.
 //!
-//! oxc parses the left side as an expression and converts it once it reaches the operator (`CoverGrammar` in its source). Most
-//! failures are fatal: the parser stops there, so nothing after them is reported.
+//! oxc parses the left side as an expression and converts it once it reaches the operator (`CoverGrammar` in its
+//! source). Most failures are fatal, so the parser stops there and reports nothing after them.
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
@@ -67,7 +67,7 @@ struct Found {
 struct Targets<'a> {
     file: &'a File<'a>,
     found: Vec<Found>,
-    /// `Found::noticed` of what is being converted.
+    /// `Found::noticed` for the target being converted.
     noticed: u32,
 }
 
@@ -110,7 +110,7 @@ impl<'a> Targets<'a> {
         });
     }
 
-    /// Returns `false`, which every conversion hands up: nothing more is converted.
+    /// Records a fatal error. Returns `false`, which every conversion propagates so that nothing more is converted.
     fn stop(&mut self, label: Span, problem: Problem) -> bool {
         self.found.push(Found {
             noticed: self.noticed,
@@ -154,7 +154,7 @@ impl<'a> Targets<'a> {
                 op: UnOp::PreInc | UnOp::PreDec,
                 ..
             } if !it.is_parenthesized() => {
-                // It starts the span of `++a` in `++ ++a` at the first `++`.
+                // In `++ ++a`, oxc starts the span of `++a` at the first `++`.
                 let mut first = it;
                 while let Node::Expr(parent) = first.parent()
                     && matches!(parent.as_unary(), Some((UnOp::PreInc | UnOp::PreDec, _)))
@@ -252,7 +252,7 @@ impl<'a> Targets<'a> {
     }
 }
 
-/// What oxc reports about the targets of assignments, of `++` and `--`, and of `for-in` and `for-of`.
+/// oxc's errors for the targets of assignments, `++`, `--`, `for-in` and `for-of`.
 pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
     if !file.has_rare_syntax(rare::ODD_TARGET) {
         return Vec::new();
@@ -262,7 +262,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
         found: Vec::new(),
         noticed: 0,
     };
-    // Not by kind: nothing else may want the expressions of the file sorted.
+    // Scan all expressions instead of using the index by kind, which may not be needed for anything else.
     for (i, raw) in file.hir.exprs.iter().enumerate() {
         let (is_assignment, target) = match raw.kind {
             hir::ExprKind::Assign { target, .. } => (true, target),
@@ -294,7 +294,7 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
                 && !is_name_or_member(target)
             {
                 targets.noticed = target.outer_span().end;
-                // oxc looks for the operand of a `yield` wherever the line goes on, and finds the `in`.
+                // oxc looks for a `yield` operand whenever the line continues, and finds the `in`.
                 let is_yield = matches!(target.kind(), ExprKind::Yield { value: None, .. });
                 let keyword = skip_trivia(file.text(), target.span().end);
                 let between = file.slice(Span::after(target.span(), keyword));
@@ -311,8 +311,8 @@ pub(super) fn errors<'a>(file: &'a File<'a>) -> Vec<SyntaxError> {
             }
         }
     }
-    // oxc converts a target when it has read the operator after it. Where TypeScript's parser has an error up to there, the
-    // tree has a hole, and oxc's parser has given up at that error.
+    // oxc converts a target once it has read the operator after it. If TypeScript's parser has an error before that
+    // point, the tree has a hole and oxc's parser has already given up at that error.
     let gives_up_at = super::super::error_of_parser(file).map(|it| it.map_or(0, |it| it.start));
     (targets.found.into_iter())
         .filter(|it| gives_up_at.is_none_or(|at| skip_trivia(file.text(), it.noticed) < at))

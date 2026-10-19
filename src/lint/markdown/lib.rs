@@ -3,7 +3,7 @@
 //! - https://github.com/eslint/markdown (Copyright OpenJS Foundation and other contributors, MIT License)
 //!
 //! The plugin parses with micromark. Bun parses with its own parser, `bun_md`, and `bun_format::markdown` builds the
-//! tree from its output. It's the same tree that `bun fmt` prints: see `document.rs`. Where micromark deviates from the
+//! tree from its output. It's the same tree that `bun fmt` prints. See `document.rs`. Where micromark deviates from the
 //! CommonMark and GFM specs, the tree follows the specs.
 
 #![forbid(unsafe_code)]

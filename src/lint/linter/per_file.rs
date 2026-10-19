@@ -1,4 +1,4 @@
-//! What the linter keeps about the file that is linted.
+//! Per-file linter state.
 
 use super::comment::{parse_list_config, parse_string_config};
 use super::directives::{self, ConfigComment, Label};
@@ -10,23 +10,24 @@ use crate::span::Span;
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell};
 
-/// Computed on demand, once.
+/// Each field is computed lazily, once.
 #[derive(Default)]
 pub(crate) struct PerFile {
-    /// Comments configure nothing: `noInlineConfig`, `--no-inline-config`.
+    /// True if config comments are ignored (`noInlineConfig`, `--no-inline-config`).
     ignores_comments: Cell<bool>,
     comments: OnceCell<Vec<ConfigComment>>,
     variables: OnceCell<CommentVariables>,
 }
 
-/// The part of ESLint's `applyInlineConfig` that is about variables.
+/// The variable-related part of ESLint's `applyInlineConfig`.
 fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
     let mut variables = CommentVariables::default();
     for comment in comments {
         let value = file.slice(comment.value);
         match comment.label {
             Label::Env => {
-                // ESLint 9 and later reject the comment. With no config file it still says which globals the file expects.
+                // ESLint 9+ rejects this comment. Without a config file it still tells us which globals the file
+                // expects.
                 let language = file.language();
                 let tables = match &language.eslint_8 {
                     Some(_) => Tables::Eslint8,
@@ -84,7 +85,7 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
 }
 
 impl<'a> File<'a> {
-    /// Comments of the file configure nothing from now on.
+    /// Ignores the file's config comments from now on.
     pub(crate) fn ignore_config_comments(&self) {
         self.lazy.linter.ignores_comments.set(true);
     }
@@ -97,13 +98,13 @@ impl<'a> File<'a> {
             .get_or_init(|| directives::config_comments(self))
     }
 
-    /// The comment that `span` is in, if the source interrupts it.
+    /// Returns the comment containing `span`, if that comment is a [`JoinedComment`].
     pub(crate) fn joined_comment(&self, span: Span) -> Option<&'a JoinedComment> {
         let joined = &self.parsed()?.joined;
         joined.iter().find(|it| it.value().contains(span))
     }
 
-    /// The text of `span`, which is part of a [`ConfigComment`].
+    /// Returns the text at `span`, which must be inside a [`ConfigComment`].
     pub(crate) fn slice_of_comment(&self, span: Span) -> &'a [u8] {
         match self.joined_comment(span) {
             Some(joined) => joined
@@ -123,14 +124,13 @@ impl<'a> File<'a> {
         })
     }
 
-    /// The variables that `/* global */` comments of the file name, in the order they are first
-    /// named: those for which ESLint's `variable.eslintExplicitGlobal` is set, and those that a
-    /// comment turns off.
+    /// Variables listed in the file's `/* global */` comments, in order of first mention. Includes the ones ESLint
+    /// marks with `variable.eslintExplicitGlobal` and the ones a comment turns off.
     pub fn globals_in_comments(&'a self) -> &'a [CommentGlobal] {
         self.comment_variables().map_or(&[], |it| &it.globals)
     }
 
-    /// The one of [`File::globals_in_comments`] that is called `name`.
+    /// Looks up `name` in [`File::globals_in_comments`].
     pub fn global_in_comments(&'a self, name: &[u8]) -> Option<&'a CommentGlobal> {
         let variables = self.comment_variables()?;
         variables
@@ -138,12 +138,12 @@ impl<'a> File<'a> {
             .get(*variables.global_by_name.get(name)? as usize)
     }
 
-    /// What `name` is in an environment that an `/* eslint-env */` comment of the file names.
+    /// Returns `name`'s setting in the environments listed in the file's `/* eslint-env */` comments.
     pub(crate) fn global_of_environment_in_comments(&'a self, name: &[u8]) -> Option<Global> {
         self.comment_variables()?.of_environments.get(name).copied()
     }
 
-    /// Globals from the environments that the file's `/* eslint-env */` comments name, sorted by name.
+    /// Globals from the environments listed in the file's `/* eslint-env */` comments, sorted by name.
     pub(crate) fn globals_of_environments_in_comments(&'a self) -> Vec<(&'a [u8], Global)> {
         let Some(variables) = self.comment_variables() else {
             return Vec::new();
@@ -155,12 +155,12 @@ impl<'a> File<'a> {
         all
     }
 
-    /// The names in the `/* exported */` comments of the file.
+    /// Names listed in the file's `/* exported */` comments.
     pub fn exported_in_comments(&'a self) -> &'a [Box<[u8]>] {
         self.comment_variables().map_or(&[], |it| &it.exported)
     }
 
-    /// Whether `name` is one of [`File::exported_in_comments`].
+    /// True if `name` is in [`File::exported_in_comments`].
     pub fn is_exported_in_comments(&'a self, name: &[u8]) -> bool {
         self.comment_variables()
             .is_some_and(|it| it.is_exported.contains(name))

@@ -21,7 +21,7 @@ pub struct NoCycle {
     ignore_external: bool,
     allow_unsafe_dynamic_cyclic_dependency: bool,
     disable_scc: bool,
-    /// An option of oxlint, where it can be turned off. eslint-plugin-import always ignores the imports of types.
+    /// oxlint's option, which can be turned off there. eslint-plugin-import always ignores type imports.
     ignore_types: bool,
     commonjs: bool,
     amd: bool,
@@ -31,18 +31,17 @@ pub struct NoCycle {
 
 const DETECTED: Message = Message::new("", "Dependency cycle detected.");
 const VIA: Message = Message::new("", "Dependency cycle via {{route}}");
-/// The message of oxlint.
 const DETECTED_BY_OXLINT: Message = Message::new("", "Dependency cycle detected");
 
 const OXLINT_HELP: &str = "Refactor to remove the cycle. Consider extracting shared code into a separate module that both files can import.";
 
-/// What `moduleVisitor` calls its visitor with.
+/// The arguments that `moduleVisitor` passes to its visitor.
 struct Check<'a> {
     specifier: &'a [u8],
-    /// What is reported.
+    /// The span to report.
     importer: Span,
     is_require: bool,
-    /// `import()`. The only other call that is an importer is one of `require`: of AMD it is the string.
+    /// `import()`. The only other call that's an importer is `require()`. For AMD the importer is the string.
     is_dynamic: bool,
 }
 
@@ -80,7 +79,7 @@ impl Rule for NoCycle {
             modules.record(file.path(), &requests, false, flavor);
             return None;
         }
-        // What a name means is a matter of the settings, in every file that the graph comes to.
+        // How a specifier resolves depends on the settings, in every file the graph reaches.
         Resolvers::of(file.settings())?;
         modules.resolve_by(&|| {
             let settings = Arc::new(file.settings().clone());
@@ -97,7 +96,7 @@ impl Rule for NoCycle {
         if !has_export_map {
             requests.clear();
         }
-        // A way back can lead through a package.
+        // A cycle can go through a package.
         modules.follow_packages();
         let checks = if self.commonjs || self.amd || !has_export_map { self.checks(file) } else { Vec::new() };
         let known = requests.len();
@@ -110,7 +109,7 @@ impl Rule for NoCycle {
             may_be_itself: false,
         }));
         set_lines(file.text(), &mut requests[known..]);
-        // Where the components do not tell: they are made of the imports of values.
+        // Cases the strongly connected components can't answer, because they're built from value imports only.
         let imports_no_value = known > 0 && requests[..known].iter().all(|it| it.is_only_importing_types);
         let is_always_checked = requests.len() > known
             || self.disable_scc
@@ -126,12 +125,12 @@ impl Rule for NoCycle {
     }
 }
 
-/// Whether `ExportMapBuilder.for` has something for the file at `path`, which has this text.
+/// True if `ExportMapBuilder.for` returns a map for the file at `path` with this text.
 fn has_export_map(settings: &Settings, path: &[u8], text: &[u8]) -> bool {
     !settings.is_ignored(path) && may_be_module(text)
 }
 
-/// What is the same for all the imports of a file.
+/// State shared by all of a file's imports.
 struct Search<'s, 'a> {
     rule: &'s NoCycle,
     modules: &'a dyn Modules,
@@ -142,7 +141,7 @@ struct Search<'s, 'a> {
 }
 
 impl Search<'_, '_> {
-    /// `ignoreModule`. As upstream, the name is resolved in the file that is linted, also where another file has it.
+    /// `ignoreModule`. Like upstream, it resolves the name from the linted file even if another file imports it.
     fn ignores(&self, name: &[u8], is_require: bool) -> bool {
         self.rule.ignore_external
             && (self.types).is_external_module(name, &self.types.resolvers().resolve(self.file, name, is_require))
@@ -152,12 +151,12 @@ impl Search<'_, '_> {
         !uses_components || self.modules.component(module) == self.modules.component(self.me)
     }
 
-    /// The way back from `imported` to the file, breadth first: the declarations that lead there. `None` if there is none.
-    /// `traversed`: the modules that have been looked at, for this import of the file or for an earlier one.
+    /// Breadth-first search for a path from `imported` back to the file. Returns the declarations along it, or `None`
+    /// if there's no path. `traversed`: the modules already visited, for this import or an earlier one in the file.
     fn find_cycle<'m>(&'m self, imported: ModuleId, uses_components: bool, traversed: &mut FxHashSet<ModuleId>) -> Option<Vec<&'m Declaration>> {
-        // A module, and the index of what led to it.
+        // (module, index in `routes` of the declaration that led to it, depth)
         let mut untraversed: VecDeque<(ModuleId, Option<usize>, usize)> = VecDeque::from([(imported, None, 0)]);
-        // A declaration, and the index of what led to the module that has it.
+        // (declaration, index of the declaration that led to the module it's in)
         let mut routes: Vec<(&Declaration, Option<usize>)> = Vec::new();
         while let Some((module, route, depth)) = untraversed.pop_front() {
             if self.settings.is_ignored(self.modules.path(module)) || !traversed.insert(module) {
@@ -200,16 +199,16 @@ fn is_in_node_modules(path: &[u8]) -> bool {
     strings::contains(path, b"/node_modules/")
 }
 
-/// oxlint's `ModuleGraphVisitor` with a `max_depth`: whether it gets from `start` to `needle`. It goes depth first, by the order of
-/// the specifiers, to no module twice, and gives up altogether the first time that it is too deep.
-/// The way: each specifier, and the module that it leads to.
+/// oxlint's `ModuleGraphVisitor` with a `max_depth`. Returns the path from `start` to `needle` if it finds one, as
+/// (specifier, module it resolves to) pairs. It searches depth first in specifier order, visits each module once, and
+/// gives up entirely the first time it gets too deep.
 fn oxlint_finds_within(
     modules: &dyn Modules,
     start: ModuleId,
     needle: ModuleId,
     max_depth: usize,
 ) -> Option<Vec<(&[u8], ModuleId)>> {
-    // The specifier, the module, and whether it is followed.
+    // (specifier, module, whether it's followed)
     let entries_of = |module: ModuleId| {
         let mut entries: Vec<(&[u8], ModuleId, bool)> = Vec::new();
         for import in modules.imports(module) {
@@ -260,7 +259,7 @@ fn oxlint_format_cycle(modules: &dyn Modules, way: &[(&[u8], ModuleId)]) -> Stri
 }
 
 impl NoCycle {
-    /// oxlint's rule: one report for each specifier that leads back to the file, at the first place that has it.
+    /// oxlint's rule: one report per specifier that leads back to the file, at its first occurrence.
     fn check_as_oxlint<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let Some(modules) = file.modules() else {
@@ -269,7 +268,7 @@ impl NoCycle {
         let Some(me) = modules.find(file.path()) else {
             return;
         };
-        // The modules are known by their real paths. Nothing leads back to the name of a link.
+        // Modules are keyed by real path, so nothing leads back to a symlink's path.
         if !modules.is_path_of(me, file.path()) {
             return;
         }
@@ -315,10 +314,10 @@ impl NoCycle {
         }
     }
 
-    /// What `moduleVisitor` visits, in the order of the source, without what the rule passes over.
+    /// Returns what `moduleVisitor` visits, in source order, minus what the rule skips.
     fn checks<'a>(&self, file: &'a File<'a>) -> Vec<Check<'a>> {
         let systems = Systems { esmodule: self.esmodule, commonjs: self.commonjs, amd: self.amd };
-        // Also an `import` that imports nothing: upstream asks whether every specifier is a type.
+        // False for an `import` without specifiers too, because upstream checks whether every specifier is a type.
         let has_values = |importer: Node<'a>| match importer {
             Node::Stmt(stmt) => match stmt.kind() {
                 StmtKind::Import(import) if self.ignore_types => {
@@ -353,7 +352,8 @@ impl NoCycle {
             return;
         };
         let search = Search { rule: self, modules, settings: Settings::new(file.settings()), types, file, me };
-        // `scc` has the modules that imports of values lead to from here. Without any it is empty: all are alike in it.
+        // `scc` covers the modules that value imports lead to from here. Without any it's empty, and all modules
+        // compare equal in it.
         let imports_value = |it: &Request| {
             !it.is_only_importing_types && modules.resolve(file.path(), it.specifier, false).is_some()
         };

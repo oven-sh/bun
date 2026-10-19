@@ -1,8 +1,8 @@
-//! The rules that a linter has, as a type: nothing about them is found out while it runs.
+//! A linter's set of rules, as a type. Everything about the set is known at compile time.
 //!
-//! Every rule has a number: the offset of its crate, which is a multiple of 64, and its place in the
-//! [`rules!`](crate::rules) of that crate. A set of rules is a [`RuleBits`]. [`rules!`](crate::rules) makes an `enum`
-//! of the rules of a crate and one of their runs, [`rule_sets!`](crate::rule_sets) joins those of several crates to a
+//! Every rule has a number: its crate's offset, which is a multiple of 64, plus its place in that crate's
+//! [`rules!`](crate::rules). A set of rules is a [`RuleBits`]. [`rules!`](crate::rules) generates one `enum` of a
+//! crate's rules and one of their runs, and [`rule_sets!`](crate::rule_sets) joins those of several crates into a
 //! [`RuleSet`].
 
 use crate::options::Options;
@@ -10,12 +10,12 @@ use crate::rule::{Meta, On, Plugin, Rule};
 use crate::runner::Starts;
 use bun_core::strings::const_str_eq;
 
-/// A set of rules, by their numbers.
+/// A set of rules, by number.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct RuleBits(pub [u64; RuleBits::WORDS]);
 
 impl RuleBits {
-    /// [`rule_sets!`](crate::rule_sets) sees to it that the rules fit.
+    /// [`rule_sets!`](crate::rule_sets) asserts that the rules fit.
     pub const WORDS: usize = 24;
     pub const EMPTY: RuleBits = RuleBits([0; RuleBits::WORDS]);
 
@@ -52,31 +52,32 @@ impl RuleBits {
     }
 }
 
-/// An instance of one of the rules that a linter has.
+/// An instance of one of a linter's rules.
 pub trait RuleSet: Starts + Sized + 'static {
-    /// By the number. `None`: no rule has it.
+    /// Indexed by rule number. `None` if no rule has the number.
     const METAS: &'static [Option<&'static Meta>];
-    /// For each row of [`On::ROWS`], the rules whose [`Rule::ON`](crate::rule::Rule::ON) names it.
+    /// For each row of [`On::ROWS`], the rules whose [`Rule::ON`](crate::rule::Rule::ON) selects it.
     const LISTENS: &'static [RuleBits; On::ROWS];
-    /// For each of [`On::KINDS`], the rules that name a row of it.
+    /// For each of [`On::KINDS`], the rules that select one of its rows.
     const LISTENS_TO_KINDS: &'static [RuleBits; On::KINDS.len()] = &of_kinds(Self::LISTENS);
     const PAIRS: &'static Pairs = &Pairs::of(Self::METAS);
 
-    /// [`Rule::new`](crate::rule::Rule::new). `None`: no rule has the number.
+    /// [`Rule::new`](crate::rule::Rule::new). `None` if no rule has the number.
     fn build(rule: u16, options: &Options) -> Option<Self>;
     /// [`Rule::validate`](crate::rule::Rule::validate)
     fn validate(rule: u16, options: &Options) -> Result<(), Vec<u8>>;
-    /// Its number.
+    /// The rule's number.
     fn number(&self) -> u16;
 }
 
-/// The rules without types whose check a rule of typescript-eslint makes with types: the core rule that it extends, and
-/// unicorn's rule for the same code. A problem is reported once: with an `.oxlintrc.json` and types for the file, where both
-/// are on, the rule with types [claims](crate::context::Report::claims) each node that it reports, and what the other has to
-/// say about that node [is not shown](crate::context::Report::unless_claimed). Neither knows what the other looks at.
+/// The untyped rules whose check a typescript-eslint rule also does with types: the core rule it extends, and unicorn's
+/// rule for the same code. A problem is only reported once. With an `.oxlintrc.json` and types for the file, where both
+/// rules are on, the typed rule [claims](crate::context::Report::claims) each node it reports, and the other rule's
+/// reports for that node [aren't shown](crate::context::Report::unless_claimed). Neither rule knows what the other
+/// checks.
 pub struct Pairs {
     pub(crate) without_types: RuleBits,
-    /// For each of them, by its number: the number of the rule with types.
+    /// For each of them, indexed by its number: the typed rule's number.
     pub(crate) typed: [u16; NUMBERS],
 }
 
@@ -134,7 +135,7 @@ const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {
     all
 }
 
-/// For [`rules!`](crate::rules): for each row, the rules of `ons` that name it, by their places: 64 to a word.
+/// For [`rules!`](crate::rules): for each row, the rules in `ons` that select it, by place, 64 to a word.
 pub const fn listens<const COUNT: usize, const WORDS: usize>(
     ons: &[On; COUNT],
 ) -> [[u64; WORDS]; On::ROWS] {
@@ -156,7 +157,7 @@ pub const fn listens<const COUNT: usize, const WORDS: usize>(
     rows
 }
 
-/// For [`rule_sets!`](crate::rule_sets): `all`, with the rows of a crate whose offset is `64 * word`.
+/// For [`rule_sets!`](crate::rule_sets): `all`, with the rows of a crate whose offset is `64 * word` filled in.
 pub const fn with_rows<const WORDS: usize>(
     mut all: [RuleBits; On::ROWS],
     rows: &[[u64; WORDS]; On::ROWS],
@@ -174,10 +175,10 @@ pub const fn with_rows<const WORDS: usize>(
     all
 }
 
-/// All the numbers that there can be.
+/// The number of possible rule numbers.
 pub const NUMBERS: usize = 64 * RuleBits::WORDS;
 
-/// For [`rule_sets!`](crate::rule_sets): `all`, with the rules of a crate whose offset is `offset`.
+/// For [`rule_sets!`](crate::rule_sets): `all`, with the rules of a crate at `offset` filled in.
 pub const fn with_metas<const COUNT: usize>(
     mut all: [Option<&'static Meta>; NUMBERS],
     metas: &[&'static Meta; COUNT],
@@ -191,7 +192,7 @@ pub const fn with_metas<const COUNT: usize>(
     all
 }
 
-/// For [`rule_sets!`](crate::rule_sets): the offset of the crate at `at` of those that have `counts` rules.
+/// For [`rule_sets!`](crate::rule_sets): the offset of crate number `at`, given each crate's rule count in `counts`.
 pub const fn offset_of(counts: &[usize], at: usize) -> usize {
     let (mut offset, mut before) = (0, 0);
     while before < at {
@@ -201,25 +202,26 @@ pub const fn offset_of(counts: &[usize], at: usize) -> usize {
     offset
 }
 
-/// For [`rules!`](crate::rules). Not inlined: what calls it for each of some hundred rules has room for none of them.
+/// For [`rules!`](crate::rules). Not inlined, so that the caller, which has a branch for each of several hundred rules,
+/// doesn't need stack space for any of them.
 #[doc(hidden)]
 #[inline(never)]
 pub fn boxed<R: Rule>(options: &Options) -> Box<R> {
     Box::new(R::new(options))
 }
 
-/// What [`rules!`](crate::rules) writes besides the modules.
+/// Everything that [`rules!`](crate::rules) generates besides the modules.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! rules_as_a_set {
     ($($module:ident::$rule:ident,)*) => {
-        /// An instance of one of the rules of this crate. They have the names of their modules.
+        /// An instance of one of this crate's rules. The variants are named after the rules' modules.
         #[allow(non_camel_case_types, clippy::enum_variant_names)]
         pub enum Rules {
             $($module(Box<rules::$module::$rule>),)*
         }
 
-        /// One of them at work on a file.
+        /// One of them running on a file.
         #[allow(non_camel_case_types, clippy::enum_variant_names)]
         pub enum Runs<'r, 'a> {
             $($module(Box<$crate::runner::Later<'r, 'a, rules::$module::$rule>>),)*
@@ -234,10 +236,10 @@ macro_rules! rules_as_a_set {
 
         impl Rules {
             pub const COUNT: usize = [$(Place::$module),*].len();
-            /// By the place.
+            /// Indexed by place.
             pub const METAS: [&'static $crate::rule::Meta; Rules::COUNT] =
                 [$(&<rules::$module::$rule as $crate::rule::Rule>::META),*];
-            /// `RuleSet::LISTENS`, by the place.
+            /// `RuleSet::LISTENS`, indexed by place.
             pub const LISTENS: [[u64; Rules::COUNT.div_ceil(64)]; $crate::rule::On::ROWS] =
                 $crate::rule_set::listens(&[$(<rules::$module::$rule as $crate::rule::Rule>::ON),*]);
 
@@ -313,7 +315,7 @@ macro_rules! rules_as_a_set {
     };
 }
 
-/// Joins the rules of several crates, each of which has a [`rules!`](crate::rules), to a [`RuleSet`]:
+/// Joins the rules of several crates, each of which has a [`rules!`](crate::rules), into a [`RuleSet`]:
 /// `rule_sets! { pub enum Rules / Runs { eslint: bun_lint_eslint, typescript: bun_lint_typescript, } }`.
 #[macro_export]
 macro_rules! rule_sets {
@@ -324,7 +326,7 @@ macro_rules! rule_sets {
             $($name($from::Rules),)*
         }
 
-        /// A rule at work on a file.
+        /// A rule running on a file.
         #[allow(non_camel_case_types)]
         $visibility enum $runs<'r, 'a> {
             $($name($from::Runs<'r, 'a>),)*

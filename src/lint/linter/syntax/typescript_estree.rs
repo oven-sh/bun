@@ -1,12 +1,12 @@
-//! The errors of typescript-estree: `checkSyntaxError`, `checkModifiers`, and what `Converter` throws itself.
+//! typescript-estree's errors: `checkSyntaxError`, `checkModifiers`, and what `Converter` throws itself.
 //!
-//! TypeScript's parser accepts `interface I { private a }` and leaves the error to the type checker. typescript-estree has no
-//! type checker to leave it to, and repeats a part of those checks as it converts a node.
+//! TypeScript's parser accepts `interface I { private a }` and leaves the error to the type checker. typescript-estree
+//! doesn't run the type checker, so it repeats some of those checks as it converts each node.
 //!
-//! No tree is walked here. Each check goes through the vector of the HIR that has the nodes it is about, and tests what is
-//! cheapest first. Where the HIR has dropped what is wrong, the parser has left a diagnostic, which is translated.
+//! This code doesn't walk the tree. Each check scans the HIR vector that holds its kind of node and runs the cheapest
+//! test first. Where the HIR has dropped the invalid syntax, the parser has left a diagnostic, which is translated.
 //!
-//! It throws at the first node that fails, in the order in which it converts, which is not the order of the source: see
+//! typescript-estree throws at the first node that fails, in conversion order, which isn't source order. See
 //! [`order`](super::order).
 
 use super::SyntaxError;
@@ -22,7 +22,7 @@ use bun_sema::hir::{
     PropKind, StmtKind, UnOp, VarKind,
 };
 
-/// `ts.SyntaxKind` of a node with modifiers, as far as `checkModifiers` tells them apart.
+/// `ts.SyntaxKind` of a node with modifiers, reduced to the kinds `checkModifiers` distinguishes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
     FunctionDeclaration,
@@ -37,13 +37,13 @@ enum Kind {
     IndexSignature,
     TypeParameter,
     Parameter,
-    /// `PropertyAssignment`, `ShorthandPropertyAssignment`: not among `ts.canHaveModifiers`.
+    /// `PropertyAssignment`, `ShorthandPropertyAssignment`. `ts.canHaveModifiers` is false for these.
     PropertyAssignment,
-    /// The others among `ts.canHaveModifiers`.
+    /// The other kinds for which `ts.canHaveModifiers` is true.
     Other,
 }
 
-/// `node.parent`, likewise.
+/// `node.parent`, reduced the same way.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Place {
     /// `ts.isClassLike`
@@ -86,14 +86,14 @@ fn var_kind_text(kind: VarKind) -> &'static str {
 struct Checks<'a> {
     file: &'a File<'a>,
     is_of_prettier: bool,
-    /// The checks that fail, and for each its error.
+    /// The failed checks. `errors` has the matching error at the same index.
     candidates: Vec<Candidate>,
     errors: Vec<SyntaxError>,
 }
 
 const NO_SOURCE: &str = "'source' is not a valid meta-property for keyword 'import'.";
 
-/// `is_of_prettier`: the version that Prettier 3.9 has, which does not look at the values of import attributes.
+/// `is_of_prettier` selects the version bundled with Prettier 3.9, which doesn't check the values of import attributes.
 pub(super) fn first_error<'a>(file: &'a File<'a>, is_of_prettier: bool) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
@@ -125,7 +125,8 @@ impl<'a> Checks<'a> {
         self.fail_at_step(node, 0, at, message);
     }
 
-    /// The same for a check that comes after those of [`Checks::fail`], in the order of `step`.
+    /// Like [`Checks::fail`], for a check that runs after the ones reported with `fail`. Such checks run in `step`
+    /// order.
     fn fail_at_step(&mut self, node: Span, step: u32, at: u32, message: impl Into<Vec<u8>>) {
         self.fail_when(When::First, node, step, at, message);
     }
@@ -138,7 +139,7 @@ impl<'a> Checks<'a> {
         at: u32,
         message: impl Into<Vec<u8>>,
     ) {
-        // What is synthesized from a comment is not syntax.
+        // Nodes synthesized from JSDoc aren't real syntax.
         if !self.file.is_in_jsdoc(at) {
             self.candidates.push(Candidate { node, when, step });
             self.errors.push(SyntaxError {
@@ -167,7 +168,7 @@ impl<'a> Checks<'a> {
             .unwrap_or_default()
     }
 
-    /// `node.getStart()` of an expression, which can be a parenthesis.
+    /// `node.getStart()` of an expression, including any parentheses around it.
     fn start_of(&self, id: hir::ExprId) -> u32 {
         Expr::new(self.file, id).outer_span().start
     }
@@ -182,14 +183,14 @@ impl<'a> Checks<'a> {
         self.file.text().get(at as usize).copied().unwrap_or(0)
     }
 
-    /// Whether the token at `at` is a `StringLiteral`.
+    /// True if the token at `at` is a `StringLiteral`.
     fn is_string_literal(&self, at: u32) -> bool {
         matches!(self.byte(at), b'"' | b'\'')
     }
 
     // ───────────────────────────── modifiers ─────────────────────────────
 
-    /// `checkModifiers`. `decorated`: `nodeCanBeDecorated(node)`, asked if there is a decorator.
+    /// `checkModifiers`. `decorated` is `nodeCanBeDecorated(node)`, called only if there's a decorator.
     fn check_modifiers(
         &mut self,
         owner: (Kind, Place, Span),
@@ -199,7 +200,8 @@ impl<'a> Checks<'a> {
         self.check_modifiers_and(owner, modifiers, decorated, None);
     }
 
-    /// `other`: what is wrong with the node if it has one of these modifiers.
+    /// Like [`Checks::check_modifiers`]. `other` is a set of modifiers and the error to report if the node has one of
+    /// them.
     fn check_modifiers_and(
         &mut self,
         (kind, place, node): (Kind, Place, Span),
@@ -349,7 +351,7 @@ impl<'a> Checks<'a> {
             }
             let node = Span::new(raw.start, raw.loc.end);
             let modifiers = self.modifiers(hir.stmt_modifiers(hir::StmtId(i as u32)));
-            // Those of a class are checked with the class.
+            // A class's modifiers are checked in `classes`.
             if !modifiers.is_empty() && !matches!(raw.kind, StmtKind::Class(_)) {
                 let kind = match raw.kind {
                     StmtKind::Fn(_) => Kind::FunctionDeclaration,
@@ -544,7 +546,7 @@ impl<'a> Checks<'a> {
         }
     }
 
-    // ───────────────────────────── declarations of variables ─────────────────────────────
+    // ───────────────────────────── variable declarations ─────────────────────────────
 
     fn variable_declarations(&mut self) {
         for (i, raw) in self.file.hir.var_decls.iter().enumerate() {
@@ -580,7 +582,7 @@ impl<'a> Checks<'a> {
                 "Declarations with definite assignment assertions must also have type annotations.";
             return self.fail(node, node.start, message);
         }
-        // The parameter of a `catch` is not in a list.
+        // A `catch` parameter isn't in a declaration list.
         if !matches!(statement.kind, StmtKind::Var(_)) {
             return;
         }
@@ -672,7 +674,7 @@ impl<'a> Checks<'a> {
             let node = Span::new(statement.start, statement.loc.end);
             let message = "Interface declaration can only extend an identifier/qualified name with optional type arguments.";
             self.heritage(node, raw.extends, message);
-            // An `implements` without elements leaves nothing in the HIR.
+            // The HIR has no trace of an `implements` without elements.
             if let crate::ast::StmtKind::Interface(it) = Stmt::new(self.file, raw.stmt).kind() {
                 let after_head = it.body_span().start;
                 if self.token_at(after_head) == b"implements" {
@@ -680,7 +682,8 @@ impl<'a> Checks<'a> {
                     self.fail_in_heritage(node, after_head, 0, message);
                 }
             }
-            // The elements of the clauses after the first `extends`. An `extends` among them has a diagnostic.
+            // The elements of the clauses after the first `extends`. The parser has a diagnostic for a second
+            // `extends`.
             let others = hir.ids.get(raw.other_heritage.range()).unwrap_or_default();
             for element in others.iter().filter_map(|&it| hir.types.get(it as usize)) {
                 let keyword = self.file.end_of_token_before(element.pos);
@@ -713,8 +716,8 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// A check of the heritage clauses of `node` fails at `at`. They are checked after everything else about the node, in their
-    /// order. `rank`: the order of the checks that fail at the same place.
+    /// Records that a check of `node`'s heritage clauses fails at `at`. The clauses are checked in source order, after
+    /// everything else about the node. `rank` orders checks that fail at the same offset.
     fn fail_in_heritage(&mut self, node: Span, at: u32, rank: u32, message: impl Into<Vec<u8>>) {
         let step = at
             .saturating_sub(node.start)
@@ -748,7 +751,7 @@ impl<'a> Checks<'a> {
                 (MemberKind::Getter | MemberKind::Setter, _) => Kind::Accessor,
                 (MemberKind::IndexSignature, _) => Kind::IndexSignature,
                 (MemberKind::Constructor, _) => Kind::Other,
-                // Not among `ts.canHaveModifiers`.
+                // `ts.canHaveModifiers` is false for these.
                 (
                     MemberKind::CallSignature
                     | MemberKind::ConstructSignature
@@ -838,7 +841,7 @@ impl<'a> Checks<'a> {
                     );
                 }
                 Kind::MethodDeclaration if is_abstract && has_body => {
-                    // `declarationNameToString`: with the comments before the name.
+                    // `declarationNameToString` includes the comments before the name.
                     let from = self.file.end_of_token_before(raw.name_pos);
                     let text = bun_core::strings::trim_js_whitespace_start(
                         self.file.slice(Span::new(from, name().end)),
@@ -950,7 +953,7 @@ impl<'a> Checks<'a> {
 
     // ───────────────────────────── `<>` ─────────────────────────────
 
-    /// `<>` from `open`, where a list of type parameters can start.
+    /// Reports `<>` at `open`, a position where a type parameter list can start.
     fn empty_type_parameters_at(&mut self, open: u32) {
         let text = self.file.text();
         if self.byte(open) == b'<' && self.byte(skip_trivia(text, open + 1)) == b'>' {
@@ -958,7 +961,8 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// `convertTypeParameters`. The HIR does not tell a list that is empty from none. For a class there is a diagnostic.
+    /// `convertTypeParameters`. The HIR doesn't distinguish an empty list from a missing one, so this looks at the
+    /// text. For a class the parser has a diagnostic.
     fn functions(&mut self) {
         let (hir, bound, text) = (&self.file.hir, &self.file.bound, self.file.text());
         for (i, raw) in hir.fns.iter().enumerate() {
@@ -969,7 +973,7 @@ impl<'a> Checks<'a> {
             if !has_list || !raw.type_params.is_empty() || raw.anchor == 0 {
                 continue;
             }
-            // Before the `(`: a `>`, or something to look behind.
+            // Fast path: the byte before the `(` must be a `>`, or whitespace or a comment that could follow one.
             if !matches!(
                 text.get(raw.anchor as usize - 1),
                 Some(b'>' | b' ' | b'\t' | b'\n' | b'\r' | b'/')
@@ -1055,7 +1059,7 @@ impl<'a> Checks<'a> {
                 else {
                     continue;
                 };
-                // A check of the `ObjectLiteralExpression`, unless it is converted as a pattern.
+                // This is a check of the `ObjectLiteralExpression`, which is skipped if it's converted as a pattern.
                 let object = Expr::new(self.file, object);
                 if !object.is_assignment_target() {
                     self.fail_at_step(
@@ -1099,7 +1103,8 @@ impl<'a> Checks<'a> {
             }
             return;
         }
-        // Nothing else of `bun fmt` wants the expressions by kind, and which error is the first does not count.
+        // Nothing else in `bun fmt` needs the index of expressions by kind, so don't build it. It also doesn't matter
+        // which error comes first.
         for (i, raw) in file.hir.exprs.iter().enumerate() {
             let is_checked = matches!(
                 raw.kind,
@@ -1170,10 +1175,10 @@ impl<'a> Checks<'a> {
                 }
             }
             Some(hir::ExprKind::ImportCall { args }) => {
-                // `import.source()`: the dialect of Babel, in which `bun fmt` has every file parsed, has it.
+                // `import.source()` parses because `bun fmt` parses every file in the Babel dialect, which allows it.
                 if self.is_of_prettier && it.import_call_phase().is_some() {
                     let dot = skip_trivia(file.text(), it.span().start + "import".len() as u32);
-                    // It is `defer` or `source`, or the parser had not taken it. The first letter can be `\u0073` or `\u{73}`.
+                    // The parser only accepts `defer` or `source` here. The first letter can be `\u0073` or `\u{73}`.
                     let is_source = match file
                         .text()
                         .get(skip_trivia(file.text(), dot + 1) as usize..)
@@ -1219,7 +1224,7 @@ impl<'a> Checks<'a> {
         }
     }
 
-    // ───────────────────────────── what there is little of ─────────────────────────────
+    // ───────────────────────────── rare nodes ─────────────────────────────
 
     fn the_rest(&mut self) {
         let hir = &self.file.hir;
@@ -1294,7 +1299,7 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// `ImportAttribute`. Those of an import type are not converted as such.
+    /// `ImportAttribute`. An import type's attributes aren't converted to `ImportAttribute` nodes.
     fn import_attributes(&mut self) {
         let file = self.file;
         for (i, raw) in file.hir.stmts.iter().enumerate() {
@@ -1316,9 +1321,9 @@ impl<'a> Checks<'a> {
         }
     }
 
-    // ───────────────────────────── what the HIR has dropped ─────────────────────────────
+    // ───────────────────────────── syntax the HIR has dropped ─────────────────────────────
 
-    /// The class or the interface whose head `at` is in, and whether it is an interface.
+    /// The class or interface whose head contains `at`, and true if it's an interface.
     fn declaration_with_head(&self, at: u32) -> Option<(Span, bool)> {
         let hir = &self.file.hir;
         let body = |members: hir::Span<hir::MemberId>, end: u32| {
@@ -1370,7 +1375,7 @@ impl<'a> Checks<'a> {
             let Some((node, _)) = checks.declaration_with_head(at) else {
                 return;
             };
-            // That a clause is empty is checked first, and the parser reports one thing about a clause.
+            // typescript-estree checks for an empty clause first, but the parser reports only one error per clause.
             let keyword = checks.token_at(at);
             let is_clause = matches!(keyword, b"extends" | b"implements");
             if is_clause
@@ -1388,7 +1393,7 @@ impl<'a> Checks<'a> {
         match it.code {
             1098 => self.fail_for_empty_list(When::TypeParameters, at),
             1099 => self.fail_for_empty_list(When::TypeArguments, at),
-            // At the end of the keyword.
+            // Reported at the end of the keyword.
             1097 => {
                 let keyword = it.args.first().map_or(&b""[..], |it| &it[..]);
                 let end = match self.file.text().get(..at as usize) {
@@ -1432,7 +1437,7 @@ impl<'a> Checks<'a> {
                 let message = "A class can only implement an identifier/qualified-name with optional type arguments.";
                 in_heritage(self, at, 1, message);
             }
-            // The specifier of a module that is not a string.
+            // A module specifier that isn't a string.
             1141 => {
                 let is_require = (self.file.hir.import_equals.iter()).any(|import| {
                     self.file
@@ -1452,7 +1457,7 @@ impl<'a> Checks<'a> {
                 let Some(start) = self.import_before(at) else {
                     return;
                 };
-                // Not as it is written: `import.\u0061`
+                // The name with escapes decoded: `import.\u0061`
                 let name = it
                     .args
                     .first()
@@ -1465,10 +1470,10 @@ impl<'a> Checks<'a> {
                 .concat();
                 self.fail(Span::new(start, at), start, message);
             }
-            // `import.defer` that is not called: the `(` is missing.
+            // `import.defer` that isn't called, so the `(` is missing.
             1005 if it.args.first().is_some_and(|it| **it == *b"(") => {
                 let end = self.file.end_of_token_before(at);
-                // In the dialect of Babel.
+                // Only in the Babel dialect.
                 if let Some(name) = end.checked_sub("source".len() as u32)
                     && self.file.slice(Span::new(name, end)) == b"source"
                     && let Some(start) = self.import_before(name)
@@ -1481,7 +1486,7 @@ impl<'a> Checks<'a> {
                 if self.file.slice(Span::new(name, end)) == b"defer"
                     && let Some(start) = self.import_before(name)
                 {
-                    // `node.parent.kind !== SyntaxKind.CallExpression`, which an argument passes too.
+                    // `node.parent.kind !== SyntaxKind.CallExpression`, which is also false for an argument of a call.
                     let is_in_call = (self.file.exprs_of_kind(ExprTag::Dot))
                         .find(|it| it.span().start == start && !it.is_parenthesized())
                         .is_some_and(|it| matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call));

@@ -201,7 +201,7 @@ impl<'a> Walker<'_, '_, 'a> {
         });
     }
 
-    /// Whether the rules know about every segment change so far.
+    /// True if every segment change so far has been emitted to the rules.
     #[inline]
     fn is_settled(&self) -> bool {
         self.builder
@@ -442,7 +442,7 @@ impl<'a> Walker<'_, '_, 'a> {
     fn process_code_path_to_exit(&mut self, id: u32) {
         let (node, node_type) = (self.node(id), self.node_type(id));
         if node_type == NodeType::Identifier {
-            // Most nodes are identifiers outside of `try`, with nothing left to tell the rules.
+            // Most nodes are identifiers outside of `try`, with no pending segment changes.
             let is_in_try = self.builder.states.last().is_some_and(State::is_in_try);
             if !is_in_try && self.is_settled() {
                 return;

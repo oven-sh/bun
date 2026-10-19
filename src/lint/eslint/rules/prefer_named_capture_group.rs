@@ -18,8 +18,7 @@ const REQUIRED: Message = Message::new(
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
-/// Whether a position in `pattern` is known to be the same position in the text of `regex_node`,
-/// after its delimiter.
+/// True if an offset in `pattern` is known to be the same offset in `regex_node`'s source text, after its delimiter.
 fn is_written_as_is(pattern: &[u8], regex_node: Expr<'_>) -> bool {
     match regex_node.kind() {
         ExprKind::String(_) => !strings::contains_char(regex_node.text(), b'\\'),
@@ -34,7 +33,7 @@ fn is_written_as_is(pattern: &[u8], regex_node: Expr<'_>) -> bool {
     }
 }
 
-/// `?<tempN>`, where `N` is one more than the highest that `pattern` has.
+/// Returns `?<tempN>`, where `N` is one more than the highest `tempN` in `pattern`.
 fn temporary_group_name(pattern: &[u8]) -> Vec<u8> {
     let mut highest_temp_count = 0.0_f64;
     let mut rest = pattern;
@@ -50,8 +49,7 @@ fn temporary_group_name(pattern: &[u8]) -> Vec<u8> {
     [&b"?<temp"[..], count.as_slice(), b">"].concat()
 }
 
-/// `node`: what has the regular expression, or the call. `regex_node`: what has the regular
-/// expression.
+/// `node` is the regex literal or the `RegExp` call. `regex_node` is the literal or the call's pattern argument.
 fn check_regex<'a>(
     cx: &Cx<'a, PreferNamedCaptureGroup>,
     pattern: &[u8],
@@ -69,9 +67,9 @@ fn check_regex<'a>(
     let in_string = OnceCell::new();
     let group_name = OnceCell::new();
     let unnamed_count = OnceCell::new();
-    // Where the last group starts in `pattern`, in bytes and in UTF-16 units, and the offset in
-    // bytes that `regex_node` has after as many units. The groups come in the order of their `(`,
-    // so that all of them take time in proportion to the texts.
+    // The last group's start in `pattern`, in bytes and in UTF-16 units. `written` tracks the byte offset in
+    // `regex_node` after the same number of units. The groups come in the order of their `(`, so handling all of them
+    // takes time linear in the texts.
     let (mut start, mut utf16_start) = (0, 0);
     let mut written = Utf16Cursor::new(regex_node.text());
     for group in ast.capturing_groups() {
@@ -81,7 +79,7 @@ fn check_regex<'a>(
         let since = pattern.get(start..group.start() as usize).unwrap_or_default();
         utf16_start += regex::utf16_index(since, since.len()) as u32;
         start += since.len();
-        // oxlint points at the group, where it is written, or else at what the pattern is made of.
+        // oxlint points at the group in the source, or at the whole pattern argument if it can't be located.
         let place = match cx.language().is_oxlint {
             true if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) => {
                 let pattern_start = regex_node.span().start + 1;
@@ -112,7 +110,7 @@ fn check_regex<'a>(
     }
 }
 
-/// [`strings::wtf8_offset_of_utf16_index`] for indices that do not decrease.
+/// [`strings::wtf8_offset_of_utf16_index`] for indices that never decrease.
 struct Utf16Cursor<'t> {
     text: &'t [u8],
     at: usize,
@@ -169,7 +167,7 @@ impl Rule for PreferNamedCaptureGroup {
             let Some(regex_node) = call.args().first() else {
                 continue;
             };
-            // For ESLint a literal is the string that it would be made into, for oxlint it is no string.
+            // ESLint treats a regex literal argument as the string it converts to. oxlint doesn't treat it as a string.
             if cx.language().is_oxlint && regex_node.tag() == ExprTag::Regex {
                 continue;
             }

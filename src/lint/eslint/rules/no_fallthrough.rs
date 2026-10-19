@@ -7,7 +7,7 @@ use bun_lint::utils::text;
 /// Disallow fallthrough of `case` statements.
 pub struct NoFallthrough {
     comment_pattern: CommentPattern,
-    /// `commentPattern` as oxlint reads it: in capitals or not.
+    /// `commentPattern` the way oxlint reads it, ignoring case.
     pattern_of_oxlint: Option<Regex>,
     allow_empty_case: bool,
     report_unused_fallthrough_comment: bool,
@@ -20,7 +20,7 @@ const UNUSED_FALLTHROUGH_COMMENT: Message = Message::new(
 const CASE: Message = Message::new("case", "Expected a 'break' statement before 'case'.");
 const DEFAULT: Message = Message::new("default", "Expected a 'break' statement before 'default'.");
 
-/// Without `commentPattern`, a comment has to be one of these for oxlint, in capitals or not.
+/// Without `commentPattern`, oxlint requires a comment to be one of these, ignoring case.
 const COMMENTS_OF_OXLINT: [&[u8]; 4] = [b"falls through", b"fall through", b"fallsthrough", b"fallthrough"];
 
 /// `commentPattern`
@@ -71,7 +71,7 @@ impl CommentPattern {
     }
 }
 
-/// `process.exit()`, `process.abort()`, or, in a file that has been type checked, any call that returns `never`.
+/// True for `process.exit()`, `process.abort()`, or, in a type-checked file, any call that returns `never`.
 fn never_returns(e: Expr) -> bool {
     let Some(call) = e.as_call() else {
         return false;
@@ -83,8 +83,8 @@ fn never_returns(e: Expr) -> bool {
     ends_the_process || e.file().types().is_some() && e.ty().has_flags(TypeFlags::NEVER)
 }
 
-/// Whether the code after `statement` can't run. ESLint's code paths only know `break`, `return`, `throw` and `continue`. This
-/// also knows [calls that never return](never_returns).
+/// True if the code after `statement` can't run. ESLint's code paths only know `break`, `return`, `throw` and
+/// `continue`. This also knows [calls that never return](never_returns).
 fn never_completes(statement: Stmt) -> bool {
     match statement.kind() {
         StmtKind::Break(..) | StmtKind::Return(..) | StmtKind::Throw(..) | StmtKind::Continue(..) => true,
@@ -96,7 +96,7 @@ fn never_completes(statement: Stmt) -> bool {
 }
 
 impl NoFallthrough {
-    /// The comment, if it is a fallthrough comment and not a directive of ESLint.
+    /// Returns the comment if it's a fallthrough comment and not an ESLint directive.
     fn fallthrough_comment<'a>(&self, comment: Option<Token<'a>>, is_oxlint: bool) -> Option<Token<'a>> {
         comment.filter(|comment| {
             let value = comment.comment_value();
@@ -143,7 +143,7 @@ impl NoFallthrough {
             cx.line_of(skip_trivia(cx.text(), end)) > cx.line_of(end) + 1
         };
         let last = previous.body().last();
-        // What follows a `break`, a `return` or a `throw` cannot be reached.
+        // Code after a `break`, `return` or `throw` can't be reached.
         let ends_with_jump = matches!(
             last.map(Stmt::tag),
             Some(StmtTag::Break | StmtTag::Return | StmtTag::Throw | StmtTag::Continue)
@@ -153,7 +153,7 @@ impl NoFallthrough {
         if !may_fall_through && !self.report_unused_fallthrough_comment {
             return;
         }
-        // With an ESLint or oxlint config, only what they take for the end of a case counts.
+        // With an ESLint or oxlint config, only what those tools treat as the end of a case counts.
         let exits = || cx.language().stands_alone && previous.body().iter().any(never_completes);
         let is_switch_exit_reachable = !ends_with_jump && previous.is_end_reachable() && !exits();
         let is_fallthrough = is_switch_exit_reachable && may_fall_through;
@@ -179,8 +179,8 @@ impl NoFallthrough {
     }
 }
 
-/// oxlint points at all that is between the last statement of `previous` and `case`, or the `}` of the block that the
-/// comment is in.
+/// oxlint reports everything between `previous`'s last statement and `case`, or the `}` of the block that contains the
+/// comment.
 fn place_of_oxlint<'a>(previous: Case<'a>, case: Case<'a>, comment: Span) -> Span {
     let (body, end_of_case) = (previous.body(), previous.span().end);
     let block = body.first().filter(|_| body.len() == 1).and_then(|it| Some((it.span(), it.as_block()?)));

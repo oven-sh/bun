@@ -1,5 +1,5 @@
-//! `json` and `agent` with a configuration of oxlint: the bytes of oxlint, but for the words of the messages. Only the rules that
-//! say it as oxlint does have a `help`, a `note` and texts at their labels.
+//! `json` and `agent` with an oxlint config. The output matches oxlint's byte for byte, except for the message texts.
+//! Only rules whose wording matches oxlint's have a `help`, a `note` and label texts.
 
 use super::Meta;
 use super::info::{Position, Source};
@@ -10,7 +10,7 @@ use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
 use std::io::Write;
 
-/// The page of oxlint about the rule. A rule of a plugin in JavaScript has none.
+/// Returns oxlint's docs page for the rule. A JavaScript plugin's rule has none.
 fn url(message: &LintMessage) -> Option<Vec<u8>> {
     let Some(RuleId::Known(rule)) = &message.rule_id else {
         return None;
@@ -18,7 +18,8 @@ fn url(message: &LintMessage) -> Option<Vec<u8>> {
     page_of(rule.plugin, rule.name.as_bytes())
 }
 
-/// A place that oxlint marks, from `start` to `end` in bytes, and what it says there. There is no end line and no end column.
+/// Writes a span that oxlint labels, from byte `start` to byte `end`, with the label's text. There's no end line or end
+/// column.
 fn write_label(out: &mut Vec<u8>, source: &Source, (start, end): (usize, usize), text: &str) {
     out.push(b'{');
     if !text.is_empty() {
@@ -73,7 +74,7 @@ fn write_diagnostic(out: &mut Vec<u8>, source: &Source, message: &LintMessage) {
     out.extend_from_slice(b"]}");
 }
 
-/// `lint_command_info` of oxlint's `JsonOutputFormatter`. It ends with blanks, not with a line break.
+/// `lint_command_info` of oxlint's `JsonOutputFormatter`. It ends with spaces, not with a newline.
 pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     out.extend_from_slice(b"{ \"diagnostics\": [");
     let mut is_first = true;
@@ -97,9 +98,9 @@ pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     );
 }
 
-/// `compact_message`: the words of `str::split_whitespace`, with a blank between them.
+/// `compact_message`: the words from `str::split_whitespace`, joined with single spaces.
 fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
-    // Most texts are that as they are.
+    // Most texts are already in that form.
     let is_plain = strings::index_of_needs_escape_for_java_script_string(text, b'"').is_none();
     let has_more_blanks =
         strings::contains(text, b"  ") || text.starts_with(b" ") || text.ends_with(b" ");
@@ -121,7 +122,7 @@ fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
     };
     for chunk in text.utf8_chunks() {
         let mut rest = chunk.valid();
-        // What is in ASCII of a word at once, any other character alone.
+        // Take a run of ASCII word characters in one step, and any other character by itself.
         while let Some(first) = rest.chars().next() {
             let len = rest.bytes().take_while(u8::is_ascii_graphic).count();
             let Some((part, after)) = rest.split_at_checked(len.max(first.len_utf8())) else {
@@ -136,7 +137,7 @@ fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
     }
 }
 
-/// A line for each problem, and nothing else. A problem without a place has the name of its file and its own severity here.
+/// Writes one line per problem and nothing else. Here a problem without a location keeps its file name and severity.
 pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let source = Source::new(result, meta);

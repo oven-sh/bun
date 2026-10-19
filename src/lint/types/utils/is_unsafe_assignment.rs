@@ -6,19 +6,17 @@ use crate::types::Type;
 use crate::types::tsutils::is_type_reference;
 use smallvec::SmallVec;
 
-/// What [`is_unsafe_assignment`] returns for an assignment that is unsafe.
+/// The result of [`is_unsafe_assignment`] for an unsafe assignment.
 #[derive(Copy, Clone, Debug)]
 pub struct UnsafeAssignment<'a> {
     pub receiver: Type<'a>,
     pub sender: Type<'a>,
 }
 
-/// `isUnsafeAssignment(type, receiver, checker, senderNode)`: whether an `any` is assigned to what
-/// is not `any`, also as a type argument: `Set<any>` to `Set<string>`. `None` is upstream's
-/// `false`.
+/// `isUnsafeAssignment(type, receiver, checker, senderNode)`: checks whether an `any` is assigned to something that
+/// isn't `any`, including as a type argument, like `Set<any>` to `Set<string>`. `None` is upstream's `false`.
 ///
-/// `sender_node`, an [`Expr`] or `None`, is what is assigned: `new Map()` is safe though it is a
-/// `Map<any, any>`.
+/// `sender_node`, an [`Expr`] or `None`, is the assigned value. `new Map()` is safe even though it's a `Map<any, any>`.
 pub fn is_unsafe_assignment<'a>(
     ty: Type<'a>,
     receiver: Type<'a>,
@@ -45,9 +43,8 @@ fn is_unsafe_assignment_worker<'a>(
             });
         }
     }
-    // Only a pair of type references is looked into, so no other pair needs to be remembered.
-    // tsgolint leaves out a deferred one, which is what an alias of a tuple, of an array or of an
-    // instantiation is: `type A = Set<string>`.
+    // Only a pair of type references is compared further, so no other pair needs to be remembered. tsgolint skips a
+    // deferred one, which is what an alias of a tuple, an array or an instantiation is: `type A = Set<string>`.
     let is_looked_into = |it: Type<'a>| match it.file().language().is_oxlint {
         true => it.is_non_deferred_type_reference(),
         false => is_type_reference(it),
@@ -60,8 +57,7 @@ fn is_unsafe_assignment_worker<'a>(
     }
     visited.push((ty, receiver));
 
-    // References to different types are assumed to be safe: their type arguments need not
-    // correspond.
+    // References to different types are assumed to be safe, since their type arguments don't have to correspond.
     if !have_the_same_target(ty, receiver) {
         return None;
     }
@@ -83,7 +79,7 @@ fn is_unsafe_assignment_worker<'a>(
     None
 }
 
-/// `type.target === receiver.target`. TypeScript has one target for all tuple types of a shape.
+/// `type.target === receiver.target`. TypeScript has one target for all tuple types of the same shape.
 fn have_the_same_target<'a>(ty: Type<'a>, receiver: Type<'a>) -> bool {
     ty.has_same_target_as(receiver)
 }

@@ -10,7 +10,7 @@ const UNEXPECTED: Message = Message::new(
     "unexpected",
     "Unexpected control character(s) in regular expression: {{controlChars}}.",
 );
-/// What oxlint says instead.
+/// oxlint's messages.
 const CONTROL_CHARACTER: Message = Message::new("unexpected", "Unexpected control character");
 const CONTROL_CHARACTERS: Message = Message::new("unexpected", "Unexpected control characters");
 
@@ -44,7 +44,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
         return;
     }
     let mut collector = Collector { source: pattern, control_chars: Vec::new() };
-    // What precedes a syntax error counts.
+    // Characters before a syntax error still count.
     _ = regex::validate_pattern(pattern, Mode::of_flags(flags), regex::Options::default(), &mut collector);
     if collector.control_chars.is_empty() {
         return;
@@ -62,7 +62,7 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
 /// oxlint's `ControlCharacterFinder`
 #[derive(Default)]
 struct Finder {
-    /// With where each of them is in the pattern.
+    /// Each with its start and end in the pattern.
     control_chars: Vec<(u8, u32, u32)>,
     capture_groups: u32,
 }
@@ -83,9 +83,9 @@ impl Handler for Finder {
     }
 }
 
-/// oxlint goes by how a character is written in the file: as `\x1b` or `\u001b`, in a string too, or so that the first
-/// character after the backslashes is the value as a hexadecimal digit, which `\1` without a group is, and `\cL`. It points at
-/// each of them.
+/// oxlint goes by how a character is written in the file. It has to be written as `\x1b` or `\u001b`, also in a string,
+/// or the first character after the backslashes has to be the value as a hexadecimal digit, which is true of `\1`
+/// without a group and of `\cL`. It labels each of them.
 fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
     let Some(pattern) = run_on_regex_node(e) else {
         return;

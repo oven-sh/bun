@@ -1,4 +1,4 @@
-//! `eslint-formatter-unix`, and what oxlint calls `unix`.
+//! `eslint-formatter-unix`, and oxlint's `unix`.
 
 use super::Meta;
 use super::info::Source;
@@ -49,7 +49,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
     }
 }
 
-/// ` [Warning/eslint(no-debugger)]` and the end of the line
+/// Writes ` [Warning/eslint(no-debugger)]` and the newline.
 fn write_end(out: &mut Vec<u8>, message: &LintMessage) {
     out.extend_from_slice(match is_error(message) {
         true => b" [Error",
@@ -62,12 +62,13 @@ fn write_end(out: &mut Vec<u8>, message: &LintMessage) {
     out.extend_from_slice(b"]\n");
 }
 
-/// [`write_end`], made once for each rule that is built in and for errors and warnings.
+/// Caches [`write_end`]'s output per built-in rule and severity.
 #[derive(Default)]
 struct Ends {
-    /// One after the other.
+    /// All the cached outputs, concatenated.
     text: Vec<u8>,
-    /// By where the rule is, plus 1 for an error: from where to where its end is in `text`.
+    /// Keyed by the address of the rule's `Meta`, plus 1 for an error. The value is the output's start and end in
+    /// `text`.
     places: FxHashMap<usize, (u32, u32)>,
 }
 
@@ -95,7 +96,7 @@ impl Ends {
     }
 }
 
-/// With the end of the last line.
+/// Includes the final newline.
 pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let (mut total, mut ends) = (0, Ends::default());
     for result in results.iter().filter(|it| !it.messages.is_empty()) {

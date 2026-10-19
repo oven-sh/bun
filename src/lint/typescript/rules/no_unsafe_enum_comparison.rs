@@ -19,7 +19,7 @@ const MISMATCHED_CONDITION: Message = Message::new(
 const REPLACE_VALUE_WITH_ENUM: Message =
     Message::new("replaceValueWithEnum", "Replace with an enum value comparison.");
 
-/// How the member of the enum `enum_type` that has the static value of `value` is written.
+/// Returns how to write the member of the enum `enum_type` that has `value`'s static value.
 fn enum_key_of_value<'a>(enum_type: Type<'a>, value: Expr<'a>) -> Option<Vec<u8>> {
     let value = get_static_value(value, None)?;
     let literal = match &value {
@@ -71,8 +71,7 @@ impl Rule for NoUnsafeEnumComparison {
             labels.push(node, "");
         });
         report.suggest(REPLACE_VALUE_WITH_ENUM, |fixer| {
-            // `Fruit.Apple === 'apple'` to `Fruit.Apple === Fruit.Apple`, or the same for the
-            // left side.
+            // `Fruit.Apple === 'apple'` becomes `Fruit.Apple === Fruit.Apple`, and likewise for the left side.
             if let Some(left_enum_key) = enum_key_of_value(left_type, right) {
                 return Some(fixer.replace(right, left_enum_key));
             }
@@ -92,7 +91,7 @@ impl Rule for NoUnsafeEnumComparison {
             return;
         };
         if is_mismatched_enum_comparison_types(discriminant.ty(), test.ty()) {
-            // oxlint points at what the `switch` compares.
+            // oxlint points at the `switch`'s discriminant.
             let place = if cx.language().is_oxlint { discriminant.outer_span() } else { node.span() };
             cx.report(place, MISMATCHED_CASE).comments_apply_at(node.span()).labels_with(|labels| {
                 labels.first(format!("Switch value: {}", bstr::BStr::new(&discriminant.ty().to_text())));

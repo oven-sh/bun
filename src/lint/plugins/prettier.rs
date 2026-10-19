@@ -1,7 +1,8 @@
-//! What `prettier/prettier` and `bun/format` share: all but whose text is wanted.
+//! The code shared by `prettier/prettier` and `bun/format`, which is everything except the choice of formatter to
+//! match.
 //!
-//! The reports are those of eslint-plugin-prettier 5.5.6, which cuts the difference between the
-//! file and the formatted text with `generateDifferences()` of prettier-linter-helpers 1.0.1.
+//! The reports match eslint-plugin-prettier 5.5.6, which splits the difference between the file and the formatted text
+//! with `generateDifferences()` from prettier-linter-helpers 1.0.1.
 
 use bun_core::strings;
 use bun_lint::formats::{Formatted, Like, Reason, Request};
@@ -33,8 +34,8 @@ fn show_invisibles(shown: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The code units of UTF-16 that `bytes` are in JavaScript, and for each where in `bytes` its
-/// character starts. Then the end.
+/// `bytes` as UTF-16 code units, as in JavaScript, and for each unit the offset in `bytes` where its character starts.
+/// The offsets end with `bytes.len()`.
 fn code_units(bytes: &[u8]) -> (Vec<u16>, Vec<usize>) {
     let mut units = Vec::with_capacity(bytes.len());
     let mut starts = Vec::with_capacity(bytes.len() + 1);
@@ -54,7 +55,7 @@ fn code_units(bytes: &[u8]) -> (Vec<u16>, Vec<usize>) {
     (units, starts)
 }
 
-/// `generateDifferences()`: what of `source` is to be replaced with what of `formatted`, in bytes.
+/// `generateDifferences()`: which byte ranges of `source` to replace with which byte ranges of `formatted`.
 fn differences(source: &[u8], formatted: &[u8]) -> Vec<Hunk> {
     let mut differ = CharDiff::default();
     let is_ascii = |it: &[u8]| strings::first_non_ascii(it).is_none();
@@ -72,7 +73,7 @@ fn differences(source: &[u8], formatted: &[u8]) -> Vec<Hunk> {
         });
         in_bytes.collect()
     };
-    // What two of them have between them is replaced with them, unless a line ends there.
+    // Merge two hunks, together with the text between them, unless that text has a line break.
     hunks.dedup_by(|next, last| {
         let between = source.get(last.a_hi..next.a_lo);
         let joins = between.is_some_and(|it| !strings::contains_js_line_break(it));
@@ -84,7 +85,7 @@ fn differences(source: &[u8], formatted: &[u8]) -> Vec<Hunk> {
     hunks
 }
 
-/// The options of either rule.
+/// The options, which are the same for both rules.
 pub(crate) struct Settings {
     options: Option<Json>,
     uses_configuration: bool,
@@ -101,7 +102,8 @@ impl Settings {
         }
     }
 
-    /// The formatted text of `source`, which is all of `file`, and where the two differ. `None`: nowhere.
+    /// Returns the formatted text of `source`, which is the whole text of `file`, and the hunks where the two differ.
+    /// `None` if they don't differ.
     fn compare(
         &self,
         like: Like,
@@ -134,7 +136,7 @@ impl Settings {
 
     pub(crate) fn check<R: Rule>(&self, like: Like, cx: &Cx<'_, R>) {
         let file = cx.file();
-        // ESLint's text is without the byte order mark.
+        // ESLint's text doesn't include the byte order mark.
         let skipped = if file.has_bom() { 3 } else { 0 };
         let source = file.text().get(skipped..).unwrap_or_default();
         let (formatted, hunks) = match self.compare(like, file, source) {
@@ -145,7 +147,7 @@ impl Settings {
             }
             // There's no package rule to fall back to, so report that the file wasn't checked.
             Err(reason) => {
-                // Behind the comments at the top, one of which may turn the rule off.
+                // Report after the comments at the top, one of which may turn the rule off.
                 let at = cx.program_span().start;
                 cx.report(Span::new(at, at), UNCHECKED)
                     .data("reason", reason.text());

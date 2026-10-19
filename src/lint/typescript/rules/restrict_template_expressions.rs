@@ -11,8 +11,7 @@ pub struct RestrictTemplateExpressions {
     allow: Vec<TypeOrValueSpecifier>,
     /// True if `allow` isn't configured.
     allows_the_default: bool,
-    /// `string`, and what `allowAny`, `allowBoolean`, `allowNullish`, `allowNumber` and `allowNever`
-    /// add to it.
+    /// `string`, plus the flags that `allowAny`, `allowBoolean`, `allowNullish`, `allowNumber` and `allowNever` add.
     allowed_flags: TypeFlags,
     allow_array: bool,
     allow_reg_exp: bool,
@@ -36,7 +35,7 @@ fn is_allowed_global(ty: Type) -> bool {
 }
 
 impl RestrictTemplateExpressions {
-    /// `on_the_way`: the arrays that `inner_type` is in. `type A = A[]` has no end.
+    /// `on_the_way` holds the array types around `inner_type`, because `type A = A[]` would recurse forever.
     fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> bool {
         if inner_type.is_unresolved() || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return true;
@@ -76,7 +75,8 @@ impl Rule for RestrictTemplateExpressions {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED.union(Presets::STRICT_TYPE_CHECKED))
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::Template]);
-    /// Whether a type is allowed. Each constituent of a union is looked at, and many expressions have the same type.
+    /// Caches whether a type is allowed. The check visits each constituent of a union, and many expressions have the
+    /// same type.
     type State<'a> = IdMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {

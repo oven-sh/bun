@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 
 /// Disallow `import()` that runs while the module is evaluated.
 ///
-/// Not the `import()` by which Vitest is told which module to mock: see `vi.mock()` in its API reference.
+/// An `import()` that tells Vitest which module to mock is allowed. See `vi.mock()` in its API reference.
 pub struct NoEagerDynamicImport;
 
 const EAGER_IMPORT: Message = Message::new(

@@ -15,7 +15,8 @@ const CATCH_ERROR_NAME: Message =
     Message::new("", "The catch parameter \"{{caught_ident}}\" should be named \"{{expected_name}}\"");
 
 impl CatchErrorName {
-    /// The name itself, with underscores after it, or qualified: `error_`, `diagnosticError`, `diagnostic_error`.
+    /// Allows the name itself, with trailing underscores, or qualified: `error_`, `diagnosticError`,
+    /// `diagnostic_error`.
     fn is_name_allowed(&self, name: &[u8]) -> bool {
         if name == self.name.as_bytes() {
             return true;
@@ -45,7 +46,7 @@ impl CatchErrorName {
         let Some(symbol) = pat.symbol() else {
             return;
         };
-        // Not what the default value of a parameter is written to.
+        // Excludes the write reference that a parameter's default value creates.
         let references = || symbol.references().filter(|it| !matches!(it.node(), Node::Pat(_)));
         if name.bytes().starts_with(b"_") && references().next().is_none() {
             return;
@@ -54,7 +55,7 @@ impl CatchErrorName {
         cx.report(pat, CATCH_ERROR_NAME)
             .data("caught_ident", name)
             .data("expected_name", self.name.clone())
-            // Of one replacement oxlint says what it says of any.
+            // For a fix with a single replacement, oxlint prints its generic help instead.
             .help_with(|| match references().next() {
                 Some(_) if self.can_rename(symbol) => format!("Rename `{caught}` to `{}`", self.name),
                 _ => String::new(),
@@ -72,7 +73,7 @@ impl CatchErrorName {
             });
     }
 
-    /// `argument`: what is called with the error.
+    /// `argument` is the callback that receives the error.
     fn check_function_arguments<'a>(&self, argument: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
         if let Some(param) = argument.and_then(Expr::as_fn).and_then(|it| it.params().first())
             && !param.is_rest()

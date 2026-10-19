@@ -14,8 +14,7 @@ enum CheckLoops {
 
 const UNEXPECTED: Message = Message::new("unexpected", "Unexpected constant condition.");
 
-/// Whether the generator that `statement` is in can be suspended between `from` and the end of
-/// `statement`.
+/// True if the generator that contains `statement` can be suspended between `from` and the end of `statement`.
 fn has_yield_from(statement: Stmt, from: u32) -> bool {
     let within = Span::new(from, statement.span().end);
     Node::Stmt(statement)
@@ -53,7 +52,7 @@ impl NoConstantCondition {
             StmtKind::For { test: Some(test), .. } => (test, test.span().start),
             _ => return,
         };
-        // oxlint looks for a `yield` only with the default option.
+        // oxlint only looks for a `yield` with the default option.
         let looks_for_yield = !cx.language().is_oxlint || self.check_loops == CheckLoops::AllExceptWhileTrue;
         if ast_utils::is_constant(test, true) && !(looks_for_yield && has_yield_from(statement, from)) {
             cx.report(place(test), UNEXPECTED);

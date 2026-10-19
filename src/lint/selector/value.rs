@@ -1,5 +1,4 @@
-//! The values of JavaScript that following a path from a node leads to, and what JavaScript's
-//! operators make of them.
+//! The JavaScript values that a path from a node can lead to, and how JavaScript's operators treat them.
 
 use super::program::{JsType, Key, Literal, Names, Property};
 use crate::ast::File;
@@ -15,7 +14,7 @@ pub(super) enum Val<'a> {
     Bool(bool),
     Number(f64),
     Str(&'a [u8]),
-    /// A string that is not written anywhere.
+    /// A string that doesn't appear anywhere in the source.
     Short(Short),
     /// In decimal.
     BigInt(&'a [u8]),
@@ -25,8 +24,8 @@ pub(super) enum Val<'a> {
     },
     Object(Object<'a>),
     Node(VNode<'a>),
-    /// The list that this field of this node is. It is computed again when it is looked at: a list is several times the size of
-    /// everything else here, and few selectors look at one.
+    /// The list in this field of this node. It's recomputed each time it's needed, because a list
+    /// is several times the size of everything else here and few selectors look at one.
     List(VNode<'a>, &'static FieldEntry),
     /// `node.range`
     Range(VNode<'a>),
@@ -79,7 +78,7 @@ impl Short {
     }
 }
 
-/// `offset` as ESLint counts: in UTF-16 code units, without a byte order mark.
+/// `offset` the way ESLint counts: in UTF-16 code units, not counting a byte order mark.
 fn utf16_offset(file: &File, offset: u32) -> f64 {
     let units = bun_core::strings::wtf8_len_utf16(file.slice(Span::new(0, offset)));
     f64::from(units.saturating_sub(u32::from(file.has_bom())))
@@ -103,7 +102,7 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
 }
 
 impl<'a> Val<'a> {
-    /// The value of the field of `entry` in `node`, which is of the type that `entry` is of.
+    /// The value of `entry`'s field in `node`. `node` must be of the type that `entry` belongs to.
     #[inline]
     pub(super) fn of_field(
         node: VNode<'a>,
@@ -127,7 +126,7 @@ impl<'a> Val<'a> {
         }
     }
 
-    /// The elements, if it is a list.
+    /// The elements, if it's a list.
     pub(super) fn elements(self) -> Option<Nodes<'a>> {
         match self {
             Val::List(node, entry) => match (entry.get)(node) {
@@ -156,7 +155,7 @@ impl<'a> Val<'a> {
         }
     }
 
-    /// `value[key]`, for a value that is not nullish.
+    /// `value[key]`, for a value that isn't nullish.
     pub(super) fn get(self, key: Key, dialect: Dialect) -> Val<'a> {
         use Property as P;
         // oxlint's nodes have `start` and `end` too.
@@ -248,7 +247,7 @@ impl<'a> Val<'a> {
         }
     }
 
-    /// `String(value)` of an array.
+    /// `String(value)` for an array.
     fn joined(self) -> Vec<u8> {
         if let Val::Range(node) = self {
             let (file, span) = (node.file(), node.span());

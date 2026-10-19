@@ -23,7 +23,7 @@ const OXLINT_STRING_IN_REF_DEPRECATED: Message =
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The component that something is in, as oxlint finds it.
+    /// Caches a node's enclosing component, as oxlint finds it.
     component_around: AncestorMemo<'a, Node<'a>>,
     pragmas: OnceCell<Pragmas<'a>>,
 }
@@ -43,7 +43,7 @@ impl Rule for NoStringRefs {
         if file.mentions("ref") {
             on = on.exprs(&[ExprTag::Jsx]);
         }
-        // upstream takes a private name for its text, and lets `this.refs` be from React 18.3 on.
+        // upstream treats a private name like the plain name, and allows `this.refs` from React 18.3 on.
         if (file.mentions("refs") || (!is_oxlint && file.mentions("#refs")))
             && file.has_exprs([ExprTag::This])
             && (is_oxlint || get_react_version_from_context(file) < (18, 3, 0))
@@ -54,7 +54,7 @@ impl Rule for NoStringRefs {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        // oxlint passes over a file that cannot have JSX.
+        // oxlint skips files that can't contain JSX.
         (!file.language().is_oxlint || is_jsx(file)).then(State::default)
     }
 
@@ -85,7 +85,8 @@ impl NoStringRefs {
         };
         let is_oxlint = cx.language().is_oxlint;
         let node = Node::Expr(member);
-        // oxlint has a node for parentheses and knows `this["refs"]`, upstream knows `this[refs]` and `this.#refs`.
+        // oxlint's AST has a node for parentheses, and it accepts `this["refs"]`. upstream accepts `this[refs]` and
+        // `this.#refs`.
         let is_refs = if is_oxlint {
             !object.is_parenthesized()
                 && static_property_name(member).is_some_and(|name| name.is("refs"))
@@ -97,7 +98,7 @@ impl NoStringRefs {
         if !is_refs {
             return;
         }
-        // oxlint goes up the parents, upstream up the scopes.
+        // oxlint walks up the parents, upstream walks up the scopes.
         let is_in_component = if is_oxlint {
             get_parent_component(node, &mut cx.state.component_around).is_some()
         } else {
@@ -115,7 +116,7 @@ impl NoStringRefs {
         }
         match get_prop_value(attribute) {
             Some(AttributeValue::StringLiteral(_)) => true,
-            // oxlint has a node for parentheses.
+            // oxlint's AST has a node for parentheses.
             Some(AttributeValue::ExpressionContainer(e)) if !(is_oxlint && e.is_parenthesized()) => {
                 e.tag() == ExprTag::String || self.no_template_literals && e.tag() == ExprTag::Template
             }

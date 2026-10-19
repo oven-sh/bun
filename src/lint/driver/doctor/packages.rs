@@ -20,7 +20,7 @@ macro_rules! pretty {
 /// Places that can use a package but aren't checked.
 const NOT_CHECKED: [&str; 3] = ["other tools' configs", "CI files", "Git hooks"];
 
-/// Whether `name` is `family-..`, `@scope/family` or `@scope/family-..`.
+/// True if `name` is `family-..`, `@scope/family` or `@scope/family-..`.
 fn is_of_family(name: &[u8], family: &[u8]) -> bool {
     let (is_scoped, own) = match (name.first(), strings::index_of_char_usize(name, b'/')) {
         (Some(b'@'), Some(slash)) => (true, &name[slash + 1..]),
@@ -33,7 +33,8 @@ fn is_of_family(name: &[u8], family: &[u8]) -> bool {
     }
 }
 
-/// Whether the package `name` only exists to serve ESLint or oxlint. `vite-plugin-eslint` doesn't, because it serves Vite.
+/// True if the package `name` only exists to serve ESLint or oxlint. `vite-plugin-eslint` doesn't, because it serves
+/// Vite.
 pub(crate) fn is_for_linting(name: &[u8]) -> bool {
     let families: [&[u8]; 3] = [
         b"eslint-plugin",
@@ -48,7 +49,7 @@ pub(crate) fn is_for_linting(name: &[u8]) -> bool {
         || families.iter().any(|it| is_of_family(name, it))
 }
 
-/// The same for Prettier and oxfmt.
+/// Same for Prettier and oxfmt.
 pub(crate) fn is_for_formatting(name: &[u8]) -> bool {
     let families: [&[u8]; 2] = [b"prettier-plugin", b"prettier-config"];
     matches!(name, b"prettier" | b"oxfmt")
@@ -65,7 +66,7 @@ pub(crate) enum Need {
     Files,
     /// `bun fmt` skips files because of a plugin it doesn't have. Until that changes, only the old tool formats them.
     SkippedFiles,
-    /// The config file can't be loaded without it. Holds the file's name as shown to the user.
+    /// The config file can't be loaded without it. The value is the file's name as shown to the user.
     Configuration(Vec<u8>),
     /// There's no config file, so having this dependency is what picks whose defaults apply.
     Defaults,
@@ -140,7 +141,7 @@ fn required_by(installed: &Json) -> Vec<Vec<u8>> {
     names
 }
 
-/// Whether any word of the shell command `command` is `name` or a path ending in `name`.
+/// True if any word of the shell command `command` is `name` or a path ending in `name`.
 fn runs(command: &[u8], name: &[u8]) -> bool {
     strings::tokenize_any(command, b" \t\n;&|()\"'")
         .any(|word| word == name || paths::basename(word) == name)
@@ -174,8 +175,8 @@ pub(crate) struct Packages {
 }
 
 impl Packages {
-    /// Reads the `package.json` closest to `cwd`. `is_of_a_tool` says whether a package only exists to serve the replaced
-    /// tool. `need` says why a run still needs a package, if it does.
+    /// Reads the `package.json` closest to `cwd`. `is_of_a_tool` says whether a package only exists to serve the
+    /// replaced tool. `need` says why a run still needs a package, if it does.
     #[optimize(size)]
     pub(crate) fn new(
         cwd: &[u8],

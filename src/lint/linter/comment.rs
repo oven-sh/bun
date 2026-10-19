@@ -1,11 +1,11 @@
-//! `ConfigCommentParser` of `@eslint/plugin-kit`: how the text of a directive comment is read.
+//! `ConfigCommentParser` from `@eslint/plugin-kit`: parses the text of a directive comment.
 
 use super::{json_v8, levn};
 use crate::options::Json;
 use bun_core::strings;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// A list of fewer names than this is searched as it is.
+/// A list with fewer names than this gets a linear search.
 const FEW: usize = 16;
 
 /// `/* label value -- justification */`. All are slices of the text that was parsed.
@@ -16,12 +16,13 @@ pub(crate) struct DirectiveComment<'t> {
     pub(crate) justification: &'t [u8],
 }
 
-/// What is white space in a directive comment. oxlint is written in Rust, whose `char::is_whitespace` has U+0085 and not U+FEFF.
+/// The definition of whitespace in a directive comment. oxlint is written in Rust, whose `char::is_whitespace` includes
+/// U+0085 but not U+FEFF.
 #[derive(Copy, Clone)]
 pub(crate) enum Space {
-    /// What `\s` matches.
+    /// The characters that `\s` matches.
     Js,
-    /// The property `White_Space`.
+    /// The `White_Space` property.
     Unicode,
 }
 
@@ -45,7 +46,7 @@ impl Space {
     }
 }
 
-/// Where the dashes of the first `\s-{2,}\s` start and end.
+/// The start and end of the dashes in the first `\s-{2,}\s`.
 fn find_justification_separator(text: &[u8], space: Space) -> Option<(usize, usize)> {
     let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], b"--") {
@@ -62,7 +63,7 @@ fn find_justification_separator(text: &[u8], space: Space) -> Option<(usize, usi
     None
 }
 
-/// `parseDirective`. `text`: the comment without its delimiters.
+/// `parseDirective`. `text` is the comment without its delimiters.
 pub(crate) fn parse_directive(text: &[u8], space: Space) -> Option<DirectiveComment<'_>> {
     let (directive, justification) = match find_justification_separator(text, space) {
         Some((start, end)) => (space.trim(&text[..start]), space.trim(&text[end..])),
@@ -94,10 +95,10 @@ pub(crate) fn parse_directive(text: &[u8], space: Space) -> Option<DirectiveComm
     })
 }
 
-/// `parseListConfig`: the distinct names of a list that is separated by commas, in order.
+/// `parseListConfig`: the distinct names in a comma-separated list, in order.
 pub(crate) fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
     let mut names: Vec<&[u8]> = Vec::new();
-    // All of them, once there are many.
+    // All the names, once there are many.
     let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
     for name in strings::split(text, b",") {
         let name = match strings::trim_js_whitespace(name) {
@@ -123,8 +124,7 @@ pub(crate) fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
     names
 }
 
-/// `parseStringConfig`: `name` or `name:value`, separated by commas or white space. The last value
-/// of a name counts.
+/// `parseStringConfig`: `name` or `name:value`, separated by commas or whitespace. A name's last value wins.
 pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     let text = strings::trim_js_whitespace(text);
     // `.replace(/(?<!\s)\s*([:,])\s*/gu, "$1")`
@@ -151,7 +151,7 @@ pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)
     }
     // `.split(/\s|,+/u)`
     let mut items: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
-    // Where each is in `items`, once there are many.
+    // Each name's index in `items`, once there are many.
     let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
     let mut at = 0;
     while at < collapsed.len() {
@@ -202,7 +202,7 @@ fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'/')
 }
 
-/// What ESLint makes of a comment without commas before it gives it to `JSON.parse`.
+/// How ESLint rewrites a comment without commas before passing it to `JSON.parse`.
 fn normalize_for_json(text: &[u8]) -> Vec<u8> {
     // `.replace(/(?<![-a-zA-Z0-9/])([-a-zA-Z0-9/]+):/gu, '"$1":')`
     let mut quoted = Vec::with_capacity(text.len() + 16);
@@ -210,7 +210,7 @@ fn normalize_for_json(text: &[u8]) -> Vec<u8> {
     while at < text.len() {
         let name_at = |at: usize| text[at..].iter().take_while(|b| is_name_byte(**b)).count();
         let mut run = name_at(at);
-        // The colon of `bun:test/no-focused-tests` is part of the name, in quotes or not.
+        // The colon in `bun:test/no-focused-tests` is part of the name, quoted or not.
         if text[at..].starts_with(b"bun:test/") && run == 3 {
             run += 1 + name_at(at + 4);
         }
@@ -249,7 +249,7 @@ fn normalize_for_json(text: &[u8]) -> Vec<u8> {
     quoted
 }
 
-/// `parseJSONLikeConfig`. `Err`: the message.
+/// `parseJSONLikeConfig`. `Err` holds the message.
 pub(crate) fn parse_json_like_config(text: &[u8]) -> Result<Vec<(Vec<u8>, Json)>, Vec<u8>> {
     if let Some(items) = levn::parse_object(text) {
         let severity_of = |value: &Json| match value {

@@ -9,7 +9,7 @@ pub struct NoRestrictedText {
 struct Pattern {
     regex: Regex,
     message: Option<Box<[u8]>>,
-    /// Where it looks: a bit for each [`Place`].
+    /// Where the pattern applies, with one bit per [`Place`].
     places: u8,
 }
 
@@ -33,7 +33,7 @@ const PLACES: [(&str, Place); 5] = [
 const RESTRICTED: Message = Message::new("restricted", "`{{text}}` matches the restricted pattern `{{pattern}}`.");
 const RESTRICTED_WITH_MESSAGE: Message = Message::new("restrictedWithMessage", "{{message}}");
 
-/// The regular expression of an element of `patterns`.
+/// Compiles the regular expression of one `patterns` element.
 fn regex_of(pattern: &Object) -> Result<Regex, Vec<u8>> {
     let source = pattern.str("pattern").unwrap_or_default();
     Regex::new(source, pattern.str("flags").unwrap_or("u"))
@@ -49,7 +49,7 @@ impl NoRestrictedText {
         self.patterns.iter().any(|it| it.places & (1 << place as u8) != 0)
     }
 
-    /// `span`: text as it is written, without what is around it.
+    /// `span` covers the raw text, without its delimiters.
     fn check<'a>(&self, span: Span, place: Place, cx: &Cx<'a, Self>) {
         let text = cx.file().slice(span);
         for pattern in self.patterns.iter().filter(|it| it.places & (1 << place as u8) != 0) {
@@ -124,7 +124,7 @@ impl Rule for NoRestrictedText {
                     return;
                 };
                 for at in 0..template.quasi_count() {
-                    // After the backtick or the `}`.
+                    // The text starts after the backtick or the `}`.
                     let start = template.quasi_span(at).start + 1;
                     self.check(Span::new(start, start + template.raw(at).len() as u32), Place::Templates, cx);
                 }

@@ -3,12 +3,12 @@ use bun_lint::rule::Plugin;
 use bun_lint_oxlint::ast_util::is_react_hook;
 use rustc_hash::FxHashMap;
 
-/// Require the hooks of React to be imported by name: `useState()`, not `React.useState()`.
+/// Require React hooks to be imported by name: `useState()`, not `React.useState()`.
 pub struct ReactNoNamespaceHooks;
 
 const NAMESPACE_HOOK: Message = Message::new("namespaceHook", "Import `{{name}}` by name from \"react\".");
 
-/// The imports from `"react"` that are not only of types.
+/// Returns the imports from `"react"`, except `import type`.
 fn imports_of_react<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Stmt<'a>, Import<'a>)> {
     file.stmts_of_kind(StmtTag::Import).filter_map(|statement| match statement.kind() {
         StmtKind::Import(import) if import.spec().is("react") && !import.is_type_only() => Some((statement, import)),
@@ -16,7 +16,7 @@ fn imports_of_react<'a>(file: &'a File<'a>) -> impl Iterator<Item = (Stmt<'a>, I
     })
 }
 
-/// The `React.useState` and the like that the file has, in the order of the source.
+/// Returns every `React.useState` and the like in the file, in source order.
 fn namespace_hooks<'a>(file: &'a File<'a>) -> Vec<Expr<'a>> {
     let scope = file.top_level_scope();
     let objects = imports_of_react(file).flat_map(|it| [it.1.default(), it.1.namespace()]).flatten();
@@ -30,7 +30,7 @@ fn namespace_hooks<'a>(file: &'a File<'a>) -> Vec<Expr<'a>> {
     all
 }
 
-/// The `useState` of `React.useState`.
+/// Returns the `useState` in `React.useState`.
 fn hook_name(member: Expr<'_>) -> Option<Name<'_>> {
     match member.kind() {
         ExprKind::Dot { name, .. } => Some(name.name()),
@@ -38,7 +38,7 @@ fn hook_name(member: Expr<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// What adds `names` to what is imported from `"react"`.
+/// Returns the fix that adds `names` to the imports from `"react"`.
 fn import_fix<'a>(file: &'a File<'a>, names: &[Name<'a>], fixer: Fixer<'a>) -> Option<Fix> {
     let list = names.iter().map(|it| it.bytes()).collect::<Vec<_>>().join(&b", "[..]);
     if let Some(last) = imports_of_react(file).find_map(|it| it.1.named().last()) {
@@ -73,7 +73,7 @@ impl Rule for ReactNoNamespaceHooks {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let hooks: Vec<_> = namespace_hooks(file).into_iter().filter_map(|it| Some((it, hook_name(it)?))).collect();
-        // What each is called where it is imported by name.
+        // Maps each hook that's already imported by name to its local name.
         let specifiers = imports_of_react(file).flat_map(|it| it.1.named()).filter(|it| !it.is_type_only());
         let imported: FxHashMap<&[u8], Name> =
             specifiers.map(|it| (it.imported().bytes(), it.local().name())).collect();
@@ -82,7 +82,7 @@ impl Rule for ReactNoNamespaceHooks {
         let mut missing: Vec<Name> = lacking().map(|it| it.1).collect();
         utils::sort::sort_unstable_by_key(&mut missing, |it| it.bytes());
         missing.dedup();
-        // A name that means something else where it is used cannot be imported.
+        // Can't import a name that already refers to something else where the hook is used.
         let can_import = lacking().all(|it| means(it.1, it.0).is_none());
         for &(hook, name) in &hooks {
             let report = cx.report(hook, NAMESPACE_HOOK).data("name", name);

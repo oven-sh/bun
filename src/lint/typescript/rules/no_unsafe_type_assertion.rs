@@ -55,7 +55,7 @@ impl NoUnsafeTypeAssertion {
             true => Span::new(node.span().start, skip_trivia(cx.text(), annotation.end) + 1),
             false => Span::new(skip_trivia(cx.text(), operand.end), annotation.end),
         };
-        // tsgolint says which the two types are, and marks the assertion.
+        // tsgolint labels the two types and marks the assertion.
         let type_label = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
         let labels = |labels: &mut Details| {
             let (original, asserted) = (type_label(expression_type), type_label(asserted_type));
@@ -96,7 +96,7 @@ impl NoUnsafeTypeAssertion {
             return;
         }
 
-        // The widened type of an object literal does not fail on the check for excess properties.
+        // An object literal's widened type doesn't fail the excess property check.
         let expression_widened_type = match is_object_literal_type(expression_type) {
             true => expression_type.get_widened_type(),
             false => expression_type,
@@ -124,7 +124,7 @@ impl NoUnsafeTypeAssertion {
 
 impl Rule for NoUnsafeTypeAssertion {
     const META: Meta = Meta::typescript("no-unsafe-type-assertion", Kind::Problem).requires_types();
-    // The type that `as const` asserts is that of the expression.
+    // `as const` asserts the expression's own type, so it isn't listed.
     const ON: On = On::new().exprs(&[ExprTag::As]);
     no_state!();
 

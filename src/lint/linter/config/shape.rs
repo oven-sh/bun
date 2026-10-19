@@ -1,5 +1,5 @@
-//! What oxlint refuses in a configuration file before it looks at what the file says: a key that it does not know, and a value of
-//! another kind than it expects. The words are those of its reader.
+//! Checks for the things oxlint rejects in a config file before it looks at the contents: an unknown key, or a value of
+//! the wrong type. The messages are worded like its deserializer's.
 
 use super::flat::ConfigError;
 use super::oxlint_options::{check_as, compact, is_integer, write_debug, write_number, wrong_type};
@@ -31,10 +31,10 @@ const KEYS_OF_OVERRIDES: &[&str] = &[
     "jsPlugins",
     "rules",
 ];
-/// The keys for which `null` is as good as nothing. For every other key it's a value of the wrong kind.
+/// The keys where `null` is the same as leaving the key out. For every other key it's a value of the wrong type.
 const NULLABLE: &[&str] = &["$schema", "plugins", "jsPlugins"];
 const NULLABLE_IN_OVERRIDES: &[&str] = &["env", "globals", "plugins", "jsPlugins"];
-/// `options` and `settings`, in the notation of `oxlint_fields.rs`. What is in `version` is looked at below.
+/// `options` and `settings`, in the notation of `oxlint_fields.rs`. The contents of `version` are checked below.
 const OPTIONS: &[u8] = b"(OxlintOptions typeAware:?b typeCheck:?b denyWarnings:?b maxWarnings:?n4 \
     reportUnusedDisableDirectives:?A respectEslintDisableDirectives:?b)";
 const SETTINGS: &[u8] = b"(WellKnownOxlintSettings~ \
@@ -71,7 +71,7 @@ fn refusal(parts: &[&[u8]]) -> ConfigError {
     ])
 }
 
-/// The same for a text that is not yet written like a string of Rust.
+/// Like [`refusal`], for text that isn't escaped as a Rust string yet.
 fn refusal_in_words(text: &[u8]) -> ConfigError {
     let mut message = b"Failed to parse config with error Error(".to_vec();
     write_debug(&mut message, text);
@@ -125,7 +125,8 @@ fn boolean(json: &Json) -> Result<(), ConfigError> {
     }
 }
 
-/// `what`: `field`, or `variant`. What starts with a `$` is not of the file: it says how a value of a program was written down.
+/// `what` is `field` or `variant`. A key that starts with `$` doesn't come from the file: it records how a value from a
+/// JavaScript config was serialized.
 fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), ConfigError> {
     let is_known =
         |key: &[u8]| key.starts_with(b"$") || known.iter().any(|it| it.as_bytes() == key);
@@ -143,7 +144,7 @@ fn known_keys(entries: &Entries, known: &[&str], what: &str) -> Result<(), Confi
     ]))
 }
 
-/// What oxlint and oxfmt refuse the pattern `written` with. `None`: they take it.
+/// The error that oxlint and oxfmt give for the pattern `written`. `None` if they accept it.
 pub fn glob_refusal(written: &[u8]) -> Option<Vec<u8>> {
     let Unclosed { kind, at } = unclosed(written)?;
     let (what, open, close) = match kind {
@@ -162,7 +163,7 @@ pub fn glob_refusal(written: &[u8]) -> Option<Vec<u8>> {
     Some([b"Invalid glob pattern `", written, why.as_bytes()].concat())
 }
 
-/// A value that a file and an override can have.
+/// Checks a value that both a file and an override can have.
 fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
     match key {
         b"plugins" | b"ignorePatterns" => strings(json),
@@ -185,7 +186,7 @@ fn value(key: &[u8], json: &Json) -> Result<(), ConfigError> {
     }
 }
 
-/// `{:?}` of a `serde_json::Value`
+/// `{:?}` for a `serde_json::Value`.
 fn write_debug_of_value(out: &mut Vec<u8>, json: &Json) {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return;
@@ -226,7 +227,7 @@ fn write_debug_of_value(out: &mut Vec<u8>, json: &Json) {
     }
 }
 
-/// The severity of a rule.
+/// Checks a rule's severity.
 fn severity(json: &Json) -> Result<(), ConfigError> {
     let mut text = b"Failed to parse rule severity, expected ".to_vec();
     match json {
@@ -254,7 +255,7 @@ fn severity(json: &Json) -> Result<(), ConfigError> {
     Err(refusal_in_words(&text))
 }
 
-/// What is said about a rule: a severity, or a list that starts with one.
+/// Checks a rule's setting: a severity, or a list that starts with one.
 fn rule(json: &Json) -> Result<(), ConfigError> {
     let expected: &[u8] = match json {
         Json::String(_) | Json::Number(_) => return severity(json),
@@ -270,7 +271,7 @@ fn rule(json: &Json) -> Result<(), ConfigError> {
     Err(refusal_in_words(&text))
 }
 
-/// `settings.jest.version`: a number, or a text that starts with one.
+/// `settings.jest.version`: a number, or a string that starts with one.
 fn jest_version(version: &Json) -> Result<(), ConfigError> {
     let mut why = Vec::new();
     match version {
@@ -297,7 +298,7 @@ fn jest_version(version: &Json) -> Result<(), ConfigError> {
     Err(refusal_in_words(&why))
 }
 
-/// `settings.react.version` is up to three numbers with dots between them.
+/// `settings.react.version` is up to three numbers separated by dots.
 fn settings(json: &Json) -> Result<(), ConfigError> {
     check_as(SETTINGS, json).map_err(|why| refusal_in_words(&why))?;
     if let Some(version) = json.get(b"jest").and_then(|it| it.get(b"version")) {
@@ -336,7 +337,8 @@ fn settings(json: &Json) -> Result<(), ConfigError> {
     }
 }
 
-/// oxlint's reader takes a list for a struct, with the fields in their order. Some of an override can be left out at the end.
+/// oxlint's deserializer accepts a list for a struct, with the fields in order. Some of an override's trailing fields
+/// can be omitted.
 fn override_in_a_list(items: &[Json]) -> Result<(), ConfigError> {
     for (at, key) in KEYS_OF_OVERRIDES.iter().enumerate() {
         match items.get(at) {
@@ -360,7 +362,7 @@ fn override_in_a_list(items: &[Json]) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// `item` of `overrides` with its keys, if it is a list.
+/// If `item` of `overrides` is a list, converts it to an object with its keys.
 pub(super) fn override_with_keys(item: &Json) -> Cow<'_, Json> {
     let Json::Array(items) = item else {
         return Cow::Borrowed(item);

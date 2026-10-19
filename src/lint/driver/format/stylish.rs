@@ -1,4 +1,4 @@
-//! ESLint's `stylish` formatter, byte for byte, and what oxlint calls `stylish`.
+//! ESLint's `stylish` formatter, byte for byte, and oxlint's `stylish`.
 
 use super::info::Source;
 use super::oxlint::is_error;
@@ -53,7 +53,7 @@ fn styled(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     }
 }
 
-/// What `util.stripVTControlCharacters` removes.
+/// Matches what `util.stripVTControlCharacters` removes.
 static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(concat!(
         r"/[\u001B\u009B][[\]()#;?]*",
@@ -123,7 +123,7 @@ struct Row {
     link: Option<Vec<u8>>,
 }
 
-/// A line or a column of a [`LintMessage`](bun_lint::linter::LintMessage).
+/// Formats a line or column of a [`LintMessage`](bun_lint::linter::LintMessage).
 fn number(n: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(4);
     let _ = write!(out, "{}", n as i32);
@@ -181,7 +181,8 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
         );
         let (kinds, messages) = (widest(&kind_len), widest(&|row| row.message_len));
         let rules = widest(&|row| visible_len(&row.rule));
-        // Every row is as wide as the widest. Where that is more than ESLint can print ("Invalid string length"), none is.
+        // Every row is padded to the widest one. If that would exceed what ESLint can print ("Invalid string length"),
+        // no row is padded.
         padded = padded.saturating_add(rows.len().saturating_mul(messages));
         let is_padded = padded as u64 <= bun_lint::fix::MAX_STRING_LENGTH;
         let mut text = Vec::new();
@@ -268,7 +269,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     }
 }
 
-/// As oxlint styles a text: whatever it starts with, it ends with a reset.
+/// Styles text like oxlint: whatever the style opens with, it closes with a reset.
 fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     let style = Style {
         open: style.open,
@@ -277,7 +278,7 @@ fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]
     styled(out, color, &style, text);
 }
 
-/// A row of oxlint's.
+/// One row of oxlint's output.
 struct Placed<'r> {
     line: usize,
     /// `line:column`
@@ -286,7 +287,8 @@ struct Placed<'r> {
     code: Vec<u8>,
 }
 
-/// `filename`: what oxlint calls the file. Empty for the problems without a place, which it puts under the working directory.
+/// `filename` is oxlint's name for the file. It's empty for problems without a location, which oxlint lists under the
+/// working directory.
 fn write_file_as_oxlint(
     out: &mut Vec<u8>,
     (color, meta): (bool, &Meta),
@@ -321,9 +323,9 @@ fn write_file_as_oxlint(
     }
 }
 
-/// With the end of the last line.
+/// Includes the final newline.
 pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    // oxlint asks for nothing else: not whether it writes to a terminal, not for `FORCE_COLOR`.
+    // oxlint checks nothing else: not whether it writes to a terminal, and not `FORCE_COLOR`.
     let has_no_color = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"NO_COLOR")).is_some();
     let color = meta.color_option.unwrap_or(!has_no_color);
     let (mut total, mut errors) = (0, 0);

@@ -48,14 +48,14 @@ fn is_named_reg_exp(ty: Type) -> bool {
 
 impl RestrictPlusOperands {
     fn report_invalid<'a>(&self, cx: &Cx<'a, Self>, base_node: Expr<'a>, ty: Type<'a>) {
-        // tsgolint points at the parentheses too.
+        // tsgolint's span includes the parentheses.
         let place = if cx.language().is_oxlint { base_node.outer_span() } else { base_node.span() };
         cx.report(place, INVALID)
             .data("type", ty.to_text())
             .data("stringLike", self.string_like.clone());
     }
 
-    /// Whether it had a complaint.
+    /// Returns true if it reported the operand.
     fn check_operand<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -82,7 +82,7 @@ impl RestrictPlusOperands {
                 false => (!self.allow_any && is_type_any_type(sub_base_type)) || is_deeply_object_type(sub_base_type),
             };
             if is_invalid {
-                // tsgolint reports an operand once, with the whole of its type.
+                // tsgolint reports an operand once, with its whole type.
                 if cx.language().is_oxlint {
                     self.report_invalid(cx, base_node, base_type);
                     return true;
@@ -112,7 +112,7 @@ impl RestrictPlusOperands {
             return;
         }
 
-        // oxlint points at the left side.
+        // oxlint reports the left side.
         let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
         let labels = |labels: &mut Details| {
             labels.first(format!("Type: {}", bstr::BStr::new(&left_type.to_text())));
@@ -193,7 +193,8 @@ impl Rule for RestrictPlusOperands {
         On::new().enter(kinds)
     }
 
-    // The outer one first, as upstream: a sum that is an operand can be reported twice at one place.
+    // Visits the outer sum first, like upstream, because a sum that's an operand can be reported twice at the same
+    // location.
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(node) = node else {
             return;

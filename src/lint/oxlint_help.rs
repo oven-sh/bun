@@ -1,12 +1,13 @@
-//! What oxlint says besides the message of a diagnostic: its `help`, its `note`, and what it says at the place.
+//! The texts oxlint prints for a diagnostic besides its message: the `help`, the `note`, and the first label's text.
 //!
-//! Made from what oxlint 1.87 prints for the cases of the test suites, each paired with what `bun lint` reports at the same place: an
-//! entry is the text of oxlint in which the values that the rule gives to [`Report::data`](crate::context::Report::data) are
-//! replaced by their names, if that makes the text of all the pairs with that message, letter for letter.
+//! The table was built from oxlint 1.87's output for the test suites' cases, with each diagnostic paired with what `bun
+//! lint` reports at the same position. An entry is oxlint's text with the values that the rule passes to
+//! [`Report::data`](crate::context::Report::data) replaced by their names. It's only included if that template
+//! reproduces oxlint's text exactly for every pair with that message.
 //!
-//! The texts are in `oxlint_help.txt`, one per line, where `\n` stands for a newline and `\\` for a backslash. The table here
-//! refers to them by line number, counted from 1 as editors do. Release builds embed the file compressed and inflate it the
-//! first time a text is needed, which is when a problem that has one is printed.
+//! The texts are in `oxlint_help.txt`, one per line, with `\n` for a newline and `\\` for a backslash. The table here
+//! refers to them by 1-based line number. Release builds embed the file compressed and decompress it the first time a
+//! text is needed, which is when a diagnostic that has one is printed.
 
 use self::Edits::{All, First};
 use self::Texts::{One, Three};
@@ -15,15 +16,15 @@ use bun_core::strings;
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 
-/// What the table has for a message.
+/// A message's entry in the table.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Help(NonZeroU32);
 
-/// Which text of a diagnostic.
+/// One of a diagnostic's texts.
 #[derive(Copy, Clone)]
 pub(crate) enum Part {
     Help,
-    /// What is said at the place of the report.
+    /// The text of the label at the reported span.
     FirstLabel,
     Note,
 }
@@ -34,20 +35,20 @@ pub(crate) enum Found {
     Constant(&'static str),
     /// With `{{names}}`.
     WithData(&'static str),
-    /// oxlint has no help of its own, and says what its `RuleFixer` says about the fix. `removes`: of a replacement by nothing that
-    /// is "Remove `..`.", and not "Delete this code.".
+    /// The rule has no help text, so oxlint prints its `RuleFixer`'s description of the fix. With `removes`, a
+    /// replacement with nothing is described as "Remove `..`." instead of "Delete this code.".
     OfTheFix {
         removes: bool,
         edits: Edits,
     },
 }
 
-/// Of which edits of a fix oxlint speaks.
+/// Selects which of a fix's edits oxlint describes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Edits {
-    /// Its fix has several too, and it says what it says about the first.
+    /// oxlint's fix also has several edits, and it describes the first.
     First,
-    /// It makes one, which does what all of them do.
+    /// oxlint's fix is a single edit that has the effect of all of ours.
     All,
 }
 
@@ -76,7 +77,7 @@ impl Help {
         }
     }
 
-    /// The text, if it is one without values. Else "".
+    /// The text, if it has no placeholders. Otherwise "".
     pub(crate) fn constant(self, part: Part) -> &'static str {
         match self.found(part) {
             Found::Constant(text) => text,
@@ -84,25 +85,25 @@ impl Help {
         }
     }
 
-    /// One of the texts has values in it.
+    /// True if any of the texts has placeholders.
     pub(crate) fn has_values(self) -> bool {
         self.entry().is_some_and(|it| it.2 != 0)
     }
 
-    /// The help is [`Found::OfTheFix`].
+    /// True if the help is [`Found::OfTheFix`].
     pub(crate) fn is_of_the_fix(self) -> bool {
         matches!(self.entry(), Some((_, Texts::OfTheFix { .. }, _)))
     }
 }
 
-/// What there is for `message`, which is as oxlint says it, of `rule`.
+/// Looks up the entry for `rule`'s `message`, which must be oxlint's version of the message.
 pub(crate) fn of(rule: &Meta, message: Message) -> Option<Help> {
     let key = rule.key ^ message.key.rotate_left(16);
     let at = INDEX.binary_search_by_key(&key, |it| it.0).ok()?;
     NonZeroU32::new(at as u32 + 1).map(Help)
 }
 
-/// Line `line` of `oxlint_help.txt`. "" for 0, which stands for no text.
+/// Line `line` of `oxlint_help.txt`. "" for 0, which means no text.
 fn text_at(line: u16) -> &'static str {
     static LINES: bun_core::Once<Vec<Cow<'static, [u8]>>> = bun_core::Once::new();
     let Some(at) = line.checked_sub(1) else {
@@ -138,9 +139,10 @@ fn unescaped(mut line: &'static [u8]) -> Cow<'static, [u8]> {
 enum Texts {
     /// The help.
     One(u16),
-    /// The help, what is said at the place of the report and the note, on three lines from this one on. An empty line: there is none.
+    /// The help, the first label's text and the note, on three lines starting at this one. An empty line means there's
+    /// no such text.
     Three(u16),
-    /// [`Found::OfTheFix`], and the note. 0: there is none.
+    /// [`Found::OfTheFix`], and the note. 0 means there's no note.
     OfTheFix {
         removes: bool,
         edits: Edits,
@@ -156,8 +158,8 @@ const fn of_the_fix(removes: bool, edits: Edits, note: u16) -> Texts {
     }
 }
 
-/// Sorted by the key, which is made of `Meta::key` and `Message::key`. The last number has a bit for each [`Part`] whose text has
-/// `{{` in it.
+/// Sorted by key, which combines `Meta::key` and `Message::key`. The last number has one bit per [`Part`] whose text
+/// contains `{{`.
 #[rustfmt::skip]
 static INDEX: &[(u32, Texts, u8)] = &[
     (0x0060F26E, One(645), 0), // no-unsafe-function-type bannedFunctionType

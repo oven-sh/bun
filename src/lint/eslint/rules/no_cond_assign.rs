@@ -13,7 +13,7 @@ const MISSING: Message = Message::new(
     "Expected a conditional expression and instead saw an assignment.",
 );
 
-/// The test of a statement or of a conditional expression, and how the message describes that.
+/// Returns the test of a statement or conditional expression, and how the message describes that node.
 #[inline]
 fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
     match node {
@@ -30,7 +30,7 @@ fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
     }
 }
 
-/// oxlint points at the operator.
+/// Where to report. oxlint reports at the operator.
 fn place<'a>(assignment: Expr<'a>, cx: &Cx<'a, NoCondAssign>) -> Span {
     match assignment.operator_span() {
         Some(operator) if cx.language().is_oxlint => operator,
@@ -60,7 +60,7 @@ impl NoCondAssign {
             let (test, kind) = test_of(ancestor)?;
             (Node::Expr(test) == inner).then_some(Some(kind))
         });
-        // The default value of a part of a destructuring assignment is not an assignment.
+        // A default value in a destructuring assignment isn't an assignment.
         if let Some(Some(kind)) = kind
             && !utils::is_assignment_target(e)
         {
@@ -68,7 +68,7 @@ impl NoCondAssign {
         }
     }
 
-    /// With `"always"` oxlint says it once more of a test that is an assignment.
+    /// With `"always"`, oxlint reports a test that's an assignment a second time.
     #[inline(never)]
     fn check_test_once_more<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((test, kind)) = test_of(node)
@@ -79,7 +79,7 @@ impl NoCondAssign {
         }
     }
 
-    /// `"except-parens"`: a test that is an assignment, without parentheses of its own.
+    /// `"except-parens"`: a test that's an assignment, without its own parentheses.
     #[inline]
     fn check_test<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if let Some((test, _)) = test_of(node)
@@ -89,13 +89,13 @@ impl NoCondAssign {
         }
     }
 
-    /// `test`: that of `node`, an assignment.
+    /// `test` is `node`'s test, and it's an assignment.
     #[inline(never)]
     fn check_parentheses<'a>(node: Node<'a>, test: Expr<'a>, cx: &Cx<'a, Self>) {
-        // ESLint wants two pairs around every test but that of a `for`. One of them is part of an
-        // `if`, a `while` and a `do`, and none is part of a conditional expression.
+        // ESLint requires two pairs around every test except a `for` loop's. One pair is part of the syntax of `if`,
+        // `while` and `do`, and none is part of a conditional expression.
         let needed = match node {
-            // oxlint sees through the parentheses there.
+            // oxlint looks through the parentheses there.
             Node::Expr(_) if cx.language().is_oxlint => usize::MAX,
             Node::Expr(_) => 2,
             _ => 1,
@@ -111,7 +111,7 @@ impl Rule for NoCondAssign {
     const ON: On = On::new()
         .exprs(&[ExprTag::Assign, ExprTag::Cond])
         .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
-    /// How the message describes what a node is in the test of, within its function.
+    /// How the message describes the node whose test contains a given node, within its function.
     type State<'a> = AncestorMemo<'a, Option<&'static str>>;
 
     fn new(options: &Options) -> Self {

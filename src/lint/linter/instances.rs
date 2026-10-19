@@ -1,36 +1,37 @@
-//! The rules as they are made from options: one for each rule and each list of options, for the whole run.
+//! Rule instances built from options: one per rule and option list, for the whole run.
 //!
-//! A configuration names one by its number. So neither it nor what carries it around has to know the type of the rules: only the
-//! [`Linter`](super::Linter) does, which has the table, and makes a rule the first time that it lints with it.
+//! A config refers to an instance by number. So neither the config nor the code that passes it around has to know the
+//! rules' type. Only the [`Linter`](super::Linter) does: it owns the table and builds a rule the first time it lints
+//! with it.
 
 use crate::options::Json;
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
-/// A place in the table of a linter.
+/// A slot in a linter's table.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct Instance(u32);
 
-/// How many places the first chunk has. Each of the others has twice as many as the one before it.
+/// The number of slots in the first chunk. Each later chunk has twice as many as the one before.
 const FIRST: u32 = 64;
 
 pub(super) struct Instances<R> {
-    /// Nothing in it ever moves, so it is read while another thread adds to it.
+    /// Nothing in it ever moves, so it can be read while another thread adds to it.
     chunks: [OnceLock<Box<[OnceLock<R>]>>; 26],
     made: Guarded<Made>,
 }
 
 #[derive(Default)]
 struct Made {
-    /// For each rule, by its index in the registry: what has been made of it, by the options.
+    /// Indexed by a rule's index in the registry: the rule's instances so far, with their options.
     by_rule: Vec<Vec<(Arc<[Json]>, Instance)>>,
     len: u32,
 }
 
-/// Where an [`Instance`] is.
+/// An [`Instance`]'s location.
 struct Place {
     chunk: usize,
-    /// In the chunk.
+    /// The index within the chunk.
     at: usize,
 }
 
@@ -57,7 +58,8 @@ impl<R> Instances<R> {
         self.chunks.get(chunk)?.get()?.get(at)?.get()
     }
 
-    /// The one for the rule at `index` of the registry and `options`. `make` makes it if there is none yet. `None`: it makes none.
+    /// Returns the instance for the rule at `index` in the registry with `options`. `make` builds it if it doesn't
+    /// exist yet. Returns `None` if `make` does.
     pub(super) fn of(
         &self,
         index: usize,
@@ -76,7 +78,7 @@ impl<R> Instances<R> {
         let Place { chunk, at } = it.place();
         let places = self.chunks[chunk]
             .get_or_init(|| (0..FIRST << chunk).map(|_| OnceLock::new()).collect());
-        // Nobody else has this place.
+        // No other thread has this slot.
         let _ = places[at].set(rule);
         made.len += 1;
         made.by_rule[index].push((Arc::clone(options), it));

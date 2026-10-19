@@ -15,7 +15,7 @@
 //! adds to an `AppendVec`, a `Cells` or a `Newest` may allocate, and the thread that drops it frees.
 
 use std::alloc::{Allocator, Global, Layout};
-use std::cell::{Cell, UnsafeCell};
+use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr::{NonNull, null_mut, slice_from_raw_parts_mut};
@@ -378,8 +378,9 @@ type Segment<T> = AtomicPtr<MaybeUninit<T>>;
 pub(crate) struct Segmented<'a, T, L: Length, A: Allocator + Clone = Global> {
     /// Segment pointers, in order. A shared vector allocates the directory at its maximum length,
     /// so it's never replaced. A single-threaded vector starts with an empty directory and replaces
-    /// it with a longer one as it grows.
-    directory: UnsafeCell<Box<[Segment<T>], A>>,
+    /// it with a longer one as it grows. A box from `new_directory` as a raw pointer: moving a box
+    /// would invalidate the pointers into it that `directories` and `Elements` keep.
+    directory: Cell<*mut [Segment<T>]>,
     /// Used by `of_either`, indexed by the top two bits of a number. Each entry is a directory
     /// pointer, biased so that `number >> SEGMENT_BITS` indexes it with the top bits still set.
     /// Entry 0 is the shared vector's directory, entry 1 is this vector's, and entries 2 and 3 are
@@ -415,7 +416,7 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         let limits: [L; 4] = Default::default();
         limits[1].add(OWN);
         Segmented {
-            directory: UnsafeCell::new(Self::new_directory(segments, &[], &alloc)),
+            directory: Cell::new(Self::new_directory(segments, &[], &alloc)),
             directories: [const { Cell::new(std::ptr::null()) }; 4],
             limits,
             len: L::default(),
@@ -427,20 +428,32 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
 
     /// Returns a directory of `len` entries: a copy of `old`, then nulls. Uses the allocator's
     /// zeroed memory: see `Zeroed::zeroed_slice_in`.
-    fn new_directory(len: usize, old: &[Segment<T>], alloc: &A) -> Box<[Segment<T>], A> {
+    fn new_directory(len: usize, old: &[Segment<T>], alloc: &A) -> *mut [Segment<T>] {
         // SAFETY: all zero bytes are a valid null `AtomicPtr`.
         let mut new = unsafe { Box::new_zeroed_slice_in(len, alloc.clone()).assume_init() };
         for (new, old) in std::iter::zip(&mut new, old) {
             *new = AtomicPtr::new(old.load(Ordering::Relaxed));
         }
-        new
+        Box::into_raw_with_allocator(new).0
     }
 
+    /// Frees a directory, but not its segments.
+    ///
+    /// # Safety
+    /// `directory` comes from `new_directory` with this allocator, and nothing uses it afterwards.
+    unsafe fn free_directory(directory: *mut [Segment<T>], alloc: &A) {
+        // SAFETY: it was a box in this allocator, and the caller gives it up.
+        drop(unsafe { Box::from_raw_in(directory, alloc.clone()) });
+    }
+
+    /// Returns directory entry `at`, or `None` if the directory is shorter.
     #[inline]
-    fn directory(&self) -> &[Segment<T>] {
-        // SAFETY: only `install` replaces the directory, and only in a single-threaded vector. That
-        // thread doesn't have a live reference to the directory at that point.
-        unsafe { &*self.directory.get() }
+    fn segment(&self, at: usize) -> Option<&Segment<T>> {
+        let directory = self.directory.get();
+        // SAFETY: the entry is inside the directory. Only `install` replaces the directory, and
+        // only in a single-threaded vector. That thread doesn't have a live reference to an entry
+        // at that point.
+        (at < directory.len()).then(|| unsafe { &*directory.cast::<Segment<T>>().add(at) })
     }
 
     #[inline]
@@ -452,7 +465,9 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
     /// allocated.
     #[inline]
     fn slot(&self, index: u32) -> *mut MaybeUninit<T> {
-        (self.directory()[(index >> SEGMENT_BITS) as usize].load(Ordering::Relaxed))
+        let segment = self.segment((index >> SEGMENT_BITS) as usize);
+        (segment.expect("the index is out of range"))
+            .load(Ordering::Relaxed)
             .wrapping_add(index as usize % SEGMENT)
     }
 
@@ -465,20 +480,24 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
         if at >= OWN as usize >> SEGMENT_BITS {
             bun_alloc::out_of_memory();
         }
-        if at >= self.directory().len() {
+        if self.segment(at).is_none() {
             let longer = (at + 1).next_power_of_two().max(4);
-            let longer = Self::new_directory(longer, self.directory(), &self.alloc);
+            // SAFETY: as in `segment`.
+            let old = unsafe { &*self.directory.get() };
+            let longer = Self::new_directory(longer, old, &self.alloc);
             // Biased by `OWN >> SEGMENT_BITS`, because `of_either` indexes it without clearing the
             // `OWN` bit.
-            self.directories[1].set(longer.as_ptr().wrapping_sub(OWN as usize >> SEGMENT_BITS));
+            let first = longer.cast_const().cast::<Segment<T>>();
+            self.directories[1].set(first.wrapping_sub(OWN as usize >> SEGMENT_BITS));
             // SAFETY: a shared vector's directory already has the maximum length, so this vector is
             // single-threaded, and this thread doesn't have a live reference to the old directory.
-            unsafe { *self.directory.get() = longer };
+            unsafe { Self::free_directory(self.directory.replace(longer), &self.alloc) };
         }
         let fresh = Box::<[T], A>::try_new_uninit_slice_in(SEGMENT, self.alloc.clone())
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
         let fresh = Box::into_raw_with_allocator(fresh).0;
-        let installed = self.directory()[at].compare_exchange(
+        let segment = self.segment(at).expect("the directory is long enough");
+        let installed = segment.compare_exchange(
             null_mut(),
             fresh.cast(),
             Ordering::AcqRel,
@@ -538,16 +557,18 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
 
     /// Frees all but the first `keep` segments. The vector must be empty.
     fn release(&mut self, keep: usize) {
-        let alloc = self.alloc.clone();
-        for segment in self.directory.get_mut().iter_mut().skip(keep) {
-            let start = std::mem::replace(segment.get_mut(), null_mut());
-            if !start.is_null() {
-                // SAFETY: `install` made this pointer from a box with this length and this
-                // allocator. Its directory entry is null now, so it's freed only once.
-                drop(unsafe {
-                    Box::from_raw_in(slice_from_raw_parts_mut(start, SEGMENT), alloc.clone())
-                });
+        for segment in (keep..).map_while(|at| self.segment(at)) {
+            let start = segment.load(Ordering::Relaxed);
+            // Every reserved index has been written by now, so no segment follows a missing one.
+            if start.is_null() {
+                break;
             }
+            segment.store(null_mut(), Ordering::Relaxed);
+            // SAFETY: `install` made this pointer from a box with this length and this allocator.
+            // Its directory entry is null now, so it's freed only once.
+            drop(unsafe {
+                Box::from_raw_in(slice_from_raw_parts_mut(start, SEGMENT), self.alloc.clone())
+            });
         }
     }
 }
@@ -556,6 +577,8 @@ impl<T, L: Length, A: Allocator + Clone> Drop for Segmented<'_, T, L, A> {
     fn drop(&mut self) {
         self.clear();
         self.release(0);
+        // SAFETY: nothing uses the directory after the drop.
+        unsafe { Self::free_directory(self.directory.get(), &self.alloc) };
     }
 }
 
@@ -566,7 +589,7 @@ impl<T, L: Length, A: Allocator + Clone> Fill<T> for Segmented<'_, T, L, A> {
 
     #[inline]
     unsafe fn write(&self, index: u32, value: T) {
-        let segment = self.directory().get((index >> SEGMENT_BITS) as usize);
+        let segment = self.segment((index >> SEGMENT_BITS) as usize);
         if segment.is_none_or(|segment| segment.load(Ordering::Acquire).is_null()) {
             self.install(index);
         }
@@ -687,7 +710,7 @@ impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
 
     pub(crate) fn elements(&self) -> Elements<'_, T> {
         Elements {
-            directory: self.directory().as_ptr(),
+            directory: self.directory.get().cast_const().cast(),
             borrowed: PhantomData,
         }
     }

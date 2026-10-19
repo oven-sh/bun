@@ -95,8 +95,8 @@ impl Checker<'_, '_> {
             }
             // `GetElementOrPropertyAccessName`, or else the whole left-hand side.
             ExprKind::Assign { target, .. } => match hir[target].kind {
-                ExprKind::Dot { name_pos, .. } if !is_private_name_at(hir, name_pos) => {
-                    return Some(self.place_of_token(file, name_pos));
+                ExprKind::Dot { .. } if !is_private_name_at(hir, hir.name_pos(target)) => {
+                    return Some(self.place_of_token(file, hir.name_pos(target)));
                 }
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
@@ -263,7 +263,7 @@ impl Checker<'_, '_> {
     /// `getSpecifierForModuleSymbol` without an enclosing file: the name of the symbol without its quotes.
     pub(super) fn specifier_of_module(&self, symbol: Sym) -> Vec<u8> {
         let files = self.files();
-        let decls = files.decls(symbol);
+        let decls = files.decls_of(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
             let file_name = displayed_path(files.module(file).file_name());
             return remove_file_extension(&file_name).to_owned();
@@ -317,7 +317,7 @@ impl Checker<'_, '_> {
 
     /// `getNameOfSymbolAsWritten` for the `__object` symbol of an object literal: the name of the variable it initializes, else `__object`.
     pub(super) fn name_of_object_literal(&self, file: FileId, e: ExprId) -> Vec<u8> {
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::VarInit(declaration) if !is_parenthesized(self.hir(file), e) => {
                 self.declaration_name_of_variable(file, self.hir(file)[declaration].pat)
             }
@@ -1444,7 +1444,7 @@ impl Checker<'_, '_> {
     ) -> Option<Sym> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let name = match first_declaration {
-            Decl::ObjectLiteral(e) => match bound.expr_parent[e.idx()] {
+            Decl::ObjectLiteral(e) => match bound.parent_of_expr(e) {
                 Parent::VarInit(declaration) if !is_parenthesized(hir, e) => hir[declaration].pat,
                 _ => return None,
             },
@@ -1991,14 +1991,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         ty: TypeId,
         identity: Option<Identity>,
     ) -> ControlFlow<Node, TypeVisit> {
-        match identity {
-            Some(Identity::Origin(origin)) => self.c.get_symbol_id_of_origin(origin),
-            Some(Identity::Instance(symbol)) => self.c.get_symbol_id(symbol),
-            Some(Identity::Function(file, function)) => {
-                self.c.get_symbol_id_of_function(file, function);
-            }
-            Some(Identity::Node(..) | Identity::Declaration(..) | Identity::Type(_)) | None => {}
-        }
         let key = self
             .enclosing_declaration
             .map(|at| (at, self.enclosing_expression, ty, self.flags));
@@ -2266,10 +2258,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten`. `is_initial`: `FlagsInInitialEntityName`.
     fn name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> Vec<u8> {
-        // `remappedSymbolReferences`
-        self.c.get_symbol_id(symbol);
         let files = self.c.files();
-        let decls = files.decls(symbol);
+        let decls = files.decls_of(symbol);
         let name = files.symbol(symbol).name;
         let is_in_other_binding_context = |&(file, decl): &(FileId, Decl)| {
             self.enclosing_declaration.is_some_and(|at| {
@@ -2324,8 +2314,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `EscapeInternalSymbolName`. The text of most internal names ends with `=` here, where the
     /// original starts with `InternalSymbolNamePrefix`.
     fn escape_internal_symbol_name(&self, name: Atom) -> Vec<u8> {
-        let text = self.c.symbol_name_with_id(name);
-        let text = &text[..];
+        let text = self.c.atoms().bytes(name);
         let rest = match name {
             known::anonymous_function
             | known::object_literal
@@ -2483,7 +2472,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `lookupTypeParameterNodes`, as they are printed. No symbol of a chain is instantiated
     /// (`lookupInstantiatedTypeArgumentNodes`).
     fn lookup_type_parameter_nodes(&mut self, chain: &[Sym], index: usize) -> Vec<u8> {
-        self.c.get_symbol_id(chain[index]);
         if self.type_parameter_symbol_list.contains(&chain[index]) {
             return Vec::new();
         }
@@ -2976,7 +2964,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let method = self.c.symbol_of_member(file, member);
                     return Some(self.symbol_to_type_node(method, false, Vec::new()));
                 }
-                FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                     Parent::Prop(p) if hir[p].kind == PropKind::Method => {
                         match bound.property_symbol.get(&Decl::Property(p)) {
                             Some(&method) => method,
@@ -3184,7 +3172,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten(typeParameter.symbol)`
     fn name_of_type_parameter(&self, parameter: TypeId) -> Vec<u8> {
-        self.c.get_symbol_id_of_type_parameter(parameter);
         if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter)
             && !self.c.is_renamed_type_param(parameter)
         {
@@ -3375,11 +3362,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 };
                 let bound = self.c.bound(file);
                 let symbol = bound.type_param_symbol[tp.idx()];
-                if symbol.is_some()
-                    && bound.symbols[symbol.idx()]
-                        .flags
-                        .contains(SymFlags::PARAMETER)
-                {
+                if symbol.is_some() && bound.symbol(symbol).flags.contains(SymFlags::PARAMETER) {
                     let name = self.text(self.c.hir(file)[tp].name);
                     self.fake_scope_type_parameters
                         .push((name, (!is_instantiated).then_some(type_parameter)));
@@ -3624,14 +3607,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let files = self.c.files();
         files.symbol(function).parent.is_some()
             || files
-                .decls(function)
+                .decls_of(function)
                 .into_iter()
                 .any(|(file, decl)| match decl {
                     Decl::Fn(f) => {
                         let bound = self.c.bound(file);
                         match bound.fns[f.idx()].owner {
                             FnOwner::Stmt(statement) => matches!(
-                                bound.stmt_parent[statement.idx()],
+                                bound.parent_of_stmt(statement),
                                 Parent::File | Parent::Module(_)
                             ),
                             _ => false,
@@ -3678,7 +3661,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             return true;
         }
         // `ast.IsClassDeclaration(symbol.ValueDeclaration)`
-        let is_class_declaration = self.c.files().decls(symbol).iter().any(|&(file, decl)| {
+        let is_class_declaration = self.c.files().decls_of(symbol).iter().any(|&(file, decl)| {
             matches!(decl, Decl::Class(c)
                 if matches!(self.c.bound(file).class_owner[c.idx()], ClassOwner::Stmt(_)))
         });
@@ -3698,14 +3681,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::VarInit(declaration) = bound.expr_parent[e.idx()] else {
+        let Parent::VarInit(declaration) = bound.parent_of_expr(e) else {
             return None;
         };
         let statement = bound.var_stmt[declaration.idx()];
         if is_parenthesized(hir, e)
             || statement.is_none()
             || !matches!(
-                bound.stmt_parent[statement.idx()],
+                bound.parent_of_stmt(statement),
                 Parent::File | Parent::Module(_)
             )
         {
@@ -4332,7 +4315,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     fn place_of_symbol(&self, symbol: Sym) -> Place {
         let files = self.c.files();
-        let Some((file, decl)) = files.decls(symbol).first().copied() else {
+        let Some((file, decl)) = files.decls_of(symbol).first().copied() else {
             return Place::Nowhere;
         };
         let pos = self.c.files().start_of_declaration(file, decl);
@@ -4690,7 +4673,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten` for a property.
     fn name_of_property_as_written(&mut self, whole: &Prop) -> Vec<u8> {
-        self.c.get_symbol_id_of_property(whole);
         let prop = first_declared(whole).unwrap_or(whole);
         match &prop.source {
             PropSource::Literal(file, property) => {
@@ -5027,7 +5009,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                         Some((file, func, _)) => {
                             let declaration = match self.c.bound(file).fns[func.idx()].owner {
                                 FnOwner::Member(m) => self.c.hir(file).node(m),
-                                FnOwner::Expr(e) => match self.c.bound(file).expr_parent[e.idx()] {
+                                FnOwner::Expr(e) => match self.c.bound(file).parent_of_expr(e) {
                                     Parent::Prop(p) => self.c.hir(file).node(p),
                                     _ => hir::Node::NONE,
                                 },
@@ -5157,7 +5139,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             ExprKind::Template { .. } => self.cloned_template_text(file, e)?,
             ExprKind::TaggedTemplate(call) if hir[call].type_args.is_empty() => {
-                let template = self.cloned_template_text(file, hir[call].template)?;
+                let template = self.cloned_template_text(file, hir.template_of(call))?;
                 cat!(emit(hir[call].callee, P::Member)?, b" ", template)
             }
             ExprKind::Dot {
@@ -5242,7 +5224,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 let (target, value) = (emit(target, P::Conditional)?, emit(value, P::Yield)?);
                 cat!(target, b" ", operator, b" ", value)
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
                 let (test, yes, no) = (
                     emit(test, P::LogicalOr)?,
                     emit(yes, P::Yield)?,
@@ -5598,9 +5581,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `serializeReturnTypeForSignature`
     fn return_type_node(&mut self, signature: SigId, try_reuse: bool) -> Node {
         let declaration = self.c.sig_decl(signature).map(|of| (of.0, of.1));
-        if let Some((file, function)) = declaration {
-            self.c.get_symbol_id_of_function(file, function);
-        }
         let enclosing = self.enclosing_symbol_types.iter().rev();
         let enclosing = enclosing
             .map(|entry| (Some(entry.0), entry.1))
@@ -5807,7 +5787,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         };
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         loop {
-            at = match bound.expr_parent[at.idx()] {
+            at = match bound.parent_of_expr(at) {
                 Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => bound.prop_owner[p.idx()],
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != at => {

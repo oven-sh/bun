@@ -101,7 +101,7 @@ impl Checker<'_, '_> {
         }
         let (start, end) = match bound.fns[f.idx()].owner {
             FnOwner::Member(m) => (hir[m].name_pos, self.end_of_member_name(file, m)),
-            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+            FnOwner::Expr(e) => match bound.parent_of_expr(e) {
                 Parent::Prop(p) => (hir[p].pos, self.end_of_prop_name(file, p)),
                 _ => return,
             },
@@ -115,7 +115,7 @@ impl Checker<'_, '_> {
         let bound = self.bound(file);
         bound
             .ids(bound.fns[f.idx()].returns)
-            .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE)
+            .any(|s| bound.flow_of_stmt(s) != UNREACHABLE)
     }
 
     /// `SkipOuterExpressions`
@@ -135,7 +135,7 @@ impl Checker<'_, '_> {
 
     fn is_undefined_itself(&self, file: FileId, e: ExprId) -> bool {
         matches!(self.hir(file)[e].kind, ExprKind::Ident(known::undefined))
-            && self.bound(file).expr_symbol[e.idx()].is_none()
+            && self.bound(file).symbol_of_expr(e).is_none()
     }
 
     /// `checkTruthinessOfType`
@@ -251,7 +251,8 @@ impl Checker<'_, '_> {
                     ALWAYS
                 }
             }
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_truthiness(file, yes) | self.syntactic_truthiness(file, no)
             }
             ExprKind::Ident(_) if self.is_undefined_itself(file, e) => NEVER,
@@ -295,7 +296,8 @@ impl Checker<'_, '_> {
                 value,
                 ..
             } => self.syntactic_nullishness(file, value),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.syntactic_nullishness(file, yes) | self.syntactic_nullishness(file, no)
             }
             ExprKind::Null => ALWAYS,

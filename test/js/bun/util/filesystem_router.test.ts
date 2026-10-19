@@ -422,6 +422,22 @@ it(".query skips empty-key pairs instead of terminating the parse", () => {
   }
 });
 
+it(".query and .params hold a name that is an index once", () => {
+  const { dir } = make(["posts.tsx", "[0].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const read of [() => router.match("/posts?0=a&x=y")!.query, () => router.match("/a")!.params]) {
+    expect(Object.values(read()).filter(value => value === "a")).toHaveLength(1);
+    expect(Object.isFrozen(Object.freeze(read()))).toBe(true);
+    const written = read();
+    written[0] = "b";
+    expect(Object.entries(written)[0]).toEqual(["0", "b"]);
+    const deleted = read();
+    expect(delete deleted[0]).toBe(true);
+    expect(Object.keys(deleted)).not.toContain("0");
+  }
+});
+
 it("reload() works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -507,7 +523,7 @@ it("dir should be validated", async () => {
     new Bun.FileSystemRouter({
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -515,7 +531,7 @@ it("dir should be validated", async () => {
       dir: undefined,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir is required");
 
   expect(() => {
     new Bun.FileSystemRouter({
@@ -523,7 +539,7 @@ it("dir should be validated", async () => {
       dir: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected dir to be a string");
+  }).toThrow("FileSystemRouterOptions.dir must be a string");
 });
 
 it("origin should be validated", async () => {
@@ -536,7 +552,76 @@ it("origin should be validated", async () => {
       origin: 123,
       style: "nextjs",
     });
-  }).toThrow("Expected origin to be a string");
+  }).toThrow("FileSystemRouterOptions.origin must be a string");
+});
+
+function routesWithExtension(extension: String) {
+  using dir = tempDir("fsr-string-object", { "posts.tsx": "", "about.mdx": "" });
+  const router = new Bun.FileSystemRouter({
+    dir: String(dir),
+    style: "nextjs",
+    // @ts-expect-error
+    fileExtensions: [extension],
+  });
+  return Object.keys(router.routes);
+}
+
+it("reads an extension that is a String object with its toString()", () => {
+  expect(routesWithExtension(Object.assign(new String(""), { toString: () => ".mdx" }))).toEqual(["/about"]);
+});
+
+it("skips an extension that is a String object whose toString() is empty", () => {
+  // None is left, so the default ones are used.
+  expect(routesWithExtension(Object.assign(new String(".mdx"), { toString: () => "" }))).toEqual(["/posts"]);
+});
+
+it("takes options that are an array", () => {
+  using dir = tempDir("fsr-array-options", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter(Object.assign([], { dir: String(dir), style: "nextjs" as const }));
+  expect(Object.keys(router.routes)).toEqual(["/posts"]);
+});
+
+it("names a directory that is absent as it was joined", () => {
+  using dir = tempDir("fsr-absent", {});
+  for (const absent of [`${dir}${path.sep}absent`, `${dir}${path.sep}absent${path.sep}`]) {
+    expect(() => new Bun.FileSystemRouter({ dir: absent, style: "nextjs" })).toThrow(
+      expect.objectContaining({ name: "Error", message: `Unable to find directory: ${absent}` }),
+    );
+  }
+});
+
+it("refuses options that are not an object, and a route that is not a string, Request or Response", () => {
+  using dir = tempDir("fsr-wrong-arguments", { "posts.tsx": "" });
+  const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
+  const refusal = (message: string) =>
+    expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  for (const wrong of [undefined, null, 1, "posts"]) {
+    // @ts-expect-error
+    expect(() => new Bun.FileSystemRouter(wrong)).toThrow(refusal("Expected object"));
+  }
+  for (const wrong of [undefined, null, 1, {}]) {
+    // @ts-expect-error
+    expect(() => router.match(wrong)).toThrow(refusal("Expected string, Request or Response"));
+  }
+});
+
+it("assetPrefix and origin are what the router was given, or null", () => {
+  using tmp = tempDir("fsr-asset-prefix", { "posts.tsx": "" });
+  const dir = String(tmp);
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "_next/static/",
+    origin: "https://a.test",
+  });
+  expect(router.assetPrefix).toBe("_next/static/");
+  expect(router.origin).toBe("https://a.test");
+  const bare = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(bare.assetPrefix).toBeNull();
+  expect(bare.origin).toBeNull();
+  const empty = new Bun.FileSystemRouter({ dir, style: "nextjs", assetPrefix: "", origin: "" });
+  expect(empty.assetPrefix).toBeNull();
+  expect(empty.origin).toBeNull();
 });
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.

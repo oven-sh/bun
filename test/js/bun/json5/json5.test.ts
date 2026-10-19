@@ -520,6 +520,13 @@ describe("error messages", () => {
     expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected token");
   });
 
+  test("a NUL character doesn't end the input", () => {
+    const nul = String.fromCharCode(0);
+    expect(() => JSON5.parse(`1${nul}`)).toThrow("Unexpected character");
+    expect(() => JSON5.parse(`[1${nul}, @`)).toThrow("Unexpected character");
+    expect(JSON5.parse(`"a${nul}b"`)).toBe(`a${nul}b`);
+  });
+
   // -- Unterminated multi-line comment --
   test("unterminated multi-line comment", () => {
     expect(() => JSON5.parse("/* unterminated")).toThrow("Unterminated multi-line comment");
@@ -622,6 +629,11 @@ describe("error messages", () => {
   test("invalid identifier start character in key", () => {
     expect(() => JSON5.parse("{: 1}")).toThrow("Invalid identifier start character");
     expect(() => JSON5.parse("{@key: 1}")).toThrow("Unexpected character");
+  });
+
+  test("escape in a key that isn't an identifier character", () => {
+    expect(() => JSON5.parse("{a\\u002d: 1}")).toThrow("Invalid identifier start character");
+    expect(JSON5.parse("{a\\u0062: 1}")).toEqual({ ab: 1 });
   });
 
   // -- Expected 'u' after '\\' in identifier --

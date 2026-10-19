@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
+#include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
@@ -41,6 +42,7 @@ template<> struct ExternTraits<int32_t> : TrivialExtern<int32_t> {};
 template<> struct ExternTraits<uint32_t> : TrivialExtern<uint32_t> {};
 template<> struct ExternTraits<uint64_t> : TrivialExtern<uint64_t> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
+template<> struct ExternTraits<void*> : TrivialExtern<void*> {};
 
 enum ExternNullPtr : uint8_t {};
 
@@ -117,6 +119,34 @@ template<> struct ExternTraits<JSStringUTF8View> {
     static ExternType convertToExtern(JSStringUTF8View&& cppValue)
     {
         return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBlobOrBufferView> {
+    using ExternType = ExternBytes;
+
+    static ExternType convertToExtern(JSBlobOrBufferView&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBytesView> {
+    using ExternType = ExternBytes;
+
+    // As for JSStringUTF8View.
+    static ExternType convertToExtern(JSBytesView&& cppValue)
+    {
+        return ExternTraits<std::span<const uint8_t>>::convertToExtern(cppValue.bytes());
+    }
+};
+
+template<> struct ExternTraits<JSBlobOrStringOrBuffer> {
+    using ExternType = WTF::StringImpl*;
+
+    static ExternType convertToExtern(JSBlobOrStringOrBuffer&& cppValue)
+    {
+        return ExternTraits<WTF::String>::convertToExtern(cppValue.takeString());
     }
 };
 

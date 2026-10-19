@@ -85,8 +85,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 pos: start.full,
                 end: self.prev_end(),
             },
-            modifiers,
         });
+        if !modifiers.is_empty() {
+            self.f.modifiers_of_stmts.push((id, modifiers));
+        }
         id
     }
 
@@ -750,7 +752,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 pos: at + 1,
                 end: last,
             },
-            modifiers: Span::EMPTY,
         });
         id
     }

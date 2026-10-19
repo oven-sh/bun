@@ -1024,7 +1024,7 @@ thread_local! {
 }
 
 impl QueryStringMap {
-    pub fn get_name_count(&mut self) -> usize {
+    pub fn get_name_count(&self) -> usize {
         self.list.len()
         // if (this.name_count == null) {
         //     var count: usize = 0;

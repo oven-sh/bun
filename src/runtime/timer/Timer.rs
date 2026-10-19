@@ -599,4 +599,9 @@ pub(crate) mod internal_bindings {
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
     }
+
+    /// Unlike `Date.now()` and `performance.now()`, this ignores bun:test's fake timers.
+    pub(crate) fn monotonic_now_ms() -> f64 {
+        Timespec::now(TimespecMockMode::ForceRealTime).ms() as f64
+    }
 }

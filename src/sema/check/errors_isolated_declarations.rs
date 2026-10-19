@@ -889,7 +889,7 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[e].kind {
             // `OmittedExpression`. The placeholder the parser creates for a missing expression is
             // an identifier with empty text.
-            ExprKind::Missing => match self.bound(file).expr_parent[e.idx()] {
+            ExprKind::Missing => match self.bound(file).parent_of_expr(e) {
                 Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Array(_)) => {
                     Pseudo::Undefined
                 }
@@ -1158,7 +1158,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let StmtKind::Return(returned) = hir[s].kind else {
                         continue;
                     };
-                    if bound.stmt_parent[s.idx()] != Parent::FnBody(func) || candidate.is_some() {
+                    if bound.parent_of_stmt(s) != Parent::FnBody(func) || candidate.is_some() {
                         candidate = ExprId::NONE;
                         break;
                     }
@@ -1281,7 +1281,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let symbol = bound.pat_symbol[decl.pat.idx()];
                 let is_declared_once = symbol.is_none()
                     || {
-                        let decls = bound.symbols[symbol.idx()].decls.as_slice();
+                        let decls = bound.symbol(symbol).decls;
                         decls.len() == 1
                         || decls
                             .iter()

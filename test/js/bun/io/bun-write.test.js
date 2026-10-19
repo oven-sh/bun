@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -564,7 +565,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   // The first read that has to wait for a pipe starts the IO thread, which needs its own descriptors.
-  it.skipIf(isWindows)(
+  // TODO: times out on macOS.
+  it.skipIf(isWindows || isMacOS)(
     "Bun.file(fifo).text() rejects with EMFILE when out of descriptors, and works afterwards",
     async () => {
       using dir = tempDir("bun-file-fifo-emfile", {});

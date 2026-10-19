@@ -6432,6 +6432,22 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
+    test("warns about a deeply nested JavaScript file when another file has a syntax error", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true },
+        }),
+        "a.js": `const a = ${repeat("[", 100_000)}${repeat("]", 100_000)};\n`,
+        "z.ts": `const = ;\n`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir);
+      expect(stdout).toBe(`z.ts(1,7): error TS1134: Variable declaration expected.`);
+      expect(stderr.split("\n")[0]).toBe(
+        "error: the code in a.js is nested too deeply: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // The parser reads a run of `!` in a loop, so nothing bounds its length.
     test.each([
       [

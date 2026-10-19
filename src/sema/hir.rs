@@ -2690,11 +2690,14 @@ impl<S: Storage> FileIn<S> {
         (self.diagnostics.iter()).any(|d| matches!(d.kind, Parse | Grammar))
     }
     /// Whether `GetSyntacticDiagnostics` can have what it only has for JavaScript: a `Js` diagnostic, or one of
-    /// `getAdditionalJSSyntacticDiagnostics`, which are about decorators.
+    /// `getAdditionalJSSyntacticDiagnostics`, which are about decorators. Also true for a file that's reported as nested too
+    /// deeply, which only a visit does.
     pub fn may_have_javascript_diagnostics(&self) -> bool {
         let mut diagnostics = self.diagnostics.iter();
         self.is_js
-            && (!self.decorators.is_empty() || diagnostics.any(|d| d.kind == DiagnosticKind::Js))
+            && (self.ran_out_of_stack
+                || !self.decorators.is_empty()
+                || diagnostics.any(|d| d.kind == DiagnosticKind::Js))
     }
     /// Whether a diagnostic with `code` starts at `start`.
     pub fn has_diagnostic(&self, start: u32, code: u32) -> bool {

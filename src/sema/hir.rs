@@ -6,8 +6,7 @@
 
 use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
-use crate::session::{Arena, ArenaHashMap, ArenaVec, Session};
-use crate::util::memory::BlockList;
+use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
 use std::hint::cold_path;
@@ -407,41 +406,34 @@ impl<'s> Storage for InArena<'s> {
     type Lazy = Lazy<'s>;
 }
 
-/// An arena block for the lists of one file.
-pub(crate) type Block<'s> = crate::util::memory::Block<&'s Arena>;
+/// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
+/// an owner that still has the list (`FileBuilder::lend`), or belongs to a file that several programs share
+/// (`File::share`).
+pub struct Fixed<'s, T>(FixedIn<'s, T>);
 
-/// A list that neither grows nor shrinks. It's either in an arena block, usually together with the file's other lists,
-/// or borrowed from an owner that still has the list (`FileBuilder::lend`), or belongs to a file that several programs
-/// share (`File::share`). A file is only shared once nothing writes to it anymore.
-///
-/// An empty list is in no block, because a file without nodes can also be created by a thread that doesn't own the arena
-/// (`File::empty_in`).
-pub struct Fixed<'s, T>(BlockList<'s, T, &'s Arena>);
+enum FixedIn<'s, T> {
+    /// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
+    /// (`File::empty_in`).
+    Arena(ArenaBox<'s, [T]>),
+    Lent(&'s mut [T]),
+    Shared(&'s [T]),
+}
 
 impl<T> Default for Fixed<'_, T> {
     fn default() -> Self {
-        Fixed(BlockList::default())
+        Fixed(FixedIn::Lent(&mut []))
     }
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
-    /// Copies `list` to a block of its own.
     #[inline(never)]
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
-        Fixed::copied_into(
-            &mut Block::with_room_in(Block::room_for::<T>(list.len()), arena),
-            list,
-        )
-    }
-
-    #[inline(never)]
-    pub(crate) fn copied_into(block: &mut Block<'s>, list: &[T]) -> Self {
-        Fixed(block.copy(list))
+        Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
 
     /// Call before writing into it. Turns a shared list into a copy in `arena`.
     pub(crate) fn make_owned_in(&mut self, arena: &'s Arena) {
-        if let Some(list) = self.0.as_shared() {
+        if let FixedIn::Shared(list) = self.0 {
             *self = Fixed::copied_in(arena, list);
         }
     }
@@ -449,7 +441,7 @@ impl<'s, T: Copy> Fixed<'s, T> {
 
 impl<'s, T> Fixed<'s, T> {
     pub(crate) fn shared(list: &'s [T]) -> Self {
-        Fixed(BlockList::shared(list))
+        Fixed(FixedIn::Shared(list))
     }
 }
 
@@ -457,14 +449,24 @@ impl<T> Deref for Fixed<'_, T> {
     type Target = [T];
     #[inline(always)]
     fn deref(&self) -> &[T] {
-        &self.0
+        match &self.0 {
+            FixedIn::Arena(list) => list,
+            FixedIn::Lent(list) => list,
+            FixedIn::Shared(list) => list,
+        }
     }
 }
 
 impl<T> DerefMut for Fixed<'_, T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
-        &mut self.0
+        match &mut self.0 {
+            FixedIn::Arena(list) => list,
+            FixedIn::Lent(list) => list,
+            FixedIn::Shared(_) => {
+                unreachable!("a file is only shared once nothing writes to it anymore")
+            }
+        }
     }
 }
 
@@ -524,35 +526,18 @@ impl<T: Id> Ids<T> for Narrow<'_, T> {
 }
 
 impl<'s, T: Id> Narrow<'s, T> {
-    fn all_fit(list: &[T]) -> bool {
-        let fits =
-            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
-        list.iter().fold(true, fits)
-    }
-
-    /// Returns the room that `moved_into` takes up in a block for `list`.
-    pub(crate) fn room_for(list: &[T]) -> usize {
-        match Self::all_fit(list) {
-            true => Block::room_for::<u16>(list.len()),
-            false => Block::room_for::<T>(list.len()),
-        }
-    }
-
-    /// Copies `list` to a block of its own in `arena` and clears it. `list` keeps its capacity.
+    /// Copies `list` into `arena` and clears it. `list` keeps its capacity.
     pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
-        Self::moved_into(&mut Block::with_room_in(Self::room_for(list), arena), list)
-    }
-
-    /// Copies `list` into `block` and clears it. `list` keeps its capacity.
-    pub(crate) fn moved_into(block: &mut Block<'s>, list: &mut Vec<T>) -> Self {
-        if !Self::all_fit(list) {
+        let all_fit =
+            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
+        if !list.iter().fold(true, all_fit) {
             return Narrow {
                 short: Fixed::default(),
-                long: copy_to_block(list, block),
+                long: copy_to_arena(list, arena),
             };
         }
         let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
-        let short = Fixed(block.collect(short));
+        let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
         list.clear();
         Narrow {
             short,
@@ -621,9 +606,9 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     keyword_identifiers: OnceLock::new(),
 };
 
-/// Copies `list` into `block` and clears it. `list` keeps its capacity.
-pub(crate) fn copy_to_block<'s, T: Copy>(list: &mut Vec<T>, block: &mut Block<'s>) -> Fixed<'s, T> {
-    let exact = Fixed::copied_into(block, list);
+/// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
+pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+    let exact = Fixed::copied_in(arena, list);
     list.clear();
     exact
 }
@@ -2946,18 +2931,6 @@ macro_rules! long_lists {
     };
 }
 
-/// The lists that `file_in_arena` passes to `$long` and that aren't in `long_lists`, except for the comments.
-macro_rules! other_copied_lists {
-    ($each:ident) => {
-        $each!(mentioned, modifiers_of_params);
-    };
-}
-
-/// Returns the room that `list` takes up in a `Block`.
-pub(crate) fn room_for<T>(list: &[T]) -> usize {
-    Block::room_for::<T>(list.len())
-}
-
 /// Builds a `File` from `$this`, a `FileBuilder` or a `File`. The macro arguments convert a list of nodes (`$long`), a
 /// list that's empty in most files (`$few`), a list whose elements own memory (`$owning`), and the text
 /// (`$source_text`).
@@ -3103,23 +3076,16 @@ impl FileBuilder {
         session: &'s Session,
         cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
-        // Most callers drop the comments right away, so they aren't in the block.
-        let comments = Fixed::copied_in(arena, &self.comments);
-        self.comments.clear();
-        let mut room = 0;
-        macro_rules! each {
-            ($($f:ident),*) => { $(room += room_for(&self.$f);)* };
-        }
-        long_lists!(each);
-        other_copied_lists!(each);
-        let mut block = Block::with_room_in(room, arena);
+        // An empty list doesn't allocate in the arena. See `File::empty_in`.
         macro_rules! copied {
-            ($list:expr) => {
-                copy_to_block(&mut $list, &mut block)
-            };
+            ($list:expr) => {{
+                let exact = Fixed::copied_in(arena, &$list);
+                $list.clear();
+                exact
+            }};
         }
         moved_lists!(arena);
-        let mut file = file_in_arena!(
+        let file = file_in_arena!(
             self,
             arena,
             session,
@@ -3129,8 +3095,6 @@ impl FileBuilder {
             owning,
             source_text
         );
-        debug_assert!(block.is_full());
-        file.comments = comments;
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -3145,7 +3109,7 @@ impl FileBuilder {
         self.lazy = LazyCells::default();
         macro_rules! lent {
             ($list:expr) => {
-                Fixed(BlockList::lent(&mut $list[..]))
+                Fixed(FixedIn::Lent(&mut $list[..]))
             };
         }
         moved_lists!(arena);

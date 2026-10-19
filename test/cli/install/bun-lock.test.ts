@@ -1246,12 +1246,38 @@ describe("bun.lock entries that no dependency resolves to", () => {
       app,
       { "abc": pkg("ghost@1.0.0", { dependencies: { "not-there": "1.0.0" } }) },
     ],
+    ["a copy of an entry in use that lists no dependency", app, { "abc": pkg("tdep@1.0.0") }],
   ];
 
   it.each(cases)("%s", (_, lock, unused) => {
     const without = load(lock);
     expect({ first: load({ ...lock, packages: { ...unused, ...lock.packages } }) }).toEqual({ first: without });
     expect({ last: load({ ...lock, packages: { ...lock.packages, ...unused } }) }).toEqual({ last: without });
+  });
+
+  // Each workspace is registered under its name. An entry of another package at that key sends the
+  // workspace's own dependencies below `./<name>`, whether or not a dependency resolves to the entry.
+  it("an unused entry at the key of a workspace leaves the workspace's dependencies below ./<name>", () => {
+    const loaded = load({
+      workspaces: {
+        "": { name: "root" },
+        "packages/a": { name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } },
+        "packages/m": { name: "m", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } },
+      },
+      packages: {
+        "a": ["a@workspace:packages/a"],
+        "m": pkg("m@9.9.9"),
+        "no-deps": pkg("no-deps@2.0.0"),
+        "./m/no-deps": pkg("no-deps@1.0.0"),
+      },
+    });
+    const resolvedBy = (owner: string) =>
+      loaded.packages
+        .filter(({ name, resolution }) => name === owner && resolution.tag === "workspace")
+        .flatMap(({ dependencies }) => dependencies.map(id => loaded.dependencies[id]))
+        .map(({ name, package_id }) => `${name} -> ${loaded.packages[package_id]?.resolution.value}`);
+    expect({ a: resolvedBy("a"), m: resolvedBy("m") }).toEqual({ a: ["no-deps -> 2.0.0"], m: ["no-deps -> 1.0.0"] });
+    expect(loaded.packages.map(({ name, resolution }) => `${name}@${resolution.value}`)).not.toContain("m@9.9.9");
   });
 
   // one-dep@1.0.0 depends on no-deps@1.0.1. The two added entries put a-dep in its place.
@@ -1347,6 +1373,20 @@ describe("bun.lock entries that no dependency resolves to", () => {
       { "packages/no-deps": { name: "no-deps", version: "5.0.0", dependencies: { "a-dep": "workspace:*" } } },
       {},
       ["./no-deps/a-dep", "./no-deps/a-dep/a-dep"],
+    ],
+    [
+      "a workspace that the root has a peer dependency on under a second name",
+      { "": { peerDependencies: { "not-member": "npm:member@^1.0.0" } } },
+      { "packages/member": { name: "member", version: "1.0.0" } },
+      {},
+      ["member", "not-member"],
+    ],
+    [
+      "a bundled dependency that an override also puts at the root",
+      { "": { dependencies: { "bundled-shadow-host": "1.0.0" }, overrides: { "bundled-shadow-shared": "2.0.0" } } },
+      { "packages/member": { name: "member", version: "1.0.0" } },
+      {},
+      ["bundled-shadow-shared", "bundled-shadow-host/bundled-shadow-shared"],
     ],
   ] as const)("Bun writes no such entry for %s", async (_, root, member, dependent, written) => {
     const manifests = Object.entries({ ...member, ...dependent }).map(([path, json]) => [

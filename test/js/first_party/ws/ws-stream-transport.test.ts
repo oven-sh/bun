@@ -1329,4 +1329,59 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       scriptTimeout,
     );
   });
+
+  // Two masked binary messages, "x" and "y". The mask is all zeros, so byte 13 is the "y".
+  const twoMessages = [0x82, 0x81, 0, 0, 0, 0, 0x78, 0x82, 0x81, 0, 0, 0, 0, 0x79];
+
+  test.each([
+    { holder: "an ArrayBuffer", createBuffer: () => new ArrayBuffer(14) },
+    { holder: "a WebAssembly.Memory", createBuffer: () => new WebAssembly.Memory({ initial: 1 }).buffer },
+  ])("reads a chunk in $holder where it is, so a 'message' listener can change the next frame", ({ createBuffer }) => {
+    const chunk = new Uint8Array(createBuffer(), 0, 14);
+    chunk.set(twoMessages);
+    const socket = new Duplex({ read() {}, write: (data, encoding, callback) => callback() });
+    const ws = new (implementation.WebSocket as any)(null, undefined, {});
+    ws.setSocket(socket, Buffer.alloc(0), { maxPayload: 0, skipUTF8Validation: false });
+    const messages: string[] = [];
+    ws.on("message", (data: Buffer) => {
+      messages.push(show(data));
+      chunk[13] = 0x7a;
+    });
+    socket.emit("data", chunk);
+    expect(messages).toEqual(['Buffer("x")', 'Buffer("z")']);
+  });
+
+  // Only a bounds checked memory releases the block it grew out of.
+  test.concurrent.skipIf(!builtin)(
+    "a 'message' listener grows the WebAssembly.Memory that holds the chunk",
+    async () => {
+      const { lines, exitCode } = await runScript(
+        { specifier },
+        `
+        const { Duplex } = require("node:stream");
+        const memory = new WebAssembly.Memory({ initial: 1, maximum: 4 });
+        const chunk = new Uint8Array(memory.buffer, 0, 14);
+        chunk.set(${JSON.stringify(twoMessages)});
+        const socket = new Duplex({ read() {}, write(data, encoding, callback) { callback(); } });
+        const ws = new WebSocket(null, undefined, {});
+        ws.setSocket(socket, Buffer.alloc(0), { maxPayload: 0, skipUTF8Validation: false });
+        let reused;
+        ws.on("error", error => console.log(showError(error)));
+        ws.on("message", data => {
+          console.log(show(data));
+          if (reused) return;
+          memory.grow(1);
+          // Where the allocator keeps the released block mapped, this takes it over.
+          reused = new WebAssembly.Memory({ initial: 1, maximum: 1 });
+          new Uint8Array(reused.buffer).fill(0xff);
+        });
+        socket.emit("data", chunk);
+      `,
+        { BUN_JSC_useWasmFastMemory: "0" },
+      );
+      expect(lines).toEqual(['Buffer("x")', 'Buffer("y")']);
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
 });

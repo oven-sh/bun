@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -899,6 +899,49 @@ describe("async write buffer lifetime", () => {
       deflate.close();
     }
   });
+
+  it.concurrent.each([
+    {
+      // A bounds checked memory releases the block it grew out of. The new memory takes it over if it stays mapped.
+      then: "moves",
+      env: { BUN_JSC_useWasmFastMemory: "0" },
+      afterGrow: "new Uint8Array(new WebAssembly.Memory({ initial: pages, maximum: pages }).buffer).fill(0xff);",
+    },
+    {
+      // A fast memory grows in place, but the detached buffer no longer keeps it alive.
+      then: "is collected",
+      env: {},
+      afterGrow: "memory = null; Bun.gc(true);",
+    },
+  ])(
+    "keeps the input readable when the WebAssembly.Memory that holds it grows and $then",
+    async ({ env, afterGrow }) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const zlib = require("node:zlib");
+        const pages = 256;
+        let memory = new WebAssembly.Memory({ initial: pages, maximum: pages * 2 });
+        const input = new Uint8Array(memory.buffer).fill(0x61);
+        // One write has to take all of the input: a second one would read the view again, and grow() detached it.
+        zlib.deflate(input, { chunkSize: pages * 65536 }, (error, deflated) => {
+          if (error) throw error;
+          console.log(zlib.inflateSync(deflated).equals(Buffer.alloc(pages * 65536, 0x61)));
+        });
+        memory.grow(1);
+        ${afterGrow}
+      `,
+        ],
+        env: { ...bunEnv, ...env },
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe("async write pins are released", () => {

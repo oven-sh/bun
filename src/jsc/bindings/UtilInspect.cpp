@@ -10,6 +10,19 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include "JavaScriptCore/BigIntObject.h"
+#include "JavaScriptCore/DisallowVMEntry.h"
+#include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/FunctionExecutable.h"
+#include "JavaScriptCore/InternalFunction.h"
+#include "JavaScriptCore/JSArrayBuffer.h"
+#include "JavaScriptCore/JSBoundFunction.h"
+#include "JavaScriptCore/JSFinalizationRegistry.h"
+#include "JavaScriptCore/JSFunctionInlines.h"
+#include "JavaScriptCore/JSRemoteFunction.h"
+#include "JavaScriptCore/JSWeakObjectRef.h"
+#include "JavaScriptCore/SymbolObject.h"
+#include "ErrorCode.h"
 
 namespace Bun {
 
@@ -116,6 +129,199 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
         return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
+}
+
+// V8's JSReceiver::class_name(), null where that answers "Object": https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L535-L591
+static ASCIILiteral v8ClassName(JSObject* object)
+{
+    if (object->isCallable())
+        return "Function"_s;
+    auto type = object->type();
+    if (isTypedArrayType(type))
+        return object->classInfo()->className;
+    switch (type) {
+    case DirectArgumentsType:
+    case ScopedArgumentsType:
+    case ClonedArgumentsType:
+        return "Arguments"_s;
+    case ArrayType:
+    case DerivedArrayType:
+        return "Array"_s;
+    case ArrayBufferType:
+        return uncheckedDowncast<JSArrayBuffer>(object)->isShared() ? "SharedArrayBuffer"_s : "ArrayBuffer"_s;
+    case JSArrayIteratorType:
+        return "Array Iterator"_s;
+    case JSDateType:
+        return "Date"_s;
+    case ErrorInstanceType:
+        return "Error"_s;
+    case JSGeneratorType:
+    case JSAsyncGeneratorType:
+        return "Generator"_s;
+    case JSMapType:
+        return "Map"_s;
+    case JSMapIteratorType:
+        return "Map Iterator"_s;
+    case RegExpObjectType:
+        return "RegExp"_s;
+    case JSSetType:
+        return "Set"_s;
+    case JSSetIteratorType:
+        return "Set Iterator"_s;
+    case BooleanObjectType:
+        return "Boolean"_s;
+    case StringObjectType:
+    case DerivedStringObjectType:
+        return "String"_s;
+    case NumberObjectType:
+        return "Number"_s;
+    case JSWeakMapType:
+        return "WeakMap"_s;
+    case JSWeakSetType:
+        return "WeakSet"_s;
+    default:
+        break;
+    }
+    if (object->inherits<BigIntObject>())
+        return "BigInt"_s;
+    if (object->inherits<SymbolObject>())
+        return "Symbol"_s;
+    return {};
+}
+
+// The constructor on the map of a function in V8 is the intrinsic of its kind. A class, a bound function and a wrapped function have none.
+static ASCIILiteral functionKindName(JSFunction* function)
+{
+    if (function->isClassConstructorFunction() || function->inherits<JSBoundFunction>() || function->inherits<JSRemoteFunction>())
+        return {};
+    if (function->isHostFunction())
+        return "Function"_s;
+    SourceParseMode mode = function->jsExecutable()->parseMode();
+    if (isAsyncGeneratorParseMode(mode))
+        return "AsyncGeneratorFunction"_s;
+    if (isAsyncFunctionParseMode(mode))
+        return "AsyncFunction"_s;
+    if (isGeneratorParseMode(mode))
+        return "GeneratorFunction"_s;
+    return "Function"_s;
+}
+
+// Stands in for the constructor on the map of the receiver, which JSC does not record: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L596-L622
+static ASCIILiteral mapConstructorName(JSObject* receiver)
+{
+    // V8 skips this step for a value that is or was a prototype. JSC sets the bit when an object gets the value as its prototype, so not yet for `F.prototype = value`.
+    if (receiver->mayBePrototype())
+        return {};
+    if (auto* function = dynamicDowncast<JSFunction>(receiver))
+        return functionKindName(function);
+    // The type names the value as if its built-in constructor made it. V8 names an instance of a subclass from its chain, and JSC cannot tell the two apart.
+    switch (receiver->type()) {
+    // The constructor of a generator object is its generator function, which JSC does not record.
+    case JSGeneratorType:
+    case JSAsyncGeneratorType:
+        return {};
+    case ErrorInstanceType:
+        return errorTypeName(uncheckedDowncast<ErrorInstance>(receiver)->errorType());
+    case JSMapIteratorType:
+        return "MapIterator"_s;
+    case JSSetIteratorType:
+        return "SetIterator"_s;
+    case JSPromiseType:
+        return "Promise"_s;
+    case DataViewType:
+        return "DataView"_s;
+    default:
+        break;
+    }
+    if (receiver->inherits<JSWeakObjectRef>())
+        return "WeakRef"_s;
+    if (receiver->inherits<JSFinalizationRegistry>())
+        return "FinalizationRegistry"_s;
+    return v8ClassName(receiver);
+}
+
+// The name a function was made with, which V8 calls its debug name. Null when V8 does not take the value for a constructor.
+static JSString* constructorDebugName(JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSString* name = nullptr;
+    if (auto* function = dynamicDowncast<JSFunction>(value)) {
+        if (function->inherits<JSBoundFunction>() || function->inherits<JSRemoteFunction>())
+            return nullptr;
+        if (!function->isHostFunction()) {
+            // JSC names a function that the Function constructor made `anonymous`. V8 gives it no name.
+            auto* executable = function->jsExecutable();
+            if (!executable->isBuiltinFunction() && executable->topLevelExecutable() == executable)
+                return nullptr;
+        }
+        name = function->originalName(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else if (auto* function = dynamicDowncast<InternalFunction>(value))
+        name = jsString(vm, function->name());
+    else
+        return nullptr;
+
+    auto view = name->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (view->isEmpty() || view.data == "Object"_s)
+        return nullptr;
+    return name;
+}
+
+// V8's GetConstructorHelper, with mapConstructorName for its first step: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/v8/src/objects/js-objects.cc#L594-L686
+static JSString* getConstructorName(JSGlobalObject* globalObject, JSObject* receiver)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    DisallowVMEntry disallowVMEntry(vm);
+
+    ASCIILiteral constructed = mapConstructorName(receiver);
+    if (!constructed.isNull())
+        return jsNontrivialString(vm, constructed);
+
+    for (JSObject* object = receiver; object && object->type() != ProxyObjectType;) {
+        // The lookup of the base class: no getOwnPropertySlot override of a class runs, as V8 skips interceptors here.
+        PropertySlot tagSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasTag = JSObject::getOwnPropertySlot(object, globalObject, vm.propertyNames->toStringTagSymbol, tagSlot);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (hasTag && tagSlot.isValue()) {
+            JSValue tag = tagSlot.getValue(globalObject, vm.propertyNames->toStringTagSymbol);
+            if (tag.isString())
+                return asString(tag);
+        }
+
+        // The `constructor` of the receiver itself does not count: it names what the receiver is a prototype of.
+        if (object != receiver) {
+            PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool hasConstructor = JSObject::getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (hasConstructor && constructorSlot.isValue()) {
+                JSString* name = constructorDebugName(globalObject, constructorSlot.getValue(globalObject, vm.propertyNames->constructor));
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (name)
+                    return name;
+            }
+        }
+
+        JSValue prototype = object->getPrototypeDirect();
+        object = prototype.isObject() ? asObject(prototype) : nullptr;
+    }
+
+    ASCIILiteral name = v8ClassName(receiver);
+    return jsNontrivialString(vm, name.isNull() ? "Object"_s : name);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetConstructorName, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+    if (!value.isObject()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "object"_s, "object"_s, value);
+    RELEASE_AND_RETURN(scope, JSValue::encode(getConstructorName(globalObject, asObject(value))));
 }
 
 }

@@ -5165,7 +5165,7 @@ function collectHttp2Response(client, pathname) {
 }
 
 // What node-http2-respond-file.fixture.mjs prints under Bun: one line per case.
-const respondFileExpected = `
+const respondFileExpected = String.raw`
 {"case":"respondWithFD, no options","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
 {"case":"respondWithFD, no options, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":-1}]},"client":{"status":200,"body":"0123456789"}}
 {"case":"respondWithFD, offset 0","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
@@ -5259,6 +5259,9 @@ const respondFileExpected = `
 {"case":"respondWithFD, after every other case","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
 {"case":"respondWithFD, directory","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
 {"case":"respondWithFD, directory, statCheck","server":{"statCheckCalls":1,"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, /proc file","server":{"headersSent":true},"client":{"status":200,"body":"Linux\n"}}
+{"case":"respondWithFD, /proc file, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"Linux\n"}}
+{"case":"respondWithFile, /proc file","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
 `;
 // Node v26 prints another line for these cases, and the same line for every other one.
 const respondFileOnNode = {
@@ -5271,6 +5274,11 @@ const respondFileOnNode = {
   // node resets the stream with the code that close() got. Bun sends no code for a stream that sent nothing.
   "respondWithFD, statCheck closes the stream": `{"case":"respondWithFD, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"error":"Stream closed with error code NGHTTP2_REFUSED_STREAM","body":""}}`,
   "respondWithFile, statCheck closes the stream": `{"case":"respondWithFile, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"error":"Stream closed with error code NGHTTP2_REFUSED_STREAM","body":""}}`,
+};
+// On Windows, node fails a read with a negative offset other than -1.
+const respondFileOnNodeOnWindows = {
+  "respondWithFD, offset -7": `{"case":"respondWithFD, offset -7","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  "respondWithFile, offset -5": `{"case":"respondWithFile, offset -5","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"content-length":"15","error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
 };
 
 for (const [name, runtime] of [
@@ -5288,16 +5296,20 @@ for (const [name, runtime] of [
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       let expected = respondFileExpected.trim().split("\n");
-      // The fixture leaves the two cases with a directory descriptor out on Windows.
+      // The fixture has the cases with a directory descriptor on POSIX only, and the ones with a /proc file on Linux.
       if (isWindows) expected = expected.filter(line => !line.startsWith(`{"case":"respondWithFD, directory`));
-      if (name === "node") expected = expected.map(line => respondFileOnNode[JSON.parse(line).case] ?? line);
+      if (!isLinux) expected = expected.filter(line => !line.includes("/proc file"));
+      if (name === "node") {
+        const onNode = isWindows ? { ...respondFileOnNode, ...respondFileOnNodeOnWindows } : respondFileOnNode;
+        expected = expected.map(line => onNode[JSON.parse(line).case] ?? line);
+      }
       expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
         lines: expected,
         stderr: "",
         exitCode: 0,
       });
     },
-    // A debug build needs 3 to 5 s to start and about as long for the 93 requests. Every other build keeps the default.
+    // A debug build needs 3 to 5 s to start and about as long for the 96 requests. Every other build keeps the default.
     isDebug ? 60_000 : undefined,
   );
 }

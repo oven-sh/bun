@@ -294,6 +294,14 @@ if (process.platform !== "win32") {
   cases["respondWithFD, directory, statCheck"] = (stream, log) =>
     stream.respondWithFD(open(stream, dir), {}, { statCheck: counted(log) });
 }
+// A file in /proc is a regular file of size 0 that has content. Only respondWithFile() goes by the size.
+if (process.platform === "linux") {
+  const procFile = "/proc/sys/kernel/ostype";
+  cases["respondWithFD, /proc file"] = stream => stream.respondWithFD(open(stream, procFile));
+  cases["respondWithFD, /proc file, statCheck"] = stream =>
+    stream.respondWithFD(open(stream, procFile), {}, { statCheck() {} });
+  cases["respondWithFile, /proc file"] = file(procFile);
+}
 
 const names = Object.keys(cases);
 const logs = new Map();

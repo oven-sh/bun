@@ -3173,9 +3173,10 @@ function processRespondWithFD(
   pipeFile(this, fd, offset, length, ownsFd, finishNativeStream);
 }
 
-// The bytes from `offset` to the end of a regular file. -1: not a regular file, so read to EOF.
+// The bytes from `offset` to the end of a regular file. -1 (to EOF) when the stat has none: a /proc file has size 0.
 function fileLengthFrom(stat: import("node:fs").Stats, offset: number) {
-  return stat.isFile() ? Math.max(stat.size - offset, 0) : -1;
+  const length = stat.isFile() ? stat.size - offset : 0;
+  return length > 0 ? length : -1;
 }
 
 // node startFilePipe, with an fs.ReadStream as the source. length < 0: to EOF.

@@ -1260,7 +1260,7 @@ pub(crate) fn collect_compile_assets(
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             // Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
-            let dest = String::from_utf8_lossy(&dest).into_owned().into_bytes();
+            let dest = bstr::BStr::new(&dest).to_string().into_bytes();
             if seen.contains_key(&dest) {
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",

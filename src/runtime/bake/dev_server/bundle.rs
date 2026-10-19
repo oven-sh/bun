@@ -572,9 +572,9 @@ impl DevServer {
                         &self.route_bundles[route_bundle_index.get() as usize].data
                     {
                         let route = self.router.route_ptr(bundle.route_index);
-                        let file = route
-                            .file_page
-                            .unwrap_or(self.router.type_ptr_const(route.r#type).server_file);
+                        let file = route.file_page.unwrap_or_else(|| {
+                            self.router.type_ptr_const(route.r#type).server_file
+                        });
                         let file_index = from_opaque_file_id::<{ bake::Side::Server }>(file);
                         self.server_graph.stale_files.set(file_index.get() as usize);
                     }

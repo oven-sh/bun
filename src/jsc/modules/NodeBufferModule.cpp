@@ -3,11 +3,15 @@
 #include "BunClientData.h"
 #include "ErrorCode.h"
 #include "helpers.h"
-#include "JSBuffer.h"
 #include "JSBufferEncodingType.h"
 #include "JSDOMExceptionHandling.h"
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/JSTypedArrays.h>
+
+namespace WebCore {
+JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject*, size_t);
+JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject*);
+}
 
 using namespace JSC;
 
@@ -177,13 +181,15 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (length == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
-    std::span<const uint8_t> input { view->typedVector(), length };
-    WTF::MallocSpan<uint8_t> copy;
+    // Another thread can write to shared bytes between the passes below. The copy is a Buffer so that no return path has to free it.
     if (view->isShared()) [[unlikely]] {
-        copy = Bun::copySharedBytes(globalObject, scope, input);
+        auto* copy = WebCore::createUninitializedBuffer(globalObject, length);
         RETURN_IF_EXCEPTION(scope, {});
-        input = copy.span();
+        memcpy(copy->typedVector(), view->typedVector(), length);
+        view = copy;
     }
+    JSC::EnsureStillAliveScope keepAlive { view };
+    const std::span<const uint8_t> input { view->typedVector(), length };
     const auto* data = reinterpret_cast<const char*>(input.data());
 
     // Only these two ICU statuses are producible here.

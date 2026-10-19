@@ -1106,13 +1106,13 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         }
         return;
     }
-    WTF::MallocSpan<uint8_t> copy;
+    JSString* decoded;
     if (isShared) [[unlikely]] {
-        copy = Bun::copySharedBytes(globalObject, scope, bytes);
+        auto copy = Bun::copySharedBytes(globalObject, scope, bytes);
         RETURN_IF_EXCEPTION(scope, void());
-        bytes = copy.span();
-    }
-    auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
+        decoded = streamingUTF8Decode(globalObject, copy.span(), controller->m_algorithms.textDecodeState, /* flush */ false);
+    } else
+        decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
     RETURN_IF_EXCEPTION(scope, void());
     if (!decoded || !decoded->length()) {
         // No output from this chunk (held back as an incomplete sequence). Arm

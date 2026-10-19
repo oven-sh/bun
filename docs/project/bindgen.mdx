@@ -426,7 +426,7 @@ thread.
 another thread that writes it during the call changes what the body reads. `shared: "copied"` is
 for a body that reads a byte again and counts on what it was, such as a parser that scans ahead
 and comes back. JSC's `sort` copies for the same reason. With `string: "asIs"` the body calls
-`JsBytes::copy_if_shared` instead.
+`JsBytes::get_or_copy_if_shared` instead.
 
 The kind of the value is checked, and a string converted, in the order of the arguments. The
 bytes of a buffer are read, copied or pinned after every argument is converted. It is not a

@@ -48,7 +48,7 @@ static bool isSharedBuffer(JSValue value)
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value))
         return view->isShared();
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value))
-        return buffer->isShared();
+        return buffer->impl()->isShared();
     return false;
 }
 
@@ -76,4 +76,10 @@ extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBuffer(JSC::Enco
 {
     auto bytes = Bun::Bindgen::bytesOfBlobOrBuffer(JSC::JSValue::decode(value));
     return { bytes.data(), bytes.size() };
+}
+
+extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(JSC::EncodedJSValue value, bool* isShared)
+{
+    *isShared = Bun::Bindgen::isSharedBuffer(JSC::JSValue::decode(value));
+    return Bun__Bindgen__bytesOfBlobOrBuffer(value);
 }

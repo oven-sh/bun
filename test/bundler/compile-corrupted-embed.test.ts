@@ -37,9 +37,9 @@ function writeU64At(fd: number, position: number, value: bigint): void {
   writeSync(fd, buf, 0, 8, position);
 }
 
-/// `bun build --compile` points the ".bun" section header at the embedded payload.
-/// sh_addr and sh_offset locate `[u64 LE length][payload]`.
-function elfFindPayload(fd: number): { fileOffset: number; vaddr: bigint } {
+/// In bun itself, the ".bun" section is the BUN_COMPILED header. `bun build --compile` points the section header at
+/// the embedded payload instead, so sh_addr and sh_offset locate `[u64 LE length][payload]`.
+function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
   const ehdr = readAt(fd, 0, 64);
   if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not an ELF file");
   const e_shoff = Number(ehdr.readBigUInt64LE(0x28));
@@ -67,24 +67,24 @@ function elfFindPayload(fd: number): { fileOffset: number; vaddr: bigint } {
 function elfStompLength(path: string): void {
   const fd = openSync(path, "r+");
   try {
-    const { fileOffset } = elfFindPayload(fd);
+    const { fileOffset } = elfFindBunSection(fd);
     writeU64At(fd, fileOffset, HUGE_LENGTH);
   } finally {
     closeSync(fd);
   }
 }
 
-/// Overwrites the payload vaddr in the BUN_COMPILED header, which is the first u64 in the file with that value.
+/// Overwrites the payload vaddr in the BUN_COMPILED header, which stays at the file offset it has in bun itself.
 function elfStompVaddr(path: string, newVaddr: bigint): void {
+  const bun = openSync(bunExe(), "r");
   const fd = openSync(path, "r+");
   try {
-    const vaddr = Buffer.alloc(8);
-    vaddr.writeBigUInt64LE(elfFindPayload(fd).vaddr);
-    const position = readFileSync(path).indexOf(vaddr);
-    if (position === -1) throw new Error("BUN_COMPILED header not found");
+    const position = elfFindBunSection(bun).fileOffset;
+    expect(readAt(fd, position, 8).readBigUInt64LE()).toBe(elfFindBunSection(fd).vaddr);
     writeU64At(fd, position, newVaddr);
   } finally {
     closeSync(fd);
+    closeSync(bun);
   }
 }
 
@@ -239,7 +239,7 @@ test.if(isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 14))
     expect(await run(exe)).toEqual({ stdout: "intact-1048576\n", stderr: "", exitCode: 0 });
 
     const fd = openSync(exe, "r");
-    const { fileOffset } = elfFindPayload(fd);
+    const { fileOffset } = elfFindBunSection(fd);
     closeSync(fd);
 
     // The first cut keeps the length header's page but drops the trailer. The second drops the whole payload.

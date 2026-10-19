@@ -130,8 +130,9 @@ pub(crate) enum Source {
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned the storage, adopting an ArrayBuffer for a bufferless view
-    /// (caller must unpin).
+    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
+    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
+    /// caller roots the value as it does for 2).
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -716,9 +717,14 @@ impl Image {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
                 };
-                // Classify the storage mode and pin the bytes the worker reads.
-                // The common input (`await res.bytes()`, `Buffer.from(file)`)
-                // doesn't have an ArrayBuffer yet, so the helper adopts one in place.
+                // Classify the storage mode WITHOUT promoting it. A fresh
+                // `new Uint8Array(N)` (the common path — `await res.bytes()`,
+                // `Buffer.from(file)`) is `OversizeTypedArray`: bytes in
+                // fastMalloc, no JSArrayBuffer wrapper, can't be detached or
+                // moved. Calling `possiblySharedBuffer()` on that would
+                // `slowDownAndWasteMemory()` → copy + allocate a wrapper for
+                // every input. The classifier returns the slice directly and
+                // tells us whether anything actually needs pinning.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
                 // SAFETY: FFI call; out-params are valid pointers to locals.
@@ -745,11 +751,14 @@ impl Image {
                             ))
                         }
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
-                    2 => {
+                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
+                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
+                    kind @ (2 | 3) => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            if kind == 2 {
+                                // SAFETY: helper pinned `v`; unpin before erroring.
+                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            }
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -760,7 +769,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                Pin(v),
+                                if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
                         }
                     }

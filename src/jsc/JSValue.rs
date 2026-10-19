@@ -921,13 +921,15 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        if !JSC__JSValue__pinArrayBuffer(self) {
+        let kind = JSC__JSValue__pinArrayBuffer(self);
+        if kind == 0 {
             return None;
         }
         let mut buffer = self.as_array_buffer(global);
         match &mut buffer {
-            Some(buffer) => buffer.pinned = true,
-            None => self.unpin_array_buffer(),
+            Some(buffer) => buffer.pinned = kind == 1,
+            None if kind == 1 => self.unpin_array_buffer(),
+            None => {}
         }
         buffer
     }
@@ -2123,9 +2125,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    /// Returns true if it pinned the value's ArrayBuffer, materializing one for a view that has
-    /// none. The caller must unpin it later.
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
+    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

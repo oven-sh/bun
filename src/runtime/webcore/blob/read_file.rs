@@ -487,7 +487,7 @@ impl ReadFile {
     /// caller finishes it): fail with ECANCELED.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
-        self.fail_wait(bun_sys::Error::from_code(
+        self.fail_wait(&bun_sys::Error::from_code(
             bun_sys::E::ECANCELED,
             bun_sys::Tag::read,
         ));
@@ -495,7 +495,7 @@ impl ReadFile {
 
     /// Records `err` when the wait on the io loop couldn't start. The caller finishes the job.
     #[cfg(not(windows))]
-    fn fail_wait(&mut self, err: bun_sys::Error) {
+    fn fail_wait(&mut self, err: &bun_sys::Error) {
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.state
@@ -509,7 +509,7 @@ impl ReadFile {
     pub(crate) fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
         if let Err(err) = io::IoRequestLoop::ensure_init() {
-            self.fail_wait(err);
+            self.fail_wait(&err);
             return self.on_finish();
         }
         if !self.io_parking.park() {

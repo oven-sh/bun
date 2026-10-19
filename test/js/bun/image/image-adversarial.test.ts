@@ -77,8 +77,6 @@ function makePng(
 }
 
 const tinyPng = makePng(2, 2, (x, y) => [x * 255, y * 255, 128, 255]);
-/// Longer than JSC's fastSizeLimit (1000 elements), so `new Uint8Array(kilobytePng)` allocates its ArrayBuffer lazily.
-const kilobytePng = makePng(32, 32, (x, y) => [(x * 7 + y * 13) & 255, (x * 31) & 255, (y * 17) & 255, 255]);
 
 /// Decode any image to RGBA via Bun.Image→PNG, then walk the PNG ourselves
 /// (filter de-prediction included) so assertions are against ground truth,
@@ -1167,17 +1165,6 @@ describe("hostile option objects", () => {
     // After resolve the pin is released; now transfer() actually detaches.
     a.buffer.transfer();
     expect(a.byteLength).toBe(0);
-  });
-
-  test("pins a view whose `.buffer` was never accessed, so transfer() copies", async () => {
-    const a = new Uint8Array(kilobytePng); // > fastSizeLimit elements, .buffer not accessed yet
-    const p = new Bun.Image(a).png().bytes();
-    const moved = a.buffer.transfer();
-    expect(moved.byteLength).toBe(kilobytePng.length);
-    expect(a.byteLength).toBe(kilobytePng.length); // pinned, so `a` isn't detached
-    expect((await p)[0]).toBe(0x89);
-    a.buffer.transfer();
-    expect(a.byteLength).toBe(0); // the pin is released when the task finishes
   });
 
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {

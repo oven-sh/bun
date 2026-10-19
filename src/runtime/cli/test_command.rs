@@ -1512,24 +1512,26 @@ impl CommandLineReporter {
         }
     }
 
+    /// Returns false if `lcov.info` could not be written.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return true;
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
+            return false;
         }
+        true
     }
 }
 
@@ -1662,14 +1664,6 @@ fn write_lcov_report(
         let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
     }
 
-    let mut fs = crate::node::fs::NodeFS::default();
-    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-        path: crate::node::PathLike::borrowed(&opts.reports_directory),
-        always_return_none: true,
-        recursive: true,
-        ..Default::default()
-    });
-
     let mut rand = [0u8; 8];
     bun_boringssl_sys::rand_bytes(&mut rand);
     let mut tmpname: Vec<u8> = Vec::new();
@@ -1696,6 +1690,16 @@ fn write_lcov_report(
         &[&opts.reports_directory, b"lcov.info"],
     )
     .ok_or_else(too_long)?;
+    if let Some(dir) = bun_path::dirname(path.as_bytes()) {
+        let mut fs = crate::node::fs::NodeFS::default();
+        let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+            path: crate::node::PathLike::borrowed(dir),
+            always_return_none: true,
+            recursive: true,
+            ..Default::default()
+        });
+    }
+
     let file = File::openat(
         Fd::cwd(),
         tmp_path,
@@ -2443,6 +2447,7 @@ impl TestCommand {
             .unwrap()
             .snapshots
             .write_snapshot_file()?;
+        let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
             && !reporter.reporters.dots
@@ -2558,7 +2563,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                write_coverage_success = reporter.generate_code_coverage(vm, &mut coverage_options);
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2725,6 +2730,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || !write_coverage_success
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;

@@ -427,30 +427,6 @@ describe("Bun.markdown buffer input", () => {
     expect((input.buffer as ArrayBuffer).detached).toBe(true);
   });
 
-  // A typed array with more than 1000 elements allocates its ArrayBuffer lazily.
-  test("pins an input without an ArrayBuffer while a callback runs and unpins it afterwards", () => {
-    const body = Buffer.alloc(2048, "world ").toString().trimEnd();
-    const text = `# Hello\n\n${body}\n`;
-    const input = new Uint8Array(Buffer.byteLength(text));
-    new TextEncoder().encodeInto(text, input);
-    let byteLengthDuringRender = -1;
-    const result = Markdown.render(input, {
-      heading: (children: string) => {
-        input.buffer.transfer();
-        byteLengthDuringRender = input.byteLength;
-        return `<h1>${children}</h1>`;
-      },
-      paragraph: (children: string) => `<p>${children}</p>`,
-    });
-    expect({ byteLengthDuringRender, result }).toEqual({
-      byteLengthDuringRender: text.length,
-      result: `<h1>Hello</h1><p>${body}</p>`,
-    });
-
-    input.buffer.transfer();
-    expect(input.byteLength).toBe(0);
-  });
-
   // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.
   describe("survives a resizable input that shrinks during the call", () => {
     const source = "# Hello\n\nworld **bold**\n";

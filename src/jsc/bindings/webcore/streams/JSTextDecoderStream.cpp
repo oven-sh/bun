@@ -330,30 +330,21 @@ using namespace JSC;
 using WebCore::JSTextDecoderStream;
 
 // [AllowShared] BufferSource → (ptr, len); a detached buffer yields the empty sequence.
-// `copy` owns the bytes when the buffer is shared.
-static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalObject* globalObject, JSValue chunk, WTF::MallocSpan<uint8_t>& copy)
+static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalObject* globalObject, JSValue chunk, bool& isShared)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
         if (view->isDetached()) [[unlikely]]
             return std::span<const uint8_t>();
-        if (view->isShared()) [[unlikely]] {
-            copy = Bun::copySharedBytes(globalObject, scope, view->span());
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-            return copy.span();
-        }
+        isShared = view->isShared();
         return std::span<const uint8_t>(static_cast<const uint8_t*>(view->vector()), view->byteLength());
     }
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
         auto* impl = buffer->impl();
         if (!impl || impl->isDetached()) [[unlikely]]
             return std::span<const uint8_t>();
-        if (impl->isShared()) [[unlikely]] {
-            copy = Bun::copySharedBytes(globalObject, scope, impl->span());
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-            return copy.span();
-        }
+        isShared = impl->isShared();
         return std::span<const uint8_t>(static_cast<const uint8_t*>(impl->data()), impl->byteLength());
     }
     Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);
@@ -382,10 +373,15 @@ JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecode
 {
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-        WTF::MallocSpan<uint8_t> copy;
-        std::optional<std::span<const uint8_t>> bytes = textDecoderStreamBytes(globalObject, chunk, copy);
+        bool isShared = false;
+        std::optional<std::span<const uint8_t>> bytes = textDecoderStreamBytes(globalObject, chunk, isShared);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        decodeAndEnqueue(globalObject, stream, controller, bytes->data(), bytes->size(), true);
+        if (isShared) [[unlikely]] {
+            auto copy = Bun::copySharedBytes(globalObject, scope, *bytes);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            decodeAndEnqueue(globalObject, stream, controller, copy.span().data(), copy.span().size(), true);
+        } else
+            decodeAndEnqueue(globalObject, stream, controller, bytes->data(), bytes->size(), true);
         RETURN_IF_EXCEPTION(scope, nullptr);
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     });

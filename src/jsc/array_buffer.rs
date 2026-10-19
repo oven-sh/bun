@@ -31,9 +31,7 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
-    /// True when the bytes belong to a `WebAssembly.Memory`. See [`can_be_freed_while_pinned`](Self::can_be_freed_while_pinned).
-    pub wasm_memory: bool,
-    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned; [`ArrayBuffer::unpin`] is a no-op otherwise.
+    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
     pub pinned: bool,
 }
 
@@ -47,7 +45,6 @@ impl Default for ArrayBuffer {
             typed_array_type: JSType::Cell,
             shared: false,
             resizable: false,
-            wasm_memory: false,
             pinned: false,
         }
     }
@@ -141,6 +138,8 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    // safe: by-value `JSValue`; false for non-buffer values.
+    safe fn JSC__JSValue__isWasmMemory(v: JSValue) -> bool;
     // safe: by-value `JSValue`; the callee always fills both out-params.
     safe fn JSC__JSValue__arrayBufferExtent(v: JSValue, out_ptr: &mut *mut u8, out_len: &mut usize);
 }
@@ -186,7 +185,12 @@ impl ArrayBuffer {
     /// which frees the old block immediately or when the memory is collected.
     /// Copy these bytes if the borrow outlives the call.
     pub fn can_be_freed_while_pinned(&self) -> bool {
-        !self.shared && (self.resizable || self.wasm_memory)
+        !self.shared && (self.resizable || self.is_wasm_memory())
+    }
+
+    /// A call instead of a field, so that `as_array_buffer` callers that never ask don't pay for the answer.
+    fn is_wasm_memory(&self) -> bool {
+        JSC__JSValue__isWasmMemory(self.value)
     }
 
     // require('buffer').kMaxLength.
@@ -330,7 +334,6 @@ impl ArrayBuffer {
         typed_array_type: JSType::Uint8Array,
         shared: false,
         resizable: false,
-        wasm_memory: false,
         pinned: false,
     };
 
@@ -775,7 +778,7 @@ impl PinnedArrayBuffer {
     /// copies the bytes to `offset`.
     #[inline]
     pub fn write_to_scratch_if_wasm(&mut self, offset: usize, len: usize) -> bool {
-        if !self.buffer.wasm_memory || self.buffer.shared || len == 0 {
+        if len == 0 || self.buffer.shared || !self.buffer.is_wasm_memory() {
             return false;
         }
         let mut scratch = vec![0u8; len];

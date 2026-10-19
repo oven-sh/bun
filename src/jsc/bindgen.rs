@@ -441,15 +441,33 @@ impl<'a> JsBytes<'a> {
         }
     }
 
-    /// `shared: "copied"` for `string: "asIs"`. Returns `None` for anything but a shared buffer.
-    pub fn copy_if_shared(self, heap: &JsHeap<'a>) -> crate::JsResult<Option<Vec<u8>>> {
+    /// `shared: "copied"` for `string: "asIs"`. Like [`get`](Self::get), but copies the bytes of a shared buffer into `copy` and returns those.
+    #[inline]
+    pub fn get_or_copy_if_shared<'heap>(
+        self,
+        heap: &'heap JsHeap<'a>,
+        copy: &'heap mut Vec<u8>,
+    ) -> crate::JsResult<&'heap [u8]> {
+        if let Some(bytes) = self.stable {
+            return Ok(bytes);
+        }
+        let mut is_shared = false;
+        let bytes = extern_types::Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(
+            self.value.0,
+            &mut is_shared,
+        );
+        if !is_shared {
+            // SAFETY: as in `get`.
+            return Ok(unsafe { bytes.get(heap) });
+        }
         let global = heap.global_object();
-        match self.value.0.as_array_buffer(global) {
-            Some(buffer) if buffer.shared => match buffer.try_copy_bytes() {
-                Some(copy) => Ok(Some(copy)),
-                None => Err(global.throw_out_of_memory()),
-            },
-            _ => Ok(None),
+        let buffer = self.value.0.as_array_buffer(global);
+        match buffer.and_then(|buffer| buffer.try_copy_bytes()) {
+            Some(bytes) => {
+                *copy = bytes;
+                Ok(copy)
+            }
+            None => Err(global.throw_out_of_memory()),
         }
     }
 }

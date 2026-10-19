@@ -108,13 +108,15 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     },
   );
 
-  // A plain Buffer has no ArrayBuffer until `.buffer` is touched. The pending write materializes one and pins it,
-  // so transfer() mid-write copies instead of detaching the Buffer, like the case above.
-  test.skipIf(isWindows)("a plain Buffer is pinned while its write is pending, then released on drain", async () => {
+  // A plain Buffer has no ArrayBuffer until `.buffer` is touched, and the
+  // pending write holds it without materializing one (doing so registers the
+  // bytes with the GC a second time). transfer() mid-write therefore detaches,
+  // as in Node, but it moves the storage rather than freeing it, so the bytes
+  // still to be written reach the client intact.
+  test.skipIf(isWindows)("a plain Buffer transferred while its write is pending still arrives intact", async () => {
     const payload = makePayload(CHUNK_SIZE);
     const expectedHash = sha1(payload);
     let detachedWhilePending: boolean | undefined;
-    let detachedAfterDrain: boolean | undefined;
     let moved: ArrayBuffer | undefined;
     let handlerError: unknown;
     const serverReady = Promise.withResolvers<void>();
@@ -127,8 +129,6 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         detachedWhilePending = payload.buffer.detached;
         serverReady.resolve();
         await once(res, "drain");
-        payload.buffer.transfer();
-        detachedAfterDrain = payload.buffer.detached;
         res.end();
       } catch (e) {
         handlerError = e;
@@ -154,8 +154,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const body = received.subarray(received.indexOf("\r\n\r\n") + 4);
     expect(body.length).toBe(CHUNK_SIZE);
     expect(sha1(body)).toBe(expectedHash);
-    expect(detachedWhilePending).toBe(false);
-    expect(detachedAfterDrain).toBe(true);
+    expect(detachedWhilePending).toBe(true);
     expect(moved?.byteLength).toBe(CHUNK_SIZE);
   });
 

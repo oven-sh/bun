@@ -3484,21 +3484,6 @@ JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* globalObject, JSC:
     return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
-// A view without an ArrayBuffer can't be shared, resizable or wasm memory, so this never materializes one.
-static void setStorageFlags(JSC::JSArrayBufferView* view, Bun__ArrayBuffer* out)
-{
-    if (!view->hasArrayBuffer()) {
-        out->shared = false;
-        out->resizable = false;
-        out->wasm_memory = false;
-        return;
-    }
-    auto* buffer = view->possiblySharedBuffer();
-    out->shared = buffer->isShared();
-    out->resizable = view->isResizableOrGrowableShared();
-    out->wasm_memory = buffer->isWasmMemory();
-}
-
 bool JSC__JSValue__asArrayBuffer(
     JSC::EncodedJSValue encodedValue,
     JSC::JSGlobalObject* globalObject,
@@ -3532,7 +3517,8 @@ bool JSC__JSValue__asArrayBuffer(
         out->len = view->length();
         out->byte_len = view->byteLength();
         out->cell_type = type;
-        setStorageFlags(view, out);
+        out->shared = view->isShared();
+        out->resizable = view->isResizableOrGrowableShared();
         break;
     }
     case JSC::JSType::ArrayBufferType: {
@@ -3543,7 +3529,6 @@ bool JSC__JSValue__asArrayBuffer(
         out->cell_type = JSC::JSType::ArrayBufferType;
         out->shared = buffer->isShared();
         out->resizable = buffer->isResizableOrGrowableShared();
-        out->wasm_memory = buffer->isWasmMemory();
         break;
     }
     case JSC::JSType::ObjectType:
@@ -3553,7 +3538,8 @@ bool JSC__JSValue__asArrayBuffer(
             out->len = view->length();
             out->byte_len = view->byteLength();
             out->cell_type = view->type();
-            setStorageFlags(view, out);
+            out->shared = view->isShared();
+            out->resizable = view->isResizableOrGrowableShared();
         } else if (JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
             JSC::ArrayBuffer* buffer = jsBuffer->impl();
             if (!buffer)
@@ -3564,7 +3550,6 @@ bool JSC__JSValue__asArrayBuffer(
             out->cell_type = JSC::JSType::ArrayBufferType;
             out->shared = buffer->isShared();
             out->resizable = buffer->isResizableOrGrowableShared();
-            out->wasm_memory = buffer->isWasmMemory();
         } else {
             return false;
         }
@@ -3593,32 +3578,44 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// Only an ArrayBuffer can be pinned, so a view without one
-// (OversizeTypedArray) gets one first. `possiblySharedBuffer()` wraps the
-// storage in place (`createAdopted`, no byte copy). Otherwise `view.buffer`
-// would later create an unpinned ArrayBuffer, and transferring it would free
-// the storage while the borrower is still reading it.
-static bool pinStorage(JSC::JSValue value)
+// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
+// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
+// an ArrayBuffer just to pin it registers the bytes with the heap a second
+// time and, because ArrayBuffers are only reclaimed by full collections,
+// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
+// pressure. Such a view cannot be detached without JS first touching
+// `.buffer`. Known gap: if JS does that mid-op, the new ArrayBuffer is
+// unpinned, so `transfer(0)` frees the storage at once and a same-length
+// `transfer()` frees it when the new owner is collected.
+// The caller keeps the returned kind and only calls unpin for `Pinned`; a
+// held view is kept alive by the caller's own root, and nothing here needs
+// undoing for it.
+enum class PinKind : uint8_t { None = 0,
+    Pinned = 1,
+    Held = 2 };
+static PinKind pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
         buf = jb->impl();
     else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         if (view->isDetached())
-            return false;
+            return PinKind::None;
+        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
+            return PinKind::Held;
         buf = view->possiblySharedBuffer();
     }
     if (!buf || buf->isDetached())
-        return false;
+        return PinKind::None;
     if (!buf->isShared())
         buf->pin();
-    return true;
+    return PinKind::Pinned;
 }
-CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
-    return pinStorage(JSC::JSValue::decode(v));
+    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
 }
-// Only call this for a value that `pinStorage` returned true for. That buffer still exists because pinned buffers can't be detached.
+// Only call this for a value that `pinStorage` returned `Pinned` for. That buffer still exists because pinned buffers can't be detached.
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
     // Reached from finalizers during GC sweep, where classInfo() (and so any
@@ -3640,6 +3637,19 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     }
     if (buf && !buf->isShared())
         buf->unpin();
+}
+
+// Returns true if `v`'s bytes belong to a `WebAssembly.Memory`. Never materializes an ArrayBuffer.
+CPP_DECL bool JSC__JSValue__isWasmMemory(JSC::EncodedJSValue v)
+{
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
+        return view->hasArrayBuffer() && view->possiblySharedBuffer()->isWasmMemory();
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        return buf && buf->isWasmMemory();
+    }
+    return false;
 }
 
 // Returns `v`'s current byte range, or null and 0 if it's detached.
@@ -3668,13 +3678,16 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode uses `pinStorage`.
+// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
+// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
 //
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
 //      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Pinned the storage: an existing ArrayBuffer, or one adopted for a
-//      bufferless view. Caller MUST `unpinArrayBuffer(v)` when done.
+//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
+//      when done.
+//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
+//      the value for the duration as it already does for 2.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
@@ -3687,10 +3700,11 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        if (!pinStorage(view)) return 0;
+        auto kind = pinStorage(view);
+        if (kind == PinKind::None) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return 2;
+        return kind == PinKind::Held ? 3 : 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
@@ -7179,6 +7193,5 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
     out->resizable = self->isResizableOrGrowableShared();
-    out->wasm_memory = self->isWasmMemory();
     out->pinned = false;
 }

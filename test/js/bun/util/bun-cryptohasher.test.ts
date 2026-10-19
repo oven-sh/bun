@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, hash as nodeHash } from "node:crypto";
 import { join } from "node:path";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
@@ -41,12 +41,14 @@ test("an output of Bun.build() is hashed as its bytes, and one written to outdir
     classInstance: new Bun.SHA1().update(inMemory).digest("hex"),
     instance: new Bun.CryptoHasher("sha1").update(inMemory).digest("hex"),
     sha: Bun.sha(inMemory, "hex"),
+    nodeCrypto: nodeHash("sha1", inMemory, "hex"),
   }).toEqual({
     classStatic: Bun.SHA1.hash(code, "hex"),
     static: Bun.CryptoHasher.hash("sha1", code, "hex"),
     classInstance: new Bun.SHA1().update(code).digest("hex"),
     instance: new Bun.CryptoHasher("sha1").update(code).digest("hex"),
     sha: Bun.sha(code, "hex"),
+    nodeCrypto: nodeHash("sha1", code, "hex"),
   });
 
   expect(() => Bun.SHA1.hash(written)).toThrow(fileBlob);
@@ -54,6 +56,7 @@ test("an output of Bun.build() is hashed as its bytes, and one written to outdir
   expect(() => new Bun.SHA1().update(written)).toThrow(fileBlob);
   expect(() => new Bun.CryptoHasher("sha1").update(written)).toThrow(fileBlob);
   expect(() => Bun.sha(written)).toThrow(fileBlob);
+  expect(() => nodeHash("sha1", written)).toThrow(fileBlob);
 });
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({

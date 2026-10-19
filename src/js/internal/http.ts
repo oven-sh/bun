@@ -44,21 +44,6 @@ const kRequest = Symbol("request");
 const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
 
-// node:_http_server registers its pipelined-response machinery here at module
-// initialization, letting internal/http1_server_fallback drive the same
-// per-connection queue without widening node:_http_server's exports. The
-// fallback loads node:http (and with it _http_server) before reading these.
-const http1ServerPipeline: {
-  queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
-  advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
-  abortQueuedPipelinedResponses?: (socket: unknown) => void;
-  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
-  maybePauseFallbackReads?: (socket: unknown) => void;
-  resumeFallbackReadsOnDrain?: (socket: unknown) => void;
-  finishDrainedResponse?: (res: unknown) => void;
-  kMustCloseConnection?: symbol;
-} = {};
-
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -363,6 +348,9 @@ const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTT
 const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
+// Node's per-connection state of internal/http1_server_fallback: on its socket, and on each ServerResponse from the request to the
+// 'finish' of that response. Such a response has no native handle. It gets its socket and its 'drain' from the connection.
+const kHttp1Connection = Symbol("kHttp1Connection");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
@@ -536,12 +524,12 @@ export {
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
-  http1ServerPipeline,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
   kHandle,
   kHandoffResponse,
+  kHttp1Connection,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,

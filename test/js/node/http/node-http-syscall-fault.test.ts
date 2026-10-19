@@ -196,6 +196,56 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
   });
 });
 
+// A socket handed over with server.emit("connection") is served over its stream
+// interface, and the response emits 'finish' from the callback of its last
+// write, also when that write fails (Node's onFinish). A send that takes only a
+// part of the response leaves the rest waiting for the socket to become
+// writable. The retry in that handler can fail: on kqueue this is how the reset
+// of a peer arrives. The rules are bound to the server's fd, so the client in
+// this process sends as usual.
+describe.skipIf(skip)("node:http on a socket from emit('connection') whose waiting send fails", () => {
+  test("the response emits 'finish' and its callbacks run, then it closes", async () => {
+    const body = Buffer.alloc(64 * 1024, "a");
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      const socket = req.socket;
+      const fd = (socket as any)._handle.fd as number;
+      res.on("finish", () => events.push(`finish, writableFinished: ${res.writableFinished}`));
+      res.on("close", () => {
+        events.push("close");
+        closed.resolve();
+      });
+      // The first send takes one byte. The rest waits in the handle.
+      fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+      res.write(body, err => events.push(`write callback: ${(err as NodeJS.ErrnoException | undefined)?.code}`));
+      res.end(body, () => events.push("end callback"));
+      events.push(`the socket holds the response: ${socket.writableLength > 2 * body.length}`);
+      // The retry fails.
+      fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd });
+    });
+    const acceptor = net.createServer(socket => void server.emit("connection", socket));
+    await once(acceptor.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((acceptor.address() as net.AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.resume();
+    try {
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await closed.promise;
+      expect(events).toEqual([
+        "the socket holds the response: true",
+        "write callback: EPIPE",
+        "finish, writableFinished: true",
+        "end callback",
+        "close",
+      ]);
+    } finally {
+      client.destroy();
+      acceptor.close();
+    }
+  });
+});
+
 describe.skipIf(skip)("node:http pipelining under short sends", () => {
   // Every send() takes at most 12 KB, so each 16 KB response leaves a tail in
   // userspace, and the flush that follows a drain callback sends the next

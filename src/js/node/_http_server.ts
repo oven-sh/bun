@@ -60,8 +60,9 @@ const {
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   kOutHeaders,
+  kNeedDrain,
+  kHttp1Connection,
   onDataIncomingMessage,
-  http1ServerPipeline,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -72,6 +73,7 @@ const {
   kErrored,
   kHighWaterMark,
   kSocket,
+  kChunkedLength,
   kRejectNonStandardBodyWrites,
   kUniqueHeaders,
   parseUniqueHeadersOption,
@@ -2756,28 +2758,6 @@ function pausePipelineReads(socket) {
   response.pauseReads();
 }
 
-// Node's parserOnIncoming read gate, for fallback connections (the native
-// sibling is the kOutgoingData check before pausePipelineReads at the
-// dispatcher): stop reading when the transport or the bytes buffered on
-// queued pipelined responses are backed up, so a pipelining client cannot
-// flood the connection's memory.
-function maybePauseFallbackReads(socket) {
-  if (socket._paused) return;
-  if (socket._writableState?.needDrain || (socket[kOutgoingData] ?? 0) >= socket.writableHighWaterMark) {
-    socket._paused = true;
-    socket.pause();
-  }
-}
-
-// Node's socketOnDrain: the transport drained, so resume reads unless queued
-// response bytes still hold the gate.
-function resumeFallbackReadsOnDrain(socket) {
-  if (socket._paused && (socket[kOutgoingData] ?? 0) <= socket.writableHighWaterMark) {
-    socket._paused = false;
-    socket.resume();
-  }
-}
-
 function addPipelineOutgoingData(queued, bytes) {
   const socket = queued.socket;
   socket[kOutgoingData] = (socket[kOutgoingData] ?? 0) + bytes;
@@ -2791,14 +2771,7 @@ function releasePipelineOutgoingData(socket, bytes) {
   socket[kOutgoingData] = outgoing > 0 ? outgoing : 0;
   if (socket._paused && outgoing <= socket.writableHighWaterMark) {
     socket._paused = false;
-    const response = socket[kHandle]?.response;
-    if (response) {
-      response.resume();
-    } else if (!(NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket)) {
-      // Fallback duplex paused by maybePauseFallbackReads: plain stream flow
-      // control is the only way to restart it.
-      socket.resume();
-    }
+    socket[kHandle]?.response?.resume();
   }
 }
 
@@ -2837,16 +2810,9 @@ function queuePipelinedResponse(socket, res, isAncient) {
   (socket[kPipelinedResponses] ??= []).push(res);
 }
 
-// Like Node.js's socketOnEnd: the response that gets `_last` after the client's FIN is the last one in the queue.
-function lastPipelinedResponse(socket) {
-  const queue = socket[kPipelinedResponses];
-  return queue?.[queue.length - 1];
-}
-
 // When the connection dies with pipelined responses still queued behind the
 // in-flight one, abort them and their requests, like Node.js's socketOnClose
-// (abortIncoming). Runs from the native socket's close path and from the
-// http1 fallback's socket 'close' listener.
+// (abortIncoming). Runs from the native socket's close path.
 function abortQueuedPipelinedResponses(socket, error = $ERR_STREAM_DESTROYED("write")) {
   const pipelined = socket[kPipelinedResponses];
   const pipelinedLength = pipelined ? pipelined.length : 0;
@@ -2877,11 +2843,7 @@ function abortQueuedPipelinedResponses(socket, error = $ERR_STREAM_DESTROYED("wr
 
 // The head of the queue can never be sent: close once the bytes of the responses ahead of it have left.
 function closeAfterLastSendableResponse(socket) {
-  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) {
-    socket[kHandle]?.closeWhenDrained();
-  } else if (!socket.destroyed) {
-    socket.destroy();
-  }
+  socket[kHandle]?.closeWhenDrained();
 }
 
 function failQueuedPipelinedWriteCallbacks(queued, error) {
@@ -2948,36 +2910,24 @@ function advanceResponsePipeline(server, socket) {
   res[kPipelinedQueuedState] = undefined;
   releasePipelineOutgoingData(socket, queued.bytes);
 
-  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) {
-    const socketHandle = socket[kHandle];
-    if (
-      !socketHandle ||
-      socket.destroyed ||
-      !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
-    ) {
-      // The connection is already gone; the socket close path destroys queued
-      // responses, but make sure this (already dequeued) one is not skipped.
-      failQueuedPipelinedWriteCallbacks(queued, socket.errored ?? $ERR_STREAM_DESTROYED("write"));
-      if (!res.destroyed) {
-        res.destroy();
-      }
-      return;
+  const socketHandle = socket[kHandle];
+  if (
+    !socketHandle ||
+    socket.destroyed ||
+    !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
+  ) {
+    // The connection is already gone; the socket close path destroys queued
+    // responses, but make sure this (already dequeued) one is not skipped.
+    failQueuedPipelinedWriteCallbacks(queued, socket.errored ?? $ERR_STREAM_DESTROYED("write"));
+    if (!res.destroyed) {
+      res.destroy();
     }
+    return;
+  }
 
-    if (res.assignSocket === ServerResponse.prototype.assignSocket) {
-      assignSocketInternal(res, socket);
-    } else {
-      res.assignSocket(socket);
-    }
+  if (res.assignSocket === ServerResponse.prototype.assignSocket) {
+    assignSocketInternal(res, socket);
   } else {
-    // internal/http1_server_fallback connection (a foreign duplex): the
-    // response's JS handle writes to the socket itself (nothing to switch
-    // natively), and the prototype assignSocket installs the 'close' listener
-    // a plain stream needs. Clear `finished` first, or assignSocket's _flush
-    // emits 'prefinish' before the ops replay below.
-    if (queued.ended) {
-      res.finished = false;
-    }
     res.assignSocket(socket);
   }
 
@@ -3249,7 +3199,7 @@ Object.defineProperty(ServerResponse.prototype, "socket", {
       // response is assigned the socket.
       return null;
     }
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    return this[fakeSocketSymbol] ?? socketOfUnassignedResponse(this);
   },
   set(value) {
     this[fakeSocketSymbol] = value;
@@ -3259,6 +3209,12 @@ Object.defineProperty(ServerResponse.prototype, "socket", {
     this[kSocket] = value;
   },
 });
+
+function socketOfUnassignedResponse(res) {
+  // The same for a response that waits for its turn on a connection of internal/http1_server_fallback.
+  if (res[kHttp1Connection] !== undefined) return null;
+  return (res[fakeSocketSymbol] = new FakeSocket(res));
+}
 
 Object.defineProperty(ServerResponse.prototype, "connection", {
   get() {
@@ -3345,7 +3301,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
     // no socket is assigned yet (kSocket is null) and flushes the buffer
     // ahead of the chunk once one is - writing through the auto-creating
     // `socket` getter here would drop the bytes into a FakeSocket.
-    return OutgoingMessagePrototype._writeRaw.$apply(this, arguments);
+    return OutgoingMessagePrototype._writeRaw.$call(this, chunk, encoding, callback);
   }
   const queued = this[kPipelinedQueuedState];
   if (queued !== undefined) {
@@ -3653,15 +3609,6 @@ function flushPendingFinish(this: any) {
   queueResponseFinished(this, callback);
 }
 
-// For internal/http1_server_fallback. Like Node.js's onFinish it emits 'finish' in place: a tick later, a closing socket's 'close' listeners would run first.
-function finishDrainedResponse(res) {
-  const callback = res[kPendingFinish];
-  if (callback === undefined) return;
-  res[kPendingFinish] = undefined;
-  res._callPendingCallbacks();
-  emitResponseFinished(res, callback);
-}
-
 Object.defineProperty(ServerResponse.prototype, "writable", {
   // Node.js's OutgoingMessage assigns `this.writable = true` in the
   // constructor and never flips it back to false - not on end(), not on
@@ -3886,40 +3833,43 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
-    // True between a write() that returned false and the next 'drain'. An armed native drain callback means a later write flushed the bytes.
+    if (this.destroyed || this.finished) return false;
     const handle = this[kHandle];
+    // Without a handle, Node's flag: true from a write() that returned false to the 'drain' that the connection emits.
+    // A response that no connection serves gets no 'drain', so it stays false and a pipe() into it flows.
+    if (!handle) return this[kHttp1Connection] !== undefined && this[kNeedDrain];
+    // True between a write() that returned false and the next 'drain'. An armed native drain callback means a later write flushed the bytes.
     return (
-      !this.destroyed &&
-      !this.finished &&
-      ((handle?.bufferedAmount ?? 0) !== 0 ||
-        handle?.onwritable !== undefined ||
-        (this[kBytesBuffered] ?? 0) >= this.writableHighWaterMark ||
-        (this[kPipelinedQueuedState]?.needDrain ?? false))
+      handle.bufferedAmount !== 0 ||
+      handle.onwritable !== undefined ||
+      (this[kBytesBuffered] ?? 0) >= this.writableHighWaterMark ||
+      (this[kPipelinedQueuedState]?.needDrain ?? false)
     );
   },
 });
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
+    if (!this.finished) return false;
     const handle = this[kHandle];
+    // Without a handle, OutgoingMessage's rule: nothing waits for the socket, and the socket holds nothing.
+    if (!handle) return this.outputSize === 0 && !(this[kSocket]?.writableLength > 0);
     // Like Node, nothing is left to write once the socket is gone.
-    return !!(
-      this.finished &&
-      (!handle || handle.finished || handle.flags & NodeHTTPResponseFlags.closed_or_completed)
-    );
+    return !!(handle.finished || handle.flags & NodeHTTPResponseFlags.closed_or_completed);
   },
 });
 
 Object.defineProperty(ServerResponse.prototype, "writableLength", {
   get() {
     if (this.writableFinished) return 0;
+    const handle = this[kHandle];
+    // Without a handle, OutgoingMessage's count: what waits for the socket, plus what the socket holds.
+    if (!handle) return this.outputSize + this[kChunkedLength] + (this[kSocket]?.writableLength ?? 0);
     // Bytes handed off this event-loop turn (including chunked framing, like
     // Node.js's outputData accounting) plus whatever the native handle still
     // has buffered, plus anything buffered while queued behind a pipelined
     // response.
-    return (
-      (this[kBytesBuffered] ?? 0) + (this[kHandle]?.bufferedAmount ?? 0) + (this[kPipelinedQueuedState]?.bytes ?? 0)
-    );
+    return (this[kBytesBuffered] ?? 0) + handle.bufferedAmount + (this[kPipelinedQueuedState]?.bytes ?? 0);
   },
 });
 
@@ -3941,7 +3891,7 @@ Object.defineProperty(ServerResponse.prototype, "closed", {
 ServerResponse.prototype._send = function (data, encoding, callback, _byteLength) {
   const handle = this[kHandle];
   if (!handle) {
-    return OutgoingMessagePrototype._send.$apply(this, arguments);
+    return OutgoingMessagePrototype._send.$call(this, data, encoding, callback, _byteLength);
   }
 
   const strict = strictContentLength(this, this[headerStateSymbol], false);
@@ -4002,6 +3952,18 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   // assignSocket(writable)) write through the OutgoingMessage machinery, so
   // render the header block immediately like Node.js does.
   if (!this[kHandle] && !this._header) {
+    // With both framing headers removed, only the close of the connection ends the body. Node's _storeHeader has written
+    // "Connection: keep-alive" by the time it finds that out. Like renderNativeHeaders, the head says what the connection does.
+    if (
+      this[kHttp1Connection] !== undefined &&
+      this._removedTE &&
+      this._hasBody &&
+      (this._removedContLen || typeof this._contentLength !== "number") &&
+      !this.hasHeader("content-length") &&
+      !this.hasHeader("transfer-encoding")
+    ) {
+      this.shouldKeepAlive = false;
+    }
     const statusLine = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
     this._storeHeader(statusLine, this[kOutHeaders]);
   }
@@ -4287,17 +4249,6 @@ function storeHTTPOptions(options) {
   }
   this[kOptimizeEmptyRequests] = optimizeEmptyRequests || false;
 }
-
-// Share the pipelining machinery with internal/http1_server_fallback through
-// internal/http instead of the user-visible module exports.
-http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
-http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
-http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponses;
-http1ServerPipeline.lastPipelinedResponse = lastPipelinedResponse;
-http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
-http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
-http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
-http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 export default {
   Server,

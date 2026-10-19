@@ -191,9 +191,9 @@ test.concurrent("the Error of the main context formats for a node:vm context tha
 });
 
 // The first value of the property is a function that formats as the engine does. Native code formats in its
-// place, so a stack has the same text when that function is put back. The other formatter prints "at outer".
+// place when that function is put back. A formatter that calls it gets the same text for an awaited frame.
 test.concurrent(
-  "the default formatter, put back as a value or given by a getter, formats as the engine does",
+  "the default formatter, put back as a value, given by a getter or called by a wrapper, formats as the engine does",
   async () => {
     const source = `
     const original = Error.prepareStackTrace;
@@ -207,10 +207,15 @@ test.concurrent(
     seen.push(await outer());
     Object.defineProperty(Error, "prepareStackTrace", { configurable: true, get: () => original });
     seen.push(await outer());
+    let asText;
+    const wrapper = (error, callSites) => ((asText = callSites.map(String)), original(error, callSites));
+    Object.defineProperty(Error, "prepareStackTrace", { configurable: true, writable: true, value: wrapper });
+    seen.push(await outer());
     console.log(JSON.stringify(seen.map(stack => /\\n    at async outer \\(/.test(stack))));
+    console.log(asText.some(text => text.startsWith("async outer (")));
   `;
     const { stdout, exitCode } = await run("-e", source);
-    expect({ stdout, exitCode }).toEqual({ stdout: "[true,true,true,true]", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "[true,true,true,true,true]\ntrue", exitCode: 0 });
   },
 );
 

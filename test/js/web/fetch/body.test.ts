@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isDebug, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1323,8 +1323,10 @@ describe.concurrent("string body consumption does not leak", () => {
         ctor === "Request"
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
           : `b => new Response(b)`;
+      // A debug build takes over 5 s for 130 of these reads, so it does fewer.
+      const [warm, block] = isDebug ? [16, 16] : [50, 40];
       const src = `
-        const SZ = 2_000_000, WARM = 50, BLOCK = 40;
+        const SZ = 2_000_000, WARM = ${warm}, BLOCK = ${block};
         const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
@@ -1346,9 +1348,10 @@ describe.concurrent("string body consumption does not leak", () => {
       const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
       expect(m).not.toBeNull();
       const block2 = Number(m![2]);
-      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ 40 × ~3 MB ≈ 100+ MB
-      // and keeps growing every block. 50 MB cleanly separates the two.
-      expect(block2).toBeLessThan(50);
+      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ BLOCK × ~3 MB (100+ MB
+      // for 40) and keeps growing every block. BLOCK × 1.25 MB (50 MB for 40)
+      // cleanly separates the two.
+      expect(block2).toBeLessThan(block * 1.25);
       expect(exitCode).toBe(0);
     });
   }
@@ -1554,6 +1557,22 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     ['""', () => "", ""],
     ["Uint8Array(0)", () => new Uint8Array(0), ""],
     ["Blob([])", () => new Blob([]), ""],
+  ];
+  // [name, init, the Content-Type it gives a body, its payload read as text]
+  const typedSources: [string, () => Bun.BodyInit, string, unknown][] = [
+    ["Blob", () => new Blob(["a=1"], { type: "text/x-custom" }), "text/x-custom", "a=1"],
+    ["File", () => new File(["a=1"], "a.txt", { type: "text/x-custom" }), "text/x-custom", "a=1"],
+    ["URLSearchParams", () => new URLSearchParams("a=1"), "application/x-www-form-urlencoded;charset=UTF-8", "a=1"],
+    [
+      "FormData",
+      () => {
+        const form = new FormData();
+        form.append("a", "1");
+        return form;
+      },
+      "multipart/form-data; boundary=",
+      expect.stringContaining('name="a"'),
+    ],
   ];
   const owners: [string, (body: Bun.BodyInit, headers?: Bun.HeadersInit) => Request | Response][] = [
     // `duplex` is what undici wants for a stream body; Bun accepts and ignores it.
@@ -1845,8 +1864,139 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           });
         }
       });
+
+      // https://fetch.spec.whatwg.org/#concept-bodyinit-extract gives a
+      // ReadableStream init no MIME type, whatever the stream was made from.
+      describe("a stream body contributes no Content-Type, whatever is behind the stream", () => {
+        const cases = typedSources.flatMap(([name, init, , content]) =>
+          owners.map(([fromName, makeFrom]) => [fromName, name, makeFrom, init, content] as const),
+        );
+        test.each(cases)("a stream taken from a %s made from %s", async (fromName, name, makeFrom, init, content) => {
+          expect({
+            bare: make(makeFrom(init()).body!).headers.get("content-type"),
+            otherHeaders: make(makeFrom(init()).body!, { "x-a": "1" }).headers.get("content-type"),
+            explicit: make(makeFrom(init()).body!, { "content-type": "text/x-other" }).headers.get("content-type"),
+            text: await make(makeFrom(init()).body!).text(),
+          }).toEqual({ bare: null, otherHeaders: null, explicit: "text/x-other", text: content });
+        });
+      });
     });
   }
+
+  // The same spec step gives a Blob, FormData or URLSearchParams init a MIME
+  // type, and the Request constructor appends it to the header list right
+  // there. So the header does not depend on what is read first, and
+  // `new Request(input, init)` copies input's header list instead of looking
+  // at the body again.
+  describe("new Request() takes the Content-Type from the body init at construction", () => {
+    const make = (body: Bun.BodyInit) =>
+      new Request("http://a/", { method: "POST", body, duplex: "half" } as RequestInit);
+    test.each(typedSources)("%s", async (name, init, type) => {
+      const contentType = (request: Request) => request.headers.get("content-type")?.slice(0, type.length) ?? null;
+      const after = async (use: (request: Request) => unknown) => {
+        const request = make(init());
+        await use(request);
+        return contentType(request);
+      };
+      const touched = make(init());
+      touched.body;
+      const clone = touched.clone();
+      await clone.text();
+      const adopted = () => make(new Response(init()).body!);
+      const adoptedThenCloned = adopted();
+      adoptedThenCloned.clone();
+      expect({
+        headersFirst: await after(() => {}),
+        bodyFirst: await after(request => request.body),
+        textFirst: await after(request => request.text()),
+        arrayBufferFirst: await after(request => request.arrayBuffer()),
+        blobFirst: await after(request => request.blob()),
+        cloneFirst: await after(request => request.clone().text()),
+        bodyThenClone: contentType(touched),
+        readCloneOfTouched: contentType(clone),
+        sameBoundary: clone.headers.get("content-type") === touched.headers.get("content-type"),
+        copied: contentType(new Request(make(init()))),
+        copiedWithInit: contentType(new Request(make(init()), { method: "PUT" })),
+        copiedWithNewHeaders: contentType(new Request(make(init()), { headers: { "x-a": "1" } })),
+        explicitWins: new Request("http://a/", {
+          method: "POST",
+          body: init(),
+          headers: { "content-type": "text/x-other" },
+        }).headers.get("content-type"),
+        cloneOfAdoptedStream: contentType(adopted().clone()),
+        adoptedStreamAfterClone: contentType(adoptedThenCloned),
+        copyOfAdoptedStream: contentType(new Request(adopted())),
+        copyOfAdoptedStreamWithInit: contentType(new Request(adopted(), { method: "PUT" })),
+      }).toEqual({
+        headersFirst: type,
+        bodyFirst: type,
+        textFirst: type,
+        arrayBufferFirst: type,
+        blobFirst: type,
+        cloneFirst: type,
+        bodyThenClone: type,
+        readCloneOfTouched: type,
+        sameBoundary: true,
+        copied: type,
+        copiedWithInit: type,
+        copiedWithNewHeaders: null,
+        explicitWins: "text/x-other",
+        cloneOfAdoptedStream: null,
+        adoptedStreamAfterClone: null,
+        copyOfAdoptedStream: null,
+        copyOfAdoptedStreamWithInit: null,
+      });
+    });
+
+    test("also when Bun.serve's server.fetch() builds the Request", async () => {
+      const seen: (string | null)[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          request.body;
+          seen.push(request.headers.get("content-type"));
+          return new Response("ok");
+        },
+      });
+      const url = new URL("/", server.url).href;
+      const body = () => new Blob(["a=1"], { type: "text/x-custom" });
+      const callerHeaders = new Headers({ "x-a": "1" });
+      await server.fetch(url, { method: "POST", body: body() });
+      await server.fetch(url, { method: "POST", body: body(), headers: { "x-a": "1" } });
+      await server.fetch(url, { method: "POST", body: body(), headers: callerHeaders });
+      await server.fetch(url, { method: "POST", body: body(), headers: { "content-type": "text/x-other" } });
+      expect({ seen, callerHeaders: [...callerHeaders] }).toEqual({
+        seen: ["text/x-custom", "text/x-custom", "text/x-custom", "text/x-other"],
+        callerHeaders: [["x-a", "1"]],
+      });
+    });
+
+    // Bun extension: a Response in place of `init` gives its headers and its body.
+    test("also when a Response stands in for init", async () => {
+      const typed = (init?: ResponseInit) => new Response(new Blob(["a=1"], { type: "text/x-custom" }), init);
+      const contentType = (response: Response) =>
+        new Request("http://a/", response as RequestInit).headers.get("content-type");
+      const headersRead = typed();
+      headersRead.headers;
+      const bodyRead = typed();
+      bodyRead.body;
+      expect({
+        fromBody: contentType(typed()),
+        explicitWins: contentType(typed({ headers: { "content-type": "text/x-other" } })),
+        otherHeaderOnly: contentType(typed({ headers: { "x-a": "1" } })),
+        headersRead: contentType(headersRead),
+        bodyRead: contentType(bodyRead),
+        text: await new Request("http://a/", typed() as RequestInit).text(),
+      }).toEqual({
+        fromBody: "text/x-custom",
+        explicitWins: "text/x-other",
+        otherHeaderOnly: "text/x-custom",
+        headersRead: "text/x-custom",
+        bodyRead: "text/x-custom",
+        text: "a=1",
+      });
+    });
+  });
 
   // A null body is not a zero-length body: nothing can use it up.
   test("Response.redirect() and Response.error() have a null body", async () => {

@@ -14,17 +14,9 @@ class VM;
 
 namespace Bun {
 
-// The allocation-sampling heap profiler behind HeapProfiler.startSampling
-// (node:inspector) and worker.startHeapProfile (node:worker_threads). One per
-// VM, owned by JSVMClientData. JSC picks the allocations
-// (Heap::startAllocationSampling); this attributes each pick to the JS stack
-// that allocated, weighs it, and follows it through GC so the profile can
-// keep what has been collected (includeObjectsCollectedBy*GC) or drop it.
-//
-// profileJSON() has the shape of V8's SamplingHeapProfile: a tree of
-// {callFrame, selfSize, id, children} from a "(root)" node, and samples
-// [{size, nodeId, ordinal}]. Sizes are integers, as V8 reports them: each
-// sample counts bytes * round(1 / (1 - exp(-bytes / interval))).
+// The allocation-sampling heap profiler behind HeapProfiler.startSampling and worker.startHeapProfile, one per VM on
+// JSVMClientData. JSC picks the allocations (Heap::startAllocationSampling); this attributes each pick to the JS stack,
+// weighs it as V8 does, and follows it through GC. profileJSON() is a V8 SamplingHeapProfile: {head, samples}.
 class HeapSampler final : public JSC::AllocationSamplerClient {
     WTF_MAKE_TZONE_ALLOCATED(HeapSampler);
 
@@ -67,9 +59,7 @@ private:
     };
 
     struct Sample {
-        // The cell, or: null when nothing owns the bytes (they never die), deadCell once the cell has been collected
-        // and the profile keeps collected allocations, voidSample for a pick that was not an allocation (the copy a
-        // relocation made), dropped at the next reconcile.
+        // The cell; null when nothing owns the bytes, deadCell once collected but kept, voidSample to drop.
         void* cell;
         unsigned node;
         unsigned nextOfSameCell;

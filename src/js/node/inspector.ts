@@ -434,9 +434,7 @@ class Session extends EventEmitter {
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
   #connectedToMainThread = false;
-  // V8's HeapProfiler agent stops the sampling heap profiler on disable() and
-  // on disconnect only when this session started it; stopSampling itself is
-  // isolate-wide.
+  // Set by the session that started sampling: only it stops sampling on disable() and disconnect(), as in V8.
   #startedAllocationSampling = false;
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
@@ -767,9 +765,7 @@ class Session extends EventEmitter {
   }
 
   #handleHeapProfilerMethod(method: string, params?: Record<string, unknown>): any {
-    // The in-process transport of a worker's connectToMainThread() session runs
-    // on the worker's own VM, so sampling through it would profile the wrong
-    // heap.
+    // A connectToMainThread() session runs on the worker's VM: sampling through it would profile the wrong heap.
     if (this.#connectedToMainThread) {
       return $ERR_INSPECTOR_COMMAND(`-32000: '${method}' is not supported on a session connected to the main thread`);
     }
@@ -802,12 +798,8 @@ class Session extends EventEmitter {
         ) {
           return $ERR_INSPECTOR_COMMAND("-32602: Invalid parameters");
         }
-        // V8 rejects an interval of 0 or less; a fraction of a byte cannot be
-        // sampled either.
         if (samplingInterval < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid sampling interval");
-        // A second start while sampling runs keeps the running session and its
-        // interval, as V8 does. The session that started it stays the one that
-        // stops it on disable()/disconnect().
+        // A second start keeps the running session and its interval, as V8 does.
         if (startAllocationSampling(samplingInterval, includeMajor, includeMinor)) {
           this.#startedAllocationSampling = true;
         }

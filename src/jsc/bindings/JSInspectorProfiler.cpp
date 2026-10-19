@@ -58,10 +58,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
 }
 
-// HeapProfiler.startSampling(samplingInterval, includeObjectsCollectedByMajorGC,
-// includeObjectsCollectedByMinorGC). The arguments are validated in
-// node/inspector.ts. False when sampling was already on: V8 keeps the running
-// session then, with its interval.
+// (samplingInterval, includeObjectsCollectedByMajorGC, includeObjectsCollectedByMinorGC), validated in
+// node/inspector.ts. False when sampling was already on.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startAllocationSampling);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startAllocationSampling, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

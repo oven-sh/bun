@@ -83,8 +83,7 @@ void HeapSampler::didSampleExtraMemory(const JSC::JSCell* owner, size_t bytes)
 void HeapSampler::record(void* cell, size_t bytes)
 {
     unsigned node = nodeForCurrentStack();
-    // V8's weighting: a pick of n bytes stands for the allocations of that size that the interval skipped, and the
-    // count is rounded so every size in the profile is a whole number of bytes.
+    // V8's weighting, with the count rounded so every size is a whole number of bytes.
     double scale = 1.0 / -std::expm1(-static_cast<double>(bytes) / m_options.intervalBytes);
     double size = static_cast<double>(bytes) * std::round(scale);
     unsigned index = m_samples.size();
@@ -123,12 +122,9 @@ unsigned HeapSampler::takeSamplesOfCell(void* cell)
     return index;
 }
 
-// The CodeBlocks of the JS frames on the stack, innermost first, inlined frames expanded. Like the
-// SamplingProfiler's FrameWalker: an allocation can happen from C++ that no frame tracer covers (a JIT
-// finalization in the LLInt prologue, for one), and there vm.topCallFrame is a frame that has returned, or
-// the poison an ASSERT build leaves. So nothing is dereferenced until it is checked: a frame pointer must
-// be on this thread's stack, and a CodeBlock must be in the heap's set of live CodeBlocks. Garbage ends the
-// walk with the frames found so far.
+// The CodeBlocks of the JS frames on the stack, innermost first, inlined frames expanded. vm.topCallFrame can be a
+// returned frame or an ASSERT build's poison at an allocation (JIT finalization in the LLInt prologue), so every
+// pointer is checked before it is read, as in SamplingProfiler's FrameWalker.
 SUPPRESS_ASAN static void collectJSFrames(JSC::VM& vm, unsigned depth, WTF::Vector<JSC::CodeBlock*, 32>& frames)
 {
     JSC::CallFrame* callFrame = vm.topCallFrame;
@@ -158,9 +154,7 @@ SUPPRESS_ASAN static void collectJSFrames(JSC::VM& vm, unsigned depth, WTF::Vect
     }
 }
 
-// The node of the innermost JS frame on the stack, created along with its ancestors as needed. Nodes are keyed by the
-// function that allocated (its source and start position), so every allocation in one function from one call path
-// lands on one node, whatever the line inside the function.
+// The node of the innermost JS frame, created with its ancestors as needed. Nodes are keyed by function, not by line.
 unsigned HeapSampler::nodeForCurrentStack()
 {
     WTF::Vector<JSC::CodeBlock*, 32> frames;

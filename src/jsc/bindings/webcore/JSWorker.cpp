@@ -893,9 +893,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
-// startHeapProfileInternal(sampleInterval, stackDepth, forceGC, includeObjectsCollectedByMajorGC,
-// includeObjectsCollectedByMinorGC), validated in node/worker_threads.ts. Resolves with false when the worker's VM is
-// sampling already (ERR_HEAP_PROFILE_HAVE_BEEN_STARTED on the JS side).
+// (sampleInterval, stackDepth, forceGC, includeObjectsCollectedByMajorGC, includeObjectsCollectedByMinorGC), validated
+// in node/worker_threads.ts. Resolves with false when the worker's VM is sampling already.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -926,7 +925,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInte
 
 static constexpr ASCIILiteral kEmptyHeapProfileJSON = "{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":0,\"id\":1,\"children\":[]},\"samples\":[]}"_s;
 
-// Resolves with the profile as JSON and turns sampling off. An empty profile when sampling was off, or the worker is gone.
+// The profile as JSON, and sampling off. An empty profile when sampling was off or the worker is gone.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

@@ -411,13 +411,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         scriptId = static_cast<int>(provider->asID());
                     }
 
-                    // The `file://` normalization (normalizeProfileURL) runs
-                    // AFTER the sourcemap callbacks below because the
-                    // callback (see FormatStackTraceForJS.cpp) unconditionally
-                    // rewrites its out-param back to the raw provider URL when
-                    // no sourcemap is found, which would undo an earlier
-                    // normalization. See #29240.
-
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
                     // The definition (not the sample position) is remapped
@@ -448,8 +441,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             : 0;
                     }
 
-                    // Normalize `url` to a `file://` URL now that any
-                    // sourcemap rewriting is done.
+                    // After the sourcemap callback, which rewrites `url` (#29240).
                     normalizeProfileURL(url);
 
                     if (frame.hasExpressionInfo()) {

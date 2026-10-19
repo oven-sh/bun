@@ -461,20 +461,33 @@ static JSValue handleVirtualModuleResult(
     }
 }
 
+// The loader that fetches: a Bun.ModuleGraph's, or (empty) the global object's.
+static JSC::JSModuleLoader* fetchingModuleLoader(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedModuleLoader)
+{
+    JSValue moduleLoader = JSC::JSValue::decode(encodedModuleLoader);
+    return moduleLoader ? uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader) : globalObject->moduleLoader();
+}
+
+// What an asynchronous fetch starts under. It comes back with the result: see Bun__onFulfillAsyncModule.
+extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__moduleLoaderRegistryEpoch(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedModuleLoader)
+{
+    return fetchingModuleLoader(globalObject, encodedModuleLoader)->registryEpoch();
+}
+
 extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
     JSC::EncodedJSValue encodedModuleLoader,
     ErrorableResolvedSource* res,
     const BunString* specifier,
-    const BunString* referrer)
+    const BunString* referrer,
+    uint32_t registryEpoch)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
-    // The loader that fetched: a Bun.ModuleGraph's, or (empty) the global object's.
-    JSValue moduleLoader = JSC::JSValue::decode(encodedModuleLoader);
-    Bun::JSModuleGraph* graph = moduleLoader ? Bun::moduleGraphOfLoader(globalObject, uncheckedDowncast<JSC::JSModuleLoader>(moduleLoader)) : nullptr;
+    JSC::JSModuleLoader* loader = fetchingModuleLoader(globalObject, encodedModuleLoader);
+    Bun::JSModuleGraph* graph = JSC::JSValue::decode(encodedModuleLoader) ? Bun::moduleGraphOfLoader(globalObject, loader) : nullptr;
 
     if (!res->success) {
         RELEASE_AND_RETURN(scope, promise->reject(vm, JSValue::decode(res->result.err)));
@@ -482,6 +495,16 @@ extern "C" void Bun__onFulfillAsyncModule(
 
     auto* specifierValue = Bun::toJS(globalObject, *specifier);
     RETURN_IF_EXCEPTION(scope, );
+
+    // The registry and the require cache were cleared (a hot reload), or the key got another module, while this fetch
+    // was in flight. The loader keeps such a load out of the registry (JSModuleLoader::isStaleLoad()). Its module stays
+    // out of the require cache and the isolation cache too: whoever awaits the load gets it, nothing else finds it.
+    bool isStaleLoad = false;
+    if (registryEpoch != loader->registryEpoch()) [[unlikely]] {
+        auto key = specifierValue->toIdentifier(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        isStaleLoad = loader->isStaleLoad(registryEpoch, key);
+    }
 
     // The new C++ module loader does not create a registry entry until *after*
     // this fetch promise resolves (provideFetch runs inside the
@@ -499,7 +522,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);
+        auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value, false, isStaleLoad);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
@@ -515,7 +538,7 @@ extern "C" void Bun__onFulfillAsyncModule(
         }
     } else {
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
-        if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+        if (!isStaleLoad && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
         }
         promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));

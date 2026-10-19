@@ -1117,6 +1117,79 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
+// No plugin is registered when import() runs, so the fetch is a transpiler job on the thread pool. It has not settled
+// when build.module() runs.
+it.concurrent.each([
+  ["an ES module", "a.mjs", `export const from = "file";`],
+  ["a CommonJS module", "a.cjs", `exports.from = "file";`],
+])("build.module() of %s whose import() is still fetching it", async (_, file, contents) => {
+  using dir = tempDir("plugin-module-import-fetch-in-flight", {
+    [file]: contents,
+    "entry.ts": `
+      import { join } from "node:path";
+      const a = join(import.meta.dir, ${JSON.stringify(file)});
+      const inFlight = import(a);
+      Bun.plugin({
+        name: "replace the module",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+
+      console.log("in flight:", (await inFlight).from);
+      console.log("next:", (await import(a)).from);
+      console.log("require:", require(a).from);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "in flight: file\nnext: build.module()\nrequire: build.module()\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("build.module() of a module right after an import() of it that found it loaded", async () => {
+  using dir = tempDir("plugin-module-import-of-loaded", {
+    "a.mjs": `export const from = "file, evaluation " + (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);`,
+    "entry.ts": `
+      import { join } from "node:path";
+      const a = join(import.meta.dir, "a.mjs");
+      await import(a);
+      const inFlight = import(a);
+      Bun.plugin({
+        name: "replace the module",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+
+      console.log("in flight:", (await inFlight).from);
+      console.log("next:", (await import(a)).from);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "in flight: file, evaluation 1\nnext: build.module()\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it.concurrent(
   "import() after delete require.cache of a module that onResolve redirected a resolved path to",
   async () => {

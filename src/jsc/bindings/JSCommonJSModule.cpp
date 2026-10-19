@@ -1597,14 +1597,15 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*, JSCommonJSModule* moduleOfStaleLoad = nullptr);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,
     JSString* requireMapKey,
     ResolvedSource& source,
-    bool isBuiltIn)
+    bool isBuiltIn,
+    bool isStaleLoad)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1612,7 +1613,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     WTF::String sourceURL = source.source_url.toWTFString();
 
     JSMap* requireMap = requireMapOf(globalObject, graph);
-    JSValue entry = requireMap->get(globalObject, requireMapKey);
+    // What the require cache holds under the key now is not the module a stale load fetched.
+    JSValue entry = isStaleLoad ? JSValue() : requireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
@@ -1632,7 +1634,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && requireMap->size() == 0 && !isStaleLoad) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1647,7 +1649,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         }
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
-        if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+        if (!isBuiltIn && !isStaleLoad && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
@@ -1660,27 +1662,33 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
             JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
-        requireMap->set(globalObject, filename, moduleObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!isStaleLoad) {
+            requireMap->set(globalObject, filename, moduleObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, isStaleLoad ? moduleObject : nullptr);
 }
 
 // The module is the entry for the record's key in the require cache of the loader that fetched
-// it: `graph`'s, or the global object's.
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
+// it: `graph`'s, or the global object's. The module of a stale load is in no require cache: the
+// source code holds it until the record is made.
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph, JSCommonJSModule* moduleOfStaleLoad)
 {
+    JSC::Strong<JSCommonJSModule> heldModule;
+    if (moduleOfStaleLoad)
+        heldModule = JSC::Strong<JSCommonJSModule>(moduleOfStaleLoad->vm(), moduleOfStaleLoad);
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
+            [graph = JSC::Weak<JSModuleGraph>(graph), heldModule = WTF::move(heldModule)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
-                JSC::MarkedArgumentBuffer& exportValues) -> void {
+                JSC::MarkedArgumentBuffer& exportValues) mutable -> void {
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1694,8 +1702,11 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
                 JSMap* requireMap = requireMapOf(globalObject, graph.get());
-                JSValue entry = requireMap->get(globalObject, keyValue);
+                JSCommonJSModule* moduleOfStaleLoad = heldModule.get();
+                heldModule.clear();
+                JSValue entry = moduleOfStaleLoad ? JSValue(moduleOfStaleLoad) : requireMap->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, void());
+                JSC::EnsureStillAliveScope keepAlive(entry);
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
@@ -1713,7 +1724,9 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
-                                requireMap->remove(globalObject, moduleObject->filename());
+                                // The module of a stale load is not in it: the key is another module's.
+                                if (!moduleOfStaleLoad)
+                                    requireMap->remove(globalObject, moduleObject->filename());
                                 RETURN_IF_EXCEPTION(scope, void());
 
                                 scope.throwException(globalObject, exception);

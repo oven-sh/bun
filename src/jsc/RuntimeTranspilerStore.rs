@@ -3,7 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena;
 use bun_ast::Loader;
@@ -196,7 +196,6 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
@@ -207,7 +206,6 @@ pub type Queue = UnboundedQueue<TranspilerJob>;
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
-            generation_number: AtomicU32::new(0),
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
@@ -373,7 +371,10 @@ impl RuntimeTranspilerStore {
                 },
                 poll_ref: KeepAlive::default(),
                 resolved_source,
-                generation_number: self.generation_number.load(Ordering::SeqCst),
+                registry_epoch: crate::cpp::Bun__moduleLoaderRegistryEpoch(
+                    global_object,
+                    module_loader,
+                ),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -430,7 +431,9 @@ pub struct TranspilerJob {
     pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
-    pub(crate) generation_number: u32,
+    /// `JSModuleLoader::registryEpoch()` of the loader that is fetching, as the fetch started:
+    /// handed back with the result, which is stale if a hot reload cleared the registry since.
+    pub(crate) registry_epoch: u32,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -529,6 +532,7 @@ impl TranspilerJob {
         let vm = self.vm;
         let promise = self.promise.swap();
         let module_loader = self.module_loader.swap();
+        let registry_epoch = self.registry_epoch;
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
         // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
         // `fulfill` call site instead.
@@ -577,6 +581,7 @@ impl TranspilerJob {
             &specifier,
             &referrer,
             &mut log,
+            registry_epoch,
         )
     }
 
@@ -647,19 +652,6 @@ impl TranspilerJob {
         // accesses below dereference per-field via `(*vm).field` (place
         // expressions / leaf-field borrows) only.
         let vm: *mut VirtualMachine = self.vm;
-
-        // SAFETY: `vm` is the live owning VM (BACKREF — see note above);
-        // atomic load on a leaf field, no `&VirtualMachine` formed.
-        let store_generation = unsafe {
-            (*vm)
-                .transpiler_store
-                .generation_number
-                .load(Ordering::Relaxed)
-        };
-        if self.generation_number != store_generation {
-            self.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
-            return;
-        }
 
         // `borrowing()`: the AST node store and the
         // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`

@@ -155,6 +155,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
         auto idIdent = JSC::Identifier::fromString(vm, asString(moduleIdValue)->value(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
         global->moduleLoader()->removeEntry(idIdent); // takes the loader's cellLock itself
+        // An import() of the key whose fetch has not settled is not in the registry yet, and loads the module that was there.
+        global->moduleLoader()->markReplaced(idIdent);
     }
 
     return JSValue::encode(callframe->thisValue());
@@ -731,9 +733,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         }
     }
 
-    if (loaded.staleESMEntry) {
+    {
         auto specifierIdent = JSC::Identifier::fromString(vm, specifier);
-        globalObject->moduleLoader()->removeEntry(specifierIdent); // takes the loader's cellLock itself
+        if (loaded.staleESMEntry)
+            globalObject->moduleLoader()->removeEntry(specifierIdent); // takes the loader's cellLock itself
+        // An import() of the module whose fetch has not settled is not in the registry yet, and loads what was there.
+        globalObject->moduleLoader()->markReplaced(specifierIdent);
     }
 
     if (loaded.staleCommonJSEntry) {

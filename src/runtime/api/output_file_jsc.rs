@@ -23,6 +23,7 @@ use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
     blob.content_type
         .set(crate::webcore::blob::BlobContentType::from(mime));
+    blob.content_type_was_set.set(true);
 }
 
 /// Extension trait wiring `to_js` / `to_blob` onto `OutputFile` from the

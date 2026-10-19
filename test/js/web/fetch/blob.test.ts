@@ -841,12 +841,13 @@ describe("a Blob reports its own type, never one another Blob put on the shared 
 
     expect({
       output: output.type,
+      // The output owns its type, so its stream carries it.
       fromStreamOfOutput: (await Bun.readableStreamToBlob(output.stream())).type,
       archive: archive.type,
       archiveRead: (await new Bun.Archive(archive).blob()).type,
     }).toEqual({
       output: "text/javascript;charset=utf-8",
-      fromStreamOfOutput: "",
+      fromStreamOfOutput: "text/javascript;charset=utf-8",
       archive: "",
       archiveRead: "",
     });

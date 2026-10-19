@@ -1,4 +1,4 @@
-//! String literals: which quotes they get, and what has to be escaped then.
+//! String literals: which quotes they get, and what then has to be escaped.
 
 use crate::ir::element::TextWidth;
 use crate::prelude::*;
@@ -10,12 +10,11 @@ pub(crate) enum StringLiteralParentKind {
     Expression,
     /// The name of an import attribute.
     ImportAttribute,
-    /// `"use strict"`. Nothing but the quotes is changed, and they are only if there are no
-    /// quotes inside.
+    /// `"use strict"`. Only the quotes change, and only if there are no quotes inside.
     Directive,
 }
 
-/// A string literal, with its quotes, as it is written in the source.
+/// A string literal's source text, with its quotes.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FormatLiteralStringToken<'a> {
     string: &'a [u8],
@@ -26,9 +25,9 @@ pub(crate) struct FormatLiteralStringToken<'a> {
 #[path = "es5_identifier_tables.rs"]
 mod es5_identifier_tables;
 
-/// ES5's `IdentifierName`, as the package `is-es5-identifier-name` has it, whose letters are those of
-/// an old version of Unicode: Bun's tables of today, but for what `es5_identifier_tables` lists.
-/// Prettier only removes the quotes of such a name.
+/// ES5's `IdentifierName` as the `is-es5-identifier-name` package defines it, with the letters of an old Unicode
+/// version: Bun's current tables, adjusted by the differences listed in `es5_identifier_tables`. Prettier only unquotes
+/// such names.
 pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
     use bun_core::lexer::{is_identifier_start, is_type_script_identifier_part};
     use es5_identifier_tables::{PART_LESS, PART_MORE, START_LESS, START_MORE};
@@ -56,7 +55,7 @@ pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
         })
 }
 
-/// Whether the name of a property can do without its quotes. For oxfmt whatever is an identifier today can: `{ ℘: 1 }`.
+/// True if a property name doesn't need its quotes. oxfmt accepts anything that's an identifier today: `{ ℘: 1 }`.
 pub(crate) fn is_name_without_quotes(name: &[u8], flavor: Flavor) -> bool {
     match flavor.is_oxfmt() {
         true => bun_core::lexer::is_identifier(name),
@@ -85,15 +84,15 @@ pub(crate) fn is_canonical_simple_number(text: &[u8]) -> bool {
     (number == 0.0 || (1e-6..1e21).contains(&number)) && number.to_string().as_bytes() == text
 }
 
-/// Prettier's `__isInHtmlAttribute`: between the double quotes of an attribute, a string has single quotes whatever is in
-/// it. `quote_style` is set to that.
+/// Prettier's `__isInHtmlAttribute`: between an attribute's double quotes, a string gets single quotes no matter what's
+/// in it. `quote_style` is set accordingly.
 fn is_in_html_attribute(options: &FormatOptions) -> bool {
     options.in_html.is_in_attribute
 }
 
 struct StringInformation {
     current_quote: QuoteStyle,
-    /// The one that takes fewer escapes.
+    /// The one that needs fewer escapes.
     preferred_quote: QuoteStyle,
     raw_content_has_quotes: bool,
 }
@@ -134,7 +133,7 @@ impl<'a> FormatLiteralStringToken<'a> {
         }
     }
 
-    /// The text that is written for the literal.
+    /// The text that's printed for the literal.
     pub(crate) fn clean_text(&self, f: &Formatter<'a>) -> CleanedStringLiteralText<'a> {
         let options = f.options();
         let chosen_quote_style = if self.jsx {
@@ -208,7 +207,7 @@ impl<'a> FormatLiteralStringToken<'a> {
         while let Some(byte) = bytes.next() {
             match byte {
                 b'\\' => match bytes.peek().copied() {
-                    // It does not have to be escaped any more.
+                    // It no longer needs escaping.
                     Some(escaped) if quotes_will_change && escaped == alternate_quote => {}
                     Some(b'\r') => text.push(b'\\'),
                     Some(escaped) => {
@@ -294,7 +293,7 @@ impl<'a> FormatLiteralStringToken<'a> {
     }
 }
 
-/// Whether `text` is printable ASCII without `quote`.
+/// True if `text` is printable ASCII without `quote`.
 #[inline]
 fn is_printable_ascii_without(text: &[u8], quote: u8) -> bool {
     #[inline]
@@ -320,8 +319,8 @@ fn is_printable_ascii_without(text: &[u8], quote: u8) -> bool {
 }
 
 impl FormatLiteralStringToken<'_> {
-    /// Enough for [`FormatLiteralStringToken::clean_text`] to be the literal as it is written, and
-    /// for that to be as wide as it is long. Most literals are like that.
+    /// Sufficient for [`FormatLiteralStringToken::clean_text`] to return the literal's source text unchanged, and for
+    /// its width to equal its length. Most literals qualify.
     #[inline]
     fn is_clean_ascii(&self, f: &Formatter<'_>) -> bool {
         let quote = f.options().quote_style.as_byte();
@@ -357,7 +356,7 @@ impl std::ops::Deref for CleanedStringLiteralText<'_> {
 }
 
 impl<'a> CleanedStringLiteralText<'a> {
-    /// The number of columns that it takes.
+    /// Its width in columns.
     pub(crate) fn width(&self) -> usize {
         crate::ir::width::string_width(&self.text) as usize
     }

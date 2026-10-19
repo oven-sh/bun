@@ -1,5 +1,6 @@
-//! The order of oxfmt's `sortPackageJson`, which is that of the crate
-//! [`sort-package-json`](https://crates.io/crates/sort-package-json) (MIT license, VoidZero Inc. and contributors).
+//! The order of oxfmt's `sortPackageJson`, which comes from the
+//! [`sort-package-json`](https://crates.io/crates/sort-package-json) crate (MIT license, VoidZero Inc. and
+//! contributors).
 //!
 //! Besides what the header of `sort_package_json.rs` lists, this differs from the crate in two ways:
 //! - From a list like `keywords`, the crate drops whatever isn't a string. Here such a list is left alone.
@@ -124,7 +125,7 @@ const FIELDS: Properties = &[
     ("nano-staged", KEPT),
     ("pre-commit", KEPT),
     ("commitlint", Over::Deep(&[])),
-    // Extensions of VS Code
+    // VS Code extensions
     ("l10n", KEPT),
     ("contributes", KEPT),
     ("activationEvents", Over::UniqueSorted),
@@ -136,8 +137,7 @@ const FIELDS: Properties = &[
     ("galleryBanner", KEPT),
     ("preview", KEPT),
     ("markdown", KEPT),
-    // Configuration of build tools. Where the order of what is nested means something, only the top
-    // level is sorted.
+    // Build tool configuration. Where the order of nested keys is meaningful, only the top level is sorted.
     ("napi", SORTED),
     ("flat", KEPT),
     ("config", SORTED),

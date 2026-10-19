@@ -1,7 +1,7 @@
 //! Svelte's `compiler/phases/1-parse`, 5.57: `index.js`, `state/*.js`, `read/{expression,context,script,options}.js`,
-//! `utils/bracket.js`. Not the loose mode.
+//! `utils/bracket.js`. Loose mode isn't ported.
 //!
-//! Where an expression ends only a parser of JavaScript can say: [`Js`].
+//! Only a JavaScript parser can tell where an expression ends. That's what [`Js`] is for.
 
 use super::ast::{
     Comment, DirectiveKind, Element, ElementKind, Expression, ExpressionKind, FragmentId, Id, Kind,
@@ -13,7 +13,7 @@ use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 use std::cell::Cell;
 
-/// `Err`: where Svelte throws.
+/// `Err` is the error that Svelte throws.
 type Result<T> = std::result::Result<T, SyntaxError>;
 
 #[cold]
@@ -21,24 +21,24 @@ fn fail<T>(message: Message, at: usize) -> Result<T> {
     Err(SyntaxError(message, at as u32))
 }
 
-/// What acorn's `parseExpressionAt` has found.
+/// The result of acorn's `parseExpressionAt`.
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct ParsedExpression {
-    /// Without the parentheses around it.
+    /// Without its surrounding parentheses.
     pub(crate) expression: Expression,
-    /// `node.end`: behind the parentheses.
+    /// `node.end`, which is after the parentheses.
     pub(crate) end: u32,
-    /// Of a sequence: its first expression, without parentheses.
+    /// For a sequence, its first expression without parentheses.
     pub(crate) first: Option<Expression>,
-    /// The outermost `a as T` that ends where the expression ends, or the first of a sequence: where `a` ends, and where `T`
-    /// starts.
+    /// The outermost `a as T` that ends where the expression (or a sequence's first expression) ends, given as the
+    /// end of `a` and the start of `T`.
     pub(crate) assertion: Option<(u32, u32)>,
 }
 
-/// What acorn's `parseStatement` has found.
+/// The result of acorn's `parseStatement`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Statement {
-    /// `let` or `const`, and where the declaration ends.
+    /// `let` or `const`, with the declaration's end offset.
     Declaration(u32),
     /// `var`, `using`.
     OtherDeclaration,
@@ -46,27 +46,29 @@ pub(crate) enum Statement {
     Other,
 }
 
-/// A parser of JavaScript and TypeScript. `text` is the component up to where the parser may not look any further, `at` is
-/// where it starts. `Err`: where the first error is.
+/// A JavaScript and TypeScript parser. `text` is the component, cut off where the parser must stop looking, and `at`
+/// is where parsing starts. `Err` is the offset of the first error.
 pub(crate) trait Js {
-    /// Says whether what follows is TypeScript.
+    /// Sets whether the code that follows is TypeScript.
     fn start(&mut self, is_typescript: bool);
-    /// One expression, commas included.
+    /// Parses one expression, which can be a comma sequence.
     fn expression_at(
         &mut self,
         text: &[u8],
         at: usize,
     ) -> std::result::Result<ParsedExpression, usize>;
-    /// `text` has no expression at `at`, because of what is at `until`. Returns where what is before that could end: where
-    /// something ends that is in no brackets and the like.
+    /// Called when `text` has no valid expression at `at` because of whatever is at `until`. Returns the offsets
+    /// where an expression before `until` could end, which is the end of every subexpression that isn't inside
+    /// brackets or the like.
     fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize>;
-    /// One statement.
+    /// Parses one statement.
     fn statement_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Statement, usize>;
-    /// One type. Returns where it is, and whether there is a comment before it or in it.
+    /// Parses one type. Returns its span, and true if there's a comment before or inside it.
     fn type_at(&mut self, text: &[u8], at: usize) -> std::result::Result<(Span, bool), usize>;
-    /// `pattern`, which is in brackets or braces, as the left side of an assignment. Returns whether there is a comment in it.
+    /// Checks `pattern`, which is in brackets or braces, as the left side of an assignment. Returns true if it
+    /// contains a comment.
     fn check_pattern(&mut self, text: &[u8], pattern: Span) -> std::result::Result<bool, usize>;
-    /// `parameters`, from a `<` or a `(` to a `)`, as those of an arrow function.
+    /// Checks `parameters`, which run from a `<` or `(` to a `)`, as an arrow function's parameters.
     fn check_parameters(&mut self, text: &[u8], parameters: Span)
     -> std::result::Result<(), usize>;
 }
@@ -182,7 +184,7 @@ fn code_points(text: &[u8]) -> impl Iterator<Item = u32> + '_ {
     strings::wtf8_codepoints(text).map(|it| it.1)
 }
 
-/// `PCENChar` without the ASCII ones.
+/// `PCENChar`, minus the ASCII characters.
 fn is_custom_element_character(c: u32) -> bool {
     matches!(c,
         0xB7 | 0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0x37D | 0x37F..=0x1FFF | 0x200C..=0x200D
@@ -201,7 +203,7 @@ const RESERVED_TAG_NAMES: [&[u8]; 8] = [
     b"missing-glyph",
 ];
 
-/// `regex_valid_tag_name` of `read/options.js`: `^[a-z]${tag_name_char}*-${tag_name_char}*$`
+/// `regex_valid_tag_name` in `read/options.js`: `^[a-z]${tag_name_char}*-${tag_name_char}*$`
 fn is_valid_custom_element_name(name: &[u8]) -> bool {
     let is_character = |c: u32| {
         matches!(c, 0x61..=0x7A | 0x30..=0x39 | 0x5F | 0x2E | 0x2D)
@@ -306,7 +308,7 @@ fn is_root_only(kind: ElementKind) -> bool {
     )
 }
 
-/// `get_directive_type`. `Err(())`: `style`.
+/// `get_directive_type`. `Err(())` means `style`.
 fn directive_kind(name: &[u8]) -> Option<std::result::Result<DirectiveKind, ()>> {
     Some(Ok(match name {
         b"use" => DirectiveKind::Use,
@@ -323,7 +325,7 @@ fn directive_kind(name: &[u8]) -> Option<std::result::Result<DirectiveKind, ()>>
     }))
 }
 
-/// When a sequence of texts and expressions ends.
+/// Where a sequence of text and expression tags ends.
 #[derive(Copy, Clone)]
 enum Done {
     /// At this quote.
@@ -337,15 +339,16 @@ enum Done {
 struct Parser<'a, 'j> {
     /// `template`
     text: &'a [u8],
-    /// `template.length`, which `{#each}` makes less for a while.
+    /// `template.length`, which `{#each}` temporarily shortens.
     len: usize,
     index: usize,
     tree: Tree<'a>,
     /// `stack`, without the root.
     stack: Vec<Id>,
-    /// For each of `stack`: `parent_is_head` and `parent_is_shadowroot_template` for what is in it.
+    /// For each entry of `stack`, the `parent_is_head` and `parent_is_shadowroot_template` that its children see.
     is_in: Vec<(bool, bool)>,
-    /// From where the next `>` has been looked for, and where it is. The length of the text: nowhere.
+    /// A cache: where the last search for a `>` started, and where it found one. The text's length means there's
+    /// none.
     next_end_of_tag: Cell<(usize, usize)>,
     fragments: Vec<FragmentId>,
     /// `meta_tags`
@@ -394,7 +397,7 @@ impl<'a> Parser<'a, '_> {
         fail(message, self.index)
     }
 
-    /// The same for the end of what starts at `start`.
+    /// Like `expect`, for the terminator of something that starts at `start`. The error points at `start`.
     fn expect_end(&mut self, text: &[u8], message: Message, start: usize) -> Result<()> {
         match self.eat(text) {
             true => Ok(()),
@@ -427,7 +430,7 @@ impl<'a> Parser<'a, '_> {
         Ok(read)
     }
 
-    /// `read_identifier`. The name is empty if there is none.
+    /// `read_identifier`. Returns an empty span if there's no identifier.
     fn read_identifier(&mut self) -> Result<Span> {
         let start = self.index;
         let rest = self.rest();
@@ -503,7 +506,7 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/expression.js ─────────────
 
-    /// Goes on behind the comments that follow: the parser has passed them when it looked at the next token.
+    /// Skips the comments that follow. The JavaScript parser already skipped them when it read the next token.
     fn pass_comments(&mut self) {
         let mut at = self.index;
         loop {
@@ -540,7 +543,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// Between the names of `{@debug a, b}`.
+    /// Used between the names in `{@debug a, b}`.
     fn allow_whitespace_and_comments(&mut self) {
         loop {
             self.allow_whitespace();
@@ -563,13 +566,14 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── utils/bracket.js ─────────────
 
-    /// `match_bracket`. `is_pointed`: the brackets are `<` and `>`. Returns where what starts at `start` ends.
+    /// `match_bracket`. `is_pointed` means the brackets are `<` and `>`. Returns the end of the pair that opens at
+    /// `start`.
     fn match_bracket(&self, start: usize, is_pointed: bool) -> Result<usize> {
-        // What is open: brackets, and the quotes of templates that an expression is open in.
+        // The brackets that are currently open.
         let mut open: Vec<u8> = Vec::new();
         let text = self.template();
         let mut i = start;
-        // How many of `open` were there when the template was entered whose expression this is.
+        // `open.len()` at the `${` of each enclosing template literal.
         let mut floors: Vec<usize> = vec![0];
         while i < text.len() {
             let char = text[i];
@@ -607,7 +611,7 @@ impl<'a> Parser<'a, '_> {
                     if floors.len() == 1 {
                         return Ok(i);
                     }
-                    // The expression of a template ends: on with the template.
+                    // A template's `${..}` ends here, so continue with the template.
                     floors.pop();
                     if self.match_quote(&mut i, b'`')? {
                         floors.push(open.len());
@@ -618,8 +622,8 @@ impl<'a> Parser<'a, '_> {
         fail(Message::UnexpectedEnd, text.len())
     }
 
-    /// `match_quote`, from behind the quote on, up to the end of the string or to a `${`, whose `{` is next then: it returns
-    /// `true` for that.
+    /// `match_quote`. Scans from just after the opening quote to the end of the string, or to a `${`. For a `${` it
+    /// stops before the `{` and returns `true`.
     fn match_quote(&self, i: &mut usize, quote: u8) -> Result<bool> {
         let text = self.template();
         let start = *i;
@@ -646,7 +650,7 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/context.js ─────────────
 
-    /// `read_type_annotation`. Returns where it is, and whether there is a comment in it.
+    /// `read_type_annotation`. Returns its span, and true if it contains a comment.
     fn read_type_annotation(&mut self) -> Result<Option<(Span, bool)>> {
         let start = self.index;
         self.allow_whitespace();
@@ -661,7 +665,7 @@ impl<'a> Parser<'a, '_> {
         match self.js.type_at(template, index) {
             Ok((span, has_comments)) => {
                 self.index = span.end as usize;
-                // The plugin loses the comment in `a: /* b */ C`.
+                // The plugin drops the comment in `a: /* b */ C`.
                 let before = template.get(index..span.start as usize).unwrap_or_default();
                 let comments = strings::trim_js_whitespace_start(before).len();
                 let span = Span::new(span.start as usize - comments, self.index);
@@ -734,7 +738,7 @@ impl<'a> Parser<'a, '_> {
         self.is_in.last().is_some_and(|it| it.1)
     }
 
-    /// `</name>`, from behind the `/` on. `start`: where the `<` is.
+    /// Reads `</name>`, starting just after the `/`. `start` is the offset of the `<`.
     fn close_element(&mut self, start: usize) -> Result<()> {
         let name = self.read_tag_name(false)?;
         self.allow_whitespace();
@@ -742,7 +746,7 @@ impl<'a> Parser<'a, '_> {
         if is_void(name) {
             return fail(Message::EndTagOfVoidElement, start);
         }
-        // Elements that have no end tags of their own are closed: `<div><p></div>`.
+        // Implicitly close the elements that have no end tag: `<div><p></div>`.
         loop {
             let parent = self.current();
             let element = parent.and_then(|it| self.element(it));
@@ -764,7 +768,7 @@ impl<'a> Parser<'a, '_> {
             self.tree[parent].end = self.index as u32;
         }
         self.pop();
-        // The root counts in Svelte's stack.
+        // Svelte's stack also counts the root.
         if (self.last_auto_closed_tag).is_some_and(|(_, depth)| self.stack.len() + 1 < depth) {
             self.last_auto_closed_tag = None;
         }
@@ -825,7 +829,7 @@ impl<'a> Parser<'a, '_> {
         }
         let is_top_level_script_or_style =
             matches!(name, b"script" | b"style") && self.stack.is_empty();
-        // The kind and the name of those that may be there once.
+        // The kind and name of each attribute that may appear only once.
         let mut unique_names: FxHashSet<(u8, &'a [u8])> = FxHashSet::default();
         let mut attributes: Vec<Id> = Vec::new();
         loop {
@@ -904,7 +908,7 @@ impl<'a> Parser<'a, '_> {
                 (Kind::ExpressionTag(expression), true) => *expression,
                 _ if is_component => return fail(Message::InvalidThis, at),
                 (Kind::ExpressionTag(expression), false) => *expression,
-                // A `Literal` where the text is.
+                // Svelte makes a `Literal` that spans the text.
                 _ => Expression::new(
                     Span {
                         start: self.tree[first.0].start,
@@ -948,7 +952,7 @@ impl<'a> Parser<'a, '_> {
         let is_self_closing = self.eat(b"/") || is_void(name);
         self.expect(b">")?;
         if is_self_closing {
-            // Not on the stack.
+            // It's never pushed onto the stack.
         } else if name == b"textarea" {
             let nodes = self.read_sequence(Done::Textarea)?;
             self.tree.fragments[fragment as usize] = nodes;
@@ -970,7 +974,7 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `regex_closing_textarea_tag`, `/<\/textarea(\s[^>]*)?>/iy`: how long the match is.
+    /// Length of the match of `regex_closing_textarea_tag`, `/<\/textarea(\s[^>]*)?>/iy`.
     fn closing_textarea_tag_len(&self) -> Option<usize> {
         let rest = self.rest();
         let name = rest.get(..10)?;
@@ -998,7 +1002,7 @@ impl<'a> Parser<'a, '_> {
         self.tree.add(Kind::Text { raw }, start, end)
     }
 
-    /// The text that the node `id` is made of.
+    /// The source text of node `id`.
     fn written(&self, id: Id) -> &'a [u8] {
         &self.text[self.tree[id].start as usize..self.tree[id].end as usize]
     }
@@ -1024,8 +1028,9 @@ impl<'a> Parser<'a, '_> {
                     self.index += len + 2;
                     (self.index - len - 1, self.index - 1)
                 }
-                // To Svelte this is a value without quotes that loses its ends all the same: `lang="ts>` is `t`. Where it ends
-                // depends on whether a quote follows anywhere in the component, so it cannot be moved.
+                // Svelte reads this as an unquoted value but still strips its first and last characters: `lang="ts>`
+                // is `t`. Where it ends depends on whether a quote follows anywhere in the component, so the element
+                // can't be moved.
                 None if matches!(rest, [b'"' | b'\'', ..]) => {
                     return fail(Message::UnclosedString, self.index);
                 }
@@ -1170,7 +1175,7 @@ impl<'a> Parser<'a, '_> {
                 }
             }
         }
-        // The name is the expression: `<p class:isRed />`.
+        // The name doubles as the expression: `<p class:isRed />`.
         if matches!(kind, DirectiveKind::Bind | DirectiveKind::Class) && expression.is_none() {
             let name_start = start + colon + 1;
             let name = Span::new(name_start, name_start + directive_name.len());
@@ -1266,7 +1271,7 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/script.js, read/style.js ─────────────
 
-    /// The text of the attribute `id`, if that is all its value is.
+    /// The attribute value's text, if the value is a single `Text` node.
     fn text_of_attribute(&self, value: &Value) -> Option<&'a [u8]> {
         match value {
             Value::Parts(parts) => match parts[..] {
@@ -1280,8 +1285,8 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// Goes on behind the first `/<\/script\s*>/` from `search` on, or the same for `</style`. Returns what is before it.
-    /// `start`: of the element.
+    /// Moves past the first `/<\/script\s*>/` at or after `search`, or the same for `</style`. Returns the span of
+    /// the content before it. `start` is the element's start.
     fn read_raw_content(
         &mut self,
         end_tag: &[u8],
@@ -1303,7 +1308,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `read_script`. What is in it is not parsed.
+    /// `read_script`. The content isn't parsed.
     fn read_script(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
         let content = self.read_raw_content(b"</script", start, self.index)?;
         let mut is_module = false;
@@ -1347,16 +1352,20 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_prelude`: of an at-rule. If not, what a
-    /// `{` ends is read by `read_selector_list`, which throws at a `<` and at the end of `--a:`.
+    /// `read_value`. Returns the offset of the `;`, `{` or `}` that ends the value starting at `start`. `is_prelude`
+    /// means it's an at-rule's prelude. Otherwise, a value that ends at a `{` is read by `read_selector_list`, which
+    /// throws at a `<` and at the end of `--a:`.
     ///
-    /// `None` also where Svelte reads on and the formatter for style sheets does not leave a `</style` as it is, or does not
-    /// read on: one that is not in a string, a comment or `url(..)`, a string or a `url(..)` that goes on in the next line, a
-    /// `url(a"b")`, which is written anew, and a parenthesis or a bracket that is not closed, which is nothing to Svelte.
+    /// Also returns `None` where Svelte reads on but the CSS formatter would either change a `</style` or stop
+    /// reading:
+    /// - a `</style` outside a string, a comment or `url(..)`
+    /// - a string or `url(..)` that continues on the next line
+    /// - `url(a"b")`, which the formatter rewrites
+    /// - an unclosed parenthesis or bracket, which Svelte ignores
     fn end_of_css_value(&self, start: usize, is_prelude: bool) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut is_in_url, mut quote, mut has_angle) = (start, false, None, false);
-        // How many parentheses and brackets are open, and where the last `url(` ends.
+        // The number of open parentheses and brackets, and the end of the last `url(`.
         let (mut open, mut url) = (0usize, start);
         loop {
             at += strings::index_of_any(text.get(at..)?, b"\\\"'()[]/;{}<\n")?;
@@ -1383,7 +1392,7 @@ impl<'a> Parser<'a, '_> {
                     quote = Some(byte);
                 }
                 byte @ (b'(' | b'[') => {
-                    // To Svelte `aurl(` is one too, and so is one in a string.
+                    // Svelte also counts `aurl(` as a `url(`, and a `url(` inside a string.
                     let is_url = byte == b'('
                         && quote.is_none()
                         && matches!(&text[start..at], [before @ .., b'u', b'r', b'l']
@@ -1412,13 +1421,15 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// Where `read_style` finds the `</style` that ends the style sheet that starts here. It looks for it between two rules:
-    /// `a { b: "</style>" }`. `None`: it throws, or see [`Parser::end_of_css_value`].
+    /// Returns the offset where `read_style` finds the `</style` that ends the style sheet starting here. It only
+    /// looks for one between rules, so not in `a { b: "</style>" }`. Returns `None` if `read_style` throws, and in
+    /// the cases listed at [`Parser::end_of_css_value`].
     fn end_of_css(&self) -> Option<usize> {
         let text = &self.text[..self.len];
         let (mut at, mut depth) = (self.index, 0usize);
         loop {
-            // `allow_comment_or_whitespace`, but for `<!-- -->`, which is no comment to the formatter for style sheets.
+            // `allow_comment_or_whitespace`, except for `<!-- -->`, which the CSS formatter doesn't treat as a
+            // comment.
             let rest = strings::trim_js_whitespace_start(text.get(at..)?);
             at = text.len() - rest.len();
             if rest.starts_with(b"/*") {
@@ -1428,9 +1439,9 @@ impl<'a> Parser<'a, '_> {
             match rest.first()? {
                 b'<' if depth == 0 && rest.starts_with(b"</style") => return Some(at),
                 b'}' => depth = depth.checked_sub(1)?,
-                // No selector, no declaration.
+                // Neither a selector nor a declaration.
                 b'{' | b';' => return None,
-                // `read_at_rule`: the name is not part of the prelude.
+                // `read_at_rule`. The name isn't part of the prelude.
                 b'@' => {
                     let name = rest[1..]
                         .iter()
@@ -1455,8 +1466,8 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `read_style`. What is in it is not parsed. With a `lang`, a preprocessor has it first, for which it ends at the first
-    /// end tag. So it does if Svelte cannot read it.
+    /// `read_style`. The content isn't parsed. With a `lang`, a preprocessor sees it first, and for a preprocessor it
+    /// ends at the first end tag. The same goes for content that Svelte can't read.
     fn read_style(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
         let is_css = attributes.iter().all(|&it| match &self.tree[it].kind {
             Kind::Attribute { name, value } if matches!(*name, b"lang" | b"type") => {
@@ -1484,7 +1495,7 @@ impl<'a> Parser<'a, '_> {
         strings::trim_js_whitespace_start(self.rest()).first() == Some(&b'}')
     }
 
-    /// Whether `word` is next, and no part of a name behind it: `/word\b/y`.
+    /// True if `word` is next and isn't followed by a word character: `/word\b/y`.
     fn matches_word(&self, word: &[u8]) -> bool {
         (self.rest().strip_prefix(word)).is_some_and(|behind| {
             behind
@@ -1549,7 +1560,7 @@ impl<'a> Parser<'a, '_> {
             Err(at) if at == self.len => return fail(Message::UnexpectedEnd, at),
             Err(at) => return fail(Message::UnexpectedToken, at),
         };
-        // The `;` is part of it.
+        // The declaration includes its `;`.
         let semicolon = behind_trivia(template, end);
         let end = match template.get(semicolon) {
             Some(b';') => semicolon + 1,
@@ -1568,16 +1579,16 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// The expression of `{#each`.
+    /// Reads the expression of `{#each`.
     fn read_expression_of_each(&mut self) -> Result<ParsedExpression> {
         let index = self.index;
         let error = match self.read_whole_expression() {
             Ok(parsed) => return Ok(parsed),
             Err(error) => error,
         };
-        // `{#each x as { y = z }}` is no expression. Svelte hides what is from the last `as` before the error on, tries again, and
-        // so on, until what is left is an expression. It is one where something ends that is in nothing else, so the last such
-        // place with an `as` behind it is where that ends up.
+        // The `x as { y = z }` in `{#each x as { y = z }}` isn't an expression. Svelte cuts the text off at the last
+        // `as` before the error and retries until what's left parses. It parses exactly where an unnested
+        // subexpression ends, so the retries stop at the last such end that's followed by an `as`.
         let (template, until) = (self.template(), error.1 as usize);
         let ends = self.js.ends_of_expressions(template, index, until);
         let end = ends.into_iter().filter_map(|it| {
@@ -1615,11 +1626,11 @@ impl<'a> Parser<'a, '_> {
             let parsed = self.read_expression_of_each()?;
             let mut expression = parsed.expression;
             self.allow_whitespace();
-            // A context has to follow: `{#each list as item}`.
+            // A context should follow: `{#each list as item}`.
             if !self.matches(b"as") {
-                // It may have been taken for an assertion of TypeScript.
+                // The `as` may have been parsed as a TypeScript assertion.
                 if let Some(first) = parsed.first {
-                    // With the comments before it. Nothing is behind it.
+                    // `outer` keeps the comments before it and has nothing after it.
                     let (start, end) = (expression.outer.start, first.span.end);
                     expression = Expression {
                         outer: Span { start, end },
@@ -1635,7 +1646,7 @@ impl<'a> Parser<'a, '_> {
                         at -= 1;
                     }
                     self.index = at;
-                    // With the comments before the `as`.
+                    // `outer` includes the comments before the `as`.
                     let behind = self.text.get(end as usize..at).unwrap_or_default();
                     expression.outer.end = end + behind.trim_ascii_end().len() as u32;
                 }
@@ -1645,7 +1656,7 @@ impl<'a> Parser<'a, '_> {
                 self.require_whitespace()?;
                 context = Some(self.read_pattern()?);
             } else {
-                // `{#each Array.from({ length: 10 }), i}` has been read as a sequence.
+                // `{#each Array.from({ length: 10 }), i}` was parsed as a sequence.
                 self.index = expression.span.end as usize;
             }
             self.allow_whitespace();
@@ -1770,7 +1781,7 @@ impl<'a> Parser<'a, '_> {
         fail(Message::UnknownBlock, self.index)
     }
 
-    /// Puts a new fragment in the place of the one that is being filled.
+    /// Replaces the fragment that's being filled with a new one.
     fn next_fragment(&mut self) -> FragmentId {
         let fragment = self.tree.add_fragment();
         self.fragments.pop();
@@ -1778,7 +1789,7 @@ impl<'a> Parser<'a, '_> {
         fragment
     }
 
-    /// `next`. `brace`: where the `{` is.
+    /// `next`. `brace` is the offset of the `{`.
     fn next(&mut self, brace: usize) -> Result<()> {
         let start = self.index - 1;
         let Some(block) = self.current() else {
@@ -1896,7 +1907,7 @@ impl<'a> Parser<'a, '_> {
             }
         ) {
             self.tree[block].end = self.index as u32;
-            // It has taken the place of a fragment, so there is none to end.
+            // An `{:else if}` replaced a fragment when it was pushed, so there's no fragment to pop.
             self.stack.pop();
             self.is_in.pop();
             match self.current() {
@@ -1923,7 +1934,7 @@ impl<'a> Parser<'a, '_> {
                 self.allow_whitespace();
                 self.index += 1;
             } else {
-                // Names with commas in between: nothing else is allowed, but for comments.
+                // Only comma-separated identifiers are allowed, plus comments.
                 let span = self.read_whole_expression()?.expression.span;
                 let (after, end) = (self.index, span.end as usize);
                 self.index = span.start as usize;
@@ -2024,7 +2035,8 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/options.js ─────────────
 
-    /// `get_static_value`: a text, or what a literal is written as. `Ok(None)`: `true`. `Err`: `null`.
+    /// `get_static_value`. Returns the text, or the raw content of a string literal. `Ok(None)` means `true` and
+    /// `Err` means `null`.
     fn static_value(&self, value: &Value) -> std::result::Result<Option<&'a [u8]>, ()> {
         let (chunk, count) = match value {
             Value::True => return Ok(None),
@@ -2049,7 +2061,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// The text that `value` starts with.
+    /// The first part of `value`, if it's text.
     fn text_of_first_part(&self, value: &Value) -> Option<&'a [u8]> {
         match value {
             Value::Parts(parts) => (parts.first().copied())
@@ -2059,7 +2071,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `get_boolean_value`: whether there is one.
+    /// True if `get_boolean_value` finds a boolean.
     fn has_boolean_value(&self, value: &Value) -> bool {
         match value {
             Value::True => true,
@@ -2074,7 +2086,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `read_options`, `disallow_children`. What is in the object of `customElement` is not looked at.
+    /// `read_options`, `disallow_children`. The contents of `customElement`'s object aren't checked.
     fn check_options(&self, options: Id) -> Result<()> {
         let Some(element) = self.element(options) else {
             return Ok(());
@@ -2147,7 +2159,8 @@ impl<'a> Parser<'a, '_> {
     }
 }
 
-/// `lang=(["'])?([^"' >]+)\1[^>]*>` at `at`: the second group. `last_end`: where the last `>` of `text` is.
+/// Matches `lang=(["'])?([^"' >]+)\1[^>]*>` at `at` and returns the second group. `last_end` is the offset of the
+/// last `>` in `text`.
 fn lang_at(text: &[u8], at: usize, last_end: usize) -> Option<&[u8]> {
     let value = text.get(at..last_end)?.strip_prefix(b"lang=")?;
     let (quote, value) = match value {
@@ -2160,7 +2173,7 @@ fn lang_at(text: &[u8], at: usize, last_end: usize) -> Option<&[u8]> {
     (len > 0 && quote.is_none_or(|quote| value.get(len) == Some(&quote))).then(|| &value[..len])
 }
 
-/// Where the white space at `at` ends, if there is any: `\s+`.
+/// `\s+`: the end of the whitespace at `at`, or `None` if there isn't any.
 fn behind_white_space(text: &[u8], mut at: usize) -> Option<usize> {
     let start = at;
     while let len @ 1.. = strings::js_whitespace_len(text.get(at..)?) {
@@ -2169,13 +2182,13 @@ fn behind_white_space(text: &[u8], mut at: usize) -> Option<usize> {
     (at > start).then_some(at)
 }
 
-/// Where the first of `bytes` is in a text from some place on. It is looked for again only from a place that is not between
-/// where it has been looked for last and where it has been found.
+/// Finds the first of `bytes` at or after an offset. The last result is cached and reused for any offset between
+/// where that search started and what it found.
 struct Next<'a> {
     text: &'a [u8],
     bytes: &'static [u8],
     looked_from: usize,
-    /// The length of the text: nowhere.
+    /// The text's length if nothing was found.
     found: usize,
 }
 
@@ -2198,15 +2211,16 @@ impl<'a> Next<'a> {
     }
 }
 
-/// `(?:[^=>'"/]+=(?:"[^"]*"|'[^']*'|[^>\s]+)\s+)*lang=..` at `start`: the value of the `lang` behind attributes that have
-/// values, in which there can be a `>`. `failed`: from where there is no match, in the whole text. `end_of_name`: of
-/// `[^=>'"/]+`.
+/// Matches `(?:[^=>'"/]+=(?:"[^"]*"|'[^']*'|[^>\s]+)\s+)*lang=..` at `start`. Returns the value of a `lang` that
+/// comes after attributes with values, which can contain a `>`. `failed` collects the offsets, across the whole text,
+/// where no match starts. `end_of_name` finds the end of `[^=>'"/]+`.
 fn lang_behind_attributes<'a>(
     text: &'a [u8],
     (start, last_end): (usize, usize),
     (failed, end_of_name): (&mut FxHashSet<usize>, &mut Next<'a>),
 ) -> Option<&'a [u8]> {
-    // Where an attribute may start, and what is tried next there: a value in quotes, one without, no more attributes.
+    // A backtracking stack. Each entry is an offset where an attribute may start and what to try there next: 0 is a
+    // quoted value, 1 an unquoted value, 2 no more attributes.
     let mut stack = vec![(start, 0u8)];
     while let Some((at, way)) = stack.pop() {
         if way == 2 {
@@ -2248,10 +2262,12 @@ fn lang_behind_attributes<'a>(
     None
 }
 
-/// `regex_lang_attribute`: whether the first `<script>` with a `lang` says `ts`, be it the module or the instance.
+/// `regex_lang_attribute`. True if the first `<script>` with a `lang` has `ts`, whether it's the module or the
+/// instance script.
 fn is_typescript(text: &[u8]) -> bool {
     let (mut at, mut has_comment_end) = (0, true);
-    // A `<script` before this has some of the attributes of one before it, and no `lang=` among those is it.
+    // A `<script` before this offset is inside an earlier one's attributes, which were already searched for a `lang=`
+    // without a match.
     let mut checked_until = 0;
     let mut failed = FxHashSet::default();
     let (mut end_of_tag, mut end_of_name) = (Next::new(text, b">"), Next::new(text, b"=>'\"/"));
@@ -2274,13 +2290,13 @@ fn is_typescript(text: &[u8]) -> bool {
         else {
             continue;
         };
-        // No tag ends from here on.
+        // There's no `>` after this point.
         let Some(end) = (end_of_tag.from(attributes).checked_sub(attributes))
             .filter(|it| attributes + it < text.len())
         else {
             return false;
         };
-        // `[^>]*lang=..`: the last `lang=` before the first `>` that has a value, whatever it is in.
+        // `[^>]*lang=..` matches the last `lang=` before the first `>` that has a value, no matter what it's part of.
         let mut until = match attributes >= checked_until {
             true => attributes + end,
             false => attributes,
@@ -2300,13 +2316,14 @@ fn is_typescript(text: &[u8]) -> bool {
     false
 }
 
-/// `/[a-zA-Z0-9_-]/`, and the `@` and the `\\` that a name can start with or have in it.
+/// `/[a-zA-Z0-9_-]/`, plus the `@` and `\\` that a name can start with or contain.
 fn is_in_css_name(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'@' | b'\\')
 }
 
-/// How long the comment is that `text` starts with. `None` also for one with the end of a style sheet and then the start of
-/// another in it: it is not closed, and the `*/` is one of the other. Svelte reads on there.
+/// Length of the comment at the start of `text`. Also returns `None` for a comment that contains a `</style` and then
+/// a `<style`. That comment is really unclosed, and the `*/` belongs to the second style sheet. Svelte reads on
+/// there.
 fn len_of_css_comment(text: &[u8]) -> Option<usize> {
     let len = 2 + strings::index_of(text.get(2..)?, b"*/")? + 2;
     let end_tag = strings::index_of(&text[..len], b"</style");
@@ -2316,7 +2333,7 @@ fn len_of_css_comment(text: &[u8]) -> Option<usize> {
     }
 }
 
-/// Where what is behind the white space and the comments at `at` starts.
+/// Skips the whitespace and comments at `at` and returns the offset after them.
 fn behind_trivia(text: &[u8], mut at: usize) -> usize {
     loop {
         let rest = strings::trim_js_whitespace_start(&text[at..]);
@@ -2337,7 +2354,7 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
     let text = strings::trim_js_whitespace_end(text);
     js.start(is_typescript(text));
     let mut tree = Tree::default();
-    // The first, which is what `tree.fragment` says.
+    // It gets id 0, which is `tree.fragment`'s default.
     let fragment = tree.add_fragment();
     let mut parser = Parser {
         text,
@@ -2354,8 +2371,8 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
         js,
     };
     parser.run()?;
-    // What has been parsed as TypeScript is printed as that. To Svelte `data-lang="ts"` says so too, to the plugin it does not,
-    // and `f<T>(a)` becomes `f < T > a`.
+    // Code that was parsed as TypeScript is printed as TypeScript. Svelte also accepts `data-lang="ts"`, but the
+    // plugin doesn't, and it turns `f<T>(a)` into `f < T > a`.
     parser.tree.says_typescript |= parser.is_typescript;
     Ok(parser.tree)
 }

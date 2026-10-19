@@ -1,9 +1,9 @@
-//! GraphQL: `.graphql` files, and the templates in JavaScript that are GraphQL.
+//! GraphQL: `.graphql` files and GraphQL templates in JavaScript.
 //!
-//! The specification is Prettier's `src/language-graphql`, which parses with graphql-js.
+//! Follows Prettier's `src/language-graphql`, which parses with graphql-js.
 //!
 //! ```text
-//! text ─ parser::parse ─→ Tree ─ comments::attach ─→ [Attached] ─ printer::Builder ─→ the document of `crate::ir`
+//! text ─ parser::parse ─→ Tree ─ comments::attach ─→ [Attached] ─ printer::Builder ─→ `crate::ir` document
 //! ```
 
 mod comments;
@@ -20,7 +20,7 @@ use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
 
-/// Whether Prettier takes the file at `path` for GraphQL.
+/// True if Prettier treats the file at `path` as GraphQL.
 pub fn is_graphql_path(path: &[u8]) -> bool {
     // Prettier's `getLanguageByFileName` compares the name in lower case.
     [&b".graphql"[..], b".gql", b".graphqls"]
@@ -28,7 +28,7 @@ pub fn is_graphql_path(path: &[u8]) -> bool {
         .any(|extension| crate::text::ends_with_ignore_ascii_case(path, extension))
 }
 
-/// Everything that is allocated to format a text. It is reused for the next one.
+/// Allocations for formatting a text, reused for the next one.
 #[derive(Default)]
 pub struct Scratch {
     tree: parser::Tree,
@@ -86,7 +86,7 @@ pub fn format(
     format_normalized(text, 0, &options, scratch, out).map_err(in_original)
 }
 
-/// Why the parser has refused the text.
+/// Converts the parser's error.
 fn because_of(error: SyntaxError) -> FormatError {
     match error {
         SyntaxError(Message::NestedTooDeeply, _) => FormatError::NestedTooDeeply,
@@ -127,8 +127,8 @@ fn format_range(
     Ok(())
 }
 
-/// Prettier's `coreFormat`. `text` has no byte order mark and no `\r`. `alignment`: the number of
-/// columns that every line is indented by.
+/// Prettier's `coreFormat`. `text` has no byte order mark and no `\r`. `alignment` is the number of columns that every
+/// line is indented by.
 fn format_normalized(
     text: &[u8],
     alignment: usize,

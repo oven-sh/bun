@@ -1,8 +1,9 @@
 //! The grammar of `@handlebars/parser` (`src/handlebars.yy`, `lib/helpers.js`).
 //!
-//! Statements go to a list of their own, for `super::tokenizer` to make the tree of. Expressions go to the tree as
-//! `@glimmer/syntax` has them (`HandlebarsNodeVisitors`). What it refuses is only refused when it gets to see the
-//! statement, which it does not in an HTML comment: `is_valid`.
+//! Statements go into a separate list, which `super::tokenizer` turns into the tree. Expressions go straight into the
+//! tree, in the form `@glimmer/syntax` gives them (`HandlebarsNodeVisitors`). An expression that `@glimmer/syntax`
+//! rejects is only an error once it visits the statement, which it doesn't do inside an HTML comment. Until then the
+//! statement just has `is_valid: false`.
 
 use super::Error;
 use super::ast::{self, Call, Head, Kind, NOTHING, NodeId, Range, Text, Tree};
@@ -14,7 +15,7 @@ use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
 pub(crate) enum StatementKind {
-    /// From `start` to `end` is its value.
+    /// `start..end` is its value.
     Content,
     Comment {
         value: Text,
@@ -25,8 +26,8 @@ pub(crate) enum StatementKind {
         /// See `Node::is_as_written`.
         is_as_written: bool,
     },
-    /// The statements of what follows `{{#a}}` come next, up to `first_end`, then those of what follows `{{else}}`,
-    /// up to `next`.
+    /// The statements after `{{#a}}` come next in the list, up to `first_end`. Then come the statements after
+    /// `{{else}}`, up to `next`.
     Block {
         node: NodeId,
         first_end: u32,
@@ -46,7 +47,7 @@ pub(crate) struct Statement {
     pub(crate) kind: StatementKind,
     pub(crate) start: u32,
     pub(crate) end: u32,
-    /// The statement behind it and all that is in it.
+    /// Index of the next statement after this one and everything nested in it.
     pub(crate) next: u32,
 }
 
@@ -79,7 +80,7 @@ struct Expression {
     is_splat: bool,
 }
 
-/// `strip` of what opens or closes something.
+/// The `strip` of an opening or closing tag.
 #[derive(Copy, Clone, Default)]
 struct Strip {
     open: bool,
@@ -92,7 +93,7 @@ impl Strip {
     }
 }
 
-/// `helperName expr* hash? blockParams?` and what closes it.
+/// `helperName expr* hash? blockParams?` and the closing token.
 struct Header {
     path: Expression,
     call: Call,
@@ -105,9 +106,9 @@ struct Header {
 /// `inverseChain` or `inverseAndProgram`.
 struct Inverse {
     strip: Strip,
-    /// `{{else if a}}`: the block that it is.
+    /// `{{else if a}}`: the block it turns into.
     chained: Option<NodeId>,
-    /// That block is. It has no end of its own, so the block that it is in is too.
+    /// The chained block is printed verbatim. It doesn't have its own closing tag, so the enclosing block must be too.
     is_as_written: bool,
 }
 
@@ -116,7 +117,7 @@ enum Prefix {
     None,
     /// `@`
     Data(Token),
-    /// `(a).`, which starts there.
+    /// `(a).`, which starts at this offset.
     SubExpression(usize),
 }
 
@@ -143,14 +144,14 @@ struct Parser<'a> {
     at: usize,
     tree: &'a mut Tree,
     statements: &'a mut Vec<Statement>,
-    /// The parameters and pairs of the calls that are being parsed.
+    /// The params and pairs of the calls being parsed.
     pending: Vec<NodeId>,
     stack: Stack,
-    /// Something of what has been parsed since this was last `false` is in no node.
+    /// Set when part of what was parsed since the last reset didn't end up in any node.
     has_dropped: bool,
 }
 
-/// What is said where there is no token of `kind`.
+/// The error for a missing token of `kind`.
 #[cold]
 fn expected(kind: TokenKind) -> Message {
     match kind {
@@ -182,7 +183,7 @@ impl Parser<'_> {
         token
     }
 
-    /// `message`, where the token is that has been taken last.
+    /// Reports `message` at the last consumed token.
     #[cold]
     fn error(&self, message: Message) -> Error {
         let token = self.tokens.get(self.at.saturating_sub(1));
@@ -207,7 +208,7 @@ impl Parser<'_> {
         }
     }
 
-    /// Before what can be in itself.
+    /// Call before parsing anything that can nest.
     fn enter(&self) -> Result<(), Error> {
         match self.stack.has_room() {
             true => Ok(()),
@@ -245,7 +246,7 @@ impl Parser<'_> {
         self.statements.len() - 1
     }
 
-    /// The statement `index` ends with the last token, and has all the statements in it that follow it.
+    /// Ends statement `index` at the last consumed token. All statements added after it are nested in it.
     fn end_statement(&mut self, index: usize, kind: StatementKind) {
         let next = self.statements.len() as u32;
         let end = self
@@ -259,7 +260,7 @@ impl Parser<'_> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    /// `text.replace(from, to)`, where `from` is a backslash and one of `escaped`, and `to` the latter.
+    /// Removes the backslash from every backslash followed by one of `escaped`.
     fn unescape(&mut self, start: usize, end: usize, escaped: &[u8]) -> Text {
         let source = self.source;
         let text = source.get(start..end).unwrap_or_default();
@@ -293,7 +294,7 @@ impl Parser<'_> {
         }
     }
 
-    /// `yy.id(token)`, and whether that is not the token.
+    /// Returns `yy.id(token)`, and whether it differs from the token's text.
     fn id(&mut self, token: Token) -> (Text, bool) {
         let text = self.id_text(token);
         match self.text(text) {
@@ -379,7 +380,7 @@ impl Parser<'_> {
         }
     }
 
-    /// `helperName`: an expression that is not all in parentheses.
+    /// `helperName`: an expression that isn't entirely in parentheses.
     fn helper_name(&mut self) -> Result<Expression, Error> {
         let expression = self.expression()?;
         match expression.class {
@@ -388,13 +389,13 @@ impl Parser<'_> {
         }
     }
 
-    /// `hashSegment+`, to `pending`. Returns whether all values are valid.
+    /// Parses `hashSegment+` into `pending`. Returns true if all values are valid.
     fn hash(&mut self) -> Result<bool, Error> {
         let mut is_valid = true;
         while self.is_at_hash() {
             let token = self.next();
             let (key, is_literal) = self.id(token);
-            // Prettier prints it without the brackets that it needs.
+            // Prettier prints the key without brackets even if it needs them.
             let name = self.text(key);
             let is_name = !name.is_empty() && id_len(name) == name.len();
             let key = match is_name || (!is_literal && !name.starts_with(b"[")) {
@@ -418,7 +419,7 @@ impl Parser<'_> {
         Ok(is_valid)
     }
 
-    /// `expr* hash?` behind `path`, and `acceptCallNodes` of `@glimmer/syntax`.
+    /// `expr* hash?` after `path`, plus `acceptCallNodes` from `@glimmer/syntax`.
     fn call(&mut self, path: Expression) -> Result<(Call, bool), Error> {
         let base = self.pending.len();
         let mut is_valid = true;
@@ -435,7 +436,7 @@ impl Parser<'_> {
         let (node, is_path_valid) = match path.class {
             Class::Path | Class::SubExpression => (path.node, path.is_valid),
             Class::Literal => (path.node, false),
-            // It is taken for `undefined`, which only matters where its position is asked for.
+            // It's treated as `undefined`, which only matters where its position is read.
             Class::HashLiteral => (NOTHING, !params.is_empty()),
         };
         self.has_dropped |= path.class == Class::HashLiteral;
@@ -484,7 +485,7 @@ impl Parser<'_> {
         Ok(expression)
     }
 
-    /// `pathSegments`, `preparePath`, and `PathExpression` of `@glimmer/syntax`.
+    /// `pathSegments`, `preparePath`, and `PathExpression` from `@glimmer/syntax`.
     fn path(&mut self, prefix: Prefix) -> Result<Expression, Error> {
         let mut segments = SmallVec::<[Segment; 4]>::new();
         let mut token = self.expect(TokenKind::Id)?;
@@ -493,7 +494,7 @@ impl Parser<'_> {
             Prefix::Data(data) => (data.start as usize, true),
             Prefix::SubExpression(start) => (start, false),
         };
-        // `original` is what the template has.
+        // True while `original` is identical to the source text.
         let mut is_plain = match prefix {
             Prefix::None => true,
             Prefix::Data(data) => data.end == token.start,
@@ -583,7 +584,8 @@ impl Parser<'_> {
         };
         let is_this = is_this_path(text);
         let is_splat = text == b"...attributes";
-        // Only the `this` that a path starts with comes back. And `[a/b]`, one name, is printed like `a/b`, which is two.
+        // Of the dropped segments, only a leading `this` is printed again. And `[a/b]`, a single name, would be printed
+        // like `a/b`, which is two.
         let is_as_written = has_private_name
             || dropped != usize::from(is_this)
             || (has_slash
@@ -683,7 +685,8 @@ impl Parser<'_> {
         let (Some(first), Some(last)) = (names.first(), names.last()) else {
             return Err(self.error(Message::ExpectedName));
         };
-        // `yy.id` is given the list. It takes it for a text, and if that is in brackets, fails.
+        // `yy.id` is called with the whole list. It coerces the list to a string and fails if that string is in
+        // brackets.
         if self.text(*first).starts_with(b"[")
             && self.text(*last).ends_with(b"]")
             && !names
@@ -695,7 +698,7 @@ impl Parser<'_> {
         Ok(self.tree.add_names(&names))
     }
 
-    /// What is behind `open`: `helperName expr* hash? blockParams?` and `close`.
+    /// Parses what follows `open`: `helperName expr* hash? blockParams?` and `close`.
     fn header(
         &mut self,
         open: Token,
@@ -752,7 +755,7 @@ impl Parser<'_> {
         }
     }
 
-    /// `prepareBlock`, for the statement `index`, whose first program ends at `first_end`. `close`: `close.strip`.
+    /// `prepareBlock` for statement `index`, whose first program ends at `first_end`. `close` is `close.strip`.
     fn end_block(
         &mut self,
         index: usize,
@@ -784,7 +787,7 @@ impl Parser<'_> {
             first_end,
             has_second: inverse.is_some(),
             is_inverted,
-            // Without what follows `{{else}}`, `{{^a}}` has no `program`.
+            // Without an `{{else}}` part, `{{^a}}` has no `program`.
             is_valid: header.is_valid && (!is_inverted || inverse.is_some()),
             is_as_written: header.is_as_written
                 || inverse.is_some_and(|inverse| inverse.is_as_written),
@@ -866,7 +869,7 @@ impl Parser<'_> {
     /// `rawBlock`
     fn raw_block(&mut self) -> Result<(), Error> {
         let open = self.next();
-        // It becomes a block like any other.
+        // `@glimmer/syntax` turns it into an ordinary block, so it's printed verbatim.
         let header = Header {
             strip: Strip::default(),
             is_as_written: true,
@@ -923,7 +926,7 @@ impl Parser<'_> {
             self.add_statement(StatementKind::Unsupported, open.start, close.end);
             return Ok(());
         }
-        // What follows a literal is dropped unseen.
+        // Anything after a literal is silently dropped.
         if path.is_some_and(|path| path.class == Class::Literal) {
             self.has_dropped = !call.params.is_empty() || !call.pairs.is_empty();
             ((call.params, call.pairs), is_valid) = (no_arguments, true);
@@ -950,7 +953,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// `partial`, or `openPartialBlock`. Returns `original` of the name.
+    /// `partial` or `openPartialBlock`. Returns the name's `original`.
     fn partial(&mut self) -> Result<Original, Error> {
         self.next();
         let path = self.expression()?;
@@ -1015,7 +1018,7 @@ impl Parser<'_> {
     }
 }
 
-/// Writes the statements that `tokens` are to `statements`, which is empty, and their expressions to `tree`.
+/// Parses `tokens` into `statements`, which must be empty, and adds their expressions to `tree`.
 pub(crate) fn parse(
     source: &[u8],
     tokens: &[Token],

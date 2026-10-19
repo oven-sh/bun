@@ -1,5 +1,5 @@
-// Generates src/format/js/utils/es5_identifier_tables.rs from the package that Prettier asks whether the quotes of a key can go,
-// and from Bun's own tables of identifiers: only where the two differ is written down.
+// Generates src/format/js/utils/es5_identifier_tables.rs from the package that Prettier uses to decide whether a key's
+// quotes can be removed, and from Bun's own identifier tables. Only the differences between the two are written.
 //
 //   cd <a directory with is-es5-identifier-name installed, in the version of Prettier's package.json>
 //   bun <this file> > src/format/js/utils/es5_identifier_tables.rs
@@ -11,9 +11,9 @@ import { pathToFileURL } from "node:url";
 const require = createRequire(pathToFileURL(process.cwd() + "/"));
 const isEs5IdentifierName = (await import(pathToFileURL(require.resolve("is-es5-identifier-name")).href)).default;
 
-// `is_id_start_es_next` and `is_id_continue_es_next` of src/bun_core/string/identifier.rs.
+// `is_id_start_es_next` and `is_id_continue_es_next` in src/bun_core/string/identifier.rs.
 const identifier = readFileSync(join(import.meta.dir, "../../../../src/bun_core/string/identifier.rs"), "utf8");
-function tableOfBun(module: string): (unit: number) => boolean {
+function bunTable(module: string): (unit: number) => boolean {
   const body = identifier.slice(identifier.indexOf(`mod ${module} {`));
   const numbers = (name: string) => {
     const start = body.indexOf("= &[", body.indexOf(`static ${name}:`));
@@ -26,8 +26,8 @@ function tableOfBun(module: string): (unit: number) => boolean {
     return ((stage2[bit >> 6] >> BigInt(bit & 63)) & 1n) === 1n;
   };
 }
-const isStartForBun = tableOfBun("id_start_es_next");
-const isContinueForBun = tableOfBun("id_continue_es_next");
+const isStartForBun = bunTable("id_start_es_next");
+const isContinueForBun = bunTable("id_continue_es_next");
 // `bun_core::lexer::is_type_script_identifier_part`
 const isPartForBun = (unit: number) => isContinueForBun(unit) || unit === 0x30fb || unit === 0xff65;
 

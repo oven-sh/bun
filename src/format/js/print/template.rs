@@ -1,7 +1,7 @@
 //! Template literals. Prettier's `printTemplateLiteral`.
 //!
-//! The text is written as it is. What is in `${}` is formatted, but kept on one line unless it has
-//! a line break in the source.
+//! The text is printed as is. The content of `${}` is formatted, but kept on one line unless it has a line break in the
+//! source.
 
 use super::type_parameters::type_arguments;
 use crate::css::embed;
@@ -15,7 +15,7 @@ use crate::js::utils::typecast::has_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// Whether Prettier's `embed` can have anything to say about the template `e`. About most it has not.
+/// True if Prettier's `embed` could apply to the template `e`. For most templates it can't.
 fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match e.ast_parent() {
         AstNodes::TaggedTemplateExpression(_)
@@ -33,7 +33,7 @@ fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
-/// Prettier's `isJestEachTemplateLiteral`, and the test of `printJestEachTemplateLiteral` that the table has a header.
+/// Prettier's `isJestEachTemplateLiteral`, plus `printJestEachTemplateLiteral`'s check that the table has a header.
 fn is_jest_each_template_literal<'a>(e: Expr<'a>, template: Template<'a>) -> bool {
     matches!(e.parent(), Node::Expr(parent)
         if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
@@ -65,8 +65,7 @@ pub(crate) fn write_template_literal<'a>(
     InTailwindContext(context.map(|it| it.in_template(e, f)), content).fmt(f);
 }
 
-/// `${e}` at `i` in a template that is written as the language in it. Prettier's
-/// `printEmbeddedTemplateExpressions`.
+/// `${e}` at `i` in a template that's printed as its embedded language. Prettier's `printEmbeddedTemplateExpressions`.
 pub(crate) fn write_embedded_template_expression<'a>(
     template: Template<'a>,
     i: usize,
@@ -128,11 +127,11 @@ pub(crate) fn write_ts_template_literal_type<'a>(ty: TypeNode<'a>, f: &mut Forma
 enum TemplateElementLayout {
     /// On one line, however long it is.
     SingleLine,
-    /// It breaks where it has to.
+    /// Breaks where it has to.
     Fit,
 }
 
-/// The number of columns that the line of a `${` is indented by.
+/// How many columns the line of a `${` is indented by.
 #[derive(Debug, Copy, Clone, Default)]
 struct TemplateElementIndention(u32);
 
@@ -145,7 +144,7 @@ impl TemplateElementIndention {
         self.0 % indent_width.value().max(1)
     }
 
-    /// That of the last line of `text`. If it is all on one line, `previous_indention`.
+    /// The indentation of `text`'s last line, or `previous_indention` if `text` is all on one line.
     fn after_last_new_line(text: &[u8], tab_width: u32, previous_indention: Self) -> Self {
         use bun_core::strings::last_index_of_char;
         let Some(new_line) = last_index_of_char(text, b'\n').max(last_index_of_char(text, b'\r'))
@@ -185,7 +184,7 @@ impl<'a> TemplateLike<'a> {
         }
     }
 
-    /// Where the text at `i` is, without its delimiters: the range of ESTree's `TemplateElement`.
+    /// The span of the text at `i`, without its delimiters: the range of ESTree's `TemplateElement`.
     fn content_span(self, i: usize) -> Span {
         let span = match self {
             Self::TemplateLiteral(t) => t.quasi_span(i),
@@ -201,7 +200,7 @@ impl<'a> TemplateLike<'a> {
         }
     }
 
-    /// What is between the `${` and the `}` of the substitution at `i`.
+    /// The span between the `${` and the `}` of the substitution at `i`.
     fn interpolation_span(self, i: usize) -> Span {
         match self {
             Self::TemplateLiteral(t) => t.quasi_span(i).between(t.quasi_span(i + 1)),
@@ -209,7 +208,7 @@ impl<'a> TemplateLike<'a> {
         }
     }
 
-    /// The substitutions. `is_in_jest_each`: they are the cells of a table, which is indented.
+    /// The substitutions. `is_in_jest_each` means they're the cells of a table, which is indented.
     fn expressions(
         self,
         is_in_jest_each: bool,
@@ -241,7 +240,7 @@ impl<'a> Format<'a> for TemplateLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, [line_suffix_boundary(), "`"]);
         let context = f.context().tailwind_context();
-        // The line breaks between classes go, so they say nothing about where a `${` is.
+        // The line breaks between classes are removed, so they can't tell where a `${` ends up.
         let collapses_line_breaks = context.is_some_and(|it| it.collapses_line_breaks());
         let mut expressions = self
             .expressions(false, f)
@@ -297,23 +296,23 @@ impl Spanned for TemplateExpression<'_> {
 /// `${e}`
 struct FormatTemplateExpression<'a> {
     expression: TemplateExpression<'a>,
-    /// What is between the `${` and the `}`.
+    /// The span between the `${` and the `}`.
     interpolation: Span,
     place: Place,
 }
 
-/// Where on its line a `${` is.
+/// Where a `${` is on its line.
 #[derive(Clone, Copy)]
 enum Place {
-    /// There is no telling how the text before it is written.
+    /// How the text before it will be printed isn't known.
     Unknown,
-    /// It is the first thing on its line.
+    /// It's the first thing on its line.
     StartOfLine,
-    /// On a line that is indented so.
+    /// On a line with this indentation.
     After(TemplateElementIndention),
 }
 
-/// Prettier's `hasComment(node)`. oxfmt only looks at the comments of expressions.
+/// Prettier's `hasComment(node)`. oxfmt only looks at comments on expressions.
 fn type_has_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     !f.is_quiet() && !f.options().flavor.is_oxfmt() && f.comments().has_comments(ty.as_ast_nodes())
 }
@@ -339,7 +338,8 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
         let content = format_with(|f| f.write_element(element));
 
         let format_inner = format_with(|f| match layout {
-            // One string, as it is for Prettier: a placeholder in it is going to be a document, which is in nothing of this.
+            // One string, as in Prettier. A placeholder inside it later becomes a document, and that document isn't
+            // nested in any of these elements.
             TemplateElementLayout::SingleLine if f.options().html_template_depth > 0 => {
                 let printed =
                     f.print_to_text(&format_with(|f| f.write_without_soft_lines(&content)));
@@ -394,8 +394,7 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
     }
 }
 
-/// Writes `content` indented like the line of the template that it starts on, whatever the
-/// template itself is indented by.
+/// Prints `content` indented like the template line it starts on, regardless of the template's own indentation.
 fn write_with_indention<'a>(
     content: &impl Format<'a>,
     indention: TemplateElementIndention,
@@ -424,7 +423,7 @@ fn write_with_indention<'a>(
     write!(f, dedent_to_root(&format_aligned));
 }
 
-/// A cell or the end of a row of the table of `` describe.each`..` ``.
+/// A cell or the end of a row in the table of `` describe.each`..` ``.
 enum EachTemplateElement {
     Column(EachTemplateColumn),
     LineBreak,
@@ -433,7 +432,7 @@ enum EachTemplateElement {
 struct EachTemplateColumn {
     text: Vec<u8>,
     width: usize,
-    /// It takes more than one line.
+    /// Spans more than one line.
     will_break: bool,
 }
 
@@ -459,7 +458,7 @@ impl EachTemplateColumn {
 /// ```
 #[derive(Default)]
 struct EachTemplateTable {
-    /// For each row, whether it has a cell that takes more than one line. It is not aligned then.
+    /// For each row, true if it has a cell that spans more than one line. Such a row isn't aligned.
     rows: Vec<bool>,
     columns_width: Vec<usize>,
     elements: Vec<EachTemplateElement>,

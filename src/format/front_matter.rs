@@ -1,18 +1,17 @@
-//! Front matter, which style sheets, Markdown and HTML can start with: Prettier's
-//! `src/main/front-matter/parse.js`.
+//! Front matter at the start of style sheets, Markdown and HTML: Prettier's `src/main/front-matter/parse.js`.
 
-/// `---`, a language, lines, `---`, with ranges in the text that it is at the start of.
+/// `---`, a language, lines, `---`. The ranges are offsets into the text that starts with it.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct FrontMatter {
-    /// Where it ends: behind the closing delimiter.
+    /// The offset just after the closing delimiter.
     pub(crate) end: usize,
-    /// What is behind the opening delimiter, without the white space around it.
+    /// The text after the opening delimiter, with surrounding whitespace trimmed.
     pub(crate) explicit_language: (usize, usize),
     pub(crate) value: (usize, usize),
 }
 
-/// Whether a line of `raw`, which is front matter, has `---` behind white space. Formatted, that can be at the start of the
-/// line, where it ends the front matter. Prettier formats it. Here it stays as it is.
+/// True if a line of the front matter `raw` has `---` after whitespace. Formatting could move that `---` to the start
+/// of the line, where it would end the front matter. Prettier formats it anyway. Here it's kept verbatim.
 pub(crate) fn has_indented_delimiter(raw: &[u8]) -> bool {
     use bun_core::strings;
     strings::contains(raw, b" ---")

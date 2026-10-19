@@ -1,9 +1,9 @@
-// Makes test/cli/format/tailwind/cases.json and order.json again: what oxfmt prints for the inputs in cases.json with the
-// real Tailwind CSS, and where that puts each class that it is asked about.
+// Regenerates test/cli/format/tailwind/cases.json and order.json: oxfmt's output for the inputs in cases.json with the
+// real Tailwind CSS, and Tailwind's order for each class that oxfmt looks up.
 //
 //   bun make-fixtures.ts <directory with node_modules/oxfmt> <directory with node_modules/tailwindcss, version 4>
 //
-// The inputs are those of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT) and some more.
+// The inputs come from oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT), plus some more.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,17 +25,17 @@ const real = join(tailwind, "node_modules/tailwindcss");
 
 const root = mkdtempSync(join(tmpdir(), "tailwind-fixtures-"));
 try {
-  // In the place of the package: the package, which writes down what it is asked.
+  // A wrapper that replaces the package and logs every class it's asked about.
   const asked = join(root, "asked.txt");
-  const stand = join(root, "node_modules/tailwindcss");
-  mkdirSync(stand, { recursive: true });
-  cpSync(join(real, "theme.css"), join(stand, "theme.css"));
+  const wrapper = join(root, "node_modules/tailwindcss");
+  mkdirSync(wrapper, { recursive: true });
+  cpSync(join(real, "theme.css"), join(wrapper, "theme.css"));
   writeFileSync(
-    join(stand, "package.json"),
+    join(wrapper, "package.json"),
     JSON.stringify({ name: "tailwindcss", version: "4.0.0", main: "index.mjs" }),
   );
   writeFileSync(
-    join(stand, "index.mjs"),
+    join(wrapper, "index.mjs"),
     `import { appendFileSync } from "node:fs";
 import * as real from ${JSON.stringify(pathToFileURL(join(real, "dist/lib.mjs")).href)};
 export async function __unstable__loadDesignSystem(...args) {

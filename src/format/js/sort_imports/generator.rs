@@ -1,15 +1,15 @@
-//! `@babel/generator` 7.29 for the nodes of `babel.rs`: `printer.js`, `buffer.js`, and of
-//! `generators/` what prints a program of directives and imports.
+//! `@babel/generator` 7.29 for the nodes in `babel.rs`: `printer.js`, `buffer.js`, and the parts of `generators/` that
+//! print a program of directives and imports.
 //!
-//! Functions have the names that they have there. What depends on options that the plugins do not
-//! set (`retainLines`, `compact`, `concise`, source maps, ..) is left out.
+//! Functions keep their upstream names. Anything that depends on options the plugins don't set (`retainLines`,
+//! `compact`, `concise`, source maps, ..) is omitted.
 
 use super::babel::{CommentId, Model, Node, SpecifierKind, Which, attribute_key_span};
 use bun_core::strings;
 
-/// What `_buf._last` is after a string has been appended.
+/// `_buf._last` after a string has been appended.
 const LAST_IS_TEXT: i32 = -1;
-/// After a word.
+/// `_buf._last` after a word.
 const LAST_IS_WORD: i32 = -3;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -20,7 +20,7 @@ pub(super) enum PieceKind {
     Comment(CommentId),
 }
 
-/// Where a statement, or a comment between statements, is in the code.
+/// Where a statement, or a comment between statements, is in the output.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Piece {
     pub(super) kind: PieceKind,
@@ -37,7 +37,7 @@ enum SkipNewLines {
     Trailing,
 }
 
-/// Whether the interpreter line and the directives of the file are part of the program.
+/// Controls whether the file's interpreter line and directives are printed as part of the program.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Prologue {
     Included,
@@ -48,7 +48,7 @@ pub(super) enum Prologue {
 enum Join {
     /// `printSequence`: statements.
     Sequence,
-    /// `printList`: commas are between them.
+    /// `printList`: separated by commas.
     List,
 }
 
@@ -56,16 +56,16 @@ pub(super) struct Printer<'m, 'a> {
     model: &'m Model<'a>,
     /// `importAttributesKeyword`
     attributes_keyword: &'static [u8],
-    /// What a line ends with.
+    /// The line ending.
     end_of_line: &'static [u8],
 
     // `Buffer`
     out: Vec<u8>,
     last: i32,
     queued: u8,
-    /// The `;` that is queued belongs to a statement that is an empty line already.
+    /// The queued `;` belongs to a statement that's already an empty line.
     is_queued_hidden: bool,
-    /// The end of the last empty line: what is before is not trimmed.
+    /// The end of the last empty line. Nothing before it is trimmed.
     kept_len: usize,
 
     current: Option<Node>,
@@ -76,9 +76,9 @@ pub(super) struct Printer<'m, 'a> {
     inner_comments_state: u8,
 
     pub(super) pieces: Vec<Piece>,
-    /// A comment is not printed as it is written, or not between statements.
+    /// A comment isn't printed verbatim, or isn't between statements.
     pub(super) has_changed_comment: bool,
-    /// What Babel prints cannot be parsed.
+    /// Babel's output can't be parsed.
     pub(super) has_failed: bool,
 }
 
@@ -109,8 +109,8 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
     }
 
-    /// `generate(file(program(body, directives, "module", interpreter))).code`, with the statements
-    /// that stand for empty lines replaced.
+    /// `generate(file(program(body, directives, "module", interpreter))).code`, with the statements that represent
+    /// empty lines replaced.
     pub(super) fn generate(mut self, prologue: Prologue, body: &[Node]) -> Self {
         if prologue == Prologue::Included && self.model.interpreter.is_some() {
             self.print(Node::Interpreter, false, 0);
@@ -319,7 +319,7 @@ impl<'m, 'a> Printer<'m, 'a> {
             });
         }
         if no_line_terminator_after && !self.no_line_terminator {
-            // Babel puts the node in parentheses, which is not valid for the source of an import.
+            // Babel wraps the node in parentheses, which isn't valid for an import's source.
             let trailing = self
                 .model
                 .list(self.model.comments_of(node, Which::Trailing));
@@ -498,7 +498,7 @@ impl<'m, 'a> Printer<'m, 'a> {
         self.print_comments_as(kind, which, node, line_offset);
     }
 
-    /// `_printComments`. `kind`: `COMMENT_TYPE`, 0 for leading, 1 for inner, 2 for trailing.
+    /// `_printComments`. `kind` is `COMMENT_TYPE`: 0 for leading, 1 for inner, 2 for trailing.
     fn print_comments_as(&mut self, kind: u8, which: Which, node: Node, line_offset: i32) -> u8 {
         let model = self.model;
         let comments = model.list(model.comments_of(node, which));
@@ -690,7 +690,7 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
     }
 
-    /// The same as `import_declaration` where no import has a comment in it.
+    /// Same as `import_declaration`, for when no import has a comment in it.
     fn import_declaration_without_comments(&mut self, index: u32) {
         let model = self.model;
         let declaration = model.declarations[index as usize];
@@ -863,8 +863,8 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 }
 
-/// `adjustMultilineComment`: takes up to `offset` characters of whitespace off the start of every
-/// line of `comment` but the first, and puts `indent_size` spaces there.
+/// `adjustMultilineComment`: strips up to `offset` whitespace characters from the start of every line of `comment` but
+/// the first, and puts `indent_size` spaces there.
 fn adjust_multiline_comment(comment: &[u8], offset: u32, indent_size: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity(comment.len());
     let mut rest = comment;
@@ -872,7 +872,7 @@ fn adjust_multiline_comment(comment: &[u8], offset: u32, indent_size: u32) -> Ve
         out.extend_from_slice(&rest[..=at]);
         out.resize(out.len() + indent_size as usize, b' ');
         rest = &rest[at + 1..];
-        // `\n\s{1,offset}`, which can take line breaks too.
+        // `\n\s{1,offset}`, which can also match line breaks.
         for _ in 0..offset {
             match strings::js_whitespace_len(rest) {
                 0 => break,

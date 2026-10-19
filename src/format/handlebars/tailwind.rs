@@ -1,23 +1,25 @@
-//! oxfmt's `sortTailwindcss` in Handlebars: `transformGlimmer` of `prettier-plugin-tailwindcss`, which changes the tree.
+//! oxfmt's `sortTailwindcss` for Handlebars: `transformGlimmer` from `prettier-plugin-tailwindcss`, which rewrites the
+//! tree.
 
 use super::ast::{Call, Kind, NodeId, Text, Tree};
 use crate::tailwind::{Ends, Tailwind};
 use crate::text;
 
-/// What is around a node in the value of an attribute.
+/// A node's surroundings within an attribute value.
 #[derive(Copy, Clone)]
 struct Around {
-    /// It is a part of a `ConcatStatement`, with a part before it, and with one behind it.
+    /// It's a part of a `ConcatStatement` and has a part before it, or after it.
     has_previous: bool,
     has_next: bool,
-    /// It is in a `(concat ..)`.
+    /// It's inside a `(concat ..)`.
     is_in_concat: bool,
-    /// What a string in it becomes is right behind, or right before, something that is no white space, or may be none. The
-    /// plugin does not ask: of `class="a{{if b "p-4 flex"}}"` it makes `"flex p-4"`, and of `{{concat "p-4 " c}}` `"p-4"`.
+    /// `[start, end]`: true if a string's rendered value comes directly after, or directly before, something that
+    /// isn't, or might not be, whitespace. The plugin doesn't check this: it turns `class="a{{if b "p-4 flex"}}"` into
+    /// `"flex p-4"`, and `{{concat "p-4 " c}}` into `"p-4"`.
     touches: [bool; 2],
 }
 
-/// Whether `id` is a text or a string with white space at its start, or at its end.
+/// True if `id` is a text or a string that starts, or with `is_start: false` ends, with whitespace.
 fn has_blank_at(tree: &Tree, source: &[u8], id: NodeId, is_start: bool) -> bool {
     let (Kind::Text { chars: text } | Kind::String { value: text }) = tree.kind(id) else {
         return false;
@@ -27,7 +29,8 @@ fn has_blank_at(tree: &Tree, source: &[u8], id: NodeId, is_start: bool) -> bool 
     end.is_some_and(u8::is_ascii_whitespace)
 }
 
-/// `touches` of each of `nodes`, which follow each other in something whose own is `outer`.
+/// Returns `touches` for `nodes[index]`. `nodes` are the consecutive parts of a container whose own `touches` is
+/// `outer`.
 fn touches_of(
     tree: &Tree,
     source: &[u8],
@@ -47,7 +50,7 @@ fn is_concat(tree: &Tree, source: &[u8], call: Call) -> bool {
         if tail.is_empty() && tree.text(source, name) == b"concat")
 }
 
-/// Sorts the classes in the attributes of `tree`, which is made of `source`.
+/// Sorts the classes in the attributes of `tree`, which was built from `source`.
 pub(super) fn sort_classes(tree: &mut Tree, source: &[u8], tailwind: &Tailwind) {
     let mut stack: Vec<(NodeId, Around)> = Vec::new();
     for id in 0..tree.nodes.len() as NodeId {

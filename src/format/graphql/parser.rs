@@ -1,9 +1,7 @@
-//! The syntax of GraphQL: the lexer and the parser of graphql-js 17, which is what Prettier parses
-//! with, with `experimentalFragmentArguments`.
+//! A port of the lexer and parser of graphql-js 17, which Prettier uses, with `experimentalFragmentArguments` enabled.
 //!
-//! The tree is flat. A node has its kind, where it is in the text, and its children in source order,
-//! which are all the nodes that graphql-js has in it. What a child is to its parent is told from its
-//! kind and its place among the others.
+//! The tree is flat. A node stores its kind, its span, and its children in source order, which are all the nodes that
+//! graphql-js puts inside it. A child's role in its parent follows from its kind and its position among its siblings.
 
 use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
 use bun_core::fmt::{hex_digit_value, parse_hex4};
@@ -90,17 +88,17 @@ pub(crate) struct Node {
     child_count: u32,
 }
 
-/// Of a `Field`: its first child is the alias.
+/// `Field`: its first child is the alias.
 pub(crate) const HAS_ALIAS: u8 = 1;
-/// Of a `StringValue`: `""" .. """`
+/// `StringValue`: `""" .. """`
 pub(crate) const IS_BLOCK: u8 = 1;
-/// Of a `DirectiveDefinition`
+/// `DirectiveDefinition`
 pub(crate) const IS_REPEATABLE: u8 = 1;
-/// Of an `OperationDefinition` and an `OperationTypeDefinition`
+/// `OperationDefinition` and `OperationTypeDefinition`
 pub(crate) const QUERY: u8 = 0;
 pub(crate) const MUTATION: u8 = 1;
 pub(crate) const SUBSCRIPTION: u8 = 2;
-/// Of an `OperationDefinition`: it is only a selection set.
+/// `OperationDefinition`: it's only a selection set.
 pub(crate) const IS_SHORTHAND: u8 = 3;
 
 #[derive(Default)]
@@ -109,7 +107,7 @@ pub(crate) struct Tree {
     children: Vec<NodeId>,
     /// From the `#` to the end of the line.
     pub(crate) comments: Vec<Span>,
-    /// The nodes that wait for their parent.
+    /// Finished nodes whose parent isn't finished yet.
     pending: Vec<NodeId>,
 }
 
@@ -184,7 +182,7 @@ const fn is_name_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-/// The escape sequence that `text` starts with: the character that it stands for, and its length.
+/// Decodes the escape sequence at the start of `text`. Returns the character and the sequence's length.
 pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
     let simple = |c: char| Some((c, 2));
     match *text.get(1)? {
@@ -215,7 +213,7 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
             if let Some(c) = char::from_u32(code) {
                 return Some((c, 6));
             }
-            // Two halves of a character.
+            // A surrogate pair written as two escapes.
             if !(0xD800..=0xDBFF).contains(&code) || text.get(6..8) != Some(b"\\u") {
                 return None;
             }
@@ -234,14 +232,13 @@ struct Parser<'t> {
     tree: &'t mut Tree,
     refusal: Refusal,
     token: Token,
-    /// The token after `token`, if it has been looked at.
+    /// The token after `token`, if it has been read already.
     next: Option<Token>,
-    /// Where the token before `token` ends.
+    /// The end of the token before `token`.
     last_end: u32,
     stack_check: bun_core::StackCheck,
 }
 
-/// Fills `tree` with the syntax of `text`.
 pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), SyntaxError> {
     tree.nodes.clear();
     tree.children.clear();
@@ -266,7 +263,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), Syn
     parser.parse_document().map_err(|_| parser.refusal.reason())
 }
 
-/// What is said where there is no token of `kind`.
+/// The error for a missing token of `kind`.
 #[cold]
 fn expected(kind: TokenKind) -> Message {
     match kind {
@@ -285,7 +282,7 @@ impl Parser<'_> {
         self.text.get(position).copied()
     }
 
-    /// The token at or after `start`. Comments on the way are noted.
+    /// Reads the token at or after `start`, and records the comments it skips.
     fn read_token(&mut self, start: u32) -> Result<Token> {
         let mut position = start as usize;
         let token = |kind, start: usize, end: usize| {
@@ -363,7 +360,7 @@ impl Parser<'_> {
         }
     }
 
-    /// Where the digits at `position` end. There has to be one.
+    /// Returns the end of the digits at `position`. Fails if there are none.
     fn read_digits(&self, position: usize) -> Result<usize> {
         let rest = self.text.get(position..).unwrap_or_default();
         match rest.iter().take_while(|byte| byte.is_ascii_digit()).count() {
@@ -409,7 +406,7 @@ impl Parser<'_> {
         }
     }
 
-    /// Where the string that starts at `start` ends.
+    /// Returns the end of the string that starts at `start`.
     fn read_string(&self, start: usize) -> Result<usize> {
         let mut position = start + 1;
         loop {
@@ -437,7 +434,7 @@ impl Parser<'_> {
             let rest = self.text.get(position..).unwrap_or_default();
             position += bun_core::strings::index_of(rest, b"\"\"\"")
                 .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
-            // `\"""` is not the end.
+            // `\"""` doesn't end the string.
             if position > start + 3 && self.byte(position - 1) == Some(b'\\') {
                 position += 3;
             } else {
@@ -453,7 +450,6 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// The token after the current one.
     fn lookahead(&mut self) -> Result<Token> {
         if self.token.kind == TokenKind::EndOfFile {
             return Ok(self.token);
@@ -482,7 +478,7 @@ impl Parser<'_> {
         token.kind == TokenKind::Name && self.text_of(token) == keyword
     }
 
-    /// `message`, where the current token is.
+    /// Reports `message` at the current token.
     #[cold]
     fn unexpected(&self, message: Message) -> Refused {
         let message = match self.token.kind {
@@ -526,13 +522,13 @@ impl Parser<'_> {
 
     // ───────────────────────────── nodes ─────────────────────────────
 
-    /// What [`Parser::finish`] needs to know of where a node starts.
+    /// Returns what [`Parser::finish`] needs to know about where a node starts.
     fn begin(&self) -> (u32, usize) {
         (self.token.start, self.tree.pending.len())
     }
 
-    /// The node that started at `begin` ends before the current token. What has been finished since
-    /// then are its children.
+    /// Ends the node that started at `begin` just before the current token. The nodes finished since then become its
+    /// children.
     fn finish(&mut self, kind: Kind, flags: u8, (start, first_pending): (u32, usize)) {
         let tree = &mut *self.tree;
         let first_child = tree.children.len() as u32;
@@ -548,7 +544,7 @@ impl Parser<'_> {
         });
     }
 
-    /// The current token is all of a node.
+    /// Makes a node from just the current token.
     fn token_as(&mut self, kind: Kind, flags: u8) -> Result<()> {
         let begin = self.begin();
         self.advance()?;
@@ -581,7 +577,7 @@ impl Parser<'_> {
         }
     }
 
-    /// The same, if it is there. Returns whether it is.
+    /// Like `many`, but optional. Returns true if it's present.
     fn optional_many(
         &mut self,
         open: TokenKind,
@@ -692,7 +688,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// `query`, `mutation` or `subscription`, which is not a node but a flag of the node it is in.
+    /// `query`, `mutation` or `subscription`. It isn't a node but a flag on the enclosing node.
     fn parse_operation_type(&mut self) -> Result<u8> {
         let token = self.expect(TokenKind::Name)?;
         match self.text_of(token) {
@@ -890,7 +886,7 @@ impl Parser<'_> {
         self.parse_named_value(Kind::ObjectField, Self::parse_const_value)
     }
 
-    /// Returns whether there is one.
+    /// Returns true if there's at least one directive.
     fn parse_directives_of(&mut self, argument: fn(&mut Self) -> Result<()>) -> Result<bool> {
         let is_there = self.peek(TokenKind::At);
         while self.peek(TokenKind::At) {

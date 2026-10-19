@@ -1,7 +1,7 @@
 //! Chains of calls and member accesses: `a.b().c().d()`. Prettier's `printMemberChain`.
 //!
-//! The links are put in groups, `a`, `.b()`, `.c()`, `.d()`, which are written on one line if that
-//! fits and the chain is short and simple, and otherwise each on its own line.
+//! The links are put in groups, `a`, `.b()`, `.c()`, `.d()`, which are printed on one line if that fits and the chain
+//! is short and simple. Otherwise each group goes on its own line.
 
 pub(crate) mod chain_member;
 mod groups;
@@ -22,13 +22,13 @@ type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
 
 struct MemberChain<'a, 'b> {
     root: Expr<'a>,
-    /// The links, from the first to the last.
+    /// The links, first to last.
     members: &'b [ChainMember<'a>],
     /// Where each group ends in `members`. The first group is the head, the others are the tail.
     group_ends: SmallVec<[u32; 8]>,
 }
 
-/// Writes the call `call_expression`, whose callee is a member access.
+/// Prints the call `call_expression`, whose callee is a member access.
 pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatter<'a>) {
     let mut members = Members::new();
     let has_inner_call = push_chain_members(call_expression, &mut members, f);
@@ -65,7 +65,8 @@ pub(crate) fn head_of_member_chain<'a>(
     }
 }
 
-/// The statement that the code is parsed as is not there for Prettier: the root is a `JsExpressionRoot` or an `NGRoot`.
+/// The code is parsed as a statement here, but Prettier has no such node: its root is a `JsExpressionRoot` or an
+/// `NGRoot`.
 fn is_all_of_expression_in_html(f: &Formatter<'_>) -> bool {
     !matches!(
         f.options().in_html.root,
@@ -73,7 +74,7 @@ fn is_all_of_expression_in_html(f: &Formatter<'_>) -> bool {
     )
 }
 
-/// `a[B].c().d()`: for Prettier `B` looks like a factory, and `.c()` stays on its line. oxfmt only looks at `a.B`.
+/// `a[B].c().d()`: to Prettier `B` looks like a factory, so `.c()` stays on its line. oxfmt only looks at `a.B`.
 fn name_in_brackets_can_be_factory(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
@@ -85,7 +86,7 @@ fn is_one_group_after_the_head(has_inner_call: bool, f: &Formatter<'_>) -> bool 
 }
 
 impl<'a, 'b> MemberChain<'a, 'b> {
-    /// `members`: the links of the chain that ends with the call `root`, from the first to the last.
+    /// `members` are the links of the chain that ends with the call `root`, first to last.
     fn new(root: Expr<'a>, members: &'b [ChainMember<'a>], f: &Formatter<'a>) -> Self {
         let head_end = get_split_index_of_head_and_tail_groups(members, f);
         let mut group_ends = SmallVec::new();
@@ -146,8 +147,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                     let name = node.text();
                     has_computed_property
                         || is_factory(name)
-                        // A name that is shorter than the indentation: the `.` would not even be
-                        // to the right of it.
+                        // A name that's shorter than the indentation: the `.` wouldn't even be to the right of it.
                         || (name.len() <= f.options().indent_width.value() as usize
                             && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
                             && !is_all_of_expression_in_html(f))
@@ -156,7 +156,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                 _ => false,
             }
         } else {
-            // Prettier looks at the name in `[]` as well.
+            // Prettier also looks at the name in `[]`.
             let name = match self
                 .head()
                 .last()
@@ -179,9 +179,9 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         }
     }
 
-    /// Before which groups of the tail an empty line is kept, and whether one of them is after a
-    /// call, which takes breaking the chain. One after the head, if that does not end with a call,
-    /// is only kept if the chain breaks.
+    /// Returns which groups of the tail keep an empty line before them, and true if one of those lines is after a call,
+    /// which forces the chain to break. An empty line after the head, if the head doesn't end with a call, is only kept
+    /// if the chain breaks.
     fn find_empty_lines(&self, f: &Formatter<'a>) -> (SmallVec<[bool; 8]>, bool) {
         if goes_by_position_of_comments(f) {
             let needs_empty_line: SmallVec<[bool; 8]> = (self.groups().skip(1))
@@ -201,7 +201,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                         has_empty_line_after_call |= is_followed_by_empty_line;
                         is_followed_by_empty_line
                     }
-                    // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
+                    // Not after a call at the head of the chain: `fn()\n\n.bar()` prints as `fn().bar()`.
                     Some(ChainMember::Node(node)) if is_call_expression(*node, f) => false,
                     Some(member) => index == 0 && should_insert_empty_line_after(member.expr(), f),
                     None => false,
@@ -213,9 +213,9 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         (needs_empty_line, has_empty_line_after_call)
     }
 
-    /// Prettier's `shouldMerge`'s counterpart `shouldNotWrap`, and the tests on complexity.
+    /// Prettier's `shouldMerge`'s counterpart `shouldNotWrap`, and the complexity checks.
     ///
-    /// `formatted`: what is written for each group.
+    /// `formatted` is each group's output.
     fn groups_should_break(&self, formatted: &[Option<FormatElement>], f: &Formatter<'a>) -> bool {
         let mut call_expressions = self
             .members
@@ -299,8 +299,7 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
             };
         }
 
-        // The groups are asked about, and written in two ways. They are formatted in order, for the
-        // sake of the comments.
+        // The groups are inspected and then printed in two layouts. They're formatted in order because of the comments.
         let formatted: SmallVec<[Option<FormatElement>; 8]> = self
             .groups()
             .map(|group| f.intern(&FormatMemberChainGroup(group)))
@@ -358,7 +357,7 @@ fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool 
     !f.is_quiet() && !member.comments(f).leading.is_empty()
 }
 
-/// `a! /* comment */ !`: the comment dangles from `a!!`. For Prettier it trails the `a!` in it, which is a link too.
+/// `a! /* comment */ !`: the comment dangles from `a!!`. In Prettier it trails the inner `a!`, which is also a link.
 fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() {
         return false;
@@ -368,18 +367,18 @@ fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool
         || (matches!(member, ChainMember::TSNonNullExpression(_)) && !comments.dangling.is_empty())
 }
 
-/// oxfmt does not go by the owners of the comments to lay out a chain. It goes by where they are.
+/// oxfmt lays out a chain by where the comments are, not by which nodes own them.
 fn goes_by_position_of_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether nothing but blanks and comments are between `expression` and `comment`, which comes after it.
+/// True if only whitespace and comments are between `expression` and `comment`, which comes after it.
 fn is_directly_behind(comment: Comment<'_>, expression: Expr<'_>) -> bool {
     comment.prev_token_end() == expression.span().end
 }
 
-/// oxfmt's `has_comment_in_member`: `member` is `.b` and has a comment between its object and its name, or a comment behind
-/// it that ends the line.
+/// oxfmt's `has_comment_in_member`: `member` is `.b` and has a comment between its object and its name, or a comment
+/// after it that ends the line.
 fn has_comment_in_member_for_oxfmt<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
     let ChainMember::StaticMember(expression) = *member else {
         return false;
@@ -396,8 +395,8 @@ fn has_comment_in_member_for_oxfmt<'a>(member: &ChainMember<'a>, f: &Formatter<'
             .any(|comment| comment.is_line() || comment.has_newline_after())
 }
 
-/// oxfmt's `needs_empty_line_before`: `group` starts with `.b`, and there is an empty line between the object and the `.`, or
-/// the first comment between the object and the name.
+/// oxfmt's `needs_empty_line_before`: `group` starts with `.b`, and there's an empty line between the object and the
+/// `.`, or between the object and the first comment before the name.
 fn needs_empty_line_before_for_oxfmt<'a>(group: &[ChainMember<'a>], f: &Formatter<'a>) -> bool {
     let Some(ChainMember::StaticMember(expression)) = group.first() else {
         return false;
@@ -406,7 +405,7 @@ fn needs_empty_line_before_for_oxfmt<'a>(group: &[ChainMember<'a>], f: &Formatte
     else {
         return false;
     };
-    // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
+    // Not after a call at the head of the chain: `fn()\n\n.bar()` prints as `fn().bar()`.
     if matches!(object.kind(), ExprKind::Call(call)
         if !matches!(call.callee().tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call))
     {
@@ -431,8 +430,8 @@ fn needs_empty_line_before_for_oxfmt<'a>(group: &[ChainMember<'a>], f: &Formatte
     false
 }
 
-/// Whether a group of the chain ends behind `member`, which `next` follows, so that a comment stays behind what it is written
-/// behind. For oxfmt that is any comment directly behind `member`, also one that starts a line.
+/// True if a group of the chain ends after `member`, which `next` follows, so that a comment stays after the link it
+/// follows in the source. In oxfmt that's any comment directly after `member`, even one that starts a line.
 fn is_followed_by_comment<'a>(
     member: &ChainMember<'a>,
     next: Option<&ChainMember<'a>>,
@@ -456,9 +455,9 @@ fn is_computed_array_member_access(member: &ChainMember<'_>) -> bool {
         if matches!(expression.kind(), ExprKind::Index { index, .. } if matches!(index.kind(), ExprKind::Number(_))))
 }
 
-/// Where the head ends. It is the first member, the calls and `[0]`s right after it, and, unless
-/// it starts with a call, the member accesses up to the last before a call:
-/// `a()()`, `a[0][1]`, `this.a.b` of `this.a.b.c()`.
+/// The index where the head ends. The head is the first member, the calls and `[0]`s right after it, and, unless it
+/// starts with a call, the member accesses up to the last one before a call: `a()()`, `a[0][1]`, the `this.a.b` in
+/// `this.a.b.c()`.
 fn get_split_index_of_head_and_tail_groups<'a>(
     members: &[ChainMember<'a>],
     f: &Formatter<'a>,
@@ -496,9 +495,9 @@ fn get_split_index_of_head_and_tail_groups<'a>(
     non_call_or_array_member_access_start + member_end
 }
 
-/// Where the groups after the head end: each is some member accesses and the calls after them.
+/// Pushes the end of each group after the head. Each group is some member accesses and the calls after them.
 ///
-/// `start`: where the head ends in `members`.
+/// `start` is where the head ends in `members`.
 fn push_ends_of_remaining_groups<'a>(
     members: &[ChainMember<'a>],
     start: usize,
@@ -510,7 +509,7 @@ fn push_ends_of_remaining_groups<'a>(
 
     for (index, member) in members.iter().enumerate().skip(start) {
         match member {
-            // `[0]` goes with what is before it.
+            // `[0]` belongs with what's before it.
             ChainMember::ComputedMember(_) if is_computed_array_member_access(member) => {}
             ChainMember::StaticMember(_) | ChainMember::ComputedMember(_)
                 if has_seen_call_expression =>
@@ -523,7 +522,7 @@ fn push_ends_of_remaining_groups<'a>(
             _ => {}
         }
 
-        // So that the comment stays behind what it is written behind.
+        // So that the comment stays after the link it follows in the source.
         if !f.is_quiet() && is_followed_by_comment(member, members.get(index + 1), f) {
             group_ends.push(index as u32 + 1);
             group_start = index + 1;
@@ -535,8 +534,8 @@ fn push_ends_of_remaining_groups<'a>(
     }
 }
 
-/// A name that starts with a capital letter, or consists of `_` and `$`, is likely to be a factory
-/// or a namespace: `Object.keys(a)`, `_.map(a)`, `$.ajax()`.
+/// A name that starts with a capital letter, or consists of `_` and `$`, is likely a factory or a namespace:
+/// `Object.keys(a)`, `_.map(a)`, `$.ajax()`.
 fn is_factory(name: &[u8]) -> bool {
     match name.split_first() {
         Some((b'_' | b'$', rest)) => rest.iter().all(|b| matches!(b, b'_' | b'$')),
@@ -545,8 +544,8 @@ fn is_factory(name: &[u8]) -> bool {
     }
 }
 
-/// Whether the call `expression` is written as a member chain that can break before each group: it
-/// has more than one group after the head, or a comment between its links.
+/// True if the call `expression` is printed as a member chain that can break before each group: it has more than one
+/// group after the head, or a comment between its links.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut members = Members::new();
     if is_one_group_after_the_head(push_chain_members(expression, &mut members, f), f) {
@@ -557,13 +556,13 @@ pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) 
     chain.tail_len() > 1 || chain.has_comment(f)
 }
 
-/// `a.#b().c()`: for oxfmt `a.#b` is no link of the chain. It, or the call of it, is what the chain starts with.
+/// `a.#b().c()`: in oxfmt `a.#b` isn't a link of the chain. It, or the call of it, is the head of the chain.
 fn starts_chain(member: Expr<'_>, f: &Formatter<'_>) -> bool {
     member.is_private_member() && f.options().flavor.is_oxfmt()
 }
 
-/// Appends the links of the chain that ends with the call `root`, from the last to the first. Returns
-/// whether there is another call among them. The chain starts where something needs parentheses.
+/// Appends the links of the chain that ends with the call `root`, last to first. Returns true if there's another call
+/// among them. The chain starts where something needs parentheses.
 fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatter<'a>) -> bool {
     members.push(ChainMember::CallExpression {
         expression: root,
@@ -579,8 +578,7 @@ fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatt
             tag,
             ExprTag::Call | ExprTag::Dot | ExprTag::Index | ExprTag::NonNull
         );
-        // A link is in a link: nothing that it would need parentheses in, unless an optional chain
-        // ends with it.
+        // A link's parent is another link, where it never needs parentheses unless an optional chain ends with it.
         if (has_type_casts && is_cast_target(expression, f))
             || ((!is_link
                 || ((tag == ExprTag::NonNull || expression.chain() != Chain::No)

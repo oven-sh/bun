@@ -34,7 +34,7 @@ pub(crate) fn write_ts_type_reference<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    // What it is only matters for a long name, and for comments.
+    // Fast path: which node this is only matters for a long name and for comments.
     if f.is_quiet()
         && name.len() <= 2
         && !f.file().is_javascript()
@@ -58,7 +58,7 @@ pub(crate) fn write_ts_type_reference<'a>(
         );
     }
     if args.is_empty() && f.file().is_javascript() {
-        // Flow's other name for it.
+        // Flow's other name for `boolean`.
         if name.len() == 1 && ty.text() == b"bool" {
             return write!(f, "boolean");
         }
@@ -89,13 +89,13 @@ pub(crate) fn write_ts_type_reference<'a>(
     );
 }
 
-/// For oxfmt `A.B.C` after `extends` or `implements` is a name like any other, on one line.
+/// oxfmt prints `A.B.C` after `extends` or `implements` like any other name, on one line.
 fn heritage_name_breaks_before_its_dots(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// `A.B.C` after `extends` or `implements`. There it is a member expression in ESTree, which can
-/// break before its dots (Prettier's `printMemberExpression`).
+/// `A.B.C` after `extends` or `implements`. ESTree has a member expression there, which can break before its dots
+/// (Prettier's `printMemberExpression`).
 fn heritage_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
         for (index, part) in name.parts().enumerate() {
@@ -114,14 +114,12 @@ fn heritage_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     })
 }
 
-/// oxfmt keeps the parentheses of `type A = (intrinsic)`. Prettier drops them, which changes what it
-/// means.
+/// oxfmt keeps the parentheses of `type A = (intrinsic)`. Prettier drops them, which changes the meaning.
 fn keeps_parentheses_of_intrinsic(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `type A = (intrinsic)` is a reference to a type of that name. Without the parentheses it is the
-/// keyword.
+/// `type A = (intrinsic)` refers to a type with that name. Without the parentheses it's the keyword.
 fn is_leftmost_intrinsic_in_type_alias<'a>(
     ty: TypeNode<'a>,
     name: EntityName<'a>,
@@ -210,12 +208,12 @@ pub(crate) fn write_ts_type_literal<'a>(
     ObjectLike::TSTypeLiteral(ty, members).fmt(f);
 }
 
-/// The members of a type literal, with their separators.
+/// A type literal's members, with their separators.
 pub(crate) fn write_ts_signatures<'a>(members: List<'a, Member<'a>>, f: &mut Formatter<'a>) {
     write_signatures(members, false, f);
 }
 
-/// The members of an interface, with their separators.
+/// An interface's members, with their separators.
 pub(crate) fn write_ts_interface_signatures<'a>(
     members: List<'a, Member<'a>>,
     f: &mut Formatter<'a>,
@@ -248,12 +246,13 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
             next_signature: iter.peek().copied(),
             is_interface,
         };
-        // `a: 1⏎⏎// comment⏎; b: 2`: a member in Flow ends before its separator, and Prettier's `isNextLineEmpty` starts there.
+        // `a: 1⏎⏎// comment⏎; b: 2`: a Flow member ends before its separator, and Prettier's `isNextLineEmpty` starts
+        // there.
         let is_after_empty_line = is_flow
             && previous.replace(signature).is_some_and(|previous| {
                 crate::text::is_next_line_empty(text, previous.span().end as usize)
             });
-        // Prettier has no node for the `...`. A comment before it trails the member before it.
+        // Prettier has no node for the `...`. A comment before it trails the previous member.
         match super::flow::is_inexact_mark(signature) {
             true => joiner.entry_without_empty_line(&content),
             false if is_after_empty_line => joiner.entry_after_empty_line(&content),
@@ -266,7 +265,7 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
     }
 }
 
-/// `a: string; /* comment */` is `a: string /* comment */;` for oxfmt.
+/// oxfmt prints `a: string; /* comment */` as `a: string /* comment */;`.
 fn separator_is_behind_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -285,21 +284,21 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
         if !f.is_quiet() {
             if f.comments().is_ignored(node) {
                 write!(f, signature);
-                // In Flow the separator is not part of the member. In an interface or a declared class Prettier writes none after an ignored
-                // member, which is a syntax error before another member.
+                // In Flow the separator isn't part of the member. In an interface or a declared class Prettier doesn't
+                // print one after an ignored member, which is a syntax error before another member.
                 if f.file().is_flow() && !(self.is_interface && self.next_signature.is_none()) {
                     self.write_separator(f);
                 }
                 return;
             }
-            // The `,` of Flow's is behind the comments that trail the member.
+            // Flow's `,` goes after the member's trailing comments.
             if (f.file().is_flow() && !self.is_interface) || separator_is_behind_comments(f) {
                 write!(f, signature);
                 return self.write_separator(f);
             }
         }
 
-        // The separator is not part of the member. The comments that trail the member are behind it.
+        // The separator isn't part of the member. The member's trailing comments go after it.
         write!(f, FormatNodeWithoutTrailingComments(&signature));
         self.write_separator(f);
         extend_node(signature.span(), f);
@@ -309,7 +308,7 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
 
 impl<'a> FormatTSSignature<'a> {
     fn write_separator(&self, f: &mut Formatter<'a>) {
-        // The types in a JavaScript file are Flow's.
+        // Types in a JavaScript file are Flow's.
         if f.file().is_javascript() {
             return match (self.is_interface, self.next_signature) {
                 (true, _) => write!(f, ";"),
@@ -328,7 +327,7 @@ impl<'a> FormatTSSignature<'a> {
         }
     }
 
-    /// Prettier's `shouldPrintSemicolonAfterInterfaceProperty`: what follows would be taken for the
+    /// Prettier's `shouldPrintSemicolonAfterInterfaceProperty`: without the `;`, what follows would be parsed as the
     /// rest of the property.
     fn needs_semicolon(&self) -> bool {
         let signature = self.signature;
@@ -347,7 +346,7 @@ impl<'a> FormatTSSignature<'a> {
     }
 }
 
-/// A member of an interface or a type literal that is not an index signature.
+/// A member of an interface or a type literal, other than an index signature.
 pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if f.file().is_flow() {
         return super::flow::write_object_type_member(member, f);
@@ -376,14 +375,15 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
                 return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
             };
             write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
-            // `a?/* comment */ : B` for oxfmt. For Prettier the `: B` has no comments, and one before the `:` can lead `B`. So the
-            // `: B` is not entered: in it, nothing would look for a comment that is before it.
+            // oxfmt prints `a?/* comment */ : B`. In Prettier the `: B` has no comments, and a comment before the `:`
+            // can lead `B`. So the `: B` node isn't entered: inside it, nothing would look for a comment that comes
+            // before it.
             if !f.is_quiet() {
                 let type_annotation = AstNodes::TSTypeAnnotation(ty);
                 let owned = f.comments().of_node(type_annotation);
                 if owned.is_ignored {
                     format_node(type_annotation, f, |_| {});
-                    // `B` is copied and not printed, and these are behind what is copied.
+                    // `B` is copied, not printed, and these come after the copied text.
                     return write!(
                         f,
                         trailing_comments(without_lone_operator(ty).as_ast_nodes())
@@ -392,7 +392,7 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
                 write!(f, FormatLeadingComments::Comments(owned.leading));
             }
             write!(f, [":", space()]);
-            // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
+            // oxfmt leaves `a: // comment ⏎ B` as is. The comment dangles from the signature.
             if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
                 let comments_behind_colon = f.comments().of_node(node).dangling;
                 write!(f, FormatLeadingComments::Comments(comments_behind_colon));
@@ -422,7 +422,7 @@ pub(crate) fn write_ts_type_query<'a>(
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
-/// `a.b.c` after `typeof`. It is ESTree's `TSQualifiedName`, which does not break like a member expression.
+/// `a.b.c` after `typeof`. It's ESTree's `TSQualifiedName`, which doesn't break like a member expression.
 fn write_qualified_name<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
     let ExprKind::Dot {
         obj: left,
@@ -432,7 +432,7 @@ fn write_qualified_name<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
     else {
         return write!(f, name);
     };
-    // Not by way of `Expr`.
+    // It isn't printed through `Expr`, so the stack check has to happen here.
     if !f.context_mut().has_stack_left() {
         return;
     }
@@ -482,7 +482,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
                 format_with(|f| write_import_type_arguments(source, options, &comments, f));
             write!(f, group(&format_args!("import", arguments)));
         }
-        // A long module name does not break.
+        // A long module name doesn't break.
         None if comments.leading_source.is_empty() && comments.trailing_source.is_empty() => {
             write!(f, ["import(", format_source, ")"])
         }
@@ -502,22 +502,23 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
-/// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Of those nodes only
-/// the module specifier and the inner object can own comments here, so they also own the comments of the import type after
-/// `typeof`, of the outer object and of its property.
+/// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Of those
+/// nodes, only the module specifier and the inner object can own comments here, so they also own the comments of the
+/// import type after `typeof`, of the outer object and of its property.
 #[derive(Default)]
 struct ImportTypeComments<'a> {
     /// `typeof /* comment */ import("a")`
     leading_import: CommentList<'a>,
     leading_source: CommentList<'a>,
     trailing_source: CommentList<'a>,
-    /// Before the `{` of `{ with: { .. } }`: the comments that the module specifier owns, then those that the inner object owns.
+    /// Before the `{` of `{ with: { .. } }`: first the comments the module specifier owns, then the ones the inner
+    /// object owns.
     leading_options: [CommentList<'a>; 2],
-    /// Before `with`: the comments that the module specifier owns, then those that the inner object owns.
+    /// Before `with`: first the comments the module specifier owns, then the ones the inner object owns.
     leading_property: [CommentList<'a>; 2],
-    /// `with // comment ⏎: { .. }`. With Prettier's `handlePropertyComments` it leads the property.
+    /// `with // comment ⏎: { .. }`. Prettier's `handlePropertyComments` makes it lead the property.
     at_end_of_line_before_colon: CommentList<'a>,
-    /// `with: // comment ⏎ { .. }`, likewise.
+    /// `with: // comment ⏎ { .. }`. Same as above.
     at_end_of_line_after_colon: CommentList<'a>,
     /// `with /* comment */: { .. }`
     trailing_keyword: CommentList<'a>,
@@ -622,13 +623,13 @@ impl<'a> ImportTypeComments<'a> {
     }
 }
 
-/// `import('a' /* prettier-ignore */)` is `import("a" /* prettier-ignore */)` for oxfmt: a `prettier-ignore` comment after a node
-/// applies to it only if it ends its line. For Prettier every comment of a node counts.
+/// oxfmt prints `import('a' /* prettier-ignore */)` as `import("a" /* prettier-ignore */)`: a `prettier-ignore` comment
+/// after a node applies to it only if it ends its line. In Prettier every comment of a node counts.
 fn trailing_ignore_comment_has_to_end_its_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether a `prettier-ignore` comment applies to the ESTree node that has the comments `leading` and `trailing`.
+/// True if a `prettier-ignore` comment applies to the ESTree node with the comments `leading` and `trailing`.
 fn has_ignore_comment<'a>(
     leading: &[CommentList<'a>],
     trailing: CommentList<'a>,
@@ -649,7 +650,7 @@ fn has_ignore_comment<'a>(
 ///                        )
 /// ```
 ///
-/// Prettier on the left: they are the last argument of a call. oxfmt on the right.
+/// Prettier is on the left: the options are the last argument of a call. oxfmt is on the right.
 fn options_of_import_type_are_on_a_line_of_their_own(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -750,13 +751,12 @@ fn write_import_type_arguments<'a>(
 /// });                             });
 /// ```
 ///
-/// oxfmt on the left, Prettier on the right.
+/// oxfmt is on the left, Prettier on the right.
 fn comments_at_end_of_line_stay_after_colon(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `{ with: { type: "json" } }`. It is an object literal, of which the HIR has only the properties
-/// of the inner one.
+/// `{ with: { type: "json" } }`. It's an object literal, but the HIR only has the inner object's properties.
 fn write_import_type_options<'a>(
     options: ImportAttributes<'a>,
     comments: &ImportTypeComments<'a>,
@@ -845,7 +845,7 @@ fn write_import_type_options<'a>(
                 write!(f, FormatTrailingComments::Comments(comments));
             }
         }
-        // The layout `break-after-operator` of Prettier's `printAssignment`.
+        // Prettier's `printAssignment` layout `break-after-operator`.
         let breaks_after_colon = (comments.leading_attributes.iter())
             .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
             || (stay_after_colon && at_end_of_line.iter().any(|it| !it.is_empty()));

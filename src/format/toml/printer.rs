@@ -1,7 +1,7 @@
-//! Tree to text: `formatter/mod.rs` of oxc-toml, with the options that oxfmt leaves as they are
-//! taken for granted: nothing is aligned, sorted or indented, an array that fits on the line and has
-//! no comment is on one line, one that does not fit has an element on each line. One thing is not as in oxc-toml: an inline
-//! table with a comment has one entry per line. oxc-toml joins the lines, which comments out the rest of the table.
+//! Tree to text. A port of oxc-toml's `formatter/mod.rs`, with the options that oxfmt leaves at their defaults
+//! hard-coded: nothing is aligned, sorted or indented, an array that fits on the line and has no comment goes on one
+//! line, and one that doesn't fit gets one element per line. There's one difference from oxc-toml: an inline table
+//! with a comment gets one entry per line. oxc-toml joins the lines, which comments out the rest of the table.
 //!
 //! Without an oxfmt config, Bun uses its own layout for arrays and inline tables (see [`Printer::flat`]):
 //!
@@ -23,7 +23,7 @@ const MAX_EMPTY_LINES: usize = 2;
 /// A range of the text.
 type Span = (u32, u32);
 
-/// [`Printer::flat`] of something that can't be on one line.
+/// The [`Printer::flat`] value for something that can't be on one line.
 const NOT_FLAT: u32 = u32::MAX;
 
 #[derive(Copy, Clone)]
@@ -53,14 +53,14 @@ struct Printer<'t> {
     indent: Vec<u8>,
     newline: &'static [u8],
     array_trailing_comma: bool,
-    /// For each element, how many of those before it are line breaks, and how many are comments.
+    /// For each element, the number of line-break elements and the number of comments before it.
     counts: Vec<[u32; 2]>,
     /// Bun's own layout: the width of each element when it's printed on one line, or [`NOT_FLAT`]. `None` with an oxfmt config.
     flat: Option<Vec<u32>>,
-    /// How many comments have been written.
+    /// Number of comments written so far.
     written_comments: Cell<u32>,
     stack_check: bun_core::StackCheck,
-    /// Why what has been written is of no use. From there on no value is written and no line is indented.
+    /// Set once the output has to be discarded. After that, no more values or indentation are written.
     failure: Cell<Option<FormatError>>,
 }
 
@@ -124,7 +124,7 @@ fn chars(text: &[u8]) -> usize {
     text.iter().filter(|byte| **byte & 0xC0 != 0x80).count()
 }
 
-/// Iterates over the elements from `from` to `end`, skipping what is nested in them.
+/// Iterates over the elements from `from` to `end`, skipping anything nested in them.
 fn siblings(elements: &[Element], from: usize, end: usize) -> impl Iterator<Item = usize> {
     let mut index = from;
     std::iter::from_fn(move || {
@@ -169,7 +169,7 @@ fn measure(text: &[u8], elements: &[Element]) -> Vec<u32> {
             Kind::Array => sum().saturating_add(2 * items().saturating_sub(1)),
             Kind::InlineTable if items() == 0 => sum(),
             Kind::InlineTable if starts_on_new_line(elements, index) => NOT_FLAT,
-            // And a blank inside each brace.
+            // The same, plus a space inside each brace.
             Kind::InlineTable => sum().saturating_add(2 * items()),
         };
     }
@@ -195,7 +195,7 @@ impl Printer<'_> {
         self.siblings(node + 1, self.elements[node].next as usize)
     }
 
-    /// Whether there are both line breaks and comments in `node`.
+    /// True if `node` contains both line breaks and comments.
     fn has_line_breaks_and_comments(&self, node: usize) -> bool {
         let (from, to) = (
             self.counts[node + 1],
@@ -209,14 +209,14 @@ impl Printer<'_> {
             .any(|index| self.elements[index].kind == kind)
     }
 
-    /// The inline table or array that is the value at `node`, if it is one.
+    /// The array or inline table that the value at `node` consists of, if any.
     fn container_in(&self, node: usize) -> Option<usize> {
         let is_container =
             |index: &usize| matches!(self.elements[*index].kind, Kind::Array | Kind::InlineTable);
         self.children(node).find(is_container)
     }
 
-    /// The column that the next byte of `out` is written at.
+    /// The column where the next byte of `out` will be written.
     fn column(&self, context: Context, out: &[u8]) -> usize {
         match bun_core::strings::last_index_of_char(out, b'\n') {
             Some(at) => chars(&out[at + 1..]),
@@ -316,8 +316,8 @@ impl Printer<'_> {
             after: 0,
             keeps_flat: false,
         };
-        // Entries and comments are written when it is known what follows them. The line break behind
-        // each is passed over, or it would be before them.
+        // Entries and comments are buffered until we know what follows them. The line break after each one is
+        // skipped, because it would otherwise be written before them.
         let mut entries: Vec<FormattedEntry> = Vec::new();
         let mut comments: Vec<Span> = Vec::new();
         let mut skip_newlines = 0usize;
@@ -376,7 +376,7 @@ impl Printer<'_> {
         self.written_comments.set(self.written_comments.get() + 1);
     }
 
-    /// Returns whether there were any.
+    /// Returns true if there were any.
     fn add_comments(&self, comments: &mut Vec<Span>, out: &mut Vec<u8>) -> bool {
         for (index, comment) in comments.iter().enumerate() {
             if index != 0 {
@@ -389,9 +389,9 @@ impl Printer<'_> {
         were_comments
     }
 
-    /// Whether a line of `entry` is longer than the lines are to be.
+    /// True if any line of `entry` exceeds the line width.
     fn is_too_long(&self, entry: &FormattedEntry) -> bool {
-        // With the blank before it.
+        // Includes the space before it.
         let comment = entry.comment.map_or(0, |it| chars(self.span(it)) + 1);
         let last = bun_core::strings::count_char(&entry.value, b'\n');
         bun_core::strings::split(&entry.value, b"\n")
@@ -403,7 +403,7 @@ impl Printer<'_> {
             })
     }
 
-    /// Returns whether there were any.
+    /// Returns true if there were any.
     fn add_entries(&self, entries: &mut Vec<FormattedEntry>, out: &mut Vec<u8>) -> bool {
         let were_entries = !entries.is_empty();
         for (index, mut entry) in entries.drain(..).enumerate() {
@@ -464,13 +464,14 @@ impl Printer<'_> {
                 Kind::Comment => Some((element.start, element.end)),
                 _ => None,
             };
-            // Only the first.
+            // Only the first comment is kept.
             entry.comment = entry.comment.or(comment);
         }
         entry
     }
 
-    /// What [`Printer::write_entry`] writes for the [`Printer::entry`] of `node`, which is in an inline table.
+    /// Writes the entry at `node`, which is in an inline table, straight to `out`. The output is the same as
+    /// [`Printer::write_entry`] of [`Printer::entry`].
     fn entry_in_place(&self, node: usize, context: Context, out: &mut Vec<u8>) {
         if let Some(comment) = self.entry_without_comment(node, context, out) {
             out.push(b' ');
@@ -478,7 +479,7 @@ impl Printer<'_> {
         }
     }
 
-    /// Writes `key = value` of the entry at `node`. Returns the comment behind it.
+    /// Writes `key = value` of the entry at `node`. Returns the comment after it.
     fn entry_without_comment(
         &self,
         node: usize,
@@ -503,14 +504,14 @@ impl Printer<'_> {
         first_comment
     }
 
-    /// `format_key`: names and periods without white space.
+    /// `format_key`: names and periods without whitespace.
     fn key(&self, node: usize, out: &mut Vec<u8>) {
         for index in self.children(node) {
             out.extend_from_slice(self.text_of(&self.elements[index]));
         }
     }
 
-    /// `format_value`. Returns the comment behind the value.
+    /// `format_value`. Returns the comment after the value.
     fn value(&self, node: usize, context: Context, out: &mut Vec<u8>) -> Option<Span> {
         if !self.stack_check.is_safe_to_recurse() {
             self.failure.set(Some(FormatError::NestedTooDeeply));
@@ -622,9 +623,10 @@ impl Printer<'_> {
             .filter(|index| is_value(self.elements[*index].kind))
             .count();
 
-        // oxc-toml keeps the values as `root` keeps the entries, and adds them when it is known what follows them. Here
-        // a value is written at once, or what is in `n` arrays would be copied `n` times. Only the comment behind the
-        // last value depends on what follows. `values`: how many oxc-toml would be keeping.
+        // oxc-toml buffers the values the way `root` buffers the entries, and adds them once it knows what follows.
+        // Here a value is written immediately, because otherwise a value nested in `n` arrays would be copied `n`
+        // times. Only the comment after the last value depends on what follows. `values` is the number of values that
+        // oxc-toml would have buffered.
         let mut values = 0usize;
         let mut comment_behind_last: Option<Span> = None;
         let write_comment = |comment: &mut Option<Span>, out: &mut Vec<u8>| {
@@ -633,7 +635,7 @@ impl Printer<'_> {
                 self.write_comment(comment, out);
             }
         };
-        // The end of its `add_values`. Returns whether there were any.
+        // The tail of oxc-toml's `add_values`. Returns true if there were any.
         let add_values = |values: &mut usize, comment: &mut Option<Span>, out: &mut Vec<u8>| {
             write_comment(comment, out);
             std::mem::take(values) != 0
@@ -703,7 +705,7 @@ impl Printer<'_> {
                 }
                 Kind::Comment => {
                     let comment = (element.start, element.end);
-                    // It is behind the last value, on its line.
+                    // It follows the last value on the same line.
                     if values != 0 && previous != Kind::LineBreaks {
                         comment_behind_last = Some(comment);
                     } else {
@@ -725,7 +727,7 @@ impl Printer<'_> {
         }
     }
 
-    /// `format_table_header`. Returns the comment behind it.
+    /// `format_table_header`. Returns the comment after it.
     fn table_header(&self, node: usize, out: &mut Vec<u8>) -> Option<Span> {
         let mut comment = None;
         for index in self.children(node) {

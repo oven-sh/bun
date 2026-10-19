@@ -1,5 +1,5 @@
-//! `bun fmt`: formats JavaScript and TypeScript the way Prettier does. All of it is in
-//! `bun_lint_driver::fmt`. See `lint_command.rs` for what that takes from the process.
+//! `bun fmt`: formats JavaScript and TypeScript the way Prettier does. The implementation is in
+//! `bun_lint_driver::fmt`. See `lint_command.rs` for what it needs from the process.
 
 use bun_core::{Global, ZStr};
 use bun_format_conformance::{Bundle, Flags, Format};
@@ -13,8 +13,8 @@ pub(crate) struct FormatCommand;
 
 pub(crate) use bun_lint_driver::fmt::cli::HELP;
 
-/// Whether `bun fmt --run-prettier-tests` exists, for `test/cli/format/conformance.test.ts`. A
-/// release build has none of it.
+/// True if `bun fmt --run-prettier-tests` exists, for `test/cli/format/conformance.test.ts`.
+/// Release builds don't include it.
 const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
 fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
@@ -26,14 +26,15 @@ fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
 }
 
 impl FormatCommand {
-    /// Whether `bun fmt <flag>` is a valid command line.
+    /// True if `bun fmt <flag>` is a valid command line.
     pub(crate) fn has_flag(flag: &[u8]) -> bool {
         Options::parse(&[flag]).is_ok()
     }
 
-    /// `args`: what follows `format`.
+    /// `args` is everything after `format`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
-        // `--debug-check-svelte <before> <after> ..`, for `test/cli/format/svelte/svelte.test.ts`: a line for each pair.
+        // `--debug-check-svelte <before> <after> ..`, for `test/cli/format/svelte/svelte.test.ts`.
+        // Prints one line per pair.
         if HAS_TEST_RUNNER
             && let [flag, pairs @ ..] = args
             && flag.as_bytes() == b"--debug-check-svelte"
@@ -49,9 +50,9 @@ impl FormatCommand {
             }
             Global::exit(0);
         }
-        // `--debug-comments <directory> <file> ..`, for the tests: writes which node owns each comment of a file into
-        // `<directory>/<file>.txt`. `--debug-unprinted-comments`: the comments that no printer has printed. With `-oxfmt` at the
-        // end: in the flavor of oxfmt.
+        // `--debug-comments <directory> <file> ..`, for the tests. Writes which node owns each
+        // comment of a file to `<directory>/<file>.txt`. `--debug-unprinted-comments` lists the
+        // comments that no printer printed instead. A `-oxfmt` suffix selects the oxfmt flavor.
         if HAS_TEST_RUNNER
             && let [flag, directory, files @ ..] = args
             && matches!(

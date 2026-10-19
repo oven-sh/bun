@@ -1,10 +1,11 @@
-// Prettier changes what some templates mean. `bun fmt` prints the same, but says so and leaves the file alone. This looks for templates
-// that it does not say it of: those whose syntax tree, as Prettier compares trees in its own tests, is another one after formatting, or that
-// cannot be parsed any more.
+// Prettier changes the meaning of some templates. `bun fmt` produces the same output, but reports it and leaves the
+// file alone. This script looks for templates that `bun fmt` fails to report: those whose syntax tree, compared the way
+// Prettier's own tests compare trees, differs after formatting, or that no longer parse.
 //
 //   bun damage.ts "bun fmt" <directory with node_modules/prettier> <directory with templates> [-show=10] [-told]
 //
-// `-told`: also prints the templates that it says it of although the trees are the same: what the parsers drop is in neither tree.
+// `-told` also prints the templates that it reports even though the trees are the same, because whatever the parsers
+// drop is in neither tree.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -12,8 +13,8 @@ const [bin, prettierRoot, directory, ...args] = process.argv.slice(2);
 const prettier = await import(join(resolve(prettierRoot), "node_modules/prettier/index.mjs"));
 const show = +(args.find(it => it.startsWith("-show=")) ?? "-show=10").slice(6);
 const options = { parser: "glimmer" };
-// Whether `{{else a}}` is written in one piece says nothing, nor does what the parser takes for the end of such a block, nor do the dashes
-// around a comment.
+// These differences don't matter: whether `{{else a}}` is written in one piece, where the parser puts the end of such a
+// block, and the dashes around a comment.
 const tree = async (text: string) =>
   JSON.stringify((await prettier.__debug.parse(text, options, { massage: true })).ast, function (key, value) {
     if (key === "chained") return undefined;
@@ -29,7 +30,7 @@ const count = { templates: 0, "the same tree": 0, "of which told": 0, "another t
 let shown = 0;
 for (const name of readdirSync(directory).sort()) {
   const text = readFileSync(join(directory, name), "utf8");
-  // Prettier never comes back from some of these.
+  // Prettier hangs on some of these.
   if (/publ.c/iu.test(text)) continue;
   let formatted: string, before: string;
   try {

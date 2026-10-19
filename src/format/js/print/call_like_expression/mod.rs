@@ -17,7 +17,8 @@ use crate::{format_args, write};
 
 pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let context = context_of_function(call.callee(), f);
-    // Among classes, the strings in a call of another function are not classes: `cn(a.includes("b c") && "d e")`.
+    // Inside a class list, the strings in a call to some other function aren't classes:
+    // `cn(a.includes("b c") && "d e")`.
     let was_disabled = match context {
         Some(_) => None,
         None => f.context_mut().disable_tailwind_context(true),
@@ -28,7 +29,7 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
     }
 }
 
-/// `context`: for the arguments. As in oxfmt, they do not get it in a chain of member accesses.
+/// `context` applies to the arguments. As in oxfmt, it isn't applied in a member chain.
 fn write_call<'a>(
     e: Expr<'a>,
     call: Call<'a>,
@@ -64,7 +65,7 @@ fn write_call<'a>(
     }
 }
 
-/// True if `callee` is a member access that is printed without parentheses. It only needs them if
+/// True if `callee` is a member access that's printed without parentheses. It only needs them if
 /// it ends an optional chain. In that case Prettier only sees a member access in JavaScript files:
 /// see `is_member_expression`.
 fn is_link_of_member_chain<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
@@ -83,8 +84,7 @@ pub(crate) fn is_written_as_member_chain<'a>(
 }
 
 fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
-    // Each of these takes one of a few names as the callee, or a string or a template as the first
-    // argument.
+    // Each check below requires one of a few callee names, or a string or template as the first argument.
     let Some(first) = call.args().first() else {
         return false;
     };
@@ -163,8 +163,8 @@ pub(crate) fn write_import_expression<'a>(
     );
 }
 
-/// A comment at the end of the line of the callee stays there. oxfmt, like Prettier 3.8, moves it behind
-/// the call: `call // comment\n()` is `call(); // comment`.
+/// A comment at the end of the callee's line stays there. oxfmt, like Prettier 3.8, moves it after the call:
+/// `call // comment\n()` is `call(); // comment`.
 fn boundary_behind_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
 }
@@ -184,7 +184,7 @@ impl<'a> Format<'a> for FormatArgumentsOnOneLine<'a> {
     }
 }
 
-/// Prettier's `isTemplateOnItsOwnLine` of the only argument, which is not written as the language in it.
+/// Prettier's `isTemplateOnItsOwnLine` for the only argument, if it isn't formatted as its embedded language.
 fn is_template_on_its_own_line_only_argument<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
@@ -197,7 +197,7 @@ fn is_template_on_its_own_line_only_argument<'a>(
     args.len() == 1 && args.first().is_some_and(is_one)
 }
 
-/// Whether the only argument is a string without comments.
+/// True if the only argument is a string without comments.
 fn is_lone_string_without_comments<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
     args.len() == 1
         && args.first().is_some_and(|first| {
@@ -209,9 +209,8 @@ fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
     e.tag() == ExprTag::Ident && e.text() == name
 }
 
-/// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`,
-/// `require.resolve.paths("a")`, `import.meta.resolve("a")`. A long name of a module is no reason
-/// to break.
+/// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`, `require.resolve.paths("a")`,
+/// `import.meta.resolve("a")`. A long module name is no reason to break.
 fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
     if call.args().len() != 1
         || call.chain() != Chain::No
@@ -245,7 +244,7 @@ fn only_leading_comment_breaks_require(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and `define` of AMD.
+/// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and AMD's `define`.
 fn is_commonjs_or_amd_module_definition<'a>(
     e: Expr<'a>,
     call: Call<'a>,

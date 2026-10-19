@@ -1,4 +1,4 @@
-//! The document of a Markdown text: Prettier's `src/language-markdown/print/*.js`.
+//! Builds a Markdown text's document: Prettier's `src/language-markdown/print/*.js`.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
 use super::parse::{Syntax, leaves_paragraph};
@@ -18,32 +18,32 @@ use std::borrow::Cow;
 
 /// Code in another language, to be formatted.
 pub(crate) struct Embedded<'x> {
-    /// What is behind the fence.
+    /// The language given after the fence.
     pub(crate) language: &'x [u8],
     pub(crate) code: &'x [u8],
-    /// How many columns are left of the line.
+    /// How many columns of the line are left.
     pub(crate) width: usize,
 }
 
 pub(crate) struct Printer<'a, 'e> {
     pub(crate) text: &'a [u8],
-    /// The same with the front matter in any case: see `parse::blank_front_matter`.
+    /// The same text, but always with the front matter: see `parse::blank_front_matter`.
     pub(crate) original: &'a [u8],
     pub(crate) tree: &'a Tree,
     pub(crate) options: &'a FormatOptions,
-    /// Formats code in another language. `None`: it stays as it is.
+    /// Formats code in another language. If it returns `None`, the code is left as is.
     pub(crate) embed: &'e mut dyn FnMut(&Embedded<'_>) -> Option<Vec<u8>>,
-    /// The document is for a template in JavaScript: no backticks.
+    /// The document is for a JavaScript template, so no backticks.
     pub(crate) is_in_template: bool,
     pub(crate) is_mdx: bool,
-    /// How many columns what is being written is indented by.
+    /// How many columns the current node is indented by.
     pub(crate) indentation: usize,
-    /// What is being written is in a reference whose label is its text, which has to stay as it is.
+    /// The current node is in a reference whose label is its text, which has to stay unchanged.
     pub(crate) is_in_label: bool,
-    /// For oxfmt: of the lists that have been asked about, the first of the lists of their kind that they follow.
+    /// For oxfmt: `first_list_of_run`'s cache, indexed by list.
     pub(crate) first_of_run: Vec<NodeId>,
     pub(crate) stack: Stack,
-    /// Why a cell of a table could not be printed.
+    /// Why a table cell couldn't be printed.
     pub(crate) failure: Option<FormatError>,
 }
 
@@ -62,8 +62,8 @@ fn mark_as_root(contents: Doc<'_>) -> Doc<'_> {
     Doc::MarkAsRoot(Box::new(contents))
 }
 
-/// oxfmt's `Atom::VerbatimLine`: a line break in what is in a line and is printed as it is written. The next line
-/// starts in the column of the content of the container, which is all that a parser takes away.
+/// oxfmt's `Atom::VerbatimLine`: a line break inside inline content that's printed verbatim. The next line starts at
+/// the column of the container's content, which is all the indentation a parser strips.
 fn verbatim_line<'a>() -> Doc<'a> {
     Doc::DedentToRoot(Box::new(hardline()))
 }
@@ -142,8 +142,8 @@ fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
     Doc::Array(parts)
 }
 
-/// oxfmt's `print_url`, which is that of Prettier after 3.9: a backslash that would escape something is doubled, `&`
-/// that would start a character reference is escaped, and between `<` and `>` those two are.
+/// oxfmt's `print_url`, which matches Prettier after 3.9: a backslash that would escape something is doubled, an `&`
+/// that would start a character reference is escaped, and between `<` and `>` those two characters are escaped.
 fn url_of_oxfmt(url: &[u8], is_in_parentheses: bool) -> Vec<u8> {
     let is_balanced = || {
         let mut depth = 0i32;
@@ -189,8 +189,7 @@ fn url_of_oxfmt(url: &[u8], is_in_parentheses: bool) -> Vec<u8> {
     printed
 }
 
-/// oxfmt's `has_line_ranges`: whether what is behind the language of a block of code names lines by their numbers:
-/// `{1,3-5}`.
+/// oxfmt's `has_line_ranges`: true if the text after a code block's language refers to lines by number: `{1,3-5}`.
 fn has_line_ranges(meta: &[u8]) -> bool {
     bun_core::strings::split(meta, b"{").skip(1).any(|rest| {
         bun_core::strings::split_once_char(rest, b'}').is_some_and(|(ranges, _)| {
@@ -235,14 +234,14 @@ fn is_commonmark_whitespace(c: char) -> bool {
         || bun_core::strings::is_unicode_space_separator(c as u32)
 }
 
-/// Collects the parts of a `fill`: content and separators take turns.
+/// Collects the parts of a `fill`, where content and separators alternate.
 ///
-/// Where lines are not wrapped, every separator is a forced line break, and a `fill` writes the same as its parts
-/// one after the other. So that is what is made then, which is less work for everybody.
+/// If lines aren't wrapped, every separator is a forced line break, and a `fill` prints the same as its parts
+/// concatenated. So a plain array is built instead, which is cheaper.
 struct FillParts<'a> {
     is_fill: bool,
     parts: Vec<Doc<'a>>,
-    /// The content that is being put together, of a `fill`.
+    /// The content being assembled, for a `fill`.
     content: Vec<Doc<'a>>,
 }
 
@@ -287,7 +286,7 @@ impl<'a> FillParts<'a> {
 
     /// Prettier's `flattenFill`: the parts of a `fill` in `doc` become parts of this one.
     fn flatten(&mut self, mut doc: Doc<'a>) {
-        // What follows `doc` in the arrays that it is in.
+        // What follows `doc` in the arrays that contain it.
         let mut outer: Vec<std::vec::IntoIter<Doc<'a>>> = Vec::new();
         loop {
             if let Doc::Array(docs) = &mut doc {
@@ -326,7 +325,7 @@ impl<'a> FillParts<'a> {
     }
 }
 
-/// What white space is written as.
+/// How whitespace is printed.
 enum Whitespace {
     Text(&'static str),
     Line,
@@ -390,7 +389,7 @@ impl<'a> Printer<'a, '_> {
 
     /// The lines of `text`, with `hardline` between them, or with `markAsRoot(literalline)`.
     ///
-    /// Where lines are not indented and nothing is to be taken away at their ends, the text is written as it is.
+    /// If lines aren't indented and nothing has to be trimmed at their ends, the text is printed as is.
     fn lines(&self, text: &'a [u8], is_literal: bool) -> Doc<'a> {
         let is_as_it_is = self.indentation == 0
             && !self.is_in_template
@@ -405,7 +404,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// `contents`, written with `width` more columns of indentation around it.
+    /// Runs `contents` with `width` more columns of indentation.
     fn indented<T>(&mut self, width: usize, contents: impl FnOnce(&mut Self) -> T) -> T {
         self.indentation += width;
         let result = contents(self);
@@ -413,7 +412,7 @@ impl<'a> Printer<'a, '_> {
         result
     }
 
-    // ───────────────────────────── what is asked of nodes ─────────────────────────────
+    // ───────────────────────────── node queries ─────────────────────────────
 
     fn is_setext_heading(&self, node: &Node) -> bool {
         self.start_line(node) != self.end_line(node)
@@ -473,7 +472,7 @@ impl<'a> Printer<'a, '_> {
         self.node(list).map_or(0, |it| it.first_align as usize)
     }
 
-    /// The first of the lists of its kind that `list` follows, or itself.
+    /// The first list in the run of same-kind lists that `list` is in, or `list` itself.
     fn first_list_of_run(&mut self, list: NodeId) -> NodeId {
         if self.first_of_run.is_empty() {
             self.first_of_run = vec![NONE; self.tree.nodes.len()];
@@ -492,11 +491,11 @@ impl<'a> Printer<'a, '_> {
         first
     }
 
-    /// Whether `list` has `*` or `)`: lists of the same kind that follow each other take turns.
+    /// True if `list` uses `*` or `)`: consecutive lists of the same kind alternate.
     fn uses_alternate_marker(&mut self, list: NodeId) -> bool {
         let index = self.nth_list_sibling_index(list);
         let mut is_first_alternate = false;
-        // oxfmt: a list that is left as it is written has the marker that it has.
+        // oxfmt: a list that's left verbatim keeps its own marker.
         if self.options.flavor.is_oxfmt() && index > 0 {
             let first = self.first_list_of_run(list);
             if let Some(first) = self.node(first)
@@ -510,7 +509,7 @@ impl<'a> Printer<'a, '_> {
         is_first_alternate ^ !index.is_multiple_of(2)
     }
 
-    /// Whether a hard line break is in `id`.
+    /// True if there's a hard line break in `id`.
     fn has_hard_break(&self, id: NodeId) -> bool {
         let mut next = self.node(id).map_or(NONE, |it| it.first_child);
         while let Some(node) = self.node(next) {
@@ -548,11 +547,11 @@ impl<'a> Printer<'a, '_> {
                 }))
     }
 
-    /// Prettier's `isLooseListItemLegacy`, with what remark-parse 8 says about an item: it is spread out if there
-    /// is an empty line in it that something follows, and it ends behind the empty lines before the next item.
+    /// Prettier's `isLooseListItemLegacy`, with remark-parse 8's view of an item: it's spread if it contains an empty
+    /// line followed by something, and it ends after the empty lines before the next item.
     fn is_loose_list_item_legacy(&self, item: &Node) -> bool {
         let source = bun_core::strings::trim_js_whitespace_end(self.source(item));
-        // The indentation of the item is taken away from its lines first, also from one with nothing else on it.
+        // The item's indentation is stripped from its lines first, even from a line with nothing else on it.
         let indent = self
             .node(item.first_child)
             .map_or(0, |first| self.column(first.start)) as usize;
@@ -601,7 +600,7 @@ impl<'a> Printer<'a, '_> {
         let is_inline_node =
             Self::is_inline(node.kind) && !(node.kind == Kind::LiquidNode && !is_in_wrapper);
         let is_inline_html = node.kind == Kind::Html && is_in_wrapper;
-        // Prettier takes text that it has not split into words for a block.
+        // Prettier treats text that it hasn't split into words as a block.
         let is_text = node.kind == Kind::Text && self.options.flavor.is_oxfmt();
         !is_inline_node && !is_inline_html && !is_text
     }
@@ -653,8 +652,8 @@ impl<'a> Printer<'a, '_> {
             || is_liquid_without_blank_line)
     }
 
-    /// oxfmt's `front_matter_risk`: the first paragraph of the document starts with `---` or `+++`, and what follows
-    /// would end front matter when it is read again.
+    /// oxfmt's `front_matter_risk`: the document's first paragraph starts with `---` or `+++`, and what follows would
+    /// close front matter when the output is parsed again.
     fn would_be_front_matter(&self, paragraph: &Node) -> bool {
         if !self.options.flavor.is_oxfmt()
             || self
@@ -684,16 +683,16 @@ impl<'a> Printer<'a, '_> {
         false
     }
 
-    /// oxfmt: HTML right behind a paragraph of a list item, on a line that is not indented as the item is, is in the
-    /// item only as long as that line is not. See `compat::complete_tag_ends_lazy_paragraph` of `bun_md`.
+    /// oxfmt: HTML right after a paragraph in a list item, on a line that isn't indented like the item, is in the item
+    /// only as long as that line stays unindented. See `bun_md`'s `compat::complete_tag_ends_lazy_paragraph`.
     fn is_lazy_html_in_tight_item(&self, node: &Node) -> bool {
         self.is_lazy_html(node)
             && self.kind(node.parent) == Some(Kind::ListItem)
             && !self.is_loose_list_item(node.parent)
     }
 
-    /// oxfmt: HTML right behind a paragraph of a container, on a line without what the lines of the container start
-    /// with. With that before it, only an empty line keeps it from being a line of the paragraph.
+    /// oxfmt: HTML right after a paragraph in a container, on a line without the container's line prefix. With the
+    /// prefix before it, only an empty line keeps it from being a line of the paragraph.
     fn is_lazy_html(&self, node: &Node) -> bool {
         if !self.options.flavor.is_oxfmt() || node.kind != Kind::Html {
             return false;
@@ -715,7 +714,7 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── children ─────────────────────────────
 
-    /// Prettier's `printChildren`. `processor` writes a child, or says that it is left out.
+    /// Prettier's `printChildren`. `processor` prints a child, or returns `None` to skip it.
     fn print_children_with(
         &mut self,
         parent: NodeId,
@@ -744,7 +743,7 @@ impl<'a> Printer<'a, '_> {
         self.print_children_with(parent, |printer, child| Some(printer.print(child)))
     }
 
-    /// A node: as it is in the text if it is ignored, or as the language in it, or as Markdown.
+    /// Prints a node: verbatim if it's ignored, as its embedded language, or as Markdown.
     pub(crate) fn print(&mut self, id: NodeId) -> Doc<'a> {
         if !self.stack.has_room() {
             return Doc::EMPTY;
@@ -780,7 +779,7 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── text ─────────────────────────────
 
-    /// Whether white space in `id` cannot be a line break: it is in something that is on one line.
+    /// True if whitespace in `id` can't become a line break, because it's in something that stays on one line.
     fn is_on_single_line(&self, id: NodeId) -> bool {
         self.has_ancestor(id, |node| {
             matches!(node.kind, Kind::TableCell | Kind::Link | Kind::WikiLink)
@@ -847,7 +846,7 @@ impl<'a> Printer<'a, '_> {
         Self::uses_cj_spaces(tokens)
     }
 
-    /// Prettier's `isBreakable`, but for what does not depend on the white space.
+    /// Prettier's `isBreakable`, except for the part that doesn't depend on the whitespace.
     fn is_breakable(tokens: &[Token], index: usize) -> bool {
         let (Some(previous), Some(next)) = (
             index.checked_sub(1).and_then(|it| tokens.get(it)),
@@ -867,7 +866,7 @@ impl<'a> Printer<'a, '_> {
         !previous.is_cj() && !next.is_cj()
     }
 
-    /// Prettier's `printWhitespace`. `can_break`: lines are wrapped, and this is not on a single line.
+    /// Prettier's `printWhitespace`. `can_break` means lines are wrapped and this isn't on a single line.
     fn print_whitespace(
         &self,
         tokens: &[Token],
@@ -897,7 +896,7 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Whether a line that starts with `word` could be taken for something else: a quote, a list, a heading.
+    /// True if a line that starts with `word` could be parsed as something else: a quote, a list, a heading.
     pub(crate) fn may_start_block(word: &[u8]) -> bool {
         match word {
             [b'>', ..] | [b'*' | b'+' | b'-'] => true,
@@ -918,21 +917,21 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// The same for a sentence that has not been split into words: it is ASCII, and lines are not wrapped. What is
-    /// written as it is in the text is one text here.
+    /// The same for a sentence that hasn't been split into words: it's ASCII, and lines aren't wrapped. Each stretch
+    /// that's printed unchanged is a single text here.
     fn print_plain_sentence(&self, node: &Node) -> Doc<'a> {
         let text = self.str(node.value);
         let is_white = |byte: u8| matches!(byte, b'\t' | b'\n' | b' ');
         let is_preserved = self.options.prose_wrap == ProseWrap::Preserve;
         let mut parts = FillParts::new(false);
-        // Where what has not been written yet starts.
+        // The start of the text that hasn't been printed yet.
         let mut start = 0;
         let mut index = 0;
-        // Where the next line break or tab is, and the next two spaces, if not before `index`.
+        // The next line break or tab, and the next two spaces, unless they're before `index`.
         let mut next_break = bun_core::strings::index_of_any(text, b"\n\t").unwrap_or(text.len());
         let mut next_spaces = bun_core::strings::index_of(text, b"  ").unwrap_or(text.len());
         while index < text.len() {
-            // The next white space that is not a single space.
+            // The next whitespace that isn't a single space.
             if next_break < index {
                 next_break = bun_core::strings::index_of_any(&text[index..], b"\n\t")
                     .map_or(text.len(), |at| index + at);
@@ -944,7 +943,7 @@ impl<'a> Printer<'a, '_> {
             let rest = &text[index..];
             let line_len = next_break - index;
             let len = line_len.min(next_spaces - index);
-            // A space before a line break or a tab belongs to the same white space.
+            // A space before a line break or a tab belongs to the same whitespace.
             index += len - usize::from(len == line_len && len > 0 && rest[len - 1] == b' ');
             let blanks = text[index..]
                 .iter()
@@ -968,7 +967,7 @@ impl<'a> Printer<'a, '_> {
                 parts.content(Doc::from(" "));
                 continue;
             }
-            // The word at the start of the next line, and whether it is all of that line.
+            // The word at the start of the next line, and whether it's that whole line.
             let word = &text[white_end..];
             let word = &word[..word.iter().take_while(|&&byte| !is_white(byte)).count()];
             let after = &text[white_end + word.len()..];
@@ -980,7 +979,7 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             parts.hardline();
-            // What looks like the line under a heading is escaped.
+            // A line that looks like a setext underline is escaped.
             let is_fake_setext_line = !word.is_empty()
                 && is_whole_line
                 && (word.iter().all(|&byte| byte == b'=') || word.iter().all(|&byte| byte == b'-'))
@@ -1086,7 +1085,7 @@ impl<'a> Printer<'a, '_> {
         parts.finish()
     }
 
-    /// Prettier's `printWord`. `emphasis`: the emphasis or strong emphasis that it is in.
+    /// Prettier's `printWord`. `emphasis` is the emphasis or strong emphasis that contains it.
     fn print_word(
         &self,
         sentence: &Node,
@@ -1103,7 +1102,7 @@ impl<'a> Printer<'a, '_> {
         let previous = index.checked_sub(1).and_then(|it| tokens.get(it));
         let next = tokens.get(index + 1);
         let Some(emphasis) = emphasis else {
-            // What looks like the line under a heading is escaped: `Previous line↵␣␣␣␣===`.
+            // A line that looks like a setext underline is escaped: `Previous line↵␣␣␣␣===`.
             let is_fake_setext_line = self.options.prose_wrap == ProseWrap::Preserve
                 && (text.iter().all(|&byte| byte == b'=') || text.iter().all(|&byte| byte == b'-'))
                 && is_newline(previous)
@@ -1208,7 +1207,7 @@ impl<'a> Printer<'a, '_> {
             index += len.max(1);
         }
 
-        // Behind an autolink, a backslash would become a part of it.
+        // After an autolink, a backslash would become part of it.
         let parent = self.node(sentence.parent);
         if is_first
             && (self.is_autolink(sentence.previous)
@@ -1234,7 +1233,7 @@ impl<'a> Printer<'a, '_> {
         Doc::from(escaped.into_bytes())
     }
 
-    /// What is in a reference whose label is its text: as it is, but for where its lines break.
+    /// The content of a reference whose label is its text: unchanged, except for where its lines break.
     fn print_same_content(&mut self, id: NodeId, node: &Node) -> Doc<'a> {
         let source = self.source(node);
         let mut tokens = Vec::new();
@@ -1264,9 +1263,9 @@ impl<'a> Printer<'a, '_> {
         parts.finish()
     }
 
-    /// Prettier's `prevOrNextWord`: whether a word is right before or behind `node`.
+    /// Prettier's `prevOrNextWord`: true if a word is right before or after `node`.
     fn has_word_next_to(&self, node: &Node) -> bool {
-        // Whether the word at that end of the sentence `sibling` has punctuation there, and the character.
+        // For the word at that end of the sentence `sibling`: whether it has punctuation there, and the character.
         let word = |sibling: NodeId, is_last: bool| -> Option<(bool, char)> {
             let sentence = self.node(sibling).filter(|it| it.kind == Kind::Sentence)?;
             if sentence.number == preprocess::PLAIN {
@@ -1290,7 +1289,7 @@ impl<'a> Printer<'a, '_> {
         };
         let is_word = |it: (bool, char)| {
             let is_punctuation = match self.options.flavor.is_oxfmt() {
-                // It asks its parser, to which symbols are punctuation.
+                // oxfmt asks its parser, which counts symbols as punctuation.
                 true => bun_md::helpers::is_unicode_punctuation(it.1 as u32),
                 false => it.0,
             };
@@ -1302,7 +1301,7 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── strings ─────────────────────────────
 
-    /// Prettier's `printUrl`. `is_in_parentheses`: a `)` cannot be in it as it is.
+    /// Prettier's `printUrl`. `is_in_parentheses` means it can't contain an unescaped `)`.
     fn print_url(&self, url: &'a [u8], is_in_parentheses: bool) -> Doc<'a> {
         if url.is_empty() && !self.is_mdx {
             return Doc::from("<>");
@@ -1379,7 +1378,7 @@ impl<'a> Printer<'a, '_> {
                 printed.push(byte);
             }
             printed.push(close);
-            // In a definition the lines of a title are printed as they are.
+            // In a definition a title's lines are printed as is.
             if !has_space || !has(b'\n') {
                 return Doc::from(printed);
             }
@@ -1424,7 +1423,7 @@ impl<'a> Printer<'a, '_> {
         let label = self.str(label);
         let mut printed = Vec::with_capacity(label.len() + 2);
         printed.push(b'[');
-        // The package collapse-white-space: every run of white space is a space.
+        // The collapse-white-space package: every run of whitespace becomes a space.
         let mut rest = label;
         while !rest.is_empty() {
             let trimmed = bun_core::strings::trim_js_whitespace_start(rest);
@@ -1444,7 +1443,7 @@ impl<'a> Printer<'a, '_> {
         Doc::from(printed)
     }
 
-    /// Prettier's `getBracketContent`: what is between the first `[` of `node` and the `]` that closes it.
+    /// Prettier's `getBracketContent`: the text between `node`'s first `[` and the `]` that closes it.
     fn bracket_content(&self, node: &Node) -> Option<&'a [u8]> {
         let source = self.source(node);
         let first = bun_core::strings::index_of_char_usize(source, b'[')?;
@@ -1452,7 +1451,7 @@ impl<'a> Printer<'a, '_> {
         while let Some(&byte) = source.get(index) {
             match byte {
                 b'\\' => {
-                    // The character behind it, however many bytes it is.
+                    // The character after it, however many bytes it takes.
                     index += 1 + first_char(&source[(index + 1).min(source.len())..])
                         .map_or(1, |it| it.1);
                     continue;
@@ -1486,8 +1485,8 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── nodes ─────────────────────────────
 
-    /// Whether `node`, an emphasis or a strong emphasis, has another of its kind right before or behind it, or is at an end
-    /// of one that has. Prettier gives both the same marker: `*a*_b_` becomes `_a__b_`, which is one emphasis, and
+    /// True if `node`, an emphasis or a strong emphasis, has another of its kind right before or after it, or is at an
+    /// end of one that does. Prettier gives both the same marker: `*a*_b_` becomes `_a__b_`, which is one emphasis, and
     /// `**a**__b__` becomes `**a****b**`.
     fn keeps_marker(&self, mut node: &'a Node) -> bool {
         loop {
@@ -1681,7 +1680,7 @@ impl<'a> Printer<'a, '_> {
                 }
                 let is_comment =
                     value.len() >= 7 && value.starts_with(b"<!--") && value.ends_with(b"-->");
-                // In a line, what follows it is measured from its last line break on.
+                // In inline content, what follows it is measured from its last line break on.
                 match (
                     self.kind(node.parent).is_some_and(Self::is_inline_wrapper),
                     is_comment,
@@ -1766,8 +1765,8 @@ impl<'a> Printer<'a, '_> {
                 ])
             }
             Kind::FootnoteReference => docs!["[^", self.str(node.value), "]"],
-            // oxfmt's `Block::ContainerDirective`: the two lines are printed as they are written. An empty line behind
-            // the first and before the second stays.
+            // oxfmt's `Block::ContainerDirective`: the two lines are printed verbatim. An empty line after the first
+            // and before the second is kept.
             Kind::Directive => {
                 let gap = |is_empty_line: bool| match is_empty_line {
                     true => docs![hardline(), hardline()],
@@ -1781,7 +1780,7 @@ impl<'a> Printer<'a, '_> {
                     (self.node(node.first_child), self.node(node.last_child))
                 {
                     let is_empty_line = self.start_line(first) > opening_line + 1;
-                    // The blanks at its end stay.
+                    // Its trailing whitespace stays.
                     match opening.ends_with(b" ") || opening.ends_with(b"\t") {
                         true if is_empty_line => {
                             parts.push(docs![mark_as_root(literalline()), hardline()]);
@@ -1912,14 +1911,14 @@ impl<'a> Printer<'a, '_> {
         docs![backticks.clone(), padding, code, padding, backticks]
     }
 
-    /// What is behind the opening fence of the block of code `node`.
+    /// The text after the opening fence of the code block `node`.
     fn print_info(&self, node: &Node) -> Doc<'a> {
         let part = |text: Str| -> Doc<'a> {
             let text = self.str(text);
             if !self.options.flavor.is_oxfmt() || !bun_core::strings::contains_char(text, b'\\') {
                 return Doc::from(text);
             }
-            // oxfmt: or it would escape what follows it when it is read again.
+            // oxfmt: otherwise it would escape what follows it when the output is parsed again.
             let mut escaped = Vec::with_capacity(text.len() + 2);
             for &byte in text {
                 if byte == b'\\' {
@@ -1939,7 +1938,7 @@ impl<'a> Printer<'a, '_> {
         ]
     }
 
-    /// What the fence of the block of code `node` is made of.
+    /// The fence character of the code block `node`.
     fn fence_unit(&self, node: &Node) -> u8 {
         // A backtick fence can't have a backtick in its info string. Prettier prints one anyway and breaks the fence.
         let has_backtick = |text: Str| bun_core::strings::contains_char(self.str(text), b'`');
@@ -2034,11 +2033,11 @@ impl<'a> Printer<'a, '_> {
         let code = self.str(node.value);
         let is_oxfmt = self.options.flavor.is_oxfmt();
         if is_oxfmt {
-            // Formatting would move the lines that the numbers are about.
+            // Formatting would move the lines that the numbers refer to.
             if has_line_ranges(self.str(node.third)) {
                 return None;
             }
-            // Nothing but white space in a language that is formatted: an empty line.
+            // Only whitespace, in a language that gets formatted: print an empty line.
             if bun_core::strings::trim_js_whitespace_end(code).is_empty()
                 && super::parser_of_oxfmt(language).is_some()
             {
@@ -2125,8 +2124,8 @@ impl<'a> Printer<'a, '_> {
         ])
     }
 
-    /// Prettier's `printRoot`: what is between `<!-- prettier-ignore-start -->` and `<!-- prettier-ignore-end -->`
-    /// stays as it is.
+    /// Prettier's `printRoot`: everything between `<!-- prettier-ignore-start -->` and `<!-- prettier-ignore-end -->`
+    /// is left as is.
     fn print_root(&mut self, root: NodeId) -> Doc<'a> {
         let mut ranges: Vec<(NodeId, NodeId)> = Vec::new();
         let mut start = None;
@@ -2196,7 +2195,7 @@ impl<'a> Printer<'a, '_> {
     fn print_list(&mut self, id: NodeId, list: &'a Node) -> Doc<'a> {
         let uses_alternate_marker = self.uses_alternate_marker(id);
         let is_git_diff_friendly = self.is_git_diff_friendly(list);
-        // Before indented code, the content has to be indented deeper than that is.
+        // Before indented code, the content has to be indented deeper than the code.
         let min_indent = match self
             .node(list.next)
             .filter(|_| is_indented_code(self.original, self.tree, list.next))
@@ -2287,7 +2286,7 @@ impl<'a> Printer<'a, '_> {
         let tab_width = self.options.indent_width.value() as usize;
         let children = self.print_children_with(id, |printer, child| {
             let kind = printer.kind(child)?;
-            // oxfmt: HTML is in the column of what is in the item, as indented code is.
+            // oxfmt: HTML goes in the column of the item's content, like indented code.
             if kind == Kind::Html && child != first && printer.options.flavor.is_oxfmt() {
                 return Some(printer.print(child));
             }
@@ -2385,7 +2384,7 @@ impl<'a> Printer<'a, '_> {
             for (index, row) in rows.iter().enumerate() {
                 push_line(&mut print_row(row).into_iter());
                 if index == 0 {
-                    // The row under the head has as many cells as the head.
+                    // The delimiter row has as many cells as the header.
                     push_line(&mut widths.iter().take(head_len).enumerate().map(
                         |(column, &width)| {
                             let align = align_of(column);
@@ -2412,7 +2411,7 @@ impl<'a> Printer<'a, '_> {
         if self.options.prose_wrap != ProseWrap::Never {
             return docs![Doc::BreakParent, aligned];
         }
-        // Without the padding if it does not fit.
+        // Without the padding if it doesn't fit.
         let compact = print_contents(true);
         docs![
             Doc::BreakParent,
@@ -2425,8 +2424,8 @@ impl<'a> Printer<'a, '_> {
     }
 }
 
-/// What `printWord` does with `/(\\+|^|.)(\*+|_+)($|.)/g`: a run of `*` or `_` in a word in emphasis that could
-/// open or close emphasis is escaped. `before` and `after`: what is next to the word.
+/// `printWord`'s handling of `/(\\+|^|.)(\*+|_+)($|.)/g`: escapes a run of `*` or `_` in a word in emphasis that could
+/// open or close emphasis. `before` and `after` are the characters next to the word.
 fn escape_delimiter_runs(units: &[u16], before: Option<u16>, after: Option<u16>) -> Vec<u16> {
     const BACKSLASH: u16 = b'\\' as u16;
     let is_marker = |unit: u16| unit == u16::from(b'*') || unit == u16::from(b'_');
@@ -2473,7 +2472,7 @@ fn escape_delimiter_runs(units: &[u16], before: Option<u16>, after: Option<u16>)
                 }
                 out.extend_from_slice(&units[run_start..run_end + following_len]);
                 index = run_end + following_len;
-                // An empty match is not possible: a run has at least one character.
+                // An empty match isn't possible: a run has at least one character.
                 continue 'search;
             }
         }

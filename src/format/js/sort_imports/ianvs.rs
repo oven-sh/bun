@@ -22,9 +22,9 @@ pub(super) enum Matcher {
     Separator,
     ThirdParty,
     Builtin,
-    /// `<TYPES>` and nothing else.
+    /// Exactly `<TYPES>`.
     Types,
-    /// `is_for_types`: it has `<TYPES>` in it.
+    /// `is_for_types` means it contains `<TYPES>`.
     Regex {
         regex: Box<Regex>,
         is_for_types: bool,
@@ -35,7 +35,7 @@ pub(super) enum Matcher {
 #[derive(Debug)]
 pub(super) struct Group {
     pub(super) matcher: Matcher,
-    /// The first element with the same text: they are one group.
+    /// The first element with the same text. They form one group.
     pub(super) same_as: usize,
 }
 
@@ -75,7 +75,7 @@ impl Options {
         }
     }
 
-    /// `getImportNodesMatchedGroup`. `None`: there is no such group, which is an error.
+    /// `getImportNodesMatchedGroup`. Returns `None` if no group matches, which is an error.
     fn group_of(&self, source: &[u8], is_type: bool) -> Option<usize> {
         let has_types = self.has_types();
         for group in &self.order {
@@ -118,7 +118,7 @@ fn has_kind(model: &Model, declaration: &Declaration, kind: SpecifierKind) -> bo
         .any(|it| model.specifiers[*it as usize].kind == kind)
 }
 
-/// `mergeNodes`: whether `forget` has been merged into `keep`.
+/// `mergeNodes`. Returns true if `forget` was merged into `keep`.
 fn merge_nodes(model: &mut Model, keep: u32, forget: u32) -> bool {
     let (kept, forgotten) = (
         model.declarations[keep as usize],
@@ -171,7 +171,7 @@ fn merge_nodes_with_matching_import_flavors(
 ) {
     let text_start = model.text_start();
     let mut deleted: Vec<u32> = Vec::new();
-    // By source, the node that others are merged into.
+    // For each source, the node that others are merged into.
     let mut context: Vec<u32> = Vec::new();
     for is_type in [false, true] {
         if !options.combine_type_and_value_imports {
@@ -285,7 +285,7 @@ fn sort_specifiers(model: &mut Model, index: u32, options: &Options) {
     model.orders = orders;
 }
 
-/// `getSortedNodesByImportOrder`. `None`: an import belongs to no group.
+/// `getSortedNodesByImportOrder`. Returns `None` if an import doesn't belong to any group.
 fn sorted_by_import_order(
     model: &mut Model,
     nodes: &[u32],
@@ -567,7 +567,7 @@ fn patch_new_first_import_location(model: &mut Model, new_first_import: Node) {
     }
 }
 
-/// `getSortedNodes`. `None`: an import belongs to no group.
+/// `getSortedNodes`. Returns `None` if an import doesn't belong to any group.
 fn sorted_nodes(model: &mut Model, options: &Options) -> Option<Vec<Node>> {
     // `getChunkTypeOfNode`
     let is_unsortable = |model: &Model, index: u32| {
@@ -646,8 +646,8 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Option<Vec<Node>> {
     Some(nodes)
 }
 
-/// The text that the plugin hands to Prettier in place of the file of `model`. `None`: it is
-/// formatted the same.
+/// The text that the plugin hands to Prettier in place of `model`'s file. Returns `None` if that wouldn't change the
+/// formatted output.
 pub(super) fn preprocess(
     model: &mut Model,
     options: &Options,

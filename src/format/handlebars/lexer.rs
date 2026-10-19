@@ -1,4 +1,4 @@
-//! The lexer of `@handlebars/parser` (`src/handlebars.l`): in each state the first rule that matches wins.
+//! The lexer of `@handlebars/parser` (`src/handlebars.l`). In each state, the first rule that matches wins.
 
 use super::Error;
 use crate::syntax_error::{Message, Refusal};
@@ -7,7 +7,7 @@ use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TokenKind {
-    /// From `start` to `end` is its value: without the backslash that escapes what follows.
+    /// `start..end` is its value, which excludes a backslash that escapes what follows.
     Content,
     Comment,
     OpenSexpr,
@@ -65,7 +65,7 @@ const ASCII_OF_ID: ByteSet = ByteSet::of(b"$-:?_\x7F")
     .with_range(b'A', b'Z')
     .with_range(b'a', b'z');
 
-/// How many bytes at the start of `text` can be in an `ID`.
+/// Returns how many bytes at the start of `text` can be part of an `ID`.
 pub(crate) fn id_len(text: &[u8]) -> usize {
     let mut at = 0;
     loop {
@@ -93,8 +93,8 @@ fn is_literal_lookahead(rest: &[u8]) -> bool {
     matches!(rest.first(), Some(b'~' | b'}' | b')' | b']')) || strings::js_whitespace_len(rest) > 0
 }
 
-/// `open(\\close|[^close])*close`, where `text` starts with the opening character: how long the match is. It ends
-/// at the first `close` without a backslash before it. If there is none, at the last one with a backslash.
+/// Returns the length of the `open(\\close|[^close])*close` match, where `text` starts with the opening character. The
+/// match ends at the first `close` that has no backslash before it or, if there's none, at the last one that has.
 fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
     let mut at = 1;
     let mut last_escaped = None;
@@ -117,7 +117,7 @@ struct Lexer<'a> {
     at: usize,
     states: Vec<State>,
     tokens: &'a mut Vec<Token>,
-    /// Where the next `\0` at or behind `at` is, if that is known.
+    /// Cached offset of the next `\0` at or after `at`.
     next_nul: Option<usize>,
 }
 
@@ -130,7 +130,7 @@ impl Lexer<'_> {
         });
     }
 
-    /// A token of `len` bytes.
+    /// Adds a token of `len` bytes.
     fn token(&mut self, kind: TokenKind, len: usize) {
         self.push(kind, self.at, self.at + len);
         self.at += len;
@@ -142,7 +142,7 @@ impl Lexer<'_> {
         }
     }
 
-    /// `[^\x00]` matches all of `text[at..end]`.
+    /// True if `[^\x00]` matches all of `text[at..end]`.
     fn is_without_nul(&mut self, end: usize) -> bool {
         let next = match self.next_nul {
             Some(next) if next >= self.at => next,
@@ -157,7 +157,7 @@ impl Lexer<'_> {
         Some(from + strings::index_of(self.text.get(from..)?, needle)?)
     }
 
-    /// `message`, where the lexer is.
+    /// Reports `message` at the lexer's position.
     #[cold]
     fn error(&self, message: Message) -> Error {
         Error::Syntax(self.refusal.note(message, self.at as u32))
@@ -273,7 +273,7 @@ impl Lexer<'_> {
         Ok(())
     }
 
-    /// What starts with `{{`.
+    /// Reads a token that starts with `{{`.
     fn open(&mut self) -> Result<(), Error> {
         let rest = &self.text[self.at..];
         if rest.starts_with(b"{{{{") {
@@ -446,7 +446,7 @@ fn number_len(text: &[u8]) -> Option<usize> {
     is_literal_lookahead(&text[len..]).then_some(len)
 }
 
-/// Writes the tokens of `text` to `tokens`, which is empty. The last is `Eof`.
+/// Writes the tokens of `text` to `tokens`, which must be empty. The last one is `Eof`.
 pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, refusal: &Refusal) -> Result<(), Error> {
     let mut lexer = Lexer {
         text,
@@ -459,7 +459,7 @@ pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, refusal: &Refusal) -> Re
     loop {
         let state = lexer.states.last().copied().unwrap_or(State::Initial);
         if lexer.at >= text.len() {
-            // Only there is the end of the text something that the grammar can go on with.
+            // The grammar only accepts the end of the text in the initial state.
             if state != State::Initial {
                 return Err(lexer.error(Message::UnexpectedEnd));
             }

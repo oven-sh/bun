@@ -1,11 +1,11 @@
-//! oxfmt's `sortTailwindcss` in JavaScript: which strings are lists of classes, and what stays of the white space at their
-//! ends.
+//! oxfmt's `sortTailwindcss` in JavaScript: which strings are class lists, and how much of the whitespace at their ends
+//! is kept.
 //!
-//! A port of `oxc_formatter/src/utils/tailwindcss.rs`, which follows `prettier-plugin-tailwindcss`. What is written
-//! is in a context, the last of a stack: `JsFormatContext::tailwind_context`.
+//! A port of `oxc_formatter/src/utils/tailwindcss.rs`, which follows `prettier-plugin-tailwindcss`. The code being
+//! printed is in a context, the top of a stack: `JsFormatContext::tailwind_context`.
 //!
-//! Where the plugin itself has turned the sorting on, `Tailwind::follows_plugin`, its `transformJavaScript` counts. The stack
-//! has one context then, and what is around a text says whether it is sorted: [`collapse_by_plugin`].
+//! If the plugin itself turned sorting on (`Tailwind::follows_plugin`), its `transformJavaScript` rules apply. The
+//! stack then has a single context, and the nodes around a text decide if it's sorted: [`collapse_by_plugin`].
 
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::options::HtmlRoot;
@@ -14,27 +14,27 @@ use crate::tailwind::{Ends, Names, Oxc, Tailwind};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// What is written is in the value of an attribute, or among the arguments of a function, that takes classes.
+/// The code being printed is in an attribute value, or among a function's arguments, that takes classes.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TailwindContext {
     pub(crate) preserves_whitespace: bool,
-    /// It is between the `${` and the `}` of a template.
+    /// It's between a template's `${` and `}`.
     is_in_template_expression: bool,
-    /// The text before that `${` ends with white space.
+    /// The text before that `${` ends with whitespace.
     has_whitespace_before: bool,
-    /// The text behind that `}` starts with white space.
+    /// The text after that `}` starts with whitespace.
     has_whitespace_behind: bool,
-    /// What the `+` around the template that is written leave of the white space at its ends.
+    /// Which ends of the current template can lose their whitespace, given the `+`s around it.
     around_template: Collapse,
-    /// It is in a call of another function. A string there is not sorted.
+    /// It's in a call of another function. Strings there aren't sorted.
     pub(crate) is_disabled: bool,
     /// See [`Tailwind::follows_plugin`].
     pub(crate) follows_plugin: bool,
-    /// The texts of the template that is written are sorted. oxfmt sorts all that are in a context.
+    /// The current template's texts are sorted. oxfmt sorts every template that's in a context.
     sorts_template: bool,
 }
 
-/// Whether the white space at the start and at the end of a text can go. If not, one blank stays of it.
+/// For the start and the end of a text, true if the whitespace there can be removed. Otherwise one space is kept.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Collapse {
     pub(crate) start: bool,
@@ -47,7 +47,7 @@ impl Collapse {
         end: true,
     };
 
-    /// What can go here, and also at the `start` and the `end`.
+    /// Intersects with `start` and `end`.
     fn and(self, start: bool, end: bool) -> Collapse {
         Collapse {
             start: self.start && start,
@@ -70,7 +70,7 @@ fn ends_with_white_space(text: &[u8]) -> bool {
 }
 
 impl TailwindContext {
-    /// For the value of an attribute and for the arguments of a function.
+    /// For an attribute's value or a function's arguments.
     fn new(tailwind: &Tailwind) -> Self {
         TailwindContext {
             preserves_whitespace: tailwind.preserves_whitespace,
@@ -84,7 +84,7 @@ impl TailwindContext {
         }
     }
 
-    /// For all of a file in which the rules of the plugin count.
+    /// For a whole file where the plugin's rules apply.
     pub(crate) fn of_plugin(tailwind: &Tailwind) -> Self {
         TailwindContext {
             follows_plugin: true,
@@ -104,7 +104,7 @@ impl TailwindContext {
         }
     }
 
-    /// For the template at `span` in `parent`, by the rules of the plugin.
+    /// For the template at `span` in `parent`, under the plugin's rules.
     pub(crate) fn in_template_at<'a>(
         self,
         span: Span,
@@ -119,7 +119,7 @@ impl TailwindContext {
         }
     }
 
-    /// For what is between `${` and `}`, `before` and `behind` which these texts are.
+    /// For the content of a `${}` that has the text `before` in front of it and the text `behind` after it.
     pub(crate) fn in_template_expression(self, before: &[u8], behind: &[u8]) -> Self {
         TailwindContext {
             is_in_template_expression: true,
@@ -132,12 +132,12 @@ impl TailwindContext {
         }
     }
 
-    /// Whether the line breaks in the template that is written go.
+    /// True if the line breaks in the current template are removed.
     pub(crate) fn collapses_line_breaks(self) -> bool {
         self.sorts_template && !self.preserves_whitespace
     }
 
-    /// What the template around it leaves of the white space at the ends of what is written.
+    /// Which ends of the code being printed can lose their whitespace, given the template around it.
     fn collapse(self) -> Collapse {
         Collapse {
             start: !self.is_in_template_expression || self.has_whitespace_before,
@@ -146,7 +146,7 @@ impl TailwindContext {
     }
 }
 
-/// `content`, written in a context if there is one.
+/// `content`, printed in a context if there is one.
 pub(crate) struct InTailwindContext<T>(pub(crate) Option<TailwindContext>, pub(crate) T);
 
 impl<'a, T: Format<'a>> Format<'a> for InTailwindContext<T> {
@@ -161,59 +161,59 @@ impl<'a, T: Format<'a>> Format<'a> for InTailwindContext<T> {
     }
 }
 
-/// The context for the arguments of `callee`, or for the template that it is the tag of, if they are classes.
+/// The context for `callee`'s arguments, or for the template it tags, if they're classes.
 pub(crate) fn context_of_function(callee: Expr<'_>, f: &Formatter<'_>) -> Option<TailwindContext> {
     (f.options().tailwind.as_deref())
         .filter(|tailwind| !tailwind.follows_plugin && is_class_function(callee, tailwind, f))
         .map(TailwindContext::new)
 }
 
-/// The context for the value of the JSX attribute called `name`, if it is classes.
+/// The context for the value of the JSX attribute `name`, if it holds classes.
 pub(crate) fn context_of_attribute(name: &[u8], f: &Formatter<'_>) -> Option<TailwindContext> {
     (f.options().tailwind.as_deref())
         .filter(|tailwind| !tailwind.follows_plugin && is_class_attribute(name, tailwind))
         .map(TailwindContext::new)
 }
 
-/// The context of the string literal `source`, if it is to be sorted: one class is not.
+/// The context of the string literal `source`, if it should be sorted. A single class isn't.
 pub(crate) fn context_of_string(source: &[u8], f: &Formatter<'_>) -> Option<TailwindContext> {
     f.context()
         .tailwind_context()
         .filter(|context| !context.is_disabled && has_white_space(source))
 }
 
-/// Whether the plugin has made one line of the string `e` by the time that Prettier looks at it.
+/// True if the plugin has already joined the string `e` onto one line by the time Prettier sees it.
 pub(crate) fn loses_line_breaks<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     (f.context().tailwind_context()).is_some_and(|it| it.follows_plugin && !it.preserves_whitespace)
         && !bun_core::strings::contains(e.text(), b"{{")
         && collapse_by_plugin(e.span(), e.ast_parent(), f).is_some()
 }
 
-/// Whether the value of the JSX attribute called `name` is classes.
+/// True if the value of the JSX attribute `name` holds classes.
 fn is_class_attribute(name: &[u8], tailwind: &Tailwind) -> bool {
     matches!(name, b"class" | b"className")
         || (!bun_core::strings::contains_char(name, b':')
             && has(&tailwind.attributes, name, tailwind))
 }
 
-/// oxfmt's own rules know no patterns.
+/// oxfmt's own rules don't support patterns.
 fn has(names: &Names, name: &[u8], tailwind: &Tailwind) -> bool {
     names.has_name(name) || (tailwind.follows_plugin && names.has_pattern_for(name))
 }
 
-/// Whether `@prettier/plugin-oxc` reads what is written.
+/// True if `@prettier/plugin-oxc` parses the code being printed.
 fn is_read_by_oxc(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
     tailwind.oxc != Oxc::Absent
         && (!f.context().has_tree_of_babel() || f.options().in_html.root == HtmlRoot::None)
 }
 
-/// Whether the plugin looks at the tree of Babel.
+/// True if the plugin sees Babel's tree.
 fn is_babel(tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
     f.context().has_tree_of_babel() && !is_read_by_oxc(tailwind, f)
 }
 
-/// Whether what is in an optional chain with `e` is another kind of node to the plugin than a call or a member access: to
-/// Babel every link from the `?.` on is, to the other parsers what is around the whole chain.
+/// True if the plugin sees `e`, which is in an optional chain, as a node kind other than a call or a member access. In
+/// Babel that's every link from the `?.` on. In the other parsers it's the node wrapping the whole chain.
 fn is_other_node_to_plugin(e: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
     match is_babel(tailwind, f) {
         true => e.is_in_optional_chain(),
@@ -221,7 +221,7 @@ fn is_other_node_to_plugin(e: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) 
     }
 }
 
-/// Whether the arguments of `callee` are classes: `cn`, `cn.a`, `cn()`. The plugin's `isSortableExpression`.
+/// True if `callee`'s arguments are classes: `cn`, `cn.a`, `cn()`. The plugin's `isSortableExpression`.
 fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -> bool {
     if tailwind.functions.is_empty() {
         return false;
@@ -240,16 +240,16 @@ fn is_class_function(callee: Expr<'_>, tailwind: &Tailwind, f: &Formatter<'_>) -
     }
 }
 
-/// What stays of the white space at the ends of the string or the template at `leaf` in `parent`, by the rules of the plugin.
-/// `None`: it is not sorted. The plugin sorts all strings and templates in the value of an attribute and in an argument of a
-/// function that take classes, however deep (`sortInside`), and the template behind such a function.
+/// Which ends of the string or template at `leaf` in `parent` can lose their whitespace, under the plugin's rules.
+/// Returns `None` if it isn't sorted. The plugin sorts all strings and templates, however deep (`sortInside`), in an
+/// attribute value or a function argument that takes classes, and the template tagged by such a function.
 fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -> Option<Collapse> {
     let tailwind = f.options().tailwind.as_deref()?;
     if tailwind.oxc == Oxc::Behind && is_read_by_oxc(tailwind, f) {
         return None;
     }
     let is_in = |span: Span| span.start <= leaf.start && leaf.end <= span.end;
-    // Each `+` and each template around it, from the inside to the outside.
+    // Each `+` and each template around it, innermost first.
     let mut around: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
     let (mut is_sorted, mut inner) = (false, None);
     for ancestor in parent.ancestors() {
@@ -258,7 +258,7 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
             AstNodes::TaggedTemplateExpression(e) if inner.is_none() => {
                 is_sorted = matches!(e.kind(), ExprKind::TaggedTemplate(call) if is_class_function(call.callee(), tailwind, f));
             }
-            // It goes by what is between it and the innermost of these.
+            // The plugin only considers the nodes between the leaf and the innermost of these.
             AstNodes::JSXAttribute(attribute)
                 if matches!(inner, None | Some(AstNodes::JSXExpressionContainer(_)))
                     && (attribute.key()).is_some_and(|key| {
@@ -294,19 +294,19 @@ fn collapse_by_plugin<'a>(leaf: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -
     Some(collapse_among(&around, leaf, tailwind, (true, texts)))
 }
 
-/// What the plugin sees of the texts of a template when it decides about what is between them.
+/// How much of a template's texts the plugin sees when it decides about the expressions between them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Texts {
-    /// Nothing: the tree of TypeScript does not have the positions that it asks for, and in Vue it does not ask.
+    /// Nothing: TypeScript's tree doesn't have the positions it looks up, and in Vue it doesn't look.
     Unseen,
     AsWritten,
-    /// It has sorted them by then.
+    /// It has already sorted them.
     Sorted,
 }
 
-/// What stays of the white space at the ends of the string or the template at `leaf`. `around`: each `+` and each template
-/// around it, from the outside to the inside. `every_plus`: all of them count, as in the plugin's `canCollapseWhitespaceIn`.
-/// If not, the innermost does.
+/// Which ends of the string or template at `leaf` can lose their whitespace. `around` is each `+` and each template
+/// around it, outermost first. With `every_plus` all the `+`s count, as in the plugin's `canCollapseWhitespaceIn`.
+/// Otherwise only the innermost does.
 pub(crate) fn collapse_among(
     around: &[Expr<'_>],
     leaf: Span,
@@ -314,7 +314,7 @@ pub(crate) fn collapse_among(
     (every_plus, texts): (bool, Texts),
 ) -> Collapse {
     let is_in = |span: Span| span.start <= leaf.start && leaf.end <= span.end;
-    // What the plugin lets go, and where nothing touches it.
+    // `collapse` is what the plugin removes. `free` is where nothing touches the leaf.
     let (mut collapse, mut free) = (Collapse::ALL, Collapse::ALL);
     if tailwind.preserves_whitespace {
         return collapse;
@@ -338,8 +338,8 @@ pub(crate) fn collapse_among(
         let Some((index, expression)) = expressions.find(|it| is_in(it.1.span())) else {
             continue;
         };
-        // It looks at the texts behind it, and at the one before it if nothing is between the `${` and it, and for the start
-        // at the start of each.
+        // The plugin looks at the texts after the expression, plus the one before it if nothing is between the `${` and
+        // the expression. For the start it checks the start of each text.
         let touches_brace = template.quasi_span(index).end == expression.span().start;
         let seen = match texts {
             Texts::Unseen => count,
@@ -360,7 +360,8 @@ pub(crate) fn collapse_among(
                 i == index || ends_with_white_space(&text),
             );
         }
-        // So the blank goes in `` `a${" b"}` ``, and `a` and `b` are one class. Here what touches a text stays apart from it.
+        // So the plugin removes the space in `` `a${" b"}` ``, which merges `a` and `b` into one class. Here, a string
+        // that touches a text keeps its space.
         let (before, behind) = (template.raw(index), template.raw(index + 1));
         free = Collapse {
             start: ends_with_white_space(before) || (before.is_empty() && index == 0 && free.start),
@@ -371,7 +372,8 @@ pub(crate) fn collapse_among(
     collapse.and(free.start, free.end)
 }
 
-/// What the plugin's `sortTemplateLiteral` calls `sortClasses` with for `text`. `around`: what stays at the ends of the template.
+/// The arguments that the plugin's `sortTemplateLiteral` passes to `sortClasses` for `text`. `around` is which of the
+/// template's ends can lose their whitespace.
 pub(crate) fn ends_in_template(
     text: &[u8],
     (is_first, is_last): (bool, bool),
@@ -385,8 +387,8 @@ pub(crate) fn ends_in_template(
     }
 }
 
-/// What `a + .. + b` leaves of the white space at the ends of what is at `span` in `parent`: what is added to has to stay
-/// apart. The plugin's `canCollapseWhitespaceIn`.
+/// Which ends of the node at `span` in `parent` can lose their whitespace inside `a + .. + b`: an end that something is
+/// concatenated to has to keep a space. The plugin's `canCollapseWhitespaceIn`.
 fn collapse_in_concatenation(span: Span, parent: AstNodes<'_>) -> Collapse {
     let mut collapse = Collapse::ALL;
     for ancestor in parent.ancestors() {
@@ -419,8 +421,8 @@ fn collapse_in_concatenation(span: Span, parent: AstNodes<'_>) -> Collapse {
     collapse
 }
 
-/// What is written for the string literal `source`, which is at `span` in `parent`. `is_jsx`: it is the value of an
-/// attribute. `None`: it is not sorted.
+/// The output for the string literal `source`, which is at `span` in `parent`. `is_jsx` means it's an attribute's
+/// value. Returns `None` if it isn't sorted.
 pub(crate) fn sorted_string_literal<'a>(
     source: &'a [u8],
     is_jsx: bool,
@@ -468,8 +470,8 @@ pub(crate) fn sorted_string_literal<'a>(
     Some(printed)
 }
 
-/// `text`, which is between two `${}` of a template or at an end of it, in three parts: a class that touches the `}`
-/// before it, what can be sorted, a class that touches the `${` behind it.
+/// Splits `text`, which is between two `${}` of a template or at one of its ends, into three parts: a class that
+/// touches the `}` before it, the sortable part, and a class that touches the `${` after it.
 fn split_template_text(text: &[u8], is_first: bool, is_last: bool) -> (&[u8], &[u8], &[u8]) {
     let is_white_space = |byte: &u8| byte.is_ascii_whitespace();
     let prefix_end = match !is_first && !starts_with_white_space(text) {
@@ -493,8 +495,8 @@ fn split_template_text(text: &[u8], is_first: bool, is_last: bool) -> (&[u8], &[
     (prefix, sortable, suffix)
 }
 
-/// What is written for `text`, which is text of a template. `is_first`, `is_last`: of the texts of the template. `None`: it
-/// is not sorted.
+/// The output for `text`, one of a template's texts. `is_first` and `is_last` are its position among them. Returns
+/// `None` if it isn't sorted.
 pub(crate) fn sorted_template_text(
     text: &[u8],
     (is_first, is_last): (bool, bool),
@@ -514,7 +516,7 @@ pub(crate) fn sorted_template_text(
     } else if trimmed.is_empty() {
         printed.extend(sortable.first().map(|_| b' '));
     } else {
-        // Only the ends of the template have something else than its own `${}` next to them.
+        // Only the template's ends have something other than its own `${}` next to them.
         let (inner, outer) = (context.collapse(), context.around_template);
         let is_at_an_end = is_first || is_last;
         let keeps_start = is_at_an_end && !(inner.start && outer.start);

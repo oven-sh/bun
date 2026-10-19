@@ -1,7 +1,7 @@
 //! Prettier's `language-html/print-preprocess.js`.
 //!
-//! Prettier walks the tree ten times. Each of its steps looks at a node and its children, so here all of them are
-//! done for a node, in the same order, before its children have their turn. Only the last step comes after them.
+//! Prettier walks the tree ten times. Each of its steps only looks at a node and its children, so here all steps run on
+//! a node, in the same order, before its children are visited. Only the last step runs after them.
 
 use super::ast::{Flags, Id, Kind, Node, Span, Tree};
 use super::data::Display;
@@ -26,7 +26,7 @@ struct SvgTextEdges {
     end: bool,
 }
 
-/// Returns whether the tree is not nested too deeply.
+/// Returns false if the tree is nested too deeply.
 pub(crate) fn preprocess<'a>(tree: &mut Tree<'a>, options: &Options<'_>) -> bool {
     let root = tree.root;
     tree[root].css_display = tree.css_display(root, false, options);
@@ -40,7 +40,7 @@ pub(crate) fn preprocess<'a>(tree: &mut Tree<'a>, options: &Options<'_>) -> bool
     !preprocessor.is_nested_too_deeply
 }
 
-/// The part of `value` from `start` to `end`.
+/// `value[start..end]`
 pub(crate) fn slice<'a>(value: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
     match value {
         Cow::Borrowed(value) => Cow::Borrowed(&value[start..end]),
@@ -48,7 +48,7 @@ pub(crate) fn slice<'a>(value: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<
     }
 }
 
-/// `ParseLocation.moveBy`: where `units` UTF-16 code units of `text` end that start at `start`.
+/// `ParseLocation.moveBy`: returns the offset `units` UTF-16 code units after `start` in `text`.
 fn moved_by(text: &[u8], start: u32, mut units: u32) -> u32 {
     let mut at = start as usize;
     while units > 0
@@ -131,7 +131,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             self.tree[first].flags.insert(Flags::HAS_LEADING_SPACES);
             self.tree[last].flags.insert(Flags::HAS_TRAILING_SPACES);
         }
-        // Every child without an end tag asks when it is printed.
+        // Cached, because every child without an end tag checks it when it's printed.
         let preserves_content = self.tree.should_preserve_content(id, self.options);
         self.tree[id]
             .flags
@@ -169,7 +169,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
 
     fn remove_ignorable_first_lf(&mut self, id: Id) {
         let node = &self.tree[id];
-        // The first child was a comment when Prettier asked.
+        // With a merged condition, the first child was still a comment when Prettier ran this step.
         if node.kind != Kind::Element
             || !node.tag_definition.ignore_first_lf
             || node.has(Flags::HAS_CONDITION)
@@ -278,8 +278,8 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 continue;
             }
             if !strings::contains(&self.tree[child].value, b"{{") {
-                // `start.moveBy(value.length)`: a text that has been put together has less in it than there is from its
-                // start to its end.
+                // `start.moveBy(value.length)`: a merged text's value is shorter than the source between its start and
+                // its end.
                 let node = &mut self.tree[child];
                 if node.value.len() != node.span.len() as usize {
                     let units = strings::wtf8_len_utf16(&node.value);
@@ -452,7 +452,8 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             flags.set(Flags::IS_TRAILING_SPACE_SENSITIVE, is_trailing);
         }
         self.keep_what_touches_through_hidden_elements(first);
-        // From the first to the last: what is asked of the one before has been settled, of the one behind not yet.
+        // In order, so each node sees the final flag of its previous sibling and the not yet adjusted flag of its next
+        // one.
         let mut next = Some(first);
         while let Some(child) = next {
             next = self.tree.next(child);

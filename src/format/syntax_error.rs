@@ -1,24 +1,24 @@
-//! What the parsers of this crate refuse: what is wrong, and where.
+//! Syntax errors from this crate's parsers: a message and an offset.
 
-/// A syntax error in a file that is not a script: what is wrong, and at which byte of the text, not counting a byte order
-/// mark.
+/// A syntax error in a file that isn't a script: the message, and the byte offset in the text, not counting a byte
+/// order mark.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SyntaxError(pub Message, pub u32);
 
 impl SyntaxError {
-    /// `self` is in what `normalizeEndOfLine` has made of `original`. The same in `original`.
+    /// Converts the offset from one in `normalizeEndOfLine(original)` to one in `original`.
     #[cold]
     pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> SyntaxError {
         SyntaxError(self.0, BeforeNormalizing::new(original).place_of(self.1))
     }
 }
 
-/// Where the places in what `normalizeEndOfLine` has made of a text are in the text. Asked for one after the other, from the
-/// first to the last, they take one pass over the text.
+/// Maps offsets in `normalizeEndOfLine(text)` back to offsets in `text`. Lookups in ascending order take a single
+/// pass over the text in total.
 pub(crate) struct BeforeNormalizing<'a> {
     original: &'a [u8],
     has_returns: bool,
-    /// The last place, and where that is in `original`.
+    /// The last offset that was looked up, and the matching offset in `original`.
     last: (usize, usize),
 }
 
@@ -51,8 +51,8 @@ impl<'a> BeforeNormalizing<'a> {
     }
 }
 
-/// Where a parser notes what it refuses. What it returns on the way, [`Refused`], has no size, so that nothing is paid for
-/// the reason where nothing is refused.
+/// Where a parser records its syntax error. The error type that it propagates, [`Refused`], is zero-sized, so the
+/// success path doesn't pay for carrying the reason.
 pub(crate) struct Refusal(std::cell::Cell<SyntaxError>);
 
 impl Default for Refusal {
@@ -64,7 +64,7 @@ impl Default for Refusal {
     }
 }
 
-/// A text has been refused, and the reason noted.
+/// The input was rejected, and the reason was recorded in a [`Refusal`].
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct Refused(());
 
@@ -75,7 +75,7 @@ impl Refusal {
         Refused(())
     }
 
-    /// What has been noted last.
+    /// The most recently recorded error.
     #[cold]
     pub(crate) fn reason(&self) -> SyntaxError {
         self.0.get()
@@ -84,7 +84,7 @@ impl Refusal {
 
 macro_rules! messages {
     ($($name:ident = $text:literal,)*) => {
-        /// What is wrong.
+        /// An error message.
         #[repr(u8)]
         #[derive(Debug, Copy, Clone, PartialEq, Eq)]
         pub enum Message {

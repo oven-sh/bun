@@ -1,4 +1,4 @@
-//! The order of `prettier-plugin-packagejson`.
+//! `prettier-plugin-packagejson`'s order.
 //!
 //! The plugin runs the npm package [`sort-package-json`](https://github.com/keithamus/sort-package-json) (MIT license, Keith
 //! Cirkel) on the text before Prettier formats it. This is a port of version 3.7.1 of that package, which is what version 3.0.2
@@ -419,8 +419,9 @@ fn min_version(range: &[u8]) -> Option<Lowest> {
 
 /// `sortObjectBySemver`, for `pnpm.overrides`: `a@1>b` comes before `a@2`. `members` are sorted by name.
 ///
-/// The package ignores everything after the first `>`, so to it `a@>=1` has no range, like `a`. When it compares two such keys, it
-/// always says that the first argument is smaller. V8's sort always passes the later element first, so they end up reversed.
+/// The package ignores everything after the first `>`, so to it `a@>=1` has no range, like `a`. When it compares two
+/// such keys, it always reports the first argument as smaller. V8's sort always passes the later element first, so they
+/// end up reversed.
 pub(super) fn sort_by_version(members: &mut [Member<'_>]) {
     /// `parseNameAndVersionRange`, with the lowest version of the range.
     struct Selector<'k> {
@@ -518,7 +519,7 @@ fn runs_in_sequence(line: &[u8]) -> bool {
     })
 }
 
-/// `hasSequentialScript`: some script runs others in the order they're written in, like `run-s build:*`.
+/// `hasSequentialScript`: some script runs others in source order, like `run-s build:*`.
 fn has_sequential_script(document: Document<'_>) -> bool {
     let dependencies = document.get(0, b"devDependencies");
     let depends_on = |name: &[u8]| dependencies.is_some_and(|it| document.get(it, name).is_some());
@@ -578,7 +579,7 @@ pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
     if !keeps_order {
         crate::sort::sort_by(&mut names, |a, b| order_of_script_names(a, b));
     }
-    // Where each script goes: the first place that names it.
+    // Each script's rank: the first position that mentions it.
     let mut ranks: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
     let mut place = |name: Vec<u8>| {
         let rank = ranks.len();

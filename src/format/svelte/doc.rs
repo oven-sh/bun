@@ -1,17 +1,18 @@
-//! The documents of the plugin. It takes them apart again after it has made them (`trim`, `trimRight`, `childDocs.pop()`),
-//! so they are kept as it has them until all is said, and written to the document of `ir` then.
+//! The plugin's docs. The plugin edits them after it builds them (`trim`, `trimRight`, `childDocs.pop()`), so they
+//! stay in its representation until the whole component is printed, and only then are they written to the `ir`
+//! document.
 
 use crate::html::writer::Writer;
 use crate::stack::Stack;
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 
-/// Code in another language, which is formatted where it is written.
+/// Code in another language. It's formatted when the doc is written.
 #[derive(Debug, Clone)]
 pub(crate) enum Code<'a> {
-    /// What `embed` makes of a node with `isJS`.
+    /// `embed`'s result for a node with `isJS`.
     Js(Js<'a>),
-    /// `textToDoc(content, { parser })`, without the line breaks at its end. `start`: where it starts in the component.
+    /// `textToDoc(content, { parser })`, minus trailing line breaks. `start` is its offset in the component.
     Body {
         content: &'a [u8],
         parser: Parser,
@@ -19,7 +20,7 @@ pub(crate) enum Code<'a> {
     },
 }
 
-/// The parsers for what is in a `<script>` or a `<style>`.
+/// The parsers for `<script>` and `<style>` content.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Parser {
     TypeScript,
@@ -59,15 +60,15 @@ pub(crate) struct Js<'a> {
     pub(crate) is_on_one_line: bool,
     /// `removeParentheses`
     pub(crate) is_without_parentheses: bool,
-    /// Svelte goes on where it ends, and takes no comment there: `{#each a}`.
+    /// Svelte resumes parsing right where the code ends and doesn't allow a comment there: `{#each a}`.
     pub(crate) is_without_comment_behind: bool,
-    /// It is right behind a `{`.
+    /// Set if the code comes right after a `{`.
     pub(crate) follows: Option<Brace>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum Doc<'a> {
-    /// A string. Prettier does not look into it.
+    /// A string. Prettier doesn't look inside it.
     Text(Cow<'a, [u8]>),
     Token(&'static str),
     List(Vec<Doc<'a>>),
@@ -106,16 +107,16 @@ pub(crate) fn dedent(contents: Doc<'_>) -> Doc<'_> {
     Doc::Dedent(Box::new(contents))
 }
 
-/// What is still to be looked at.
+/// The docs still to visit.
 type Rest<'d, 'a> = SmallVec<[&'d Doc<'a>; 8]>;
 
 impl<'a> Doc<'a> {
-    /// What it is. It is nothing afterwards.
+    /// Moves the doc out and leaves `EMPTY` in its place.
     fn take(&mut self) -> Doc<'a> {
         std::mem::replace(self, EMPTY)
     }
 
-    /// Moves what is in it, and has something in it, to `rest`.
+    /// Moves those of its children that have children themselves to `rest`.
     fn take_contents(&mut self, rest: &mut Vec<Doc<'a>>) {
         let mut take = |contents: &mut Doc<'a>| {
             if matches!(
@@ -140,7 +141,7 @@ impl<'a> Doc<'a> {
         }
     }
 
-    /// Whether `is` says yes to it, and to all that `is` adds to the list.
+    /// True if `is` returns true for this doc and for every doc that `is` pushes onto the list.
     fn all<'d>(&'d self, is: impl Fn(&'d Doc<'a>, &mut Rest<'d, 'a>) -> bool) -> bool {
         let mut rest: Rest<'d, 'a> = smallvec![self];
         while let Some(doc) = rest.pop() {
@@ -151,7 +152,7 @@ impl<'a> Doc<'a> {
         true
     }
 
-    /// The string that it is.
+    /// Its string, if it's `Text` or `Token`.
     fn as_string(&self) -> Option<&[u8]> {
         match self {
             Doc::Text(text) => Some(&text[..]),
@@ -194,7 +195,7 @@ impl<'a> Doc<'a> {
         })
     }
 
-    /// What the plugin trims a fragment of: a line, a string of blanks, `breakParent`.
+    /// True for the docs that the plugin trims from a fragment: a line, an all-whitespace string or `breakParent`.
     pub(crate) fn is_white_space_of_fragment(&self) -> bool {
         self.is_line()
             || matches!(self, Doc::BreakParent)
@@ -204,7 +205,7 @@ impl<'a> Doc<'a> {
             })
     }
 
-    /// Nothing at all is printed for it.
+    /// True if it prints nothing at all.
     fn is_nothing(&self) -> bool {
         self.all(|doc, rest| match doc {
             Doc::Text(text) => text.is_empty(),
@@ -224,7 +225,7 @@ impl<'a> Doc<'a> {
         })
     }
 
-    /// Puts the name in the place of code that is a name. Returns whether there is no other code.
+    /// Replaces each piece of code that's only an identifier with its text. Returns false if there's any other code.
     pub(crate) fn replace_code_by_names(&mut self) -> bool {
         let mut rest: Vec<&mut Doc<'a>> = vec![self];
         while let Some(doc) = rest.pop() {
@@ -262,8 +263,8 @@ impl<'a> Doc<'a> {
     }
 }
 
-/// In a loop: a document is nested as deeply as what it is made of, and what the compiler makes to let go of one calls
-/// itself for each level without asking whether there is stack for that.
+/// Drops in a loop. A doc nests as deeply as its source, and the compiler's drop glue recurses once per level without
+/// a stack check.
 impl Drop for Doc<'_> {
     fn drop(&mut self) {
         let mut rest = Vec::new();
@@ -315,7 +316,7 @@ pub(crate) fn trim_right<'a>(mut group: &mut Vec<Doc<'a>>, is_white_space: fn(&D
     }
 }
 
-/// Whether the last thing in `doc` is a line break that is one only if its group is broken.
+/// True if `doc` ends with a line that only breaks if its group breaks.
 fn ends_with_soft_line(mut doc: &Doc<'_>) -> bool {
     loop {
         doc = match doc {
@@ -333,14 +334,14 @@ fn ends_with_soft_line(mut doc: &Doc<'_>) -> bool {
     }
 }
 
-/// How a document is written.
+/// Context for `write`.
 pub(crate) struct Write<'w, 'a> {
-    /// Writes the code in it.
+    /// Writes embedded code.
     pub(crate) code: &'w mut dyn FnMut(&Code<'a>, &mut Writer<'_, '_>),
     pub(crate) stack: &'w Stack,
 }
 
-/// Writes `doc`, and lets go of each part of it when that is written: what is written takes as much memory again.
+/// Writes `doc` and frees each part as soon as it's written, because the written form takes as much memory again.
 pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Write<'_, 'a>) {
     if !how.stack.has_room() {
         return;
@@ -357,7 +358,7 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
                 write(part, out, how);
             }
         }
-        // The writer takes what has a start and an end for something.
+        // The writer counts any start/end pair as content, even an empty one.
         Doc::Group(contents) if contents.is_nothing() => {}
         Doc::Group(contents) => {
             let id = ends_with_soft_line(contents).then(|| out.new_group_id());
@@ -399,7 +400,8 @@ pub(crate) fn write<'a>(mut doc: Doc<'a>, out: &mut Writer<'_, '_>, how: &mut Wr
         Doc::BreakParent => out.break_parent(),
         Doc::Code(code) => {
             (how.code)(code, out);
-            // A comment in it that waits for the end of the line is not for behind the `}`: `{a[0 // b\n]}`.
+            // A comment in the code that's deferred to the end of the line must not move past the `}`:
+            // `{a[0 // b\n]}`.
             if matches!(**code, Code::Js(_)) {
                 out.line_suffix_boundary();
             }

@@ -1,9 +1,8 @@
-//! CSS, the way Prettier formats it.
+//! CSS, formatted the way Prettier does.
 //!
-//! Prettier parses a style sheet with `postcss`, and what is in it with three more parsers:
-//! `postcss-values-parser` for values, `postcss-selector-parser` for selectors and
-//! `postcss-media-query-parser` for media queries. What it prints depends on how they take the text
-//! apart, mistakes included. So this has the same four parsers.
+//! Prettier parses a style sheet with `postcss`, and its contents with three more parsers: `postcss-values-parser` for
+//! values, `postcss-selector-parser` for selectors and `postcss-media-query-parser` for media queries. Its output
+//! depends on exactly how they split the text, bugs included. So this module ports all four parsers.
 
 pub(crate) mod doc;
 pub(crate) mod embed;
@@ -48,7 +47,7 @@ impl Parser {
     }
 }
 
-/// The parser that Prettier infers from the name of a file. `None` if it is not a style sheet.
+/// Returns the parser Prettier infers from a file name, or `None` if it isn't a style sheet.
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     const EXTENSIONS: [(&[u8], Parser); 6] = [
         (b".scss", Parser::Scss),
@@ -68,14 +67,14 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
         .map(|(_, parser)| *parser)
 }
 
-/// Everything that is allocated to format a style sheet. It is reused for the next one.
+/// Allocations for formatting a style sheet, reused for the next one.
 #[derive(Default)]
 pub struct Scratch {
     memo: Memo,
 }
 
-/// Prettier's `replaceQuotesInInlineComments`: the inline comments in which quotes and asterisks are to
-/// be replaced by blanks, for `postcss-less` not to stumble over them.
+/// Prettier's `replaceQuotesInInlineComments`. Returns the inline comments whose quotes and asterisks must be replaced
+/// with spaces so that `postcss-less` doesn't trip over them.
 fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
     #[derive(Copy, Clone, PartialEq)]
     enum State {
@@ -153,18 +152,18 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
     comments
 }
 
-/// `each(@list, { .. })` of Less is a statement for oxfmt, which writes the `;` behind it if there is none. `postcss-less`
-/// goes on to the next `;`, wherever that is. So here the `;` is there before anything is parsed.
+/// oxfmt treats Less's `each(@list, { .. })` as a statement and adds the `;` after it if it's missing. `postcss-less`
+/// would read on to the next `;`, wherever that is. So the `;` is inserted before parsing.
 fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains(text, b"each(") {
         return Cow::Borrowed(text);
     }
-    // How many `(` are open, and how many were when the statement started that the scan is in. What is in its parentheses
-    // is printed as it is.
+    // The number of open `(`, and what that number was when the current `each(` statement started. The contents of its
+    // parentheses are printed verbatim.
     let mut depth = 0usize;
     let mut statement = None;
     let mut missing: Vec<usize> = Vec::new();
-    // The last character that is neither white space nor in a comment.
+    // The last character that's neither whitespace nor in a comment.
     let mut last = b';';
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
@@ -232,7 +231,7 @@ fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(result)
 }
 
-/// Parses `text`, whose line breaks are `\n`, and writes it to `sink`.
+/// Parses `text`, whose line breaks must be `\n`, and writes it to `sink`.
 fn parse_and_print<'o>(
     text: &[u8],
     parser: Parser,
@@ -245,7 +244,7 @@ fn parse_and_print<'o>(
         false => Cow::Borrowed(text),
     };
     let text = &with_semicolons[..];
-    // What is parsed has blanks in the place of the front matter, so that all positions stay.
+    // The front matter is replaced with spaces before parsing, so all offsets stay valid.
     let front_matter = front_matter::parse(text).map(|it| &text[..it.end]);
     let mut blanked: Cow<'_, [u8]> = match front_matter {
         None => Cow::Borrowed(text),
@@ -293,7 +292,7 @@ fn parse_and_print<'o>(
                     .unwrap_or_default(),
             ),
         );
-        // There is no formatter for TOML, and what is not YAML after all stays as it is.
+        // There's no TOML formatter, and front matter that doesn't parse as YAML is kept verbatim.
         let formatted = match value {
             _ if matches!(
                 options.embedded_language_formatting,
@@ -369,7 +368,8 @@ fn parse_and_print<'o>(
     }
 }
 
-/// Prettier's `textToDoc`: the document for `text`, whose line breaks are `\n`, in another language.
+/// Prettier's `textToDoc`: returns the document for a style sheet embedded in another language. `text`'s line breaks
+/// must be `\n`.
 pub(crate) fn document(
     text: &[u8],
     parser: Parser,
@@ -401,7 +401,8 @@ pub fn format(
         out.extend_from_slice(original);
         return Ok(());
     }
-    // Nothing in a style sheet is something that Prettier formats on its own.
+    // Prettier can't format a part of a style sheet on its own, so with a range the text is only parsed and then
+    // printed back unchanged.
     let is_range = start > first || end < original.len();
     let text = bun_core::strings::crlf_as_lf(text);
     let text = match crate::pragma::before_parsing_css(

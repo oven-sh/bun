@@ -32,7 +32,7 @@ pub(crate) fn write_big_int_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// An error: `/a/é`. The characters are sorted as JavaScript sorts strings, by UTF-16 code units.
+/// Invalid flags, as in `/a/é`. They're sorted the way JavaScript sorts strings, by UTF-16 code units.
 #[cold]
 fn write_reg_exp_literal_with_unknown_flags<'a>(
     raw: &'a [u8],
@@ -55,7 +55,7 @@ fn write_reg_exp_literal_with_unknown_flags<'a>(
     });
 }
 
-/// The flags are sorted.
+/// Prints the regex with its flags sorted.
 pub(crate) fn write_reg_exp_literal<'a>(e: Expr<'a>, regex: Regex<'a>, f: &mut Formatter<'a>) {
     let (raw, flags) = (f.source_text().text_for(&e), regex.flags());
     if flags.is_sorted() {

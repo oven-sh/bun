@@ -8587,6 +8587,97 @@ describe("css tests", () => {
       ".btn{color:red;cursor:pointer}.q{top:0}.btn{color:red;vertical-align:middle}",
     );
 
+    // `!important` declarations are a list of their own. A prefix that the other list writes is not added.
+    prefix_test(
+      ".foo { -webkit-user-select: text; user-select: none !important }",
+      ".foo { -webkit-user-select: text; user-select: none !important; }",
+      defaults,
+    );
+    prefix_test(
+      ".foo { -webkit-user-select: text !important; user-select: none }",
+      ".foo { user-select: none; -webkit-user-select: text !important; }",
+      defaults,
+    );
+
+    // A rule is no duplicate of a rule that has the same properties with another importance.
+    minify_test(".a{color:red!important}.b{top:0}.a{color:#00f}", ".a{color:red!important}.b{top:0}.a{color:#00f}");
+    minify_test(
+      ".a{-webkit-user-select:none!important;user-select:none!important}.b{top:0}.a{user-select:text}",
+      ".a{-webkit-user-select:none!important;user-select:none!important}.b{top:0}.a{user-select:text}",
+    );
+    minify_test(
+      ".a{user-select:none}.b{top:0}.a{user-select:text!important;user-select:text!important}",
+      ".a{user-select:none}.b{top:0}.a{user-select:text!important}",
+    );
+
+    test("two rules of one selector keep the winning declaration", () => {
+      const atoms = [
+        "user-select:none",
+        "user-select:text",
+        "user-select:none!important",
+        "user-select:text!important",
+        "-webkit-user-select:text",
+        "-webkit-user-select:text!important",
+      ];
+      const blocks = [...atoms.map(atom => [atom]), ...atoms.flatMap(first => atoms.map(second => [first, second]))];
+      const pairs = [
+        ...blocks.flatMap(first => atoms.map(second => [first, [second]])),
+        ...atoms.flatMap(first => blocks.filter(second => second.length === 2).map(second => [[first], second])),
+      ];
+      const parse = (declaration: string) => {
+        const important = /\s*!important$/.test(declaration);
+        const [name, value] = declaration.replace(/\s*!important$/, "").split(":");
+        return { name: name.trim(), value: value.trim(), important };
+      };
+      type Declaration = ReturnType<typeof parse>;
+      const output = prefix_test_output(
+        pairs
+          .map(([first, second], i) => `.a${i}{${first.join(";")}}\n.q${i}{top:0}\n.a${i}{${second.join(";")}}`)
+          .join("\n"),
+        "",
+        defaults,
+      );
+      const printed = new Map<string, Declaration[]>();
+      for (const [, selectors, body] of output.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const declarations = body
+          .split(";")
+          .filter(declaration => declaration.trim())
+          .map(parse);
+        for (const selector of selectors.split(",")) {
+          printed.set(selector.trim(), [...(printed.get(selector.trim()) ?? []), ...declarations]);
+        }
+      }
+      // The declaration that a browser applies: the last `!important` one whose name it reads, or else the last one.
+      const winner = (declarations: Declaration[], names: string[]) => {
+        const read = declarations.filter(({ name }) => names.includes(name));
+        const last = read.findLast(({ important }) => important) ?? read.at(-1);
+        return last && `${last.value}${last.important ? "!important" : ""}`;
+      };
+      // Safari only reads the prefixed name. A rule that writes that name gets no copy after it, or with the other importance.
+      const forPrefixOnly = (rule: Declaration[]) =>
+        rule.map((declaration, i) => {
+          const written = rule.some(
+            (other, j) => other.name === "-webkit-user-select" && (other.important !== declaration.important || j < i),
+          );
+          return declaration.name === "user-select" && !written
+            ? { ...declaration, name: "-webkit-user-select" }
+            : declaration;
+        });
+      const wrong: string[] = [];
+      for (const [i, [first, second]] of pairs.entries()) {
+        const rules = [first.map(parse), second.map(parse)];
+        const out = printed.get(`.a${i}`) ?? [];
+        const same =
+          winner(out, ["user-select"]) === winner(rules.flat(), ["user-select"]) &&
+          winner(out, ["user-select", "-webkit-user-select"]) ===
+            winner(rules.flat(), ["user-select", "-webkit-user-select"]) &&
+          winner(out, ["-webkit-user-select"]) === winner(rules.flatMap(forPrefixOnly), ["-webkit-user-select"]);
+        if (!same) wrong.push(`${first.join(";")} | ${second.join(";")}`);
+      }
+      expect(pairs.length).toBe(468);
+      expect(wrong).toEqual([]);
+    });
+
     test("the prefixes change no winning declaration", () => {
       const atoms = [
         "user-select:none",

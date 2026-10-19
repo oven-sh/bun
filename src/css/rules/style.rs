@@ -459,43 +459,16 @@ impl<R> StyleRule<R> {
         result
     }
 
-    /// Returns whether this rule is a duplicate of another rule.
-    /// This means it has the same selectors and properties.
+    /// Whether this rule has the selectors, properties and importance of another rule.
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
-        self.declarations.len() == other.declarations.len()
+        let same_properties = |a: &css::DeclarationList<'_>, b: &css::DeclarationList<'_>| {
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| same_property(a, b))
+        };
+        let (a, b) = (&self.declarations, &other.declarations);
+        same_properties(&a.declarations, &b.declarations)
+            && same_properties(&a.important_declarations, &b.important_declarations)
             && self.selectors.eql(&other.selectors)
-            && 'brk: {
-                let mut len = self
-                    .declarations
-                    .declarations
-                    .len()
-                    .min(other.declarations.declarations.len());
-                // len is the min of the two lengths, so truncation is intended.
-                for (a, b) in self.declarations.declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.declarations[..len])
-                {
-                    // `PropertyId`'s `PartialEq` is a tag+prefix compare.
-                    if !same_property(a, b) {
-                        break 'brk false;
-                    }
-                }
-                len = self
-                    .declarations
-                    .important_declarations
-                    .len()
-                    .min(other.declarations.important_declarations.len());
-                for (a, b) in self.declarations.important_declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.important_declarations[..len])
-                {
-                    if !same_property(a, b) {
-                        break 'brk false;
-                    }
-                }
-                true
-            }
     }
 }
 

@@ -82,6 +82,8 @@ pub struct PrefixHandler {
     last: [usize; SLOT_COUNT],
     /// The prefixes that the author wrote for each property since `start`.
     written: [VendorPrefix; SLOT_COUNT],
+    /// The prefixes that the author wrote for each property in the other list of the block.
+    elsewhere: [VendorPrefix; SLOT_COUNT],
 }
 
 impl PrefixHandler {
@@ -103,7 +105,7 @@ impl PrefixHandler {
         let equal = previous.filter(|index| same_value(&dest[*index], property));
 
         // Unlike lightningcss: a written prefix stays, and a prefix the block already has is not added.
-        let mut covered = self.written[slot];
+        let mut covered = self.written[slot] | self.elsewhere[slot];
         if let Some(index) = equal {
             covered |=
                 slot_of(&dest[index]).map_or(VendorPrefix::empty(), |(_, prefixes, _)| prefixes);
@@ -132,6 +134,15 @@ impl PrefixHandler {
         true
     }
 
+    /// Records the prefixed names in the other list of the block (`!important` or not).
+    pub(crate) fn see_other_list(&mut self, declarations: &css::DeclarationList) {
+        for declaration in declarations.iter() {
+            if let Some((slot, written, _)) = slot_of(declaration) {
+                self.elsewhere[slot as usize] |= written.difference(VendorPrefix::NONE);
+            }
+        }
+    }
+
     /// `all` sets every property. An unknown name can be one more spelling (`-khtml-user-select`).
     fn see_other(&mut self, property: &Property, index: usize) {
         match property {
@@ -149,7 +160,10 @@ impl PrefixHandler {
     }
 
     fn close(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            elsewhere: self.elsewhere,
+            ..Self::default()
+        };
     }
 
     pub(crate) fn finalize(
@@ -157,7 +171,7 @@ impl PrefixHandler {
         _dest: &mut css::DeclarationList,
         _context: &mut css::PropertyHandlerContext,
     ) {
-        self.close();
+        *self = Self::default();
     }
 }
 

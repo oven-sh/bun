@@ -88,6 +88,12 @@ impl<'bump> DeclarationBlock<'bump> {
             }
         }
 
+        // The `!important` list has its own handler. Each one has to know what the other list wrote.
+        if !self.important_declarations.is_empty() {
+            handler.prefix.see_other_list(&self.important_declarations);
+            important_handler.prefix.see_other_list(&self.declarations);
+        }
+
         handle(
             &mut self.important_declarations,
             context,

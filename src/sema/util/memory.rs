@@ -20,7 +20,7 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::ptr::{NonNull, null_mut, slice_from_raw_parts_mut};
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Once, OnceLock};
 
 /// Makes its owner `Send` if `E` is `Send`, and `Sync` if `E` is `Send + Sync`, because one thread
@@ -795,7 +795,7 @@ macro_rules! zeroed {
         }
     )*};
 }
-zeroed!(AtomicU32, AtomicU64);
+zeroed!(AtomicU16, AtomicU32, AtomicU64);
 
 /// One bit per page of an array of cells that starts out all zero. The bit is set once anything on the page has been
 /// written. A reader that finds the bit clear treats the cell as zero without loading it. So a page that was never

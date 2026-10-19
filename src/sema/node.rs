@@ -23,8 +23,11 @@ use crate::check::spans::{
 };
 use crate::hir::*;
 use crate::util::SharedSort;
+use crate::util::memory::Zeroed;
+use std::alloc::Global;
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 macro_rules! kinds {
     ($($name:ident)*) => {
@@ -32,6 +35,10 @@ macro_rules! kinds {
         #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
         #[repr(u16)]
         pub enum Kind { $($name),* }
+
+        impl Kind {
+            const ALL: &[Kind] = &[$(Kind::$name),*];
+        }
     };
 }
 kinds! {
@@ -1831,7 +1838,31 @@ impl<'s> File<'s> {
     }
 
     /// `node.Kind`
+    #[inline]
     pub fn kind(&self, node: Node) -> Kind {
+        let known = self.known_kinds().get(node.idx());
+        match known.map(|kind| kind.load(Ordering::Relaxed)) {
+            None | Some(0) => self.compute_kind(node),
+            Some(kind) => Kind::ALL.get(kind as usize).map_or(Kind::Unknown, |&kind| kind),
+        }
+    }
+
+    /// Returns the kind of each HIR node that `kind` has computed, and 0, which is `Kind::Unknown`, for the others.
+    #[inline]
+    fn known_kinds(&self) -> &[AtomicU16] {
+        let total = self.bases.0[VECTORS] as usize;
+        (self.lazy.cells.kinds).get_or_init(|| AtomicU16::zeroed_slice_in(total, Global))
+    }
+
+    fn compute_kind(&self, node: Node) -> Kind {
+        let kind = self.kind_from_hir(node);
+        if let Some(known) = self.known_kinds().get(node.idx()) {
+            known.store(kind as u16, Ordering::Relaxed);
+        }
+        kind
+    }
+
+    fn kind_from_hir(&self, node: Node) -> Kind {
         match self.data(node) {
             NodeData::None => Kind::Unknown,
             NodeData::File => Kind::SourceFile,

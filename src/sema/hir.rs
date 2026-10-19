@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicU16;
 
 macro_rules! define_id {
     ($($name:ident),* $(,)?) => {$(
@@ -576,6 +577,8 @@ pub struct Lazy<'s> {
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: OnceLock<crate::node::Parents>,
+    /// `File::kind`
+    pub(crate) kinds: OnceLock<Box<[AtomicU16]>>,
     /// `FnId::to_node`, `ClassId::to_node`
     pub(crate) owners: OnceLock<crate::node::Owners>,
     /// `File::is_in_ambient_or_type_node`
@@ -591,6 +594,7 @@ pub struct LazyCells {
 /// The cells of every file without nodes. What's computed from such a file is the same for all of them.
 static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     parents: OnceLock::new(),
+    kinds: OnceLock::new(),
     owners: OnceLock::new(),
     ambient_or_type_ranges: OnceLock::new(),
     type_query_ranges: OnceLock::new(),

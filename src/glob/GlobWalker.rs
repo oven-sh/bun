@@ -2009,7 +2009,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if self.follow_symlinks || self.only_files || named.count() == active.count() {
             return Ok(None);
         }
-        let mut unnamed = active.clone().expect("OOM");
+        let mut unnamed = active.clone()?;
         let mut it = named.iterator::<true, true>();
         while let Some(idx) = it.next() {
             unnamed.unset(idx);

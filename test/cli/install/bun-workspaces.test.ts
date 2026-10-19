@@ -4696,7 +4696,8 @@ test.concurrent.skipIf(isWindows)("`**` in a workspace glob does not go through 
   expect(exitCode).toBe(0);
 });
 
-// In a brace group too: `s` is a link that only the wildcard alternative matches, `named` is a link that an alternative spells.
+// Pins what a workspaces glob does on main too: it follows each link that a segment matches, in a brace group as well.
+// `s` is a link that only the wildcard alternative matches, `named` is a link that an alternative spells.
 test.concurrent.skipIf(isWindows)(
   "a brace group in a workspace glob matches a symlinked member directory",
   async () => {

@@ -1350,6 +1350,7 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       expect(scanSync(String(dir), pattern)).toEqual(expected);
     });
 
+    // Not on Windows: a `\` in a pattern is a path separator there, and a file name cannot hold `*`.
     test.skipIf(isWindows)("an escaped wildcard or class is text", () => {
       using dir = makeNamedTree("glob-scan-symlink-named-escape");
       const cwd = String(dir);
@@ -1416,6 +1417,7 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
       ]);
     });
 
+    // Not on Windows: the rows pin the POSIX error of the failed open (`ENOENT` from `open`), as "error broken symlinks" above is POSIX only.
     test.skipIf(isWindows)("a broken link that a segment names throws with throwErrorOnBrokenSymlink", () => {
       using dir = makeNamedTree("glob-scan-symlink-named-broken");
       const cwd = String(dir);
@@ -1432,6 +1434,7 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     });
 
     // What is behind a named link is read as behind a literal segment, errors included.
+    // Not on Windows: the row pins `ELOOP`, the POSIX error for a link that points at itself.
     test.skipIf(isWindows)("an error behind a named link is the error of the literal form", () => {
       using dir = tempDir("glob-scan-symlink-named-eloop", { "realdir/file.txt": "x", "src/loop.txt": "x" });
       const cwd = String(dir);

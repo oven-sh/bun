@@ -433,6 +433,15 @@ pub mod defines {
             }
         }
 
+        /// True for a value like `dot.chain`: a property reference, which is a valid delete target.
+        #[inline]
+        pub(crate) fn is_property_reference(&self) -> bool {
+            matches!(self.value, ExprData::EIdentifier(_))
+                && self
+                    .original_name()
+                    .is_some_and(|name| bun_core::strings::contains_char(name, b'.'))
+        }
+
         /// True if accessing this value is known to not have any side effects.
         #[inline]
         pub(crate) fn can_be_removed_if_unused(&self) -> bool {

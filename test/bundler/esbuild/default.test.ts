@@ -4688,35 +4688,136 @@ describe.concurrent("bundler", () => {
       stdout: "1\n2",
     },
   });
-  // TODO: this doesnt warn in esbuild ???
-  // itBundled("default/DefineAssignWarning", {
-  //   // GENERATED
-  //   files: {
-  //     "/read.js": /* js */ `
-  //       console.log(
-  //         [a, b.c, b['c']],
-  //         [d, e.f, e['f']],
-  //         [g, h.i, h['i']],
-  //       )
-  //     `,
-  //     "/write.js": /* js */ `
-  //       console.log(
-  //         [a = 0, b.c = 0, b['c'] = 0],
-  //         [d = 0, e.f = 0, e['f'] = 0],
-  //         [g = 0, h.i = 0, h['i'] = 0],
-  //       )
-  //     `,
-  //   },
-  //   entryPoints: ["/read.js", "/write.js"],
-  //   define: {
-  //     a: "null",
-  //     "b.c": "null",
-  //     d: "ident",
-  //     "e.f": "ident",
-  //     g: "dot.chain",
-  //     "h.i": "dot.chain",
-  //   },
-  // });
+  // A define with a constant value (`a`, `b.c`) is only substituted where it
+  // is read; as an assignment target the reference stays as written, since
+  // `null = 0` is a syntax error. esbuild also logs an "assign-to-define"
+  // warning there, bun does not. A define whose value is an identifier
+  // (`d`, `e.f`, `g`, `h.i`) is substituted in both positions. A delete
+  // target is substituted only for a property reference (`g`, `h.i`):
+  // `delete ident` is a strict mode error. The namespace import is the first
+  // symbol of write.js, so the substituted identifier must be resolved before
+  // the "Cannot assign to import" check runs.
+  itBundled("default/DefineAssignWarning", {
+    files: {
+      "/read.js": /* js */ `
+        capture(a);
+        capture(b.c);
+        capture(d);
+        capture(e.f);
+        capture(g);
+        capture(h.i);
+      `,
+      "/ns.js": /* js */ `export const k = 0;`,
+      "/write.js": /* js */ `
+        import * as ns from "./ns.js";
+        capture(ns.k);
+        let five = 5;
+        capture(j.k);
+        capture(j.k = 11);
+        capture(a = 1);
+        capture(a += 1);
+        capture(a++);
+        capture(--a);
+        capture([a] = [3]);
+        capture({ x: a } = { x: 4 });
+        capture(a ??= 5);
+        for (a in { 5: 0 });
+        for (a of [6]);
+        capture(b.c = 1);
+        capture(delete b.c);
+        capture(d = 7);
+        capture(e.f = 8);
+        capture(delete e.f);
+        capture(g = 9);
+        capture(delete g);
+        capture(h.i = 10);
+        capture(delete h.i);
+        console.log(a, globalThis.a, globalThis.ident, globalThis.b.c, globalThis.ident2, "chain" in globalThis.dot);
+      `,
+    },
+    entryPoints: ["/read.js", "/write.js"],
+    define: {
+      a: "null",
+      "b.c": "null",
+      d: "ident",
+      "e.f": "ident2",
+      g: "dot.chain",
+      "h.i": "dot.chain2",
+      "j.k": "five",
+    },
+    runtimeFiles: {
+      // The output is an ES module, so the globals it assigns to must exist.
+      "/test.js": /* js */ `
+        globalThis.capture = x => x;
+        globalThis.a = undefined;
+        globalThis.b = { c: undefined };
+        globalThis.e = { f: undefined };
+        globalThis.j = { k: undefined };
+        globalThis.ident = undefined;
+        globalThis.ident2 = undefined;
+        globalThis.dot = { chain: undefined, chain2: undefined };
+        await import("./out/write.js");
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out/read.js")).toEqual(["null", "null", "ident", "ident2", "dot.chain", "dot.chain2"]);
+      expect(api.captureFile("/out/write.js")).toEqual([
+        "k",
+        "five",
+        "five = 11",
+        "a = 1",
+        "a += 1",
+        "a++",
+        "--a",
+        "[a] = [3]",
+        "{ x: a } = { x: 4 }",
+        "a ??= 5",
+        "b.c = 1",
+        "delete b.c",
+        "ident = 7",
+        "ident2 = 8",
+        "delete e.f",
+        "dot.chain = 9",
+        "delete dot.chain",
+        "dot.chain2 = 10",
+        "delete dot.chain2",
+      ]);
+      const write = api.readFile("/out/write.js");
+      expect(write).toContain("for (a in { 5: 0 })");
+      expect(write).toContain("for (a of [6])");
+    },
+    run: {
+      file: "/test.js",
+      // The reads of `a` and `b.c` are replaced with the define, the writes
+      // went to the real globals.
+      stdout: "null 6 7 undefined 8 false",
+    },
+  });
+  // With inlining on, a define that names a local `const` reads as the constant.
+  // The constant is not a valid assignment target, so a write keeps the property.
+  itBundled("default/DefineAssignInlinedConst", {
+    files: {
+      "/entry.js": /* js */ `
+        const five = 5;
+        capture(j.k);
+        capture(j.k = 11);
+        console.log(j.k);
+      `,
+    },
+    minifySyntax: true,
+    define: { "j.k": "five" },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        globalThis.capture = x => x;
+        globalThis.j = { k: undefined };
+        await import("./out.js");
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.captureFile("/out.js")).toEqual(["5", "j.k = 11"]);
+    },
+    run: { file: "/test.js", stdout: "5" },
+  });
   itBundled("default/KeepNamesTreeShaking", {
     todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {

@@ -1,7 +1,6 @@
 use crate::jest::{
     self, JestFnKind, JestGeneralFnKind, OxlintOrder, ParsedJestFnCall, parent_expression,
 };
-use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::oxlint::source_type;
@@ -204,22 +203,6 @@ fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: 
             create_import_text(is_module, &functions_to_import),
         );
     }
-    let text = create_import_text(is_module, &functions_to_import);
-    if let Some(directive) = file
-        .body()
-        .iter()
-        .take_while(|it| it.directive().is_some())
-        .last()
-    {
-        return fixer.insert_after(directive, [b"\n".as_slice(), &text].concat());
-    }
-    if file.text().starts_with(b"#!") {
-        let hashbang_end =
-            strings::index_of_any(file.text(), b"\r\n").unwrap_or_else(|| file.text().len());
-        return fixer.insert_after(
-            Span::empty(hashbang_end as u32),
-            [b"\n".as_slice(), &text].concat(),
-        );
-    }
-    fixer.insert_before(Span::empty(0), [text.as_slice(), b"\n".as_slice()].concat())
+    // oxlint only skips the `#!` line and the directives, so it inserts the import above `// @ts-nocheck`.
+    fixer.insert_first_statement(&create_import_text(is_module, &functions_to_import))
 }

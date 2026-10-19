@@ -31,7 +31,7 @@ pub(crate) struct YarnLock<'a> {
 #[derive(Default)]
 pub struct Entry<'a> {
     pub(crate) specs: Vec<&'a [u8]>,
-    /// Name of the package the entry resolves to; see `package_name_of`.
+    /// The name of the package that the entry resolves to. See `package_name_of`.
     pub(crate) name: &'a [u8],
     pub(crate) version: &'a [u8],
     // Usually borrows from the input; owned when `set_git_source` rewrites a
@@ -70,7 +70,8 @@ impl<'a> Entry<'a> {
             .unwrap_or(first)
     }
 
-    /// `alias@npm:<name>@<range>` -> `<name>`; `None` for every other kind of spec.
+    /// Returns `<name>` for `alias@npm:<name>@<range>`, and `None` for every other kind of
+    /// specifier.
     pub(crate) fn npm_alias_target(spec: &[u8]) -> Option<&[u8]> {
         let alias_end = strings::index_of(spec, b"@npm:")?;
         let range = dependency::without_npm_protocol(&spec[alias_end + 1..]);
@@ -85,7 +86,8 @@ impl<'a> Entry<'a> {
         })
     }
 
-    /// Identity shared by consolidation and the package-id pass; git entries go by repository.
+    /// The identity that consolidation and the package-id pass both use. Git entries are identified
+    /// by repository.
     pub(crate) fn dedupe_name(&self) -> &[u8] {
         match &self.git_repo_name {
             Some(repo_name) if !self.has_direct_url_spec() => repo_name,
@@ -227,7 +229,8 @@ impl<'a> Entry<'a> {
         self.resolved = Some(Cow::Borrowed(url));
     }
 
-    /// `npm:<name>@<range>` -> (name, range); the `@` of a scoped `<name>` is not the separator.
+    /// Splits `npm:<name>@<range>` into (name, range). The `@` of a scoped `<name>` isn't the
+    /// separator.
     pub(crate) fn parse_npm_alias(version: &[u8]) -> (&[u8], &[u8]) {
         let target = version.strip_prefix(b"npm:").unwrap_or(version);
         let scope_len = usize::from(target.starts_with(b"@"));
@@ -423,7 +426,7 @@ impl<'a> YarnLock<'a> {
     }
 }
 
-/// `<workspace_path>/package.json` (`None`: the root's), parsed the way `bun install` does.
+/// Parses `<workspace_path>/package.json` (the root's for `None`) the way `bun install` does.
 fn append_package_json(
     this: &mut Lockfile,
     manager: &mut PackageManager,
@@ -465,7 +468,8 @@ fn append_package_json(
     Ok(this.append_package(&package)?)
 }
 
-/// Only the exact `name@range` key binds; an entry that merely satisfies it is another resolution.
+/// Only the exact `name@range` key binds. An entry that merely satisfies the range is a different
+/// resolution.
 fn bind_importer_dependency(
     this: &Lockfile,
     dep: &Dependency,
@@ -478,18 +482,20 @@ fn bind_importer_dependency(
         let path = dep.version.workspace().slice(string_bytes);
         return workspace_id_by_path.get(path).copied();
     }
-    // yarn never locked these peers; bind them the way loading a bun.lock does.
+    // Yarn never locked these peers, so bind them the way loading a bun.lock does.
     if dep.behavior.is_peer() {
         if dep.behavior.is_optional_peer() {
             // Bound by the hoister, as after a fresh resolve.
             return Some(install::INVALID_PACKAGE_ID);
         }
-        // Overrides are not consulted: yarn applied them to the entries the candidates come from.
+        // Overrides aren't consulted, because Yarn already applied them to the entries that the
+        // candidates come from.
         let range = this.catalogs.resolve_range(string_bytes, dep);
         let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
         let resolutions = this.packages.items_resolution();
         let index = &this.package_index;
-        // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
+        // Nothing satisfies it, so use the highest version there is, like the peer pass of a fresh
+        // install.
         let newest = || index.get(&name_hash)?.as_slice().first().copied();
         return lockfile::bun_lock::resolve_peer_dep_by_range(
             range,
@@ -722,7 +728,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 }
 
-                // The bare URL a fresh install records; empty means the configured registry.
+                // The bare URL that a fresh install records. Empty means the configured registry.
                 let url = match resolved_url {
                     Some(resolved)
                         if !(resolved.starts_with(b"https://registry.yarnpkg.com/")

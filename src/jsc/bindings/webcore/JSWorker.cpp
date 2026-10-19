@@ -893,8 +893,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     return JSValue::encode(promise);
 }
 
-// (sampleInterval, stackDepth, forceGC, includeObjectsCollectedByMajorGC, includeObjectsCollectedByMinorGC), validated
-// in node/worker_threads.ts. Resolves with false when the worker's VM is sampling already.
+// Arguments validated in node/worker_threads.ts. Resolves with false when the worker's VM is sampling already.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

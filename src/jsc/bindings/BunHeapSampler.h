@@ -14,9 +14,8 @@ class VM;
 
 namespace Bun {
 
-// The allocation-sampling heap profiler behind HeapProfiler.startSampling and worker.startHeapProfile, one per VM on
-// JSVMClientData. JSC picks the allocations (Heap::startAllocationSampling); this attributes each pick to the JS stack,
-// weighs it as V8 does, and follows it through GC. profileJSON() is a V8 SamplingHeapProfile: {head, samples}.
+// The sampling heap profiler behind HeapProfiler.startSampling and worker.startHeapProfile, one per VM on
+// JSVMClientData. JSC picks the allocations; this attributes them to JS stacks and emits V8's SamplingHeapProfile.
 class HeapSampler final : public JSC::AllocationSamplerClient {
     WTF_MAKE_TZONE_ALLOCATED(HeapSampler);
 

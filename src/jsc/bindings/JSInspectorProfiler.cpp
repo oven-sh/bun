@@ -58,8 +58,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
 }
 
-// (samplingInterval, includeObjectsCollectedByMajorGC, includeObjectsCollectedByMinorGC), validated in
-// node/inspector.ts. False when sampling was already on.
+// Arguments validated in node/inspector.ts. False when sampling was already on.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startAllocationSampling);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startAllocationSampling, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

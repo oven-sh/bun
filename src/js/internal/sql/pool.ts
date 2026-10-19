@@ -584,7 +584,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   createQueryHandle(sql: string, values: unknown[], flags: number) {
+    const describe = !!(flags & SQLQueryFlags.describe);
+    // a describe() starts no transaction
     if (
+      !describe &&
       !(flags & SQLQueryFlags.allowUnsafeTransaction) &&
       this.connectionInfo.max !== 1 &&
       isUnsafeTransactionStart(sql)
@@ -596,7 +599,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       values = [];
       flags |= SQLQueryFlags.simple;
     }
-    const describe = !!(flags & SQLQueryFlags.describe);
     return this.createNativeQuery(
       sql,
       values,

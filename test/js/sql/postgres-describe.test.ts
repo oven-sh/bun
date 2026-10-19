@@ -152,6 +152,12 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     expect(await rows(sql)).toBe(0);
   });
 
+  test("a BEGIN on a pool: a describe() starts no transaction", async () => {
+    await using sql = await session({ max: 2 });
+    expect(await sql.unsafe("begin").describe()).toEqual({ string: "begin", types: [], columns: [] });
+    expect(await rejection(sql.unsafe("begin"))).toMatchObject({ code: "ERR_POSTGRES_UNSAFE_TRANSACTION" });
+  });
+
   test("a COPY and an empty text", async () => {
     await using sql = await session();
     expect(await sql`copy described from stdin`.describe()).toEqual({

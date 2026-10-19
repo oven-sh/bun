@@ -273,18 +273,22 @@ describe("strict: a Statement does not start a run while a parameter has no valu
   };
 
   describe("it runs with a value in every parameter, or it does not run", () => {
-    // 7 and 8 are the only values script passes, so a NULL in a row is a parameter that has no value.
-    const shapes = {
-      "nothing": [],
-      "one value": [7],
-      "two values": [7, 8],
-      "a list of one": [[7]],
-      "a list of two": [[7, 8]],
-      "an empty list": [[]],
-      "an empty object": [{}],
-      "an object with the first position": [{ 0: 7 }],
-      "an object with both positions": [{ 0: 7, 1: 8 }],
-    };
+    const missing = 'Missing parameter "?1"';
+    const count = (expected, received) => `SQLite query expected ${expected} values, received ${received}`;
+    // The values, then what a statement of one parameter and a statement of two do with them: `true` when it runs
+    // with 7 (and 8), else the message that it throws. 7 and 8 are the only values script passes, so a NULL in a
+    // row is a parameter that has no value.
+    const shapes = [
+      ["nothing", [], missing, missing],
+      ["one value", [7], true, count(2, 1)],
+      ["two values", [7, 8], count(1, 2), true],
+      ["a list of one", [[7]], true, count(2, 1)],
+      ["a list of two", [[7, 8]], count(1, 2), true],
+      ["an empty list", [[]], missing, missing],
+      ["an empty object", [{}], missing, missing],
+      ["an object with the first position", [{ 0: 7 }], true, 'Missing parameter "?2"'],
+      ["an object with both positions", [{ 0: 7, 1: 8 }], true, true],
+    ];
     const placeholders = { 1: "?", 2: "?, ?" };
     const columns = { 1: "? as a", 2: "? as a, ? as b" };
     const stored = (db, n) => db.query(`select * from t${n}`).values().flat();
@@ -306,23 +310,25 @@ describe("strict: a Statement does not start a run while a parameter has no valu
 
     const cells = [];
     for (const entry of Object.keys(entries))
-      for (const n of [1, 2])
-        for (const [shape, values] of Object.entries(shapes))
+      for (const [shape, values, ...outcomes] of shapes)
+        for (const n of [1, 2]) {
+          const atPrepare = entry.startsWith("db.prepare");
           // db.prepare() takes one argument for the values.
-          if (!entry.startsWith("db.prepare") || values.length <= 1) cells.push([entry, n, shape, values]);
+          if (atPrepare && values.length > 1) continue;
+          // db.prepare() drops a lone value that the statement has no one parameter for, so the run has no values.
+          const dropped = atPrepare && shape === "one value" && n === 2;
+          cells.push([entry, n, shape, values, dropped ? missing : outcomes[n - 1]]);
+        }
 
-    it.each(cells)("%s, %d parameter(s), %s", (entry, n, _, values) => {
+    it.each(cells)("%s, %d parameter(s), %s", (entry, n, _, values, outcome) => {
       using db = new Database(":memory:", { strict: true });
       db.run("create table t1 (a); create table t2 (a, b)");
-      let ran;
-      try {
-        ran = entries[entry](db, n, values);
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-        expect(stored(db, n)).toEqual([]);
+      if (outcome === true) {
+        expect(entries[entry](db, n, values)).toEqual([7, 8].slice(0, n));
         return;
       }
-      expect(ran).toEqual([7, 8].slice(0, n));
+      expect(() => entries[entry](db, n, values)).toThrow(outcome);
+      if (entry.includes(".run(")) expect(stored(db, n)).toEqual([]);
     });
   });
 
@@ -345,6 +351,15 @@ describe("strict: a Statement does not start a run while a parameter has no valu
       [1, "ann"],
       [2, "bob"],
     ]);
+  });
+
+  it("an EXPLAIN needs its values too, because the plan that SQLite reports can depend on them", () => {
+    const db = open();
+    const plan = db.query("explain query plan select * from t where a = ?");
+    expect(() => plan.all()).toThrow('Missing parameter "?1"');
+    expect(() => plan.columnTypes).toThrow('Missing parameter "?1"');
+    expect(plan.all(1)).toHaveLength(1);
+    expect(() => db.query("explain select $a as v").get()).toThrow('Missing parameter "a"');
   });
 
   it("an empty array is not a set of values", () => {
@@ -389,13 +404,13 @@ describe("strict: a Statement does not start a run while a parameter has no valu
       insert.run(3, 4);
       expect(rows(db)).toEqual([[3, 4]]);
     });
+  });
 
-    it("an empty array binds nothing and does not throw", () => {
-      const db = open();
-      const q = db.prepare("select ? as v", []);
-      expect(() => q.get()).toThrow('Missing parameter "?1"');
-      expect(q.get(5)).toEqual({ v: 5 });
-    });
+  it("db.prepare() with an empty array returns a statement without values", () => {
+    const db = open();
+    const q = db.prepare("select ? as v", []);
+    expect(() => q.get()).toThrow('Missing parameter "?1"');
+    expect(q.get(5)).toEqual({ v: 5 });
   });
 
   describe("a getter that uses the statement while its values are being read", () => {
@@ -478,6 +493,48 @@ describe("strict: a Statement does not start a run while a parameter has no valu
       };
       expect(q.get(values)).toEqual({ a: 1, b: 5 });
     });
+
+    it("from the getter of the first value: the outer bind throws too", () => {
+      const db = open();
+      const q = db.query("select $a as a, $b as b");
+      const values = {
+        get a() {
+          return q.get({ a: 1, b: 2 }).a + 10;
+        },
+        b: 20,
+      };
+      expect(() => q.get(values)).toThrow(boundAgain);
+      expect(q.get()).toEqual({ a: 1, b: 2 });
+    });
+
+    it.each(["first", "second"])(
+      "with an iterate() that stays open, from the getter of the %s value: the open run keeps its values",
+      position => {
+        const db = open();
+        db.run("insert into t (a) values (1), (2), (3)");
+        const q = db.query("select $p as p, $s as s, a from t order by a");
+        let iterator;
+        const start = () => {
+          iterator = q.iterate({ p: "inner", s: 8 });
+          expect(iterator.next().value).toEqual({ p: "inner", s: 8, a: 1 });
+        };
+        const values = {
+          get p() {
+            if (position === "first") start();
+            return "outer";
+          },
+          get s() {
+            if (position === "second") start();
+            return 80;
+          },
+        };
+        expect(() => q.get(values)).toThrow(boundAgain);
+        expect([...iterator]).toEqual([
+          { p: "inner", s: 8, a: 2 },
+          { p: "inner", s: 8, a: 3 },
+        ]);
+      },
+    );
   });
 
   describe("is as before", () => {

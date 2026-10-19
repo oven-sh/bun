@@ -1938,6 +1938,7 @@ describe("SQL helpers", () => {
       ["SELECT $a AS v", "a"],
       ["SELECT @a AS v", "a"],
       ["INSERT INTO no_value_test VALUES (?)", "?1"],
+      ["EXPLAIN QUERY PLAN SELECT a FROM no_value_test WHERE a = ?", "?1"],
     ];
     for (const [text, name] of texts) {
       const missing = `Missing parameter "${name}"`;

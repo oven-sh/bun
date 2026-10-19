@@ -31,6 +31,8 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
+#include "JSPerformance.h"
+#include "BunProcess.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -275,6 +277,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
 
     bool isImmutable = builtin->hasImmutableProperties();
+    if (isImmutable) {
+        // What builds a lazy property may run JavaScript.
+        JSC::PropertySlot slot(builtin, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+        builtin->methodTable()->getOwnPropertySlot(builtin, globalObject, key, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     {
         std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
         if (isImmutable)
@@ -300,10 +308,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty, (JSC::JSGlobalObject *
     auto key = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
-    if (builtin->hasImmutableProperties())
-        allowMaterialization.emplace(vm);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsBoolean(JSC::JSCell::deleteProperty(builtin, globalObject, key))));
+    bool isImmutable = builtin->hasImmutableProperties();
+    if (isImmutable && !builtin->staticPropertiesReified()) {
+        // What builds a lazy property may run JavaScript.
+        builtin->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    bool didDelete;
+    {
+        std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
+        if (isImmutable)
+            allowMaterialization.emplace(vm);
+        didDelete = JSC::JSCell::deleteProperty(builtin, globalObject, key);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!didDelete)
+        return throwVMTypeError(globalObject, scope, JSC::UnableToDeletePropertyError);
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -321,6 +342,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype, (JSC::JSGlobalObject * g
     scope.release();
     builtin->setPrototype(vm, globalObject, prototype, true);
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC::JSValue blobPrototype(Zig::GlobalObject* globalObject)
+{
+    return globalObject->JSBlobPrototype();
+}
+
+JSC::JSValue performancePrototype(Zig::GlobalObject* globalObject)
+{
+    return WebCore::JSPerformance::prototype(JSC::getVM(globalObject), *globalObject);
+}
+
+JSC::JSValue processPrototype(Zig::GlobalObject* globalObject)
+{
+    return globalObject->processObject()->getPrototypeDirect();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

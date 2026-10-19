@@ -301,7 +301,8 @@ if (Performance) {
     },
   };
   const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
-  for (const name in additions) defineBuiltinProperty(Performance.prototype, name, additions[name]);
+  const prototype = $cpp("BunClientData.cpp", "performancePrototype");
+  for (const name in additions) defineBuiltinProperty(prototype, name, additions[name]);
 }
 
 export default {

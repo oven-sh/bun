@@ -463,6 +463,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
             expect(7).toBeSeven();
             expect(8).not.toBeSeven();
             expect({ n: 7 }).toEqual({ n: expect.toBeSeven() });
+            expect(Object.isExtensible(expect.toBeSeven)).toBe(false);
           });
           test("a name that is an index", () => {
             expect(() => expect.extend({ 0: () => ({ pass: true }) })).toThrow(TypeError);
@@ -552,48 +553,93 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       expect(exitCode).toBe(0);
     });
 
+    // Each puts another built-in under the name of the class the module finishes.
     test.each([
       [
         "*",
         "node:quic",
-        `const net = require("node:net"), real = net.SocketAddress;
-         net.SocketAddress = { get prototype() { attempt("net.SocketAddress"); return real.prototype; } };`,
+        `require("node:net").SocketAddress = { get prototype() { attempt("net.SocketAddress"); return Array.prototype; } };`,
       ],
       [
         "*,-globalThis",
         "node:quic",
-        `const real = Blob;
-         globalThis.Blob = { get prototype() { attempt("Blob"); return real.prototype; } };`,
+        `globalThis.Blob = { get prototype() { attempt("Blob"); return Array.prototype; } };`,
       ],
       [
         "*,-globalThis",
         "node:perf_hooks",
-        `const real = Performance;
-         globalThis.Performance = { get prototype() { attempt("Performance"); return real.prototype; } };`,
+        `globalThis.Performance = { get prototype() { attempt("Performance"); return Array.prototype; } };`,
       ],
-      [
-        "*,-Bun",
-        "bun:ffi",
-        `const traps = { deleteProperty(target, key) { attempt("Bun.FFI"); return true; } };
-         Object.defineProperty(Bun, "FFI", { value: new Proxy(Bun.FFI, traps) });`,
-      ],
-    ])("with %s, what a program puts where %s looks cannot write", async (immutableGlobals, module, plant) => {
+      ["*,-globalThis", "node:events", `globalThis.process = Object.create(Array.prototype);`],
+    ])(
+      "with %s, %s finishes its own class whatever a program puts in its place",
+      async (immutableGlobals, module, plant) => {
+        using dir = tempDir("immutable-globals-planted", {
+          "index.cjs": `
+          ${attempt}
+          const log = console.log, before = Reflect.ownKeys(Array.prototype).length, parent = Object.getPrototypeOf(Array.prototype);
+          ${plant}
+          require(${JSON.stringify(module)});
+          log(JSON.stringify({
+            wrote,
+            added: Reflect.ownKeys(Array.prototype).length - before,
+            relinked: Object.getPrototypeOf(Array.prototype) !== parent,
+          }));
+        `,
+        });
+        const { stdout, exitCode } = await run(immutableGlobals, ["index.cjs"], String(dir));
+        expect(JSON.parse(stdout)).toEqual({ wrote: [], added: 0, relinked: false });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("a trap that is called while bun:ffi loads cannot write", async () => {
       using dir = tempDir("immutable-globals-planted", {
         "index.cjs": `
           ${attempt}
-          ${plant}
-          require(${JSON.stringify(module)});
-          console.log(JSON.stringify(wrote));
+          const traps = { deleteProperty(target, key) { attempt("Bun.FFI"); return true; } };
+          Object.defineProperty(Bun, "FFI", { value: new Proxy(Bun.FFI, traps) });
+          require("bun:ffi");
+          console.log(JSON.stringify({ called: calls > 0, wrote }));
         `,
       });
-      const { stdout, exitCode } = await run(immutableGlobals, ["index.cjs"], String(dir));
-      expect({ stdout, exitCode }).toEqual({ stdout: "[]\n", exitCode: 0 });
+      const { stdout, exitCode } = await run("*,-Bun", ["index.cjs"], String(dir));
+      expect(JSON.parse(stdout)).toEqual({ called: true, wrote: [] });
+      expect(exitCode).toBe(0);
+    });
+
+    test("jest.useFakeTimers() marks no built-in a program puts in setTimeout's place", async () => {
+      using dir = tempDir("immutable-globals-planted", {
+        "timers.test.js": `
+          import { expect, jest, test } from "bun:test";
+          ${attempt.replace('"use strict";', "")}
+          test("another built-in", () => {
+            globalThis.setTimeout = Object.prototype;
+            jest.useFakeTimers();
+            expect(Object.hasOwn(Object.prototype, "clock")).toBe(false);
+            jest.useRealTimers();
+          });
+          test("a Proxy", () => {
+            globalThis.setTimeout = new Proxy(function () {}, { deleteProperty() { attempt("setTimeout"); return true; } });
+            jest.useFakeTimers();
+            jest.useRealTimers();
+            expect({ called: calls > 0, wrote }).toEqual({ called: true, wrote: [] });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await run("*,-globalThis", ["test", "timers.test.js"], String(dir));
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
     });
 
     test.each([
-      ["node:perf_hooks", `globalThis.Performance = { prototype: 5 };`],
-      ["node:quic", `globalThis.Blob = {};`],
-    ])("without the option, %s throws for a class that is not one", async (module, plant) => {
+      ["bun:ffi", `Object.freeze(Bun.FFI);`, "Unable to delete property."],
+      [
+        "node:perf_hooks",
+        `Object.preventExtensions(Performance.prototype);`,
+        "Attempting to define property on object that is not extensible.",
+      ],
+    ])("without the option, %s throws for a class it cannot finish", async (module, plant, message) => {
       const script = `
         ${plant}
         try {
@@ -603,7 +649,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         }
       `;
       const { stdout, exitCode } = await run(undefined, ["-e", script]);
-      expect({ stdout, exitCode }).toEqual({ stdout: "Properties can only be defined on Objects.\n", exitCode: 0 });
+      expect({ stdout, exitCode }).toEqual({ stdout: message + "\n", exitCode: 0 });
     });
   });
 
@@ -917,8 +963,10 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       input.write("await new Promise(() => { setImmediate(interrupt); })\\n");
     `;
     using dir = tempDir("immutable-globals-repl", { "index.cjs": source });
-    const immutable = await run("*", ["index.cjs"], String(dir));
-    const mutable = await run(undefined, ["index.cjs"], String(dir));
+    const [immutable, mutable] = await Promise.all([
+      run("*", ["index.cjs"], String(dir)),
+      run(undefined, ["index.cjs"], String(dir)),
+    ]);
     expect(immutable.stdout).toMatchInlineSnapshot(`
       ""> Uncaught Error: Script execution was interrupted by \`SIGINT\`\\n> "
       "

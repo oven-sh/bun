@@ -2683,7 +2683,7 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              auto* function = JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public);
              init.set(function);
-             // JSC makes immutable the functions in an immutable object's properties. It cannot see this one, which a native getter of Error returns.
+             // A native getter of Error returns this function, so JSC does not find it among Error's properties.
              if (init.owner->errorConstructor()->hasImmutableProperties())
                  function->makePropertiesImmutable(init.vm);
          } },

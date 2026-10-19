@@ -3679,11 +3679,6 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
     return cryptoX509;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionGetProcessPrototype, (JSGlobalObject * globalObject, CallFrame*))
-{
-    return JSValue::encode(defaultGlobalObject(globalObject)->processObject()->getPrototypeDirect());
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(jsGlobalObject);

@@ -16,6 +16,7 @@ use crate::timer::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
+    safe fn Bun__isSetTimeoutFunction(value: JSValue) -> bool;
 }
 
 #[derive(Default)]
@@ -355,7 +356,9 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
-    let allow_materialization = global.vm().allow_lazy_materialization_of_immutable_properties();
+    // A program may have given the global another value, which gets no more than the program can do itself.
+    let allow_materialization = Bun__isSetTimeoutFunction(set_timeout_fn)
+        .then(|| global.vm().allow_lazy_materialization_of_immutable_properties());
     if enabled {
         set_timeout_fn.put(global, "clock", JSValue::TRUE);
     } else {

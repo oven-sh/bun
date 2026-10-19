@@ -170,7 +170,7 @@ function InternalSocketAddress(handle): void {
 }
 
 const kBlobHandle = Symbol("kBlobHandle");
-defineBuiltinProperty(Blob.prototype, kBlobHandle, {
+defineBuiltinProperty($cpp("BunClientData.cpp", "blobPrototype"), kBlobHandle, {
   __proto__: null,
   get() {
     return this;

@@ -1041,7 +1041,7 @@ Object.assign(EventEmitter, {
 // Link the native process prototype under this module's EventEmitter; the
 // native methods stay earlier in the chain and keep winning lookups.
 try {
-  const processPrototype = $newCppFunction("BunProcess.cpp", "jsFunctionGetProcessPrototype", 0)();
+  const processPrototype = $cpp("BunClientData.cpp", "processPrototype");
   if (
     processPrototype !== null &&
     processPrototype !== Object.prototype &&

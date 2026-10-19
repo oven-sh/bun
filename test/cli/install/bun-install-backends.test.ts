@@ -352,15 +352,16 @@ describe.skipIf(!isWindows)("install backends on Windows", () => {
 
   // The package's `sub/entry` is a file, but the leftover has a directory
   // there. The copyfile walker used to exit the process at this point.
-  test.concurrent("copyfile walker reports a file it could not install into a leftover directory", async () => {
+  test.concurrent("copyfile walker replaces a leftover directory at a file's name", async () => {
     const { dir, projectDir, packageDir } = projectWithLocalPackage("conflict-copyfile");
     using _ = dir;
     mkdirSync(join(packageDir, "sub"));
     writeFileSync(join(packageDir, "sub", "entry"), "module.exports = 2;");
 
     const { stdout, exitCode } = await installOverLeftover(projectDir, join("sub", "entry"));
-    expect(stdout).toContain("Failed to install 1 package");
-    expect(exitCode).toBe(1);
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(readFileSync(join(projectDir, "node_modules", "pkg", "sub", "entry"), "utf8")).toBe("module.exports = 2;");
     expect(existsSync(join(projectDir, "sub"))).toBe(false);
   });
 });

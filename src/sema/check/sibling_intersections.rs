@@ -15,8 +15,10 @@
 //! - A call whose result is kept left no trace (`Checker::traces_of_inference`), so all its lookups hit the type store or
 //!   a table. It also didn't taint a frame or call `Task::hold_back`.
 //! - What such a call does every time is kept and replayed. See `Effects`.
-//! - The facts are dropped at the next cycle or limit (`disturbances_for_siblings`). A lookup that misses without
-//!   starting an evaluation only gets another answer later if a cycle or a limit produced the new entry.
+//! - The facts are void after the next cycle or limit (`disturbances_for_siblings`). A lookup that misses without
+//!   starting an evaluation only gets another answer later if a cycle or a limit produced the new entry. If it was this
+//!   task that met the cycle or the limit, it gives the facts up until the next union: a property type that depends on
+//!   a query in progress meets the cycle every time it's asked for, so no fact would live long enough to be read.
 //! - No instantiation is in progress (`Checker::may_reuse_for_siblings`). While a mapper is active, `instantiate` counts a
 //!   type only once.
 //! - The facts live as long as `reduced_members` filters one union. Nothing that was in progress when a fact was kept has
@@ -68,6 +70,8 @@ struct Fact {
     of_type: Effects,
     /// 1 + the number of the `PropOfConstituent`. 0: it has no number yet.
     symbol: u32,
+    /// `SiblingIntersections::generation` when the calls ran. In any other generation their effects are unknown.
+    generation: u16,
     /// `TypeOfProp::is_literal`
     is_literal: bool,
 }
@@ -81,11 +85,14 @@ impl Fact {
         ty: TypeId::NEVER,
         of_type: Effects::Unknown,
         symbol: 0,
+        generation: 0,
         is_literal: false,
     };
 }
 
 type Disturbances = [u64; 9];
+/// The index in `Disturbances` of what other tasks do.
+const COMMITS: usize = 7;
 
 #[derive(Default)]
 pub(in super::super) struct SiblingIntersections<'p> {
@@ -99,8 +106,12 @@ pub(in super::super) struct SiblingIntersections<'p> {
     seen_for: Vec<u32>,
     /// Counts the calls of `combine_props`.
     name: u32,
-    /// `disturbances_for_siblings` when the facts were kept.
+    /// `disturbances_for_siblings` at the beginning of this generation.
     disturbances: Disturbances,
+    /// Counts the commits that have made facts void.
+    generation: u16,
+    /// This task has met a cycle or a limit since the facts were begun.
+    is_given_up: bool,
 }
 
 impl<'p> SiblingIntersections<'p> {
@@ -119,10 +130,15 @@ impl<'p> SiblingIntersections<'p> {
         all.iter().map(&mut number_of).collect()
     }
 
-    /// Forgets what the calls returned. The numbers stay: they say nothing about types.
-    fn forget(&mut self) {
-        for fact in self.facts.iter_mut().flat_map(|it| it.iter_mut()) {
-            (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
+    /// What the calls have returned so far is void. The numbers stay: they say nothing about types.
+    fn begin_generation(&mut self, disturbances: &Disturbances) {
+        self.disturbances = *disturbances;
+        self.generation = self.generation.wrapping_add(1);
+        // The facts of 65,536 generations ago would count as new.
+        if self.generation == 0 {
+            for fact in self.facts.iter_mut().flat_map(|it| it.iter_mut()) {
+                (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
+            }
         }
     }
 }
@@ -156,7 +172,12 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
         let &(at, position) = self.places.get(nth)?;
         let &number = self.numbers.get(at as usize)?;
         let of_member = self.all.facts.get_mut(number as usize)?;
-        of_member.get_mut(position as usize)
+        let fact = of_member.get_mut(position as usize)?;
+        if fact.generation != self.all.generation {
+            fact.generation = self.all.generation;
+            (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
+        }
+        Some(fact)
     }
 
     /// `propSet.Add`: returns false if an equal `symbol` was added since `new`. `nth`: where the property is in `places`.
@@ -216,19 +237,36 @@ impl<'p, 's> Checker<'p, 's> {
     /// `inference_disturbances`, but of the commits of other tasks only those that resolve a cycle count. A task stores
     /// what it computed in a cycle only in such a commit, and what it computed at a limit never leaves it.
     fn disturbances_for_siblings(&self) -> Disturbances {
-        const COMMITS: usize = 7;
         let mut disturbances = self.inference_disturbances();
         disturbances[COMMITS] = self.newest_commit_with_a_cycle();
         disturbances
     }
 
-    /// Drops the facts that a cycle or a limit has followed.
-    pub(super) fn forget_disturbed_facts(&self, facts: &mut SiblingIntersections<'p>) {
-        let disturbances = self.disturbances_for_siblings();
-        if facts.disturbances != disturbances {
-            facts.forget();
-            facts.disturbances = disturbances;
+    /// Returns empty facts, for a union that `reduced_members` is about to filter.
+    pub(super) fn facts_for_siblings(&self) -> SiblingIntersections<'p> {
+        SiblingIntersections {
+            disturbances: self.disturbances_for_siblings(),
+            ..Default::default()
         }
+    }
+
+    /// `now`: `disturbances_for_siblings`. A cycle or a limit may have followed the facts.
+    fn note_disturbances(facts: &mut SiblingIntersections<'p>, now: &Disturbances) {
+        if facts.disturbances == *now {
+            return;
+        }
+        let mut after_commits_only = facts.disturbances;
+        after_commits_only[COMMITS] = now[COMMITS];
+        match after_commits_only == *now {
+            true => facts.begin_generation(now),
+            false => facts.is_given_up = true,
+        }
+    }
+
+    /// Call before the facts are read. Returns false if they're given up.
+    pub(super) fn may_still_use(&self, facts: &mut SiblingIntersections<'p>) -> bool {
+        Self::note_disturbances(facts, &self.disturbances_for_siblings());
+        !facts.is_given_up
     }
 
     fn readings_for_siblings(&self) -> Readings {
@@ -266,7 +304,7 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// Runs `call`. Also returns its effects, which are known if it left no trace. Drops `facts` if it met a cycle or a
+    /// Runs `call`. Also returns its effects, which are known if it left no trace. Notes in `facts` if it met a cycle or a
     /// limit.
     fn run_for_a_fact<R>(
         &mut self,
@@ -299,10 +337,7 @@ impl<'p, 's> Checker<'p, 's> {
         let reliability = self.reliability;
         self.reliability |= before.reliability;
         let after = self.readings_for_siblings();
-        if after.disturbances != before.readings.disturbances {
-            facts.forget();
-            facts.disturbances = after.disturbances;
-        }
+        Self::note_disturbances(facts, &after.disturbances);
         let stack = u16::try_from(deepest.saturating_sub(before.stack_in_use));
         let instantiations = (self.instantiation_count).checked_sub(before.instantiation_count);
         let instantiations = instantiations.and_then(|it| u16::try_from(it).ok());
@@ -324,7 +359,7 @@ impl<'p, 's> Checker<'p, 's> {
         prop: &Prop,
         mapper: MapperId,
     ) -> PropInstantiation {
-        let Some(facts) = facts else {
+        let Some(facts) = facts.filter(|it| !it.all.is_given_up) else {
             return self.instantiation_of_prop(prop, mapper);
         };
         if let Some(&mut fact) = facts.fact(nth)
@@ -355,7 +390,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.is_boolean(ty) || c.is_pattern_literal(ty) || c.is_every_type_unit(ty);
             TypeOfProp { ty, is_literal }
         };
-        let Some(facts) = facts else {
+        let Some(facts) = facts.filter(|it| !it.all.is_given_up) else {
             return ask(self);
         };
         if let Some(&mut fact) = facts.fact(nth)

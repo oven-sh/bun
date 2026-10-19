@@ -7904,10 +7904,10 @@ impl<'p, 's> Checker<'p, 's> {
                 holders.clear();
                 holders.extend(of_name[1..].iter().map(|&it| holder(it)));
                 let first = holder(of_name[0]);
-                let facts = memo.as_mut().map(|all| {
-                    self.forget_disturbed_facts(all);
-                    FactsOfName::new(all, &numbers, of_name)
-                });
+                if memo.as_mut().is_some_and(|it| !self.may_still_use(it)) {
+                    memo = None;
+                }
+                let facts = (memo.as_mut()).map(|all| FactsOfName::new(all, &numbers, of_name));
                 let (combined, scope) =
                     self.combine_props(first, &holders, &mut long_prop_set, facts);
                 examine(self, first.1, combined, scope);
@@ -8080,7 +8080,11 @@ impl<'p, 's> Checker<'p, 's> {
                     return known;
                 }
                 let before = self.non_cacheable_mark();
-                let outer = self.sibling_intersections.replace(Default::default());
+                // The first of them asks, the second finds out that asking again leaves no trace, the third saves the work.
+                let is_large = |m: &&TypeId| matches!(self.data(**m), TypeData::Intersection(parts) if parts.len() > FEW_MEMBERS);
+                let has_three = members.iter().filter(is_large).nth(2).is_some();
+                let facts = has_three.then(|| self.facts_for_siblings());
+                let outer = std::mem::replace(&mut self.sibling_intersections, facts);
                 let reduced = self.filter(ty, |c, m| !c.is_never_intersection(m));
                 self.sibling_intersections = outer;
                 // A member that is being reduced counts as not `never` for the time being, and moves no counter.

@@ -10,6 +10,7 @@
  * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L328-L351
  */
 import assert from "node:assert";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
@@ -682,7 +683,6 @@ describe("PerformanceObserver.observe()", () => {
 describe("the delivery of Node's entry types", () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
   test("is from one setImmediate(), in the async context that queued the first entry", async () => {
-    const { AsyncLocalStorage } = await import("node:async_hooks");
     const storage = new AsyncLocalStorage<string>();
     const order: string[] = [];
     const observer = new PerformanceObserver(() => void order.push("observer in " + storage.getStore()));

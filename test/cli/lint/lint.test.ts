@@ -5416,7 +5416,9 @@ maybe(() => { return f; });
         const lines = readFileSync(join(root, "oxlint_help.txt"), "utf8").split("\n");
         const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
         const entries = [
-          ...table.matchAll(/^ {4}\(0x[0-9A-F]{8}, (One|Three|fix_description)\((?:\w+, \w+, )?(\d+)\), (\d)\), \/\//gm),
+          ...table.matchAll(
+            /^ {4}\(0x[0-9A-F]{8}, (One|Three|fix_description)\((?:\w+, \w+, )?(\d+)\), (\d)\), \/\//gm,
+          ),
         ];
         expect(entries.length).toBe(table.match(/^ {4}\(0x/gm)!.length);
         const wrong = entries.filter(([, kind, line, withValues]) => {

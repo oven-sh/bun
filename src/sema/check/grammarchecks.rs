@@ -23,6 +23,7 @@ const GET_OR_SET_ACCESSOR: u8 = GET_ACCESSOR | SET_ACCESSOR;
 
 impl Checker<'_, '_> {
     /// `grammarErrorOnNode`
+    #[cold]
     pub(super) fn grammar_error_on_node(
         &mut self,
         file: FileId,

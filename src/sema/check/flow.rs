@@ -380,6 +380,7 @@ impl SharedFlows {
         if self.inline_entries.len() < self.inline_entries.inline_size() {
             self.inline_entries.push((flow, ty));
         } else {
+            cold_path();
             self.overflow_entries.insert(flow, ty);
         }
     }
@@ -5566,6 +5567,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         if self.flow_memo.narrowing_index_file != Some(file) {
+            cold_path();
             self.index_narrowing_subjects(file);
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -5786,12 +5788,14 @@ impl<'p, 's> Checker<'p, 's> {
         name_crossing: Crossing,
     ) -> TypeId {
         if self.flow_analysis_disabled.contains(&file) {
+            cold_path();
             return TypeId::ERROR;
         }
         let bound = self.bound(file);
         let flow = bound.flow_of_expr(e);
         // `getTypeAtFlowNode`: an unreachable flow node has `convertAutoToAny(declaredType)`.
         if flow == UNREACHABLE {
+            cold_path();
             return self.convert_auto_to_any(declared);
         }
         let mut reference = self.reference_of(file, e);
@@ -5852,6 +5856,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn get_flow_type_of_reference(&mut self, walk: &mut Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
         if self.flow_analysis_disabled.contains(&file) {
+            cold_path();
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -5868,11 +5873,13 @@ impl<'p, 's> Checker<'p, 's> {
         let evolved = evolved.ty;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
+            cold_path();
             self.disable_flow_analysis(file);
             self.report_flow_control_error(&walk.reference);
             return TypeId::ERROR;
         }
         if walk.steps >= MAX_STEPS {
+            cold_path();
             return declared;
         }
         // An operation that adds elements to an evolving array sees `autoArrayType`, whatever its
@@ -6140,7 +6147,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some((latest, known)) if latest == file => known,
             _ => self.find_order_dependent_assignment_marks(file),
         };
-        is_possible && self.are_assignments_marked_in_program_order(file)
+        if !is_possible {
+            return false;
+        }
+        cold_path();
+        self.are_assignments_marked_in_program_order(file)
     }
 
     /// Not in tsgo. A single checker visits the files in program order, so whatever it evaluates in
@@ -7040,6 +7051,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         (walk.depth, walk.crossed) = (depth, crossed);
         if walk.too_deep {
+            cold_path();
             return FlowType::new(TypeId::ERROR, false);
         }
         if shared_flow.is_some() {

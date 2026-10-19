@@ -13,6 +13,7 @@ use crate::hir::*;
 use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena, vec_from_iter_in};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
+use std::hint::cold_path;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
@@ -513,13 +514,19 @@ impl<'s> Symbols<'s> {
     #[inline]
     fn decode<'a>(&'a self, symbol: &'a StoredSymbol) -> Symbol<'a> {
         // `FIRST_IS_VALUE` and `NO_VALUE` are always out of range, so they fall back to the defaults.
-        let rest = self.rest.get(symbol.rest as usize).copied();
-        let rest = rest.unwrap_or(RestOfSymbol {
-            value_declaration: if symbol.rest == NO_VALUE { u32::MAX } else { 0 },
-            exports: TableId::NONE,
-            members: TableId::NONE,
-            export_symbol: SymbolId::NONE,
-        });
+        let rest = match self.rest.get(symbol.rest as usize) {
+            // Only a symbol with a table, an export symbol or a later value declaration has one.
+            Some(&rest) => {
+                cold_path();
+                rest
+            }
+            None => RestOfSymbol {
+                value_declaration: if symbol.rest == NO_VALUE { u32::MAX } else { 0 },
+                exports: TableId::NONE,
+                members: TableId::NONE,
+                export_symbol: SymbolId::NONE,
+            },
+        };
         Symbol {
             name: symbol.name,
             flags: symbol.flags,

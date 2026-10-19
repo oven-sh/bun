@@ -3495,9 +3495,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.last_enter = EnterOutcome::Entered;
         let frame = self.frames.pop().unwrap();
         self.in_progress[frame.class as usize] -= 1;
-        if self.in_progress[frame.class as usize] != 0 && (!frame.tainted || frame.circular) {
+        if self.in_progress[frame.class as usize] != 0 {
             cold_path();
-            self.note_result(q);
+            if !frame.tainted || frame.circular {
+                self.note_result(q);
+            }
         }
         self.left_a_cycle = if self.stale_resolutions.is_empty() {
             frame.circular
@@ -3510,6 +3512,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.settle_reported(frame, q);
         }
         if frame.tainted {
+            cold_path();
             self.left_frame = Some(frame);
             return Err(Open);
         }

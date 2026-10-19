@@ -9,6 +9,7 @@ pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
 use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
@@ -278,7 +279,10 @@ impl<T> Deref for ArenaFew<'_, T> {
     #[inline]
     fn deref(&self) -> &[T] {
         match &self.0 {
-            Some(list) => list,
+            Some(list) => {
+                cold_path();
+                list
+            }
             None => &[],
         }
     }

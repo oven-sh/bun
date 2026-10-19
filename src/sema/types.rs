@@ -19,6 +19,7 @@ use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
+use std::hint::cold_path;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 /// A list that's stored once, as one exactly sized block in the arena of the thread that built it.
@@ -143,7 +144,10 @@ impl<T, const N: usize, L: std::ops::Deref<Target = [T]>> std::ops::Deref for Sh
     fn deref(&self) -> &[T] {
         match self {
             ShortList::Inline(len, items) => &items[..usize::from(*len)],
-            ShortList::Spilled(items) => items,
+            ShortList::Spilled(items) => {
+                cold_path();
+                items
+            }
         }
     }
 }
@@ -3325,6 +3329,7 @@ impl<'p, 's> Types<'p, 's> {
                 let rank = self.rank_of_type(&record.created);
                 (self.published.summaries.get(id.index())).set(summary, rank);
                 if is_unresolved_name {
+                    cold_path();
                     let has_unresolved_names = &self.published.has_unresolved_names;
                     has_unresolved_names.store(true, Ordering::Relaxed);
                 }

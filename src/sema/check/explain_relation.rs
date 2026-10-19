@@ -1034,6 +1034,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `reportRelationError`
+    #[cold]
     pub(super) fn report_relation_error(
         &mut self,
         r: &mut Relater,

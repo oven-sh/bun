@@ -458,6 +458,7 @@ impl Checker<'_, '_> {
     }
 
     /// `NewDiagnosticForNode`
+    #[cold]
     pub(super) fn new_diagnostic(
         &mut self,
         at: (FileId, u32, u32),
@@ -468,6 +469,7 @@ impl Checker<'_, '_> {
     }
 
     /// `NewDiagnosticChainForNode`
+    #[cold]
     pub(super) fn new_diagnostic_chain(
         &mut self,
         chain: Option<Reported>,
@@ -511,6 +513,7 @@ impl Checker<'_, '_> {
     }
 
     /// `grammarErrorAtPos`. Returns false without reporting if the file has parse errors.
+    #[cold]
     pub(super) fn grammar_error_at(
         &mut self,
         at: (FileId, u32, u32),

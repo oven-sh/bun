@@ -8166,6 +8166,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn reduced(&mut self, ty: TypeId) -> TypeId {
         if self.may_be_reduced(ty) {
+            cold_path();
             self.reduced_members(ty)
         } else {
             ty

@@ -107,15 +107,18 @@ impl<'p> SignatureLinks<'p> {
         let Some(index) = sig.local_number() else {
             let page = sig.0 as usize / PAGE;
             if page >= self.pages.len() {
+                cold_path();
                 self.pages.resize(page + 1, 0);
             }
             if self.pages[page] == 0 {
+                cold_path();
                 self.published.push([[0; 4]; PAGE]);
                 self.pages[page] = self.published.len() as u32;
             }
             return &mut self.published[self.pages[page] as usize - 1][sig.0 as usize % PAGE][at];
         };
         if index as usize >= self.own.len() {
+            cold_path();
             self.own.resize(index as usize + 1, [0; 4]);
         }
         &mut self.own[index as usize][at]

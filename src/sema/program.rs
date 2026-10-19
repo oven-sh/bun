@@ -37,6 +37,7 @@ use bun_paths::resolve_path::dirname;
 use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::hint::cold_path;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -7984,6 +7985,7 @@ impl<'s> Files<'s> {
     #[inline]
     pub fn canonical(&self, sym: Sym) -> Sym {
         if self.symbol(sym).flags.contains(SymFlags::MERGED) {
+            cold_path();
             return self.whole_of(sym);
         }
         sym
@@ -8054,6 +8056,7 @@ impl<'s> Files<'s> {
     pub fn export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let symbol = self.symbol(sym);
         if symbol.flags.contains(SymFlags::MERGED) {
+            cold_path();
             if let Some(table) = self.merged_exports_of(sym) {
                 return table.get(name).copied();
             }
@@ -8136,6 +8139,7 @@ impl<'s> Files<'s> {
         let symbol = self.symbol(sym);
         let index = symbol.value_declaration as usize;
         if symbol.flags.contains(SymFlags::MERGED) {
+            cold_path();
             return self.value_declaration_of_merged(sym, index);
         }
         symbol.decls.get(index).map(|&decl| (sym.file, decl))

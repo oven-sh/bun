@@ -247,6 +247,7 @@ impl Checker<'_, '_> {
     }
 
     /// `grammarErrorOnNode(node, ..)`
+    #[cold]
     fn grammar_error_on(
         &self,
         file: FileId,

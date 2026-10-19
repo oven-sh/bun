@@ -647,11 +647,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // This comes before any cache, because at the limit tsgo fails every instantiation, even a
         // type parameter's.
-        if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
-            && !self.reset_instantiation_count_if_idle()
-        {
+        if self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000 {
             cold_path();
-            return self.instantiation_too_deep();
+            if !self.reset_instantiation_count_if_idle() {
+                return self.instantiation_too_deep();
+            }
         }
         let active = self.active_mappers.find(mapper);
         if class == InstantiationClass::TypeParameter {

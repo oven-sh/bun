@@ -11,7 +11,6 @@ use super::shape::{Access, Found};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
-use std::hint::cold_path;
 use std::ops::ControlFlow;
 
 /// See `Checker::pattern_implying_contextual_type`.
@@ -466,11 +465,11 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
                 let left = self.leave(Query::Expr(file, e));
-                if let Err(open) = left
-                    && !is_uncached
-                {
+                if let Err(open) = left {
                     cold_path();
-                    self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
+                    if !is_uncached {
+                        self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
+                    }
                 }
                 (ty, left.ok().filter(|_| is_final))
             }

@@ -19,6 +19,7 @@
 
 use crate::util::{LocalVec, Placement, free_slot, is_too_full, search, slot_value, slots_for};
 use std::cell::{Cell, RefCell};
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::ops::Range;
 
@@ -296,6 +297,7 @@ pub fn spread_word(word: u64) -> u64 {
 #[inline]
 fn cell_at<C: Copy + Default>(cells: &mut Vec<C>, index: usize) -> &mut C {
     if index >= cells.len() {
+        cold_path();
         cells.resize(index + 1, C::default());
     }
     &mut cells[index]

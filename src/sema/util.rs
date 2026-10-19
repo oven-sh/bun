@@ -10,6 +10,7 @@ use memory::{Fixed, Growing, Newest, Series};
 use smallvec::{SmallVec, smallvec};
 use std::alloc::{Allocator, Global};
 use std::hash::Hasher;
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -191,7 +192,10 @@ impl<T> std::ops::Deref for List<'_, T> {
     fn deref(&self) -> &[T] {
         match self {
             List::Permanent(borrowed) => borrowed,
-            List::Own(own) => own,
+            List::Own(own) => {
+                cold_path();
+                own
+            }
             List::One(one) => std::slice::from_ref(one),
         }
     }

@@ -1,7 +1,6 @@
 use super::*;
 use crate::atom::known;
 use crate::util::number_repeated;
-use std::hint::cold_path;
 
 /// A label while the file is being bound.
 struct Label {
@@ -4570,11 +4569,27 @@ impl<'f, 's> Binder<'f, 's> {
         self.is_unchecked = was_unchecked;
     }
 
+    /// Binds `id` if it's an `Object.defineProperty` call that declares something, which only a JavaScript file has.
+    #[cold]
+    fn bind_define_property_call(&mut self, id: ExprId) {
+        if !matches!(self.f[id].kind, ExprKind::Call(_)) {
+            return;
+        }
+        match assignment_declaration_kind(self.f, id) {
+            JsDeclarationKind::ObjectDefinePropertyValue => {
+                self.expando_assignments.push((id, self.scope));
+            }
+            JsDeclarationKind::ObjectDefinePropertyExports => self.define_property_export(id),
+            _ => {}
+        }
+    }
+
     /// The first part of `expr`, which doesn't depend on flow or on the enclosing expression.
     #[inline(always)]
     fn enter_expr(&mut self, id: ExprId, parent: Parent) {
         self.b.expr_parent[id.idx()] = parent.into();
         if self.is_unchecked {
+            cold_path();
             self.b.unchecked_exprs.push(id);
         }
         match self.f[id].kind {
@@ -4651,15 +4666,8 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
-        if self.f.is_js && matches!(self.f[id].kind, ExprKind::Call(_)) {
-            cold_path();
-            match assignment_declaration_kind(self.f, id) {
-                JsDeclarationKind::ObjectDefinePropertyValue => {
-                    self.expando_assignments.push((id, self.scope));
-                }
-                JsDeclarationKind::ObjectDefinePropertyExports => self.define_property_export(id),
-                _ => {}
-            }
+        if self.f.is_js {
+            self.bind_define_property_call(id);
         }
         match self.f[id].kind {
             ExprKind::Missing

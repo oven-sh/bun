@@ -4251,7 +4251,6 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::MAYBE;
         }
         if self.is_stack_low() {
-            self.note_gave_up("the native stack in a comparison");
             r.overflow = true;
             return Ternary::FALSE;
         }

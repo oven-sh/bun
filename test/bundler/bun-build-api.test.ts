@@ -2622,15 +2622,19 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
   }
 
   test("fails the build when an in-memory entry point's directory is too long", async () => {
-    // Windows can't look up a key this long in `files`, so it looks for the directory on disk and Bun.build() rejects.
+    // Windows can't look up a key this long in `files`, so it looks for the directory on disk and Bun.build() throws.
     const message = isWindows
       ? "ENOSYS: failed to open root directory"
       : "ENAMETOOLONG: Failed to get full path for directory";
     expect(
       await run(`
         const entry = "/" + long + "/entry.js";
-        const build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false })
-          .catch(error => ({ success: false, logs: [error] }));
+        let build;
+        try {
+          build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false });
+        } catch (error) {
+          build = { success: false, logs: [error] };
+        }
         console.log(build.success, build.logs.map(log => log.message.slice(0, ${message.length})));
       `),
     ).toEqual({

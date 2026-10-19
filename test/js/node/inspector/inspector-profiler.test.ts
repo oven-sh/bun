@@ -874,12 +874,14 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(node.callFrame.scriptId).not.toBe("0");
       expect(node.callFrame.lineNumber).toBeGreaterThan(0);
       expect(node.callFrame.columnNumber).toBeGreaterThanOrEqual(0);
-      // getSamplingProfile leaves sampling on: the next profile has more samples.
+      // getSamplingProfile leaves sampling on: the next profile has newer samples. (The count can go down: the
+      // second fill replaces the first objects, and the profile drops the samples of collected objects.)
       allocateObjects(20000, holder);
       const { profile: later } = (await session.post("HeapProfiler.getSamplingProfile")) as {
         profile: SamplingProfile;
       };
-      expect(later.samples.length).toBeGreaterThan(profile.samples.length);
+      const lastOrdinal = (p: SamplingProfile) => Math.max(0, ...p.samples.map(s => s.ordinal));
+      expect(lastOrdinal(later)).toBeGreaterThan(lastOrdinal(profile));
       const { profile: last } = (await session.post("HeapProfiler.stopSampling")) as { profile: SamplingProfile };
       validate(last);
       await expect(session.post("HeapProfiler.getSamplingProfile")).rejects.toThrow(notStarted());

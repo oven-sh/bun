@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -690,6 +690,9 @@ it("process.versions", async () => {
   // Node.js exposes the bundled SQLite version here; Bun should too.
   expect(process.versions).toHaveProperty("sqlite");
   expect(process.versions.sqlite).toMatch(/^3\.\d+\.\d+$/);
+
+  // The version of TypeScript that `bun check` behaves like.
+  expect(process.versions.typescript).toMatch(/^\d+\.\d+\.\d+$/);
 });
 
 it("process.config", () => {
@@ -1413,7 +1416,7 @@ describe.concurrent(() => {
     // bmalloc scavenger) had signal-suspended a thread, it could never ack the barrier
     // and the whole process wedged at 0% CPU. The race is probabilistic, so hammer
     // seteuid under GC pressure from many processes at once and require each to exit.
-    it.skipIf(process.platform !== "linux" || process.getuid() !== 0)(
+    it.skipIf(process.platform !== "linux" || !isRoot)(
       "seteuid under GC pressure does not deadlock",
       async () => {
         using dir = tempDir("seteuid-deadlock", {
@@ -1679,6 +1682,51 @@ describe.concurrent(() => {
 
   it("process.constrainedMemory()", () => {
     expect(process.constrainedMemory() >= 0).toBe(true);
+  });
+
+  // In a mount namespace of its own, `sys` is /sys/fs/cgroup and `cgroup` is /proc/self/cgroup.
+  const inMadeUpCgroup = `
+    mount --bind "$1/sys" /sys/fs/cgroup &&
+    mount --bind "$1/cgroup" /proc/$$/cgroup &&
+    exec "$2" -e "console.log(navigator.hardwareConcurrency, process.constrainedMemory())"
+  `;
+  const unshare = ["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private"];
+  // Not in every container.
+  const canMount = () => {
+    if (!isLinux || !which("unshare")) return false;
+    using dir = tempDir("process-cgroup", { "cgroup": "", "sys/a": "" });
+    const script = inMadeUpCgroup.replace(/exec .*/, "true");
+    return spawnSync({ cmd: [...unshare, "sh", "-c", script, "sh", String(dir)] }).exitCode === 0;
+  };
+  const GiB = 1024 ** 3;
+  const v2 = group => ({
+    [`sys/${group}cpu.max`]: "100000 100000\n",
+    [`sys/${group}memory.max`]: `${GiB}\n`,
+    [`sys/${group}memory.high`]: "max\n",
+  });
+  const v1 = {
+    "sys/cpu/a/cpu.cfs_quota_us": "100000\n",
+    "sys/cpu/a/cpu.cfs_period_us": "100000\n",
+    "sys/memory/a/memory.limit_in_bytes": `${GiB}\n`,
+    "sys/memory/a/memory.soft_limit_in_bytes": "9223372036854771712\n",
+  };
+  it.skipIf(!canMount()).each([
+    ["cgroup v2", "0::/\n", v2("")],
+    ["cgroup v2, in a group", "0::/a/b\n", { ...v2("a/"), "sys/a/b/cpu.max": "max 100000\n" }],
+    ["cgroup v1", "5:cpu,cpuacct:/a\n4:memory:/a\n1:name=systemd:/a\n", v1],
+    ["cgroup v1, and cgroup v2 without controllers", "5:cpu,cpuacct:/a\n4:memory:/a\n0::/a\n", v1],
+    ["cgroup v1 with memory and cpu in one hierarchy, and cgroup v2", "3:cpu,cpuacct,memory:/a\n0::/a\n", v1],
+    // The kernel lists cgroup v1 first.
+    ["cgroup v2, and a cgroup v1 hierarchy without controllers", "1:name=systemd:/\n0::/a\n", v2("a/")],
+  ])("the limits of %s are seen", async (_, cgroup, files) => {
+    using dir = tempDir("process-cgroup", { cgroup, ...files });
+    await using proc = Bun.spawn({
+      cmd: [...unshare, "sh", "-c", inMadeUpCgroup, "sh", String(dir), bunExe()],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `1 ${GiB}\n`, stderr: "", exitCode: 0 });
   });
 
   it("process.report", () => {
@@ -2574,6 +2622,56 @@ describe.concurrent("process.exit()", () => {
       exitCode: 42,
     });
   });
+
+  it("throws a TypeError with a message when process.reallyExit is not callable", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const results = [];
+         for (const value of ["str", undefined, {}]) {
+           process.reallyExit = value;
+           try {
+             process.exit(0);
+             results.push("did not throw");
+           } catch (e) {
+             results.push({ isTypeError: e instanceof TypeError, message: e.message });
+           }
+         }
+         console.log(JSON.stringify(results));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = { isTypeError: true, message: "process.reallyExit is not a function" };
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([expected, expected, expected]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("calls process.reallyExit as a method of process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const reallyExit = process.reallyExit;
+         process.reallyExit = function (code) {
+           require("node:fs").writeSync(1, "this is process: " + (this === process) + "\\n");
+           return reallyExit.call(process, code);
+         };
+         process.exit(3);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "this is process: true\n", stderr: "", exitCode: 3 });
+  });
 });
 
 it("process.memoryUsage.arrayBuffers", () => {
@@ -2994,21 +3092,18 @@ it("_rawDebug never throws when fd 2 is closed", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows || process.getuid?.() === 0)(
-  "process.initgroups passes an unknown string user straight to initgroups(3)",
-  () => {
-    // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
-    // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
-    let err;
-    try {
-      process.initgroups("zz_no_user_zz", 0);
-    } catch (e) {
-      err = e;
-    }
-    expect(err?.code).toBe("EPERM");
-    expect(err?.syscall).toBe("initgroups");
-  },
-);
+it.skipIf(isWindows || isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
+  // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
+  // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
+  let err;
+  try {
+    process.initgroups("zz_no_user_zz", 0);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("EPERM");
+  expect(err?.syscall).toBe("initgroups");
+});
 
 it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
   // Numeric users go through getpwuid_r first, so an unknown uid surfaces

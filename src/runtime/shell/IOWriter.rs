@@ -302,10 +302,6 @@ impl IOWriter {
     /// # Safety
     /// `interp` must be null or point to the live owning `Interpreter` (which
     /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
-    // Forwards `interp` to `ParentRef::from_nullable` (shared provenance)
-    // without dereferencing it here; not_unsafe_ptr_arg_deref is a false
-    // positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
         // SAFETY: caller contract above.
@@ -589,7 +585,6 @@ impl IOWriter {
                 return &[];
             }
             if s.writers[s.writer_idx].is_dead() {
-                let _ = s;
                 self.skip_dead();
             }
         }
@@ -1093,8 +1088,8 @@ bun_io::impl_buffered_writer_parent! {
     uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop,
     // INVARIANT: `this` is `Arc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Arc ptr is UB.
-    ref_       = |this| std::sync::Arc::increment_strong_count(this as *const Self),
-    deref      = |this| std::sync::Arc::decrement_strong_count(this as *const Self),
+    ref_       = |this| std::sync::Arc::increment_strong_count(this.cast_const()),
+    deref      = |this| std::sync::Arc::decrement_strong_count(this.cast_const()),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1228,7 +1223,6 @@ pub(crate) fn on_io_writer_chunk(
         // lives outside the NodeId arena (heap-allocated PipeReader), so it
         // is carried in `child.raw` instead of `child.node`.
         WriterTag::Subproc => {
-            let _ = interp;
             debug_assert!(!child.raw.is_null());
             // SAFETY: `raw` was set from `&mut CapturedWriter` in
             // `CapturedWriter::do_write`; the PipeReader (and the embedded

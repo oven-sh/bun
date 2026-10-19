@@ -1,8 +1,6 @@
 #![allow(non_snake_case)]
-#![allow(non_camel_case_types, non_upper_case_globals)]
-#![allow(static_mut_refs, private_interfaces, private_bounds)]
+#![allow(non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![allow(incomplete_features)]
 #![feature(adt_const_params)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
@@ -376,6 +374,16 @@ pub mod fs {
             join_abs_string::<platform::Loose>(self.top_level_dir, parts)
         }
 
+        /// `ENAMETOOLONG` on overflow.
+        pub(crate) fn abs_checked(
+            &self,
+            parts: &[&[u8]],
+        ) -> core::result::Result<&[u8], bun_errno::SystemErrno> {
+            use bun_paths::resolve_path::{join_abs_string_checked, platform};
+            join_abs_string_checked::<platform::Loose>(self.top_level_dir, parts)
+                .ok_or(bun_errno::SystemErrno::ENAMETOOLONG)
+        }
+
         /// Like `abs`, but interns the joined path into `DirnameStore` and
         /// returns the `'static` copy.
         pub(crate) fn abs_alloc(
@@ -431,14 +439,6 @@ pub mod fs {
             } else {
                 d
             }
-        }
-
-        /// Normalizes `str` in the shared scratch space, returning the input
-        /// unchanged when already normalized.
-        #[inline]
-        pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
-            use bun_paths::resolve_path::{normalize_string, platform};
-            normalize_string::<true, platform::Auto>(str)
         }
 
         /// The process-global directory-name interning store.
@@ -752,147 +752,6 @@ pub mod fs {
             // the escaped reference.
             unsafe { &mut *slot.as_mut_ptr() }
         })
-    }
-
-    // ── RealFS.Tmpfile ───────────────────────────────────────────────────
-    /// Temporary-file helper. The POSIX impl opens at cwd; the Windows impl
-    /// only needs the temp-dir path, which routes via `tmpdir_path`.
-    pub struct RealFsTmpfile {
-        pub fd: bun_sys::Fd,
-        #[cfg(not(windows))]
-        pub(crate) dir_fd: bun_sys::Fd,
-        #[cfg(windows)]
-        pub(crate) existing_path: Box<[u8]>,
-    }
-    impl Default for RealFsTmpfile {
-        fn default() -> Self {
-            Self {
-                fd: bun_sys::Fd::INVALID,
-                #[cfg(not(windows))]
-                dir_fd: bun_sys::Fd::INVALID,
-                #[cfg(windows)]
-                existing_path: Box::default(),
-            }
-        }
-    }
-    impl RealFsTmpfile {
-        #[inline]
-        pub fn file(&self) -> &bun_sys::File {
-            bun_sys::File::borrow(&self.fd)
-        }
-
-        pub(crate) fn close(&mut self) {
-            if self.fd.is_valid() {
-                let _ = bun_sys::close(self.fd);
-                self.fd = bun_sys::Fd::INVALID;
-            }
-        }
-
-        /// POSIX path opens at cwd; Windows opens under the
-        /// process temp dir.
-        pub fn create(&mut self, name: &ZStr) -> crate::CrateResult<()> {
-            #[cfg(not(windows))]
-            {
-                // We originally used a temporary directory, but it caused EXDEV.
-                let dir_fd = bun_sys::Fd::cwd();
-                self.dir_fd = dir_fd;
-                let flags = bun_sys::O::CREAT | bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
-                // S_IRWXU == 0o700
-                self.fd = bun_sys::openat(dir_fd, name, flags, 0o700)?;
-                Ok(())
-            }
-            #[cfg(windows)]
-            {
-                // Open the temp dir iterable + read-only, with delete/rename
-                // sharing denied. The temp dir path honours BUN_TMPDIR only
-                // when it is non-empty (an empty env var falls through to the
-                // platform temp dir).
-                let tmp = RealFS::tmpdir_path();
-                let tmp_dir = bun_sys::open_dir_at_windows_a(
-                    bun_sys::Fd::INVALID,
-                    tmp,
-                    bun_sys::WindowsOpenDirOptions {
-                        iterable: true,
-                        can_rename_or_delete: false,
-                        ..Default::default()
-                    },
-                )?;
-                // Spec's `TmpfileWindows` has no `dir_fd` field — the handle is
-                // local. Close it once we've captured the absolute path so we
-                // don't leak a directory HANDLE per tmpfile.
-                scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
-                let flags = bun_sys::O::CREAT
-                    | bun_sys::O::WRONLY
-                    | bun_sys::O::TRUNC
-                    | bun_sys::O::CLOEXEC;
-                self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
-                self.existing_path = Box::<[u8]>::from(&*existing_path);
-                Ok(())
-            }
-        }
-
-        /// Renames the temp file from `from_name` to `name` relative to the
-        /// current working directory.
-        pub fn promote_to_cwd(&mut self, from_name: &ZStr, name: &ZStr) -> crate::CrateResult<()> {
-            #[cfg(not(windows))]
-            {
-                debug_assert!(self.fd != bun_sys::Fd::INVALID);
-                debug_assert!(self.dir_fd != bun_sys::Fd::INVALID);
-                bun_sys::move_file_z_with_handle(
-                    self.fd,
-                    self.dir_fd,
-                    from_name,
-                    bun_sys::Fd::cwd(),
-                    name,
-                )?;
-                self.close();
-                Ok(())
-            }
-            #[cfg(windows)]
-            {
-                use bun_sys::windows as w;
-                let _ = from_name;
-                let mut existing_buf = bun_paths::w_path_buffer_pool::get();
-                let mut new_buf = bun_paths::w_path_buffer_pool::get();
-                self.close();
-                let existing = bun_paths::strings::paths::to_extended_path_normalized(
-                    &mut new_buf.0[..],
-                    &self.existing_path,
-                );
-                let new = if bun_paths::is_absolute_windows(name.as_bytes()) {
-                    bun_paths::strings::paths::to_extended_path_normalized(
-                        &mut existing_buf.0[..],
-                        name.as_bytes(),
-                    )
-                } else {
-                    bun_paths::strings::paths::to_w_path_normalized(
-                        &mut existing_buf.0[..],
-                        name.as_bytes(),
-                    )
-                };
-                // SAFETY: `existing`/`new` are NUL-terminated WTF-16 backed by
-                // stack `WPathBuffer`s alive for this frame.
-                if unsafe {
-                    w::kernel32::MoveFileExW(
-                        existing.as_ptr(),
-                        new.as_ptr(),
-                        w::MOVEFILE_COPY_ALLOWED
-                            | w::MOVEFILE_REPLACE_EXISTING
-                            | w::MOVEFILE_WRITE_THROUGH,
-                    )
-                } == w::FALSE
-                {
-                    return Err(bun_sys::Error::from_win32(
-                        w::Win32Error::get(),
-                        bun_sys::Tag::rename,
-                    )
-                    .into());
-                }
-                Ok(())
-            }
-        }
     }
 
     // Modeled as
@@ -1452,14 +1311,11 @@ pub mod fs {
                         core::ptr::null_mut(),
                     )
                 };
-                // Dangling link / loop / EACCES: `cache.kind` is already set
-                // from the link's own directory bit, which is correct for all
-                // of those. `Entry.kind`/`Entry.symlink` swallow errors and
-                // fall back to the `.file` placeholder anyway, so returning
-                // the half-populated cache is strictly better than `try`.
-                // Empty `cache.symlink` makes the resolver fall back to
-                // `parent.abs_real_path + base`.
                 if handle == w::INVALID_HANDLE_VALUE {
+                    if is_dangling_link_error(w::last_system_errno().to_e()) {
+                        cache.kind = EntryKind::Dangling;
+                    }
+                    // anything else keeps the kind from the link's own directory bit
                     return Ok(cache);
                 }
                 scopeguard::defer! {
@@ -1495,14 +1351,15 @@ pub mod fs {
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
-                    let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
-                        valid
+                    let opened: bun_sys::Maybe<Fd> = if let Some(valid) = existing_fd.unwrap_valid()
+                    {
+                        Ok(valid)
                     } else if store_fd {
                         bun_sys::open_file_absolute_z(
                             absolute_path_c,
                             bun_sys::OpenFlags::READ_ONLY,
-                        )?
-                        .into_raw()
+                        )
+                        .map(bun_sys::File::into_raw)
                     } else {
                         // O_PATH is
                         // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -1510,7 +1367,15 @@ pub mod fs {
                         let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
                         #[cfg(not(any(target_os = "linux", target_os = "android")))]
                         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                        bun_sys::open(absolute_path_c, flags, 0)?
+                        bun_sys::open(absolute_path_c, flags, 0)
+                    };
+                    let file: Fd = match opened {
+                        Ok(file) => file,
+                        Err(err) if is_dangling_link_error(err.get_errno()) => {
+                            cache.kind = EntryKind::Dangling;
+                            return Ok(cache);
+                        }
+                        Err(err) => return Err(err.into()),
                     };
                     FileSystem::set_max_fd(file.native());
 
@@ -1550,6 +1415,15 @@ pub mod fs {
         }
     }
 
+    /// Returns true for the errors that `stat()` returns for a dangling symlink or a symlink loop.
+    /// Other errors surface when the entry is read.
+    fn is_dangling_link_error(errno: bun_sys::E) -> bool {
+        matches!(
+            errno,
+            bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ELOOP
+        )
+    }
+
     impl crate::fs_full::EntryKindResolver for RealFS {
         #[inline(always)]
         fn resolve_kind(
@@ -1567,7 +1441,7 @@ pub mod fs {
         /// Whether cached file descriptors should be closed eagerly instead
         /// of kept open (fd budget exceeded or fd-storing disabled).
         #[inline]
-        pub(crate) fn need_to_close_files(&self) -> bool {
+        pub fn need_to_close_files(&self) -> bool {
             if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
                 return true;
             }
@@ -1926,6 +1800,8 @@ pub mod dir_entry_accessor {
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
+                    // The walker gets to apply its own broken-symlink handling.
+                    EntryKind::Dangling => bun_sys::FileKind::SymLink,
                 };
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.

@@ -5,12 +5,13 @@ import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import http from "node:http";
 import http2 from "node:http2";
 import { builtinModules } from "node:module";
 import { PerformanceObserver } from "node:perf_hooks";
 import { join } from "path";
+import { WebSocketServer } from "ws";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -28,7 +29,7 @@ type State = {
   tag: string;
   ticks: number;
   port: any;
-  pid: number;
+  pid: number | undefined;
   settled: string | undefined;
   heard: string[];
   file: string;
@@ -89,7 +90,6 @@ const dir = String(
       import fs from "node:fs";
       import { PerformanceObserver } from "node:perf_hooks";
       import { DatabaseSync } from "node:sqlite";
-      // (No node:sqlite statement: its close() leaves the file open until they are collected, dispose() or not.)
       // Files held open inside \`dir\`, each by an object that would have to be closed or collected to let go.
       export const keepsFilesOpen = async dir => {
         const db = new Database(dir + "/bun.sqlite");
@@ -485,16 +485,21 @@ const dir = String(
         const server = graph.run(() => app.serve());
         // A request for a page starts its build, which holds a pending request on the server until it is
         // done. That is a later turn's business: the build seen here is still going when dispose() runs.
+        // (All of them can be done before a turn here sees one. Such a server shows nothing.)
+        const answered = new Set();
         for (const path of app.paths)
-          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() {}, close() {}, error() {} } }).catch(() => {});
-        await until(() => server.pendingRequests >= 1);
+          Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { open: socket => void socket.write("GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"), data() { answered.add(path); }, close() {}, error() {} } }).catch(() => {});
+        await until(() => server.pendingRequests >= 1 || answered.size === app.paths.length);
+        const building = server.pendingRequests >= 1;
         graph.dispose();
+        if (!building) console.error("every build was done before a turn saw one");
+        return building;
       };
       // (One first, so the class's own cells are there before counting.)
       await use();
       let none;
       await until(() => { const before = none; return (none = servers()) === before; });
-      for (let i = 0; i < 3; i++) await use();
+      for (let i = 0; i < 3; ) if (await use()) i++;
       // (No more than before, not as many: the first one may have outlived that reading.)
       let turns = 0;
       await until(() => servers() <= none || ++turns === 2000);
@@ -1086,6 +1091,9 @@ const dir = String(
     `,
     "response-bodies-of-disposed-graphs.mjs": `
       import { heapStats } from "bun:jsc";
+      const protectedPromises = () => heapStats().protectedObjectTypeCounts.Promise ?? 0;
+      // What the process holds by itself, like the promise of this entry point.
+      const before = protectedPromises();
       // A body that never ends: a chunk per pull, the next one when the host says so.
       let release = () => {};
       const server = Bun.serve({ port: 0, fetch: request => new URL(request.url).pathname === "/turn" ? new Response("turn") : new Response(new ReadableStream({ async pull(controller) { controller.enqueue(new Uint8Array(1024)); await new Promise(resolve => (release = resolve)); } })) });
@@ -1109,7 +1117,7 @@ const dir = String(
       }
       await hostTurn();
       Bun.gc(true);
-      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: heapStats().protectedObjectTypeCounts.Promise ?? 0 }));
+      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: protectedPromises() - before }));
       process.exit(0);
     `,
     "errors-of-a-graph-made-by-a-graph.mjs": `
@@ -1952,7 +1960,7 @@ async function greetsThrough(options: object, tag: string): Promise<boolean> {
         close: () => resolve(false),
         error: () => resolve(false),
       },
-    } as Parameters<typeof Bun.connect>[0]);
+    } as unknown as Parameters<typeof Bun.connect>[0]);
   } catch {
     return false;
   }
@@ -2055,7 +2063,7 @@ let hostMysql: Bun.TCPSocketListener<{ tag?: string }>;
 let hostKeepAlive: Bun.TCPSocketListener<{ tag?: string }>;
 let hostUnix: Bun.UnixSocketListener<{ tag?: string }>;
 let hostHttp2: http2.Http2Server;
-let hostHttp: Bun.Server;
+let hostHttp: Bun.Server<{ tag: string }>;
 beforeAll(async () => {
   hostTcp = Bun.listen<{ tag?: string }>({ hostname: "127.0.0.1", port: 0, socket: tracksTags("tcp:") });
   hostTls = Bun.listen<{ tag?: string }>({
@@ -2167,7 +2175,7 @@ const kinds: Record<string, Kind> = {
     args: () => [bunExe()],
     alive: async state => {
       try {
-        process.kill(state.pid, 0);
+        process.kill(state.pid!, 0);
         return true;
       } catch {
         return false;
@@ -2246,7 +2254,7 @@ const kinds: Record<string, Kind> = {
     args: () => [bunExe()],
     alive: async state => {
       try {
-        process.kill(state.pid, 0);
+        process.kill(state.pid!, 0);
         return true;
       } catch {
         return false;
@@ -2479,7 +2487,7 @@ test("ModuleGraph isolation: a Bun.SQL query of a disposed graph reports nothing
 
 test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQL fails instead of waiting for ever", async () => {
   // Servers that let a client in and answer nothing afterwards.
-  using postgres = Bun.listen({
+  using postgres = Bun.listen<boolean | undefined>({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
@@ -2749,7 +2757,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       let buffered = Buffer.alloc(0);
       socket.once("data", () => {
         socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-        socket.on("data", data => {
+        socket.on("data", (data: Buffer) => {
           buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
             if (type === 0x51 /* Query */)
               socket.write(Buffer.concat([pgCommandComplete("LISTEN"), pgReadyForQuery()]));
@@ -2827,6 +2835,54 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       await until(() => entries > afterTheGraph);
     } finally {
       observer.disconnect();
+    }
+  });
+
+  test("`ws` connections upgraded on the host's http.Server belong to the host, even when a graph called handleUpgrade() first", async () => {
+    const graph = new ModuleGraph();
+    const wss = new WebSocketServer({ noServer: true });
+    const server = http.createServer();
+    const clients: WebSocket[] = [];
+    try {
+      const messageGraphs: (Graph | undefined)[] = [];
+      const accept = (...connection: Parameters<typeof wss.handleUpgrade> extends [...infer C, unknown] ? C : never) =>
+        wss.handleUpgrade(...connection, ws =>
+          ws.on("message", data => {
+            messageGraphs.push(ModuleGraph.current);
+            ws.send(String(data));
+          }),
+        );
+      server.on("upgrade", (request, socket, head) =>
+        request.url === "/graph" ? graph.run(accept, request, socket, head) : accept(request, socket, head),
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const connect = async (path: string) => {
+        const client = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}${path}`);
+        clients.push(client);
+        await new Promise((resolve, reject) => Object.assign(client, { onopen: resolve, onerror: reject }));
+        return client;
+      };
+      const echo = (client: WebSocket, text: string) =>
+        new Promise(resolve => {
+          client.onmessage = event => resolve(event.data);
+          client.send(text);
+        });
+
+      const graphClient = await connect("/graph");
+      const hostClient = await connect("/host");
+      expect([await echo(graphClient, "1"), await echo(hostClient, "2")]).toEqual(["1", "2"]);
+      expect(messageGraphs).toEqual([undefined, undefined]);
+
+      graph.dispose();
+      expect([
+        await echo(graphClient, "3"),
+        await echo(hostClient, "4"),
+        await echo(await connect("/host"), "5"),
+      ]).toEqual(["3", "4", "5"]);
+    } finally {
+      for (const client of clients) client.terminate();
+      server.close();
+      graph.dispose();
     }
   });
 });
@@ -3085,7 +3141,7 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     using made = await newGraph();
     const { graph, app } = made;
     const state = newState("held");
-    const server: Bun.Server = graph.run(() =>
+    const server: Bun.Server<undefined> = graph.run(() =>
       app.call(() => Bun.serve({ port: 0, fetch: () => new Response("held") })),
     );
     await graph.run(() =>

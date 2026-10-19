@@ -195,21 +195,16 @@ public:
         m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
-            // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
-            // One pass, no branching. Commands are typically <512B.
-            Latin1Character acc = 0;
-            for (auto c : s)
-                acc |= c;
-            if (!(acc & 0x80)) [[likely]] {
+            if (charactersAreAllASCII(s)) [[likely]] {
                 sink(reinterpret_cast<const char*>(s.data()), s.size());
                 sink("\0", 1);
                 return;
             }
         }
-        // Non-ASCII path: transcode. The CString has its own NUL terminator
-        // at data()[length()], so length()+1 covers the frame delimiter.
+        // Non-ASCII path: transcode. The NUL terminator is the frame delimiter.
         auto utf8 = m_sb.toString().utf8();
-        sink(utf8.data(), utf8.length() + 1);
+        auto bytes = byteCast<char>(utf8.spanIncludingNullTerminator());
+        sink(bytes.data(), bytes.size());
     }
 
 private:

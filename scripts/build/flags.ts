@@ -817,6 +817,16 @@ export const defines: Flag[] = [
     desc: "Compile usockets bsd_* syscall fault-injection hooks (runtime-armed via bun:internal-for-testing)",
   },
   {
+    flag: "BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1",
+    when: c => !c.codeGenerationFromStrings,
+    desc: "--disallow-code-generation-from-strings=strict as a compile-time constant",
+  },
+  {
+    flag: "BUN_DISABLE_WEBASSEMBLY=1",
+    when: c => !c.webAssembly,
+    desc: "No WebAssembly global: JSC's useWasm option is always false",
+  },
+  {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
     flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
     when: c => c.debug && !c.ci,
@@ -1484,19 +1494,11 @@ export const linkerFlags: Flag[] = [
     desc: "FreeBSD linker tuning (same as Linux ELF; here -z stack-size also sizes the main thread's stack)",
   },
   {
-    // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for
-    // the lld they bundle as `rust-lld`, so this flag hard-fails there:
-    //   `rust-lld: error: --compress-debug-sections: LLVM was not built with
-    //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
-    // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
-    // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
-    // that case the link-time flag is dropped and llvm-objcopy compresses
-    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
-    // uncompressed bun-profile is ~2x larger and every `--compile` test
+    // An uncompressed bun-profile is ~2x larger and every `--compile` test
     // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (post-link via llvm-objcopy with rust-lld — built without zlib)",
+    when: c => c.linux || c.freebsd,
+    desc: "Compress ELF debug sections",
   },
   {
     flag: "-Wl,--gc-sections",

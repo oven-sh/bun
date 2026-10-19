@@ -39,15 +39,15 @@ test("stream should not leak when creating a stream contained in another request
     const stream = new ReadableStream({
       async pull(controller) {
         await 42;
-        controller.stream = req1;
-        controller.stream2 = req2;
+        (controller as any).stream = req1;
+        (controller as any).stream2 = req2;
       },
     });
     req1 = new Request("http://localhost:1337", { method: "POST", body: stream });
     req2 = new Request("http://localhost:1337", { method: "POST", body: req1.body });
     // @ts-ignore
     stream.req2 = req2;
-    stream.req = req1;
+    (stream as any).req = req1;
   }
   for (let i = 0; i < iterations; i++) {
     leak();

@@ -1,0 +1,7 @@
+import { type /* comment */ as as } from "a";
+import { type as /* comment */ as } from "a";
+import { type as /* comment */ as as } from "a";
+import { type /* comment */ as as as } from "a";
+import { type as as /* comment */ as } from "a";
+export { type /* comment */ as as };
+export { type as /* comment */ as as };

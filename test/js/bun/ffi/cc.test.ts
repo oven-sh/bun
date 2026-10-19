@@ -139,6 +139,37 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
+// cc() wraps a symbol that returns a cstring in a closure, not in script made from a string.
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {
+  for (const flag of ["--disallow-code-generation-from-strings", "--disallow-code-generation-from-strings=strict"]) {
+    it(`is called with ${flag}`, async () => {
+      using dir = tempDir("bun-ffi-cc-cstring", {
+        "hello.c": /* c */ `const char* hello(int n) { return n ? "hello from c" : 0; }`,
+        "index.js": /* js */ `
+          const { cc } = require("bun:ffi");
+          const { symbols, close } = cc({
+            source: require("path").join(__dirname, "hello.c"),
+            symbols: { hello: { args: ["int"], returns: "cstring" } },
+          });
+          console.log(JSON.stringify([String(symbols.hello(1)), symbols.hello(0), typeof symbols.hello.native]));
+          close();
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual(["hello from c", null, "function"]);
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 describe.skip("given a ping(cstr) function", () => {
   const library = makeValidCase(
     "ping",
@@ -188,11 +219,10 @@ describe.skip("given a strlen(cstring) function", () => {
     const arr = new Uint8Array(buf);
     const cstr = new CString(ptr(arr));
 
-    expect(library.symbols.strlen(cstr)).toBe(5);
+    expect<number | bigint>(library.symbols.strlen(cstr)).toBe(5);
   });
 
   it("given a JSString, throws", () => {
-    // @ts-expect-error
     expect(() => library.symbols.strlen("hello")).toThrow(TypeError);
   });
 }); // </given a strlen(cstring) function>

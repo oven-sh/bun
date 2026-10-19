@@ -404,9 +404,11 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY moved
         /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
+        #[derive(Clone)]
         pub enum BuiltInModule {
-            Import(Box<[u8]>),
-            Code(Box<[u8]>),
+            Import(std::borrow::Cow<'static, [u8]>),
+            /// `Cow::Borrowed` is one of Bun's embedded sources.
+            Code(std::borrow::Cow<'static, [u8]>),
         }
 
         /// `EntryPointList` flags.
@@ -459,7 +461,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::framework_router` reads it.
+        /// stays in T6 because only `bake::router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -475,7 +477,7 @@ pub mod bv2_impl {
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
-            /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
+            /// `bun_runtime::bake::Framework::as_bundler_view`; the
             /// runtime owns the canonical `bake.Framework` and projects the
             /// fields the bundler reads.
             pub fn new(
@@ -600,7 +602,7 @@ pub mod bv2_impl {
             use super::Side;
 
             /// `OpaqueFileId` is the insertion index into `EntryPointMap.files`.
-            /// This is the same newtype as `framework_router::OpaqueFileId`; the
+            /// This is the same newtype as `router::OpaqueFileId`; the
             /// bake crate re-exports that one and converts via `.get()` only at
             /// the FFI boundary.
             #[repr(transparent)]
@@ -2509,6 +2511,75 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
+        /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
+        /// each file is in the graph.
+        fn type_check(&self) -> Result<(), Error> {
+            let Some(type_check) = self.transpiler.options.type_check else {
+                return Ok(());
+            };
+            let sources = self.graph.input_files.items_source();
+            let loaders = self.graph.input_files.items_loader();
+            let import_records = self.graph.ast.items_import_records();
+            let flags = self.graph.input_files.items_flags();
+            let is_loaded_by_plugin = |index: usize| {
+                flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+            };
+            // What cannot be named stands for what it imports: a page, and what only a plugin can
+            // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
+            // which is not of the project.
+            let mut named: Vec<usize> = Vec::new();
+            let mut is_named = vec![false; sources.len()];
+            // A page that a server imports is in the graph like one that is an entry point.
+            let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
+            let entry_points = self.graph.entry_points.iter();
+            let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
+                .chain(pages)
+                .collect();
+            pending.reverse();
+            while let Some(index) = pending.pop() {
+                if std::mem::replace(&mut is_named[index], true) {
+                    continue;
+                }
+                named.push(index);
+                if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
+                    let records = import_records[index].as_slice().iter().rev();
+                    pending.extend(
+                        (records.map(|record| record.source_index))
+                            .filter(|imported| imported.is_valid())
+                            .map(|imported| imported.get() as usize)
+                            .filter(|&imported| !sources[imported].path.is_node_module()),
+                    );
+                }
+            }
+            let mut entry_points = (named.iter().copied())
+                .filter(|&index| {
+                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                })
+                .map(|index| sources[index].path.text);
+            // The types are those of what is written, as in `bun check`, not of what a plugin makes
+            // of it. What only a plugin provides is written nowhere else.
+            let mut sources = (sources.iter().zip(loaders).zip(flags))
+                .filter(|((source, loader), flags)| {
+                    loader.is_javascript_like_or_json()
+                        && source.path.is_file()
+                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                            && bun_sys::exists(source.path.text))
+                })
+                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+            let checked = options::TypeChecked {
+                cwd: self.transpiler.fs().top_level_dir,
+                tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
+                conditions: &self.transpiler.options.custom_conditions,
+                loaders: &self.transpiler.options.loaders,
+                entry_points: &mut entry_points,
+                sources: &mut sources,
+            };
+            if type_check(checked, self.transpiler.log_mut()) {
+                return Ok(());
+            }
+            Err(crate::Error::BuildFailed)
+        }
+
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
@@ -3086,7 +3157,7 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             // intern via `dupe_alloc` BEFORE writing back into `result` /
             // the path-to-source-index map. The dev-server path builds a fresh
-            // `bake_types::EntryPointList` with `Box<[u8]>` keys (DevServer.rs:3027)
+            // `bake_types::EntryPointList` with `Box<[u8]>` keys (bake/dev_server/bundle.rs)
             // that drops as soon as `enqueue_entry_points_dev_server` returns;
             // `resolve_with_framework` then lifetime-erases that key into the
             // returned `Path`, so without interning here `ParseTask.path.text` (and
@@ -3414,7 +3485,6 @@ pub mod bv2_impl {
         /// callers are done); each call returns a fresh disjoint slot, so the
         /// resulting `&mut T` is unique.
         #[inline]
-        #[allow(clippy::mut_from_ref)]
         fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
             // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
             unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
@@ -4284,25 +4354,48 @@ pub mod bv2_impl {
 
             let import_records = self.graph.ast.items_import_records();
 
+            // Check for either node or bun builtins
+            // We don't use the list from .bun because that includes third-party packages in some cases.
+            let is_builtin = |specifier: &[u8]| {
+                bun_resolve_builtins::HardcodedModule::Alias::has(
+                    specifier,
+                    Target::Node,
+                    Default::default(),
+                ) || specifier.starts_with(b"bun:")
+                    || specifier == b"bun"
+            };
+
+            let sources = self.graph.input_files.items_source();
+
             for source_index in reachable_files {
                 let records: &[ImportRecord] =
                     import_records[source_index.get() as usize].as_slice();
+                // A package may import itself by name, which is not a dependency to install. The
+                // resolver already read this directory while bundling, so this is a cache hit.
+                let own_name: &[u8] = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(
+                        sources[source_index.get() as usize].path.source_dir(),
+                    )
+                    .and_then(|dir| dir.enclosing_package_json)
+                    .map_or(&b""[..], |package_json| &*package_json.name);
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
                     {
-                        let path = &record.path.text;
-                        // External dependency
-                        if !path.is_empty()
-                        // Check for either node or bun builtins
-                        // We don't use the list from .bun because that includes third-party packages in some cases.
-                        && !bun_resolve_builtins::HardcodedModule::Alias::has(path, Target::Node, Default::default())
-                        && !path.starts_with(b"bun:")
-                        && path != b"bun"
+                        let path: &[u8] = record.path.text;
+                        // Record the package name only: `lodash/debounce` is part of `lodash`.
+                        if let Some(name) = bun_resolver::package_json::Package::parse_name(path)
+                            && name != own_name
+                            && !is_builtin(path)
+                            && !is_builtin(name)
+                            // An npm scope is never empty, so `@/x` can only be a tsconfig `paths`
+                            // alias that matched nothing.
+                            && !name.starts_with(b"@/")
+                            && strings::is_npm_package_name_ignore_length(name)
                         {
-                            if strings::is_npm_package_name_ignore_length(path) {
-                                external_deps.insert(path)?;
-                            }
+                            external_deps.insert(name)?;
                         }
                     }
                 }
@@ -4362,6 +4455,7 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
+                this.type_check()?;
 
                 this.scan_for_secondary_paths();
 
@@ -4952,6 +5046,8 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
+                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
+                        .insert(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN);
                     // For copied assets keep the bytes Owned in `source.contents`
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything
@@ -5419,8 +5515,14 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // A build that stops between `compute_data_for_source_map` and the waits in
+            // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
+            // creating `Worker`s and reading `graph`.
+            self.linker.source_maps.line_offset_wait_group.wait();
+            self.linker.source_maps.quoted_contents_wait_group.wait();
+
             {
-                // We do this first to make it harder for any dangling pointers to data to be used in there.
+                // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);
                 for finalizer in &on_parse_finalizers {
                     finalizer.call();
@@ -5554,6 +5656,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
+            self.type_check()?;
 
             self.scan_for_secondary_paths();
 
@@ -6539,7 +6642,10 @@ pub mod bv2_impl {
                 }
 
                 if let Some(fw) = &self.framework {
-                    if fw.server_components.is_some() {
+                    // In the dev server, the HMR runtime provides `bun:bake/client` and
+                    // `bun:bake/server` to every framework. A production build has their data only
+                    // with server components.
+                    if fw.server_components.is_some() || self.dev_server.is_some() {
                         let is_server = ctx.target.is_server_side();
                         let src = if is_server {
                             &bake::SERVER_VIRTUAL_SOURCE

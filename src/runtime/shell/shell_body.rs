@@ -1,6 +1,6 @@
 //! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
 
-#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
+#![allow(clippy::too_many_arguments)]
 
 use core::fmt;
 use std::io::Write as _;

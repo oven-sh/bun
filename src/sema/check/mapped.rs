@@ -285,8 +285,42 @@ impl<'p, 's> Checker<'p, 's> {
         if mapped.name_ty.is_none() {
             return false;
         }
+        let known = self.task_facts.get(ty);
+        if known & task_fact::KNOWS_GENERIC_NAME != 0
+            && self.index_infos_in_instantiation.is_empty()
+            && self.instantiation_depth < 100
+            && self.instantiation_count < 5_000_000
+        {
+            self.instantiation_count += u32::from(known & task_fact::HAS_OPEN_NAME != 0);
+            return known & task_fact::HAS_GENERIC_NAME != 0;
+        }
+        let constraint_type = links::MappedPart::ConstraintType as usize;
+        let ((facts, _), stored) = self.derive_settled(
+            |c| c.derive_has_generic_name(ty, (file, node, mapper), constraint),
+            |c, &(_, stays)| {
+                stays
+                    && c.is_type_node_settled(file, mapped.name_ty)
+                    && c.kept_part::<TypeId>(ty, links::Kind::Mapped, constraint_type)
+                        .is_some()
+            },
+        );
+        if stored.is_some() {
+            self.task_facts
+                .add(ty, facts | task_fact::KNOWS_GENERIC_NAME);
+        }
+        facts & task_fact::HAS_GENERIC_NAME != 0
+    }
+
+    /// Returns `HAS_GENERIC_NAME` and `HAS_OPEN_NAME` for the mapped type `ty`, and whether nothing in progress has a part
+    /// in the answer. `constraint`: `mapped_keys(ty)`.
+    fn derive_has_generic_name(
+        &mut self,
+        ty: TypeId,
+        (file, node, mapper): (FileId, TypeNodeId, MapperId),
+        constraint: TypeId,
+    ) -> (u32, bool) {
         let declared = self.declared_name_type_of_mapped(file, node);
-        let param = self.type_param(file, mapped.param);
+        let param = self.type_param(file, self.mapped_decl(file, node).param);
         let with_keys = self.mapper_with_pair(mapper, param, constraint);
         // The name may contain `ty`: `{ [K in keyof C as C[K] & string]: 1 }` as a member of
         // `C`. `isGenericMappedType` has no guard and caches nothing. Every level
@@ -296,11 +330,12 @@ impl<'p, 's> Checker<'p, 's> {
         // After that the unions and intersections in the name have
         // `ObjectFlagsIsGenericTypeComputed`.
         if self.generic_mapped_types_cut_short.contains(&ty) {
-            return false;
+            return (0, false);
         }
         // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type of the one declaration.
         let is_in_progress = (self.generic_mapped_types_in_progress).contains(&(file, node));
         self.generic_mapped_types_in_progress.push((file, node));
+        let stays = !is_in_progress && self.is_mapper_idle(with_keys);
         let name = if is_in_progress && self.is_half_of_stack_in_use() {
             self.generic_mapped_types_cut_short.push(ty);
             self.instantiation_count = 5_000_000;
@@ -310,7 +345,15 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_generic = self.is_generic_index_type(name);
         self.generic_mapped_types_in_progress.pop();
-        is_generic
+        let is_open = self.types().instantiation_class(declared) != InstantiationClass::Unchanged;
+        let facts = match is_generic {
+            true => task_fact::HAS_GENERIC_NAME,
+            false => 0,
+        } | match is_open {
+            true => task_fact::HAS_OPEN_NAME,
+            false => 0,
+        };
+        (facts, stays)
     }
 
     // ───────────────────────────── keyof ─────────────────────────────

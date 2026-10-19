@@ -212,7 +212,6 @@ struct Outer<'a> {
     context: u32,
     lists: u32,
     errors_at: (u32, u32),
-    unclaimed_nullable_types: u32,
     last_nullable_type: (TypeNodeId, u32),
     parameter_question_pos: u32,
     has_top_level_await: bool,
@@ -810,7 +809,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             context: self.context,
             lists: self.lists,
             errors_at: self.errors_at,
-            unclaimed_nullable_types: self.unclaimed_nullable_types,
             last_nullable_type: self.last_nullable_type,
             parameter_question_pos: self.parameter_question_pos,
             has_top_level_await: self.has_top_level_await,
@@ -833,10 +831,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// The second half of `parseJSDocComment`, without the diagnostics.
     fn leave_comment(&mut self, outer: Outer<'a>) {
-        // Never true, because nothing increments `unclaimed_nullable_types`.
-        if self.unclaimed_nullable_types > outer.unclaimed_nullable_types {
-            self.reject(Rejection::Reported);
-        }
         self.lx.skips_jsdoc_asterisks = false;
         self.lx.set_src(outer.src);
         self.lx.reset(outer.mark);
@@ -847,7 +841,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.context = outer.context;
         self.lists = outer.lists;
         self.errors_at = outer.errors_at;
-        self.unclaimed_nullable_types = outer.unclaimed_nullable_types;
         self.last_nullable_type = outer.last_nullable_type;
         self.parameter_question_pos = outer.parameter_question_pos;
         self.has_top_level_await = outer.has_top_level_await;

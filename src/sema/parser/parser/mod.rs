@@ -173,7 +173,6 @@ pub(crate) struct Checkpoint {
     lists: u32,
     class_depth: u32,
     has_top_level_await: bool,
-    unclaimed_nullable_types: u32,
     declared: declared::Mark,
     jsdoc: jsdoc::Lens,
     comments: comments::CommentCheckpoint,
@@ -268,8 +267,6 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
     /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
     pub(crate) not_type_arguments: Vec<(u32, u32)>,
-    /// Always 0, because nothing increments it. A `T?` type gets a `JSDocNullableType` node, which the checker reports.
-    pub(crate) unclaimed_nullable_types: u32,
     /// The last `T?` node and its end.
     pub(crate) last_nullable_type: (TypeNodeId, u32),
     /// Number of speculative parses in progress.
@@ -521,7 +518,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             not_arrows: Vec::new(),
             function_type_starts: Vec::new(),
             not_type_arguments: Vec::new(),
-            unclaimed_nullable_types: 0,
             last_nullable_type: (TypeNodeId::NONE, 0),
             speculations: 0,
             has_reported: false,
@@ -633,9 +629,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
         if self.f.diagnostics.iter().any(|it| it.code == 1141) {
             self.drop_specifier_errors_in_misplaced_declarations();
-        }
-        if self.unclaimed_nullable_types > 0 {
-            self.reject(Rejection::Reported);
         }
         if self.is_ecmascript && !self.is_flow() && !self.has_failed() {
             bun_sema::ecmascript::report_typescript_only_syntax(&mut self.f, self.lx.src);
@@ -990,7 +983,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             lists: self.lists,
             class_depth: self.class_depth,
             has_top_level_await: self.has_top_level_await,
-            unclaimed_nullable_types: self.unclaimed_nullable_types,
             declared: self.declared.mark(),
             jsdoc,
             comments: self.comment_checkpoint(),
@@ -1005,7 +997,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lists = to.lists;
         self.class_depth = to.class_depth;
         self.has_top_level_await = to.has_top_level_await;
-        self.unclaimed_nullable_types = to.unclaimed_nullable_types;
         self.declared.rollback(to.declared);
         if self.reads_jsdoc() {
             self.rollback_jsdoc(to);

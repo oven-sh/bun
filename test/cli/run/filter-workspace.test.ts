@@ -1576,6 +1576,68 @@ describe("auto-discovered bunfig.toml [run] section", () => {
   });
 });
 
+// A script can print Latin-1, Shift-JIS or binary data. The line renderer prints the bytes as the script wrote them.
+describe("script output that is not UTF-8", () => {
+  // "é" in UTF-8, "é" in Latin-1, two bytes that UTF-8 never has, and a continuation byte without a lead byte.
+  const mixed = Buffer.from([0xc3, 0xa9, 0x20, 0xe9, 0x20, 0xff, 0xfe, 0xbf]);
+  // One read of the runner returns at most 256 KiB (PIPE_READ_BUFFER_SIZE), so a later read completes this line.
+  const long = Buffer.alloc(600_000, 0xff);
+  const nl = Buffer.from("\n");
+  // The lines of each script. `out` has two whole lines, a line that takes several reads, and a rest with no line end.
+  const lines = { out: [mixed, mixed, long, mixed], err: [mixed] };
+  const expected = (script: keyof typeof lines) =>
+    Buffer.concat(
+      [...lines[script], Buffer.from("Exited with code 0")].flatMap(line => [Buffer.from(`p ${script}: `), line, nl]),
+    );
+  const files = {
+    "package.json": JSON.stringify({ name: "filter-bytes", workspaces: ["packages/*"] }),
+    "packages/p/package.json": JSON.stringify({
+      name: "p",
+      scripts: Object.fromEntries(Object.keys(lines).map(script => [script, `"${bunExe()}" write.mjs ${script}`])),
+    }),
+    "packages/p/write.mjs": `
+      const mixed = Buffer.from(${JSON.stringify([...mixed])});
+      const nl = Buffer.from("\\n");
+      const [stream, ...chunks] = {
+        out: [Bun.stdout, mixed, nl, mixed, nl, Buffer.alloc(${long.length}, ${long[0]}), nl, mixed],
+        err: [Bun.stderr, mixed, nl],
+      }[process.argv[2]];
+      await Bun.write(stream, Buffer.concat(chunks));
+    `,
+  };
+  // One character per byte. A run of 100 or more copies of a sequence becomes `<count x hex>`, so a failure prints a short diff.
+  const show = (bytes: Uint8Array) =>
+    Buffer.from(bytes)
+      .toString("latin1")
+      .replace(
+        /([^]{1,3}?)\1{99,}/g,
+        (run, unit) => `<${run.length / unit.length} x ${Buffer.from(unit, "latin1").toString("hex")}>`,
+      );
+
+  test.concurrent.each([
+    ["run --filter p", "out"],
+    ["run --filter p", "err"],
+    ["--filter p", "out"],
+    ["run --workspaces", "out"],
+  ] as const)("bun %s %s", async (args, script) => {
+    using dir = tempDir("filter-bytes", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args.split(" "), script],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    // The label of the rest has no script name. This test is about the bytes after the label.
+    expect({ stdout: show(stdout).replace(/^p: /m, `p ${script}: `), stderr, exitCode }).toEqual({
+      stdout: show(expected(script)),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test.concurrent.each([
   ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
   ["CR", "\r", "\\r"],

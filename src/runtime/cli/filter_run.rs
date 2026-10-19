@@ -350,6 +350,18 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
+    /// Appends `<package> <script>: `, then `line` as bytes: formatting it would write U+FFFD.
+    fn push_line(&mut self, config: &ScriptConfig, line: &[u8]) -> std::io::Result<()> {
+        write!(
+            &mut self.draw_buf,
+            "{} {}: ",
+            bun_core::fmt::escape_control_chars(&config.package_name),
+            bun_core::fmt::escape_control_chars(&config.script_name),
+        )?;
+        self.draw_buf.extend_from_slice(line);
+        Ok(())
+    }
+
     fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
@@ -362,13 +374,7 @@ impl<'a> State<'a> {
                     let i = i as usize;
                     handle.buffer.extend_from_slice(&content[0..i + 1]);
                     content = &content[i + 1..];
-                    write!(
-                        &mut self.draw_buf,
-                        "{} {}: {}",
-                        bun_core::fmt::escape_control_chars(&handle.config.package_name),
-                        bun_core::fmt::escape_control_chars(&handle.config.script_name),
-                        bstr::BStr::new(&handle.buffer),
-                    )?;
+                    self.push_line(handle.config, &handle.buffer)?;
                     handle.buffer.clear();
                 } else {
                     handle.buffer.extend_from_slice(content);
@@ -378,13 +384,7 @@ impl<'a> State<'a> {
             while let Some(i) = strings::index_of_char(content, b'\n') {
                 let i = i as usize;
                 let line = &content[0..i + 1];
-                write!(
-                    &mut self.draw_buf,
-                    "{} {}: {}",
-                    bun_core::fmt::escape_control_chars(&handle.config.package_name),
-                    bun_core::fmt::escape_control_chars(&handle.config.script_name),
-                    bstr::BStr::new(line),
-                )?;
+                self.push_line(handle.config, line)?;
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
@@ -449,12 +449,14 @@ impl<'a> State<'a> {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
-                writeln!(
+                write!(
                     &mut self.draw_buf,
-                    "{}: {}",
+                    "{}: ",
                     bun_core::fmt::escape_control_chars(&handle.config.package_name),
-                    bstr::BStr::new(&handle.buffer),
                 )?;
+                // Raw bytes, as in `push_line`.
+                self.draw_buf.extend_from_slice(&handle.buffer);
+                self.draw_buf.push(b'\n');
                 handle.buffer.clear();
             }
             // print exit status

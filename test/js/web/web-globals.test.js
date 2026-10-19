@@ -1,6 +1,17 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  spawnWithNonBlockingStdin,
+  tempDir,
+  untilBunWaitsForInput,
+  withoutAggressiveGC,
+} from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -417,6 +428,96 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+// A read of a stdin in non-blocking mode fails with EAGAIN while there is no input. That is not the end of the input.
+describe.skipIf(isWindows).concurrent("dialogs on a non-blocking stdin", () => {
+  const exitOf = async child => {
+    const [stderr, exitCode] = await Promise.all([child.proc.stderr.text(), child.proc.exited]);
+    return { stderr, exitCode, signalCode: child.proc.signalCode };
+  };
+
+  test("alert, confirm and prompt wait for their input", async () => {
+    // `fs.readSync` does not wait, as in Node. Its error shows that stdin is in non-blocking mode and has no input.
+    const script = `
+      try {
+        require("fs").readSync(0, Buffer.alloc(1));
+      } catch (error) {
+        console.log("readSync: " + error.code);
+      }
+      alert("one");
+      const yes = confirm("two");
+      console.log(JSON.stringify({ yes, name: prompt("three") }));
+    `;
+    await using child = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" -e "$1" <&3', bunExe(), script]);
+    await child.waitFor("readSync: EAGAIN\n");
+    for (const [question, answer] of [
+      ["one [Enter] ", "\n"],
+      ["two [y/N] ", "y\n"],
+      ["three ", "bob\n"],
+    ]) {
+      await child.waitFor(question);
+      await untilBunWaitsForInput(child.proc);
+      child.write(answer);
+    }
+    await child.waitFor('{"yes":true,"name":"bob"}\n');
+    expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // A line wakes both readers and one of them reads it. The other one finds no input after its wait. That is still
+  // not the end of the input.
+  test("prompt keeps waiting when another reader of the same stdin took the line", async () => {
+    const reader = `
+      for (;;) {
+        const line = prompt("q");
+        console.log("answer=" + line);
+        if (line === null || line === "quit") break;
+      }
+    `;
+    await using child = spawnWithNonBlockingStdin([
+      "sh",
+      "-c",
+      '"$0" -e "$1" <&3 & exec "$0" -e "$1" <&3',
+      bunExe(),
+      reader,
+    ]);
+    // prompt() writes "q" and " " with two writes, so the two questions can interleave. Count the spaces.
+    await child.waitFor(" ");
+    await child.waitFor(" ");
+    await untilBunWaitsForInput(child.proc);
+    for (let i = 0; i < 30; i++) {
+      child.write(`line${i}\n`);
+      await child.waitFor(`answer=line${i}\n`);
+      // The reader that answered asks again.
+      await child.waitFor(" ");
+    }
+    // A reader that took its empty read for the end has printed "answer=null" and left. Then nobody reads the second
+    // "quit".
+    for (let i = 0; i < 2; i++) {
+      child.write("quit\n");
+      await child.waitFor("answer=quit\n");
+    }
+    expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  // Linux poll(2) fails with EINVAL once the number of descriptors is above RLIMIT_NOFILE.
+  test.skipIf(!isLinux)("prompt returns null, and does not spin, when nothing can watch stdin", async () => {
+    const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
+    const script = `
+      console.log("first=" + prompt("one"));
+      const { dlopen, ptr } = require("bun:ffi");
+      const { setrlimit } = dlopen(${JSON.stringify(libc)}, { setrlimit: { args: ["int", "ptr"], returns: "int" } }).symbols;
+      const RLIMIT_NOFILE = 7;
+      if (setrlimit(RLIMIT_NOFILE, ptr(new BigUint64Array(2))) !== 0) throw new Error("setrlimit failed");
+      console.log("second=" + prompt("two"));
+    `;
+    await using child = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" -e "$1" <&3', bunExe(), script]);
+    await child.waitFor("one ");
+    await untilBunWaitsForInput(child.proc);
+    child.write("x\n");
+    await child.waitFor("first=x\ntwo second=null\n");
+    expect(await exitOf(child)).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+  });
 });
 
 test("globalThis.self = 123 works", () => {

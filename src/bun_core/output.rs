@@ -554,11 +554,6 @@ pub mod windows_stdio {
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
-        // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
-        unsafe {
-            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
-        }
-
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
         CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
@@ -2627,32 +2622,20 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // Stdin readers (CYCLEBREAK §Dispatch cold path)
 //
 // The concrete `File.Reader` lives in bun_sys; bun_core routes
-// the underlying `read(2)` through the [`OutputSinkVTable::read`] slot so the
+// the underlying `read(2)` through the [`OutputSinkVTable::read_stdin`] slot so the
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
 static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(BufferedStdin {
-    fd: {
-        #[cfg(windows)]
-        {
-            Fd::INVALID // set in WindowsStdio.init
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::stdin()
-        }
-    },
     buf: [0; 4096],
     start: 0,
     end: 0,
 });
 
 /// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
-/// Layout is local to bun_core; bun_sys never casts into this (it only fills
-/// `.fd` during Windows startup).
+/// Layout is local to bun_core; bun_sys never casts into this.
 #[repr(C)]
 pub struct BufferedStdin {
-    pub(crate) fd: Fd,
     pub(crate) buf: [u8; 4096],
     pub(crate) start: usize,
     pub(crate) end: usize,
@@ -2680,7 +2663,7 @@ impl BufferedStdin {
             let remaining = dest.len() - written;
             if remaining >= self.buf.len() {
                 // Large dest tail: bypass the buffer.
-                let n = output_sink().read(self.fd, &mut dest[written..])?;
+                let n = output_sink().read_stdin(&mut dest[written..])?;
                 if n == 0 {
                     return Ok(written);
                 }
@@ -2690,7 +2673,7 @@ impl BufferedStdin {
                 }
                 continue;
             }
-            self.end = output_sink().read(self.fd, &mut self.buf)?;
+            self.end = output_sink().read_stdin(&mut self.buf)?;
             self.start = 0;
             if self.end == 0 {
                 return Ok(written);
@@ -2737,16 +2720,14 @@ impl BufferedStdin {
 
 /// Unbuffered stdin byte reader.
 /// Each `take_byte` is a 1-byte blocking read on the process stdin.
-pub struct StdinReader {
-    fd: Fd,
-}
+pub struct StdinReader;
 
 impl StdinReader {
     /// Read one byte — `Err` on I/O error *or* EOF.
     #[inline]
     pub fn take_byte(&mut self) -> crate::CrateResult<u8> {
         let mut one = [0u8; 1];
-        match output_sink().read(self.fd, &mut one)? {
+        match output_sink().read_stdin(&mut one)? {
             0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
@@ -2757,7 +2738,7 @@ impl StdinReader {
 /// reader. Used by `alert()`/`confirm()` which read a handful of bytes.
 #[inline]
 pub fn stdin_reader() -> StdinReader {
-    StdinReader { fd: Fd::stdin() }
+    StdinReader
 }
 
 /// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB

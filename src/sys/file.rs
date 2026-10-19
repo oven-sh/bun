@@ -141,7 +141,14 @@ impl File {
 
     // ── read / write ─────────────────────────────────────────────────────
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
-        read(self.handle, buf)
+        match read(self.handle, buf) {
+            // Stdin waits for its input, see `read_stdin_blocking`. Any other handle reports EAGAIN: whoever opened
+            // it with O_NONBLOCK asked for that.
+            #[cfg(unix)]
+            Err(e) if e.is_retry() && self.handle == Fd::stdin() => read_stdin_when_readable(buf)
+                .map_err(|errno| Error::from_code_int(errno.into(), Tag::read)),
+            result => result,
+        }
     }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
@@ -171,7 +178,7 @@ impl File {
     /// Growable-`Vec` variant (was previously misnamed `read_all`). Kept for
     /// callers that want cursor-relative streaming into an existing `Vec`.
     pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
-        read_fill_vec(buf, 8192, |dst, _| read(self.handle, dst))
+        read_fill_vec(buf, 8192, |dst, _| self.read(dst))
     }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();

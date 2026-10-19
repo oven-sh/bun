@@ -9368,6 +9368,87 @@ pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     Ok(())
 }
 
+/// Reads stdin for a caller that waits for its input: the REPL, `prompt()`, a CLI prompt. `Ok(0)` is the end of the input.
+#[inline]
+pub fn read_stdin_blocking(buf: &mut [u8]) -> Maybe<usize> {
+    #[cfg(unix)]
+    {
+        // `read` reports an errno and nothing else. Only the errno crosses the branch: a caller that ignores the error
+        // then has no `Error` to build or drop.
+        match read(Fd::stdin(), buf).map_err(|e| e.errno) {
+            // fd 0 shares its O_NONBLOCK with fd 1/2 (set once process.stdout is a socket) and with every program on
+            // the same terminal. EAGAIN is "no input yet", not the end of it: wait, as `write_all_to_stdio` does.
+            Err(EAGAIN) => read_stdin_when_readable(buf),
+            result => result,
+        }
+        .map_err(|errno| Error::from_code_int(errno.into(), Tag::read))
+    }
+    // Not handled: a pipe in PIPE_NOWAIT mode.
+    #[cfg(windows)]
+    {
+        read(Fd::stdin(), buf)
+    }
+}
+
+#[cfg(unix)]
+const EAGAIN: ErrorInt = libc::EAGAIN as ErrorInt;
+
+#[cfg(unix)]
+#[cold]
+#[inline(never)]
+fn read_stdin_when_readable(buf: &mut [u8]) -> core::result::Result<usize, ErrorInt> {
+    loop {
+        let has_input = wait_for_stdin();
+        match read(Fd::stdin(), buf).map_err(|e| e.errno) {
+            // Another reader of the same description took the input.
+            Err(EAGAIN) if has_input => {}
+            // The EAGAIN of a stdin that the wait cannot watch goes to the caller, so the loop cannot spin.
+            result => return result,
+        }
+    }
+}
+
+/// Waits for stdin. True if the wait reported input.
+#[cfg(unix)]
+fn wait_for_stdin() -> bool {
+    // poll(2) of macOS does not watch every device (`/dev/tty`) and misses the last writer of a FIFO closing.
+    #[cfg(target_os = "macos")]
+    {
+        loop {
+            let mut readable = core::mem::MaybeUninit::<libc::fd_set>::uninit();
+            // SAFETY: FD_ZERO initializes the whole set, and fd 0 is below FD_SETSIZE.
+            unsafe {
+                libc::FD_ZERO(readable.as_mut_ptr());
+                libc::FD_SET(0, readable.as_mut_ptr());
+            }
+            // SAFETY: `readable` is an initialized set that lives through the call. The other sets and the timeout
+            // may be null.
+            let ready = unsafe {
+                libc::select(
+                    1,
+                    readable.as_mut_ptr(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            if ready < 0 && last_errno() == libc::EINTR {
+                continue;
+            }
+            return ready > 0;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut pfd = [posix::PollFd {
+            fd: Fd::stdin().native(),
+            events: posix::POLL_IN,
+            revents: 0,
+        }];
+        posix::poll(&mut pfd, -1).is_ok() && pfd[0].revents & posix::POLL_IN != 0
+    }
+}
+
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
 fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {
@@ -9525,7 +9606,7 @@ bun_core::link_impl_OutputSink! {
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
-        read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
+        read_stdin(buf) => read_stdin_blocking(buf).map_err(|_| bun_core::Error::Unexpected),
     }
 }
 

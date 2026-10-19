@@ -10,10 +10,12 @@ import {
   normalizeBunSnapshot,
   pack,
   runBunInstall,
+  spawnWithNonBlockingStdin,
   substDrive,
   tempDir,
   tls,
   unprivilegedSpawnOptions,
+  untilBunWaitsForInput,
   writeBinCommand,
 } from "harness";
 import { delimiter, join } from "path";
@@ -414,10 +416,9 @@ describe.concurrent("otp", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("done url on a different origin is not polled and login falls back to the OTP prompt", async () => {
-    const otp = "424242";
-    using foreign = mockRegistry(() => Response.json({ token: otp }));
-    using mock = mockRegistry((req, recorded) => {
+  /** A registry whose 401 names a done url on `foreign`, another origin, so `bun publish` asks for the password. */
+  function otpPromptRegistry(otp: string, foreign: MockRegistry) {
+    return mockRegistry((req, recorded) => {
       if (req.method === "PUT") {
         if (recorded.otp === otp) {
           return new Response("OK", { status: 200 });
@@ -432,6 +433,12 @@ describe.concurrent("otp", () => {
       }
       return new Response("unexpected url", { status: 500 });
     });
+  }
+
+  test("done url on a different origin is not polled and login falls back to the OTP prompt", async () => {
+    const otp = "424242";
+    using foreign = mockRegistry(() => Response.json({ token: otp }));
+    using mock = otpPromptRegistry(otp, foreign);
     using dir = tempDir("publish-otp-foreign-done", {
       "package.json": JSON.stringify({ name: "otp-pkg-6", version: "6.6.6" }),
       "bunfig.toml": mockBunfig(mock),
@@ -471,6 +478,34 @@ describe.concurrent("otp", () => {
     expect(mock.requests).toEqual([
       request("PUT", "/otp-pkg-6"),
       request("PUT", "/otp-pkg-6", { authType: "legacy", otp }),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A read of a stdin in non-blocking mode fails with EAGAIN while there is no input. That is not the end of the input.
+  test.skipIf(isWindows)("the OTP prompt waits for the password on a non-blocking stdin", async () => {
+    const otp = "424242";
+    using foreign = mockRegistry(() => Response.json({ token: otp }));
+    using mock = otpPromptRegistry(otp, foreign);
+    using dir = tempDir("publish-otp-non-blocking", {
+      "package.json": JSON.stringify({ name: "otp-pkg-7", version: "7.7.7" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    await using publishing = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" publish <&3', bunExe()], {
+      cwd: String(dir),
+    });
+    await publishing.waitFor("Enter OTP: ");
+    await untilBunWaitsForInput(publishing.proc);
+    publishing.write(otp + "\n");
+    await publishing.waitFor(" + otp-pkg-7@7.7.7");
+    const [err, exitCode] = await Promise.all([publishing.proc.stderr.text(), publishing.proc.exited]);
+
+    expect(err).toBe("");
+    expect(foreign.requests).toEqual([]);
+    expect(mock.requests).toEqual([
+      request("PUT", "/otp-pkg-7"),
+      request("PUT", "/otp-pkg-7", { authType: "legacy", otp }),
     ]);
     expect(exitCode).toBe(0);
   });

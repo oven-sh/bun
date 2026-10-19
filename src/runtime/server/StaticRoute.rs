@@ -227,7 +227,7 @@ impl StaticRoute {
                 response.get_init_headers(),
                 response
                     .pending_content_type()
-                    .or(any_blob_content_type(&blob)),
+                    .or_else(|| any_blob_content_type(&blob)),
             );
 
             // Generate ETag if not already present

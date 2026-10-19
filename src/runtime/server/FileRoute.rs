@@ -167,7 +167,9 @@ impl FileRoute {
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = bun_http_jsc::headers_jsc::from_fetch_headers(
                     response.get_init_headers(),
-                    response.pending_content_type().or(blob_content_type(&blob)),
+                    response
+                        .pending_content_type()
+                        .or_else(|| blob_content_type(&blob)),
                 );
                 let status_code = response.status_code();
 

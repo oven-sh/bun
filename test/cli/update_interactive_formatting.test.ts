@@ -1646,6 +1646,29 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("reads a key with a modifier as one key", async () => {
+    await using dir = tempDir("update-interactive-modified-key", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await install(dir);
+    // Ctrl+Up is ESC [ 1 ; 5 A. Read as an arrow key of three bytes, it leaves "A", which selects
+    // every package.
+    const { stdout, exitCode } = await updateInteractive(dir, {
+      args: ["--latest", "--dry-run"],
+      input: "\x1b[1;5A\n",
+    });
+
+    expect(stdout).not.toContain("■ no-deps");
+    expect(stdout).not.toContain("Selected 1 package to update");
+    expect(exitCode).toBe(0);
+  });
+
   it("redraws after the key that follows a mouse click", async () => {
     await using dir = tempDir("update-interactive-click-then-key", {
       "bunfig.toml": bunfig(),

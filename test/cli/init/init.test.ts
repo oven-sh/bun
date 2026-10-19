@@ -143,6 +143,42 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
   });
 
+  test.skipIf(isWindows)("a function key in the template menu selects nothing", async () => {
+    await using temp = tempDir("bun-init-function-key", {});
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const menu = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("Select a project template")) menu.resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      terminal,
+    });
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun init exited before the menu (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([menu.promise, exitedEarly]);
+    // F10 is ESC [ 2 1 ~. Read as an arrow key of three bytes, it leaves "1", which picks the
+    // first template. Ctrl+C then cancels a menu that is still open.
+    terminal.write("\x1b[21~");
+    terminal.write("\x03");
+
+    await proc.exited;
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+  });
+
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
       "mydir": {

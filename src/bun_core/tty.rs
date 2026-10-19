@@ -91,6 +91,74 @@ impl Drop for RawModeGuard {
     }
 }
 
+/// The control sequence of a key (ECMA-48, 5.4), as a terminal in raw mode sends it after the
+/// introducer `ESC [`: parameter bytes, intermediate bytes, and the final byte that names the key.
+/// Up is `ESC [ A`, Ctrl+Right is `ESC [ 1 ; 5 C`, F5 is `ESC [ 1 5 ~`.
+///
+/// A reader of keys has to consume the whole sequence, also when it binds nothing to the key.
+/// What it leaves behind is read as typed text.
+pub struct ControlSequence {
+    params: [u8; ControlSequence::MAX_PARAMS],
+    params_len: u8,
+    /// `0x40..=0x7E`, or 0 for a sequence that no key has: one with intermediate bytes or with
+    /// too many parameter bytes, and the function keys of the Linux console (`ESC [ [ A`).
+    pub final_byte: u8,
+}
+
+impl ControlSequence {
+    /// The longest key sequence in use has six parameter bytes (`ESC [ 2 4 ; 1 0 ~`). A mouse
+    /// report (`ESC [ < 65 ; 120 ; 40 M`) has more.
+    const MAX_PARAMS: usize = 24;
+
+    /// Reads the sequence that follows `ESC [` from `next`, which returns `None` at the end of
+    /// input. `Err(None)`: the input ended inside the sequence. `Err(Some(byte))`: `byte`
+    /// cannot be part of a sequence, so the sequence is broken and `byte` starts something else.
+    pub fn read(mut next: impl FnMut() -> Option<u8>) -> Result<ControlSequence, Option<u8>> {
+        let mut sequence = ControlSequence {
+            params: [0; Self::MAX_PARAMS],
+            params_len: 0,
+            final_byte: 0,
+        };
+        let mut is_key = true;
+        let mut byte = next().ok_or(None)?;
+        if byte == b'[' {
+            // The Linux console sends F1 to F5 as `ESC [ [ A` to `ESC [ [ E`.
+            is_key = false;
+            byte = next().ok_or(None)?;
+        }
+        while matches!(byte, 0x30..=0x3F) {
+            match sequence.params.get_mut(usize::from(sequence.params_len)) {
+                Some(slot) => {
+                    *slot = byte;
+                    sequence.params_len += 1;
+                }
+                None => is_key = false,
+            }
+            byte = next().ok_or(None)?;
+        }
+        // rxvt ends a key that has Shift with `$`, which the standard has as an intermediate byte.
+        if byte != b'$' || sequence.params_len == 0 {
+            while matches!(byte, 0x20..=0x2F) {
+                is_key = false;
+                byte = next().ok_or(None)?;
+            }
+            if !matches!(byte, 0x40..=0x7E) {
+                return Err(Some(byte));
+            }
+        }
+        if is_key {
+            sequence.final_byte = byte;
+        }
+        Ok(sequence)
+    }
+
+    /// The parameter bytes: digits, `;`, and the private markers `<`, `=`, `>`, `?`.
+    #[inline]
+    pub fn params(&self) -> &[u8] {
+        &self.params[..usize::from(self.params_len)]
+    }
+}
+
 unsafe extern "C" {
     unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void, drain: c_int) -> c_int;
 }

@@ -210,17 +210,20 @@ impl InitCommand {
                         return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                     }
 
-                    // Read arrow key
-                    let arrow = match stdin.take_byte() {
-                        Ok(b) => b,
-                        Err(_) => {
-                            reprint_menu = false;
-                            finish!(reprint_menu, selected);
-                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
-                        }
-                    };
-                    match arrow {
-                        b'A' => {
+                    // The whole sequence of the key: what is left of a key that is not an
+                    // arrow would be read as the keys `1` to `9`.
+                    let sequence =
+                        match bun_core::tty::ControlSequence::read(|| stdin.take_byte().ok()) {
+                            Ok(sequence) => sequence,
+                            Err(Some(_)) => continue,
+                            Err(None) => {
+                                reprint_menu = false;
+                                finish!(reprint_menu, selected);
+                                return Err(crate::Error::Core(bun_core::Error::EndOfStream));
+                            }
+                        };
+                    match (sequence.final_byte, sequence.params()) {
+                        (b'A', b"") => {
                             // Up arrow
                             if selected.to_index() == 0 {
                                 selected = C::from_index(choices.len() - 1);
@@ -228,7 +231,7 @@ impl InitCommand {
                                 selected = C::from_index(selected.to_index() - 1);
                             }
                         }
-                        b'B' => {
+                        (b'B', b"") => {
                             // Down arrow
                             if selected.to_index() == choices.len() - 1 {
                                 selected = C::from_index(0);

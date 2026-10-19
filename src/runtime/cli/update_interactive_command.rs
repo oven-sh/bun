@@ -1313,75 +1313,59 @@ impl UpdateInteractiveCommand {
                         continue;
                     };
                     if seq == b'[' {
-                        let Ok(arrow) = reader.take_byte() else {
+                        let Ok(sequence) =
+                            bun_core::tty::ControlSequence::read(|| reader.take_byte().ok())
+                        else {
                             continue;
                         };
-                        match arrow {
+                        match (sequence.final_byte, sequence.params()) {
                             // up arrow
-                            b'A' => {
+                            (b'A', b"") => {
                                 state.cursor = state.cursor.checked_sub(1).unwrap_or(last);
                                 Self::update_viewport(state);
                             }
                             // down arrow
-                            b'B' => {
+                            (b'B', b"") => {
                                 state.cursor = (state.cursor + 1) % state.packages.len();
                                 Self::update_viewport(state);
                             }
                             // The right arrow selects Latest, and the left arrow selects Target.
-                            b'C' | b'D' => {
+                            (arrow @ (b'C' | b'D'), b"") => {
                                 state.packages[state.cursor].use_latest = arrow == b'C';
                                 state.selected[state.cursor] = true;
                             }
                             // Page Up, Page Down
-                            b'5' | b'6' => {
-                                let Ok(tilde) = reader.take_byte() else {
-                                    continue;
+                            (b'~', page @ (b"5" | b"6")) => {
+                                state.cursor = if page == b"5" {
+                                    state.cursor.saturating_sub(state.viewport_height)
+                                } else {
+                                    (state.cursor + state.viewport_height).min(last)
                                 };
-                                if tilde == b'~' {
-                                    state.cursor = if arrow == b'5' {
-                                        state.cursor.saturating_sub(state.viewport_height)
-                                    } else {
-                                        (state.cursor + state.viewport_height).min(last)
-                                    };
-                                    Self::update_viewport(state);
-                                }
+                                Self::update_viewport(state);
                             }
-                            b'<' => {
-                                // SGR extended mouse mode
-                                // Read until 'M' or 'm' for button press/release
-                                let mut buffer = [0u8; 32];
-                                let mut buf_idx: usize = 0;
-                                while buf_idx < buffer.len() {
-                                    let Ok(c) = reader.take_byte() else { break };
-                                    if c == b'M' || c == b'm' {
-                                        // Parse SGR mouse event: ESC[<button;col;row(M or m)
-                                        // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts =
-                                            strings::tokenize(&buffer[0..buf_idx], b";");
-                                        if let Some(button_str) = parts.next() {
-                                            let button: u32 =
-                                                strings::parse_int(button_str, 10).unwrap_or(0);
-                                            if button == 64 {
-                                                if state.viewport_start > 0 {
-                                                    state.viewport_start -= 1;
-                                                    Self::ensure_cursor_in_viewport(state);
-                                                }
-                                            } else if button == 65 {
-                                                if state.viewport_start + state.viewport_height
-                                                    < state.packages.len()
-                                                {
-                                                    state.viewport_start += 1;
-                                                    Self::ensure_cursor_in_viewport(state);
-                                                }
-                                            } else {
-                                                // A click changes nothing.
-                                                needs_redraw = false;
-                                            }
+                            // SGR extended mouse mode: ESC[<button;col;row(M or m), for a button
+                            // that is pressed or released. button: 64 = scroll up, 65 = scroll down
+                            (b'M' | b'm', [b'<', event @ ..]) => {
+                                let mut parts = strings::tokenize(event, b";");
+                                if let Some(button_str) = parts.next() {
+                                    let button: u32 =
+                                        strings::parse_int(button_str, 10).unwrap_or(0);
+                                    if button == 64 {
+                                        if state.viewport_start > 0 {
+                                            state.viewport_start -= 1;
+                                            Self::ensure_cursor_in_viewport(state);
                                         }
-                                        break;
+                                    } else if button == 65 {
+                                        if state.viewport_start + state.viewport_height
+                                            < state.packages.len()
+                                        {
+                                            state.viewport_start += 1;
+                                            Self::ensure_cursor_in_viewport(state);
+                                        }
+                                    } else {
+                                        // A click changes nothing.
+                                        needs_redraw = false;
                                     }
-                                    buffer[buf_idx] = c;
-                                    buf_idx += 1;
                                 }
                             }
                             _ => {}

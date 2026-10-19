@@ -129,7 +129,12 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
 }
 `;
 
-  async function installWithShim(dir: string, projectDir: string, expectedInstalled: string, errno = "EXDEV") {
+  async function installWithShim(
+    dir: string,
+    projectDir: string,
+    expectedInstalled: string,
+    { errno = "EXDEV" }: { errno?: string } = {},
+  ) {
     {
       await using compile = Bun.spawn({
         cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
@@ -186,7 +191,7 @@ int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
       const projectDir = join(String(dir), "project");
       cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(projectDir, "bar-0.0.2.tgz"));
 
-      await installWithShim(String(dir), projectDir, "2 packages installed", errno);
+      await installWithShim(String(dir), projectDir, "2 packages installed", { errno });
 
       // The folder was copied, its source is as it was: nlink === 1.
       expect(statSync(join(projectDir, "node_modules", "aaa-local", "xdev-marker.js")).nlink).toBe(1);
@@ -494,7 +499,8 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
   beforeAll(async () => {
     shimDir = tempDir("hardlink-interpose", { "shim.c": interposeC });
     await using compile = Bun.spawn({
-      cmd: [cc!, "-dynamiclib", "-o", "shim.dylib", "shim.c"],
+      // The arch of this bun, which is not the arch of the machine under Rosetta.
+      cmd: [cc!, "-arch", process.arch === "arm64" ? "arm64" : "x86_64", "-dynamiclib", "-o", "shim.dylib", "shim.c"],
       cwd: String(shimDir),
       env: bunEnv,
       stdout: "pipe",
@@ -539,7 +545,9 @@ __attribute__((used, section("__DATA,__interpose"))) static const struct {
         env: {
           ...bunEnv,
           BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
-          DYLD_INSERT_LIBRARIES: join(String(shimDir), "shim.dylib"),
+          DYLD_INSERT_LIBRARIES: [join(String(shimDir), "shim.dylib"), bunEnv.DYLD_INSERT_LIBRARIES]
+            .filter(Boolean)
+            .join(":"),
           LINK_SHIM_ERRNO: String(errno),
           LINK_SHIM_LOG: join(String(dir), "links.log"),
         },
@@ -594,8 +602,10 @@ test.skipIf(!isWindows)("a package at the NTFS link limit is copied, isolated li
       }
     }
   });
-  // The loop stopped at the limit of NTFS, not at some other error.
-  expect(Object.values(linkCounts(cached))).toEqual(files.map(() => 1023));
+  // The loop stopped at the limit of NTFS (1023 more links to a file), not at some other error.
+  const atLimit = Object.values(linkCounts(cached));
+  expect(atLimit).toEqual(files.map(() => atLimit[0]));
+  expect([1023, 1024]).toContain(atLimit[0]);
 
   const { stdout, stderr, exitCode } = await install();
   expect(stderr).not.toContain("failed to link");

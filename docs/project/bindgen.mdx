@@ -132,7 +132,9 @@ to may run JavaScript, and the compiler cannot see that. Read what is called all
 before writing the `SAFETY` comment. `ToString` of an object, a property that is looked up or
 set and not defined, and a call to a constructor found on the global object all run JavaScript.
 Throwing tells the debugger, which can run code, so after a throw the body returns without
-reading what it borrowed.
+reading what it borrowed. A `mutates: true` method does not throw: that code can call a method of
+the same object while the `&mut self` is live. It returns the error, which is thrown after the
+borrow ends.
 
 ```rust
 // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
@@ -143,7 +145,8 @@ let global = unsafe { heap.global() };
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
 `heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
-`heap.illegal_constructor()` or `bindgen::Error::from_value(value)` (`?` makes one of a `JsError`
+`heap.illegal_constructor()`, `heap.string_too_long()`, `heap.memory_allocation_failed()` or
+`bindgen::Error::from_value(value)` (`?` makes one of a `JsError`
 or an `AllocError`), or any type that implements `bindgen::IntoError` (`bun_sys::Error`,
 `SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
 

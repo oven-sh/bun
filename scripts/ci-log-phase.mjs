@@ -1,4 +1,4 @@
-// The header shapes runner.node.mjs writes into a CI job log, shared by the
+// The header shapes runner.node.ts writes into a CI job log, shared by the
 // per-file timing parsers (scripts/ci-slowest-tests.ts and
 // scripts/update-test-durations.mjs). Plain .mjs so the durations script keeps
 // running under node.
@@ -21,7 +21,7 @@
 // stdoutPreview) can still deliver a line that starts `--- ` without being a
 // group header (unified-diff `--- a/<file>`, `--- ps ---`). The boundary check
 // is therefore an allowlist of the phase headers the runner actually emits,
-// not any `--- `. When runner.node.mjs grows a new phase between the serial
+// not any `--- `. When runner.node.ts grows a new phase between the serial
 // tests and the next `[N/M]` header, add it here.
 
 /**

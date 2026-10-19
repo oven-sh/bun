@@ -19,8 +19,8 @@
 //                        that may have thrown and returned a failure value the caller
 //                        usually tests.
 //
-// The tool needs the LLVM 21 development package (libclang-cpp, headers). Set
-// LLVM_DIR to point at it if it is not under /usr/lib/llvm-21 or `brew
+// The tool needs the LLVM 23 development package (libclang-cpp, headers). Set
+// LLVM_DIR to point at it if it is not under /usr/lib/llvm-23 or `brew
 // --prefix llvm`.
 //
 // Summaries: functions defined in another translation unit cannot be analyzed
@@ -104,8 +104,8 @@ mkdirSync(outDir, { recursive: true });
 
 function llvmDir(): string {
   if (process.env.LLVM_DIR) return process.env.LLVM_DIR;
-  for (const d of ["/usr/lib/llvm-21", "/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"]) if (existsSync(d)) return d;
-  throw new Error("LLVM 21 not found; set LLVM_DIR");
+  for (const d of ["/usr/lib/llvm-23", "/opt/homebrew/opt/llvm", "/usr/local/opt/llvm"]) if (existsSync(d)) return d;
+  throw new Error("LLVM 23 not found; set LLVM_DIR");
 }
 
 async function run(

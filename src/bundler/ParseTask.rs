@@ -2651,21 +2651,18 @@ pub mod parse_worker {
             }
         });
 
-        // The browser copy of a page of a `clientPages` router: its data functions run on the
-        // server only.
-        if target == options::Target::Browser
-            && topts
-                .framework
-                .is_some_and(|f| f.is_client_page_file(task.path.text))
+        // The browser copy of a page of a `clientPages` router drops the exports that its router
+        // says run on the server only.
+        if let Some(server_exports) = topts
+            .framework
+            .filter(|_| target == options::Target::Browser)
+            .and_then(|f| f.client_page_server_exports(task.path.text))
+            .filter(|names| !names.is_empty())
         {
             // TypeScript trims imports whose bindings went unused; JavaScript does not by default. Turn
-            // it on, so an import that only a deleted data function used goes with it.
+            // it on, so an import that only a deleted export used goes with it.
             opts.features.trim_unused_imports = true;
-            for name in [
-                &b"getServerSideProps"[..],
-                b"getStaticProps",
-                b"getStaticPaths",
-            ] {
+            for name in server_exports {
                 bun_core::handle_oom(
                     opts.features
                         .replace_exports

@@ -296,6 +296,16 @@ test.concurrent.each([
     error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages' needs a 'clientEntryPoint'`,
   },
   {
+    name: "a framework whose clientPages has no serverExports list",
+    files: {
+      "bake.config.ts": `export default { plugins: [{ name: "a", framework: {
+        fileSystemRouterTypes: [{ root: "app/pages", style: "nextjs-pages", serverEntryPoint: "./r.ts", clientEntryPoint: "./c.ts", clientPages: {} }],
+      } }] };`,
+    },
+    waits: true,
+    error: `"bake.config.ts": the framework of "a": 'fileSystemRouterTypes[0].clientPages.serverExports' must be an array of export names`,
+  },
+  {
     name: "a .tsx page and an .html page at the same URL",
     files: {
       "app/pages/index.html": page,
@@ -1179,6 +1189,50 @@ test.concurrent("a framework with clientPages puts the pages of a route in its b
   expect(bundle).toContain(`route: { page: "app/pages/index.ts", layouts: [] }`);
   expect(bundle).toContain("home-page-module");
   expect(bundle).not.toContain("about-page-module");
+});
+
+test.concurrent("the browser build of a page leaves out the serverExports of its framework", async () => {
+  using dir = tempDir("bake-command-server-exports", {
+    "app/secret.ts": `export const secret = "server-only-secret";`,
+    // `getServerSideProps` is not a server export of this framework, so it stays.
+    "app/pages/index.ts": `
+      import { secret } from "../secret.ts";
+      export const loader = () => secret.length;
+      export const getServerSideProps = () => "kept-export";
+      export default () => "home-page-module";
+    `,
+    "render/server.ts": `export function render(request, meta) {
+      return new Response(meta.pageModule.loader() + " " + meta.modules.join(" "));
+    }`,
+    "render/client.ts": `import { route } from "bun:bake/client"; route.page();`,
+    "bake.config.ts": `export default {
+      plugins: [{
+        name: "fw",
+        framework: {
+          fileSystemRouterTypes: [{
+            root: "app/pages",
+            style: "nextjs-pages",
+            serverEntryPoint: "./render/server.ts",
+            clientEntryPoint: "./render/client.ts",
+            extensions: [".ts"],
+            clientPages: { serverExports: ["loader"] },
+          }],
+        },
+      }],
+    };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const url = await getServerUrl(proc);
+
+  // The server still has the loader.
+  const [status, length, bundleUrl] = (await get(url, "/")).split(" ");
+  expect(status).toBe("200");
+  expect(length).toBe("18");
+  const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+  expect(bundle).toContain("home-page-module");
+  expect(bundle).toContain("kept-export");
+  expect(bundle).not.toContain("server-only-secret");
 });
 
 test.concurrent("bun bake sends a page's new code to a page load after an edit", async () => {

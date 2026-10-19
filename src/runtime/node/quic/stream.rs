@@ -128,8 +128,9 @@ pub(crate) struct QuicStream {
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
-    /// Set in `on_stream_close` when lsquic had not finished the stream.
-    closed_by_conn: Cell<bool>,
+    /// Set in `on_stream_close` when lsquic had not finished the stream:
+    /// frames of it were still in flight.
+    unfinished_at_close: Cell<bool>,
     destroyed: Cell<bool>,
 }
 
@@ -161,7 +162,7 @@ impl QuicStream {
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
-            closed_by_conn: Cell::new(false),
+            unfinished_at_close: Cell::new(false),
             destroyed: Cell::new(false),
         };
         let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
@@ -337,12 +338,14 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
-    /// The stream was still open when lsquic closed it: the connection's
-    /// teardown closed it, not its own end. Node destroys such streams with
-    /// the session's close error, so their close must wait for the session's
-    /// close instead of being reported as clean.
-    pub(super) fn closed_by_conn(&self) -> bool {
-        self.closed_by_conn.get()
+    /// lsquic reported this stream's close while frames of it were still in
+    /// flight. With the connection gone, that close is the connection's
+    /// death, not the stream's own end: Node keeps such a stream until the
+    /// acknowledgement and destroys it with the session's close error, so
+    /// its close must wait for the session's close instead of being reported
+    /// as clean.
+    pub(super) fn unfinished_at_close(&self) -> bool {
+        self.unfinished_at_close.get()
     }
     pub(super) fn release_close_root(&self) {
         self.this_value.with_mut(|r| r.downgrade());
@@ -1154,7 +1157,7 @@ lsquic_callback! {
     ) {
         // SAFETY: `s` is live for the duration of this lsquic callback.
         if let Some(stream) = unsafe { lsquic::Stream::from_raw(s) } {
-            qs.closed_by_conn.set(!stream.is_finished());
+            qs.unfinished_at_close.set(!stream.is_finished());
         }
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
@@ -1187,6 +1190,21 @@ lsquic_callback! {
         if how == 1 || how == 2 {
             // Node rejects only the STOP_SENDING caller's `closed`.
             qs.peer_stop_sending_code.set(Some(code));
+            // lsquic answered with RESET_STREAM and dropped the buffered
+            // data. End our write side too, so the stream can finish once
+            // the reset is acknowledged (ngtcp2 closes the send side the same
+            // way). A bidi stream whose read side is open keeps reading.
+            qs.outbound.with_mut(|o| {
+                o.data.clear();
+                o.end = PendingEnd::None;
+            });
+            if let Some(s) = qs.ls() {
+                if qs.with_state(|st| st.read_ended != 0) {
+                    s.close();
+                } else {
+                    s.shutdown(1);
+                }
+            }
             if let Some(session) = qs.session_ref() {
                 // Node's `onstream` still observes a live writer.
                 session.push_event(SessionEvent::StreamStopSending {

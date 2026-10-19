@@ -408,8 +408,9 @@ describe("a stream left open when the connection closes", () => {
     } as SessionOptions);
     await client.opened;
     // Opens a client stream, writes one byte, and returns its server side.
-    async function open() {
-      const stream = await client.createBidirectionalStream();
+    async function open(direction: "bidi" | "uni" = "bidi") {
+      const stream =
+        direction === "uni" ? await client.createUnidirectionalStream() : await client.createBidirectionalStream();
       stream.closed.catch(() => {});
       stream.writer.writeSync(Uint8Array.of(1));
       const peer = accepted.shift() ?? (await new Promise<{ session: any; stream: any }>(r => waiters.push(r)));
@@ -634,6 +635,24 @@ describe("a stream left open when the connection closes", () => {
     expect(ticks).toEqual({ s1: ticks.session, s3: ticks.session, session: ticks.session });
   });
 
+  test("a write-only stream the peer stops closes with the peer's code while the connection lives", async () => {
+    const { server, client, open } = await openPair();
+    await using _server = server;
+    const { stream: uni, peer } = await open("uni");
+    const closed = settle(uni.closed);
+
+    // The peer discards its end of the stream. Its STOP_SENDING ends our
+    // write side, so the stream closes once the reset is acknowledged
+    // instead of living until the connection dies.
+    peer.stream.destroy(new Error("not wanted"));
+
+    expect(await closed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 1");
+    // The connection is still usable: a new stream reaches the peer.
+    const { peer: next } = await open("bidi");
+    expect(next.session).toBe(peer.session);
+    client.close();
+  });
+
   test("an iterator taken after the connection error rethrows it", async () => {
     const { server, client, stream, peer } = await openPair();
     await using _server = server;
@@ -644,6 +663,20 @@ describe("a stream left open when the connection closes", () => {
     expect(await streamClosed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
 
     expect(await settleRead(stream[Symbol.asyncIterator]().next())).toBe("rejected ERR_QUIC_APPLICATION_ERROR");
+  });
+
+  test("iterating a write-only stream after the connection error ends without an error", async () => {
+    const { server, client, peer, open } = await openPair();
+    await using _server = server;
+    const { stream: uni } = await open("uni");
+    const closed = settle(uni.closed);
+    client.closed.catch(() => {});
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+    expect(await closed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
+
+    // There is no read side to truncate, so the iterator just finishes.
+    expect(await settleRead(uni[Symbol.asyncIterator]().next())).toBe("ended cleanly");
   });
 
   test("stream.destroy(error) with a pending read rejects the read with that error", async () => {

@@ -828,7 +828,7 @@ impl QuicSession {
     /// no conn, was closed by the connection's death. Its close is the
     /// session's to report.
     fn defers_stream_close(&self, stream: &super::stream::QuicStream) -> bool {
-        self.conn.get().is_null() && stream.closed_by_conn()
+        self.conn.get().is_null() && stream.unfinished_at_close()
     }
 
     pub(super) fn apply_peer_datagram_budget(&self) {
@@ -924,7 +924,7 @@ impl QuicSession {
                     !self.conn.get().is_null()
                         || self
                             .live_stream(*stream)
-                            .is_some_and(|s| s.is_announce_suppressed() || !s.closed_by_conn())
+                            .is_some_and(|s| s.is_announce_suppressed() || !s.unfinished_at_close())
                 }
                 _ => true,
             };

@@ -1,5 +1,5 @@
 // Ported from Node.js lib/internal/quic/state.js (v26.3.0).
-const { uncurryThis } = require("internal/primordials");
+const { uncurryThis, TypedArrayPrototypeGetBuffer } = require("internal/primordials");
 const { isArrayBuffer } = require("node:util/types");
 const { inspect } = require("node:util");
 
@@ -18,10 +18,6 @@ const DataViewPrototypeGetByteOffset = uncurryThis(
 );
 const DataViewPrototypeGetByteLength = uncurryThis(
   Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength")!.get!,
-);
-const TypedArrayPrototypeSlice = uncurryThis(Uint8Array.prototype.slice);
-const TypedArrayPrototypeGetBuffer = uncurryThis(
-  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "buffer")!.get!,
 );
 
 const kIsLittleEndian = require("node:os").endianness() === "LE";
@@ -889,11 +885,7 @@ class QuicStreamState {
     // reporting the final state after the native stream is gone, the same
     // way QuicStreamStats does.
     const handle = this.#handle;
-    if (handle === undefined) {
-      this.#disconnected = true;
-      return;
-    }
-    const copy = TypedArrayPrototypeSlice(
+    const copy = new Uint8Array(
       new Uint8Array(
         DataViewPrototypeGetBuffer(handle),
         DataViewPrototypeGetByteOffset(handle) + this.#offset,

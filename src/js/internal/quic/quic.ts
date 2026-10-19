@@ -1740,12 +1740,9 @@ class QuicStream {
     }
     inner.iteratorLocked = true;
 
-    inner.reader ??= this.#handle?.getReader();
-    // No reader means an outbound-only unidirectional stream, or a stream
-    // destroyed before it was read. The latter is still checked for
-    // truncation below.
-    if (inner.reader) {
-      yield* createBlobReaderIterable(inner.reader, {
+    const reader = (inner.reader ??= this.#handle?.getReader());
+    if (reader) {
+      yield* createBlobReaderIterable(reader, {
         getReadError: () => {
           if (inner.state.readEnded && !inner.state.finReceived) {
             if (inner.state.reset) {
@@ -1761,8 +1758,10 @@ class QuicStream {
     // The stream was destroyed before a FIN arrived: the read is truncated.
     // The close carries the reason (the session's error, or the error
     // passed to destroy()), so a rejected `closed` rethrows here and a
-    // clean close ends the iteration.
-    if (this.destroyed && !inner.state.finReceived) {
+    // clean close ends the iteration. A stream with no read side has
+    // nothing to truncate.
+    const readable = !(inner.direction === kStreamDirectionUnidirectional && inner.isLocal);
+    if (readable && this.destroyed && !inner.state.finReceived) {
       await this.closed;
     }
   }

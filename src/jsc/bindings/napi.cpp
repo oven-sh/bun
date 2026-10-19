@@ -3059,8 +3059,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
-    // Not JSC::evaluate(): that takes what the script threw off the VM and hands back the Exception cell. Every
-    // other call leaves it on the VM, where napi_get_and_clear_last_exception unwraps it and a termination stays one.
+    // Not JSC::evaluate(): that takes what the script threw off the VM, and a termination has to stay there.
     JSValue value = vm.interpreter.executeProgram(sourceCode, globalObject, globalObject->globalThis());
     // Node reports a script that threw as napi_generic_failure, not napi_pending_exception.
     NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);

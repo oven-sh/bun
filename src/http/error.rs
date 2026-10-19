@@ -99,6 +99,8 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
+    #[error("UnsupportedProtocol")]
+    UnsupportedProtocol,
     #[error("ProxyConnectFailed")]
     ProxyConnectFailed,
     #[error("TLSHandshakeFailed")]
@@ -246,8 +248,6 @@ pub enum CertError {
     SUITE_B_LOS_NOT_ALLOWED,
     #[error("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256")]
     SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-    #[error("HOSTNAME_MISMATCH")]
-    HOSTNAME_MISMATCH,
     #[error("EMAIL_MISMATCH")]
     EMAIL_MISMATCH,
     #[error("IP_ADDRESS_MISMATCH")]
@@ -315,6 +315,7 @@ impl Error {
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
+            Self::UnsupportedProtocol => "UnsupportedProtocol",
             Self::ProxyConnectFailed => "ProxyConnectFailed",
             Self::TLSHandshakeFailed => "TLSHandshakeFailed",
             Self::Cert(e) => <&'static str>::from(e),

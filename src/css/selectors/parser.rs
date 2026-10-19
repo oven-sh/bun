@@ -1586,18 +1586,6 @@ impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
     }
 }
 
-impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
-    fn default() -> Self {
-        Self {
-            specificity_and_flags: SpecificityAndFlags {
-                specificity: 0,
-                flags: SelectorFlags::empty(),
-            },
-            components: Vec::new_in(ArenaPtr::global()),
-        }
-    }
-}
-
 impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     /// Consume `self.v` and return a heap slice — used by `:is()`/`:where()`/
     /// `:has()`/`:not()`/`:nth-*(.. of ..)` which store `Box<[Selector]>` to
@@ -1776,19 +1764,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         hash_selector_slice(self.v.slice(), hasher);
-    }
-}
-
-impl<Impl: BunSelectorImpl> CssEql for GenericSelectorList<Impl> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
     }
 }
 
@@ -2402,19 +2377,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             }
             C::Nesting => tag!(27),
         }
-    }
-}
-
-impl<Impl: BunSelectorImpl> CssEql for GenericComponent<Impl> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
     }
 }
 

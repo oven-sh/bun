@@ -1,57 +1,49 @@
-import type { MySQLAdapter } from "internal/sql/mysql";
-import type { PostgresAdapter } from "internal/sql/postgres";
-import type { BaseQueryHandle, Query } from "internal/sql/query";
-import type { SQLHelper } from "internal/sql/shared";
+import type { PooledConnection as ServerConnection } from "internal/sql/pool";
+import type { BaseQueryHandle } from "internal/sql/query";
+import type { DatabaseAdapter, TransactionCommands } from "internal/sql/shared";
 
-const { Query, SQLQueryFlags } = require("internal/sql/query");
+type Query = import("internal/sql/query").Query<any, any>;
+type Adapter = DatabaseAdapter<any, any, any>;
+type Pool = Adapter | (Adapter & Pick<InstanceType<typeof PostgresAdapter>, "listen">);
+type QueryHandle = BaseQueryHandle<any>;
+type QueryHandler = (query: Query, handle: QueryHandle) => void;
+type TransactionCallback = (sql: Bun.SQL) => unknown;
+type CloseOptions = { timeout?: number };
+
+/// SQLite's is the Database itself.
+interface PooledConnection {
+  bindQuery?: ServerConnection["bindQuery"];
+  flush?: ServerConnection["flush"];
+  close(): void;
+}
+
+const {
+  Query,
+  SQLQueryFlags,
+  onQuerySettled,
+  symbols: { _flags, _strings, _waiter, _copy },
+} = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
-const { SQLHelper, parseOptions } = require("internal/sql/shared");
+const { SQLHelper, SQLResultArray, transforms } = require("internal/sql/shared");
+const { closeTimeoutMs } = require("internal/sql/pool");
+const { parseOptions } = require("internal/sql/options");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 
-const defineProperties = Object.defineProperties;
+const defineProperty = Object.defineProperty;
+const setPrototypeOf = Object.setPrototypeOf;
+const hasOwn = Object.hasOwn;
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
+const arraySlice = Array.prototype.slice;
 
-type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
+function noop() {}
 
-enum ReservedConnectionState {
-  acceptQueries = 1 << 0,
-  closed = 1 << 1,
-  released = 1 << 2,
-}
-
-interface TransactionState {
-  connectionState: ReservedConnectionState;
-  reject: (err: Error) => void;
-  storedError?: Error | null | undefined;
-  queries: Set<Query<any, any>>;
-}
-
-/// Bound as `this` to both callbacks of a reserve({ signal }) call, so each can
-/// reach the other without a per-call closure.
-interface ReserveAbortState {
-  signal: AbortSignal;
-  promiseWithResolvers: { promise: Promise<any>; resolve: (value: any) => void; reject: (reason?: any) => void };
-  onConnected: ((err: Error | null, pooledConnection: any) => void) | null;
-  onAbort: (() => void) | null;
-}
-
-function settleReservedTransaction(
-  reservedTransaction: Set<Promise<void>>,
-  finished: { promise: Promise<void>; resolve: () => void },
-  settle: (value: any) => void,
-  value: any,
-) {
-  reservedTransaction.delete(finished.promise);
-  finished.resolve();
-  settle(value);
-}
-
-function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
+function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Pool {
   switch (options.adapter) {
     case "postgres":
       return new PostgresAdapter(options);
@@ -65,1128 +57,1058 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   }
 }
 
-const SQL: typeof Bun.SQL = function SQL(
+interface Target {
+  client: Client;
+  pool: Pool;
+  flags: number;
+  handler: QueryHandler;
+}
+
+class Client implements Target {
+  client: Client = this;
+  pool: Pool;
+  options: Bun.SQL.__internal.DefinedOptions;
+  flags: number;
+  handler: QueryHandler = dispatchToPool.bind(this);
+  reserve = reserve.bind(this);
+  listen = listen.bind(this);
+  array = array.bind(this);
+  json = json.bind(this);
+
+  constructor(pool: Pool, options: Bun.SQL.__internal.DefinedOptions & { bigint?: boolean }) {
+    this.pool = pool;
+    this.options = options;
+    this.flags = options.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none;
+  }
+}
+
+const enum Kind {
+  reservation,
+  transaction,
+  savepoint,
+}
+
+/// Never references its handle: a FinalizationRegistry releases a reservation whose handle was dropped.
+class Scope implements Target {
+  client: Client;
+  pool: Pool;
+  flags: number;
+  handler: QueryHandler = dispatch.bind(this);
+  kind: Kind;
+  /// null: it took the connection from the pool
+  parent: Scope | null;
+  /// null: over
+  connection: PooledConnection | null;
+  /// The caller's statements pass. close() and release() clear it in the call, COMMIT and ROLLBACK where they are handed over.
+  accepting = true;
+  finishing: Promise<any> | null = null;
+  /// The callback is over and run() waits for the answer to the end. Only that answer settles the transaction.
+  awaitingAnswer = false;
+  error: Error | null = null;
+  running = new Set<Query>();
+  children = new Set<Scope>();
+  whenIdle: (() => void) | null = null;
+  onConnectionClosed: ((err: Error) => void) | null = null;
+
+  statements: TransactionCommands | null = null;
+  distributed = false;
+  savepoints = 0;
+  /// of a transaction that waits for the one before it on the reservation
+  start: (() => void) | null = null;
+  resolve: ((value: unknown) => void) | null = null;
+  reject: ((reason: unknown) => void) | null = null;
+  failure: { error: unknown } | null = null;
+
+  constructor(client: Client, kind: Kind, parent: Scope | null, connection: PooledConnection | null) {
+    this.client = client;
+    this.pool = client.pool;
+    this.flags = client.flags | SQLQueryFlags.allowUnsafeTransaction;
+    this.kind = kind;
+    this.parent = parent;
+    this.connection = connection;
+  }
+}
+
+function isTemplateObject(strings: readonly unknown[]) {
+  if (!$isArray((strings as TemplateStringsArray).raw) || !hasOwn(strings, "raw")) {
+    return false;
+  }
+  if (propertyIsEnumerable.$call(strings, "raw")) {
+    throw $ERR_INVALID_ARG_VALUE(
+      "strings",
+      strings,
+      "has an enumerable 'raw' property, so it is not a template object. Use sql.unsafe(), or define 'raw' with Object.defineProperty()",
+    );
+  }
+  return true;
+}
+
+function tag(this: Target, strings: any, ...values: any[]) {
+  if ($isArray(strings)) {
+    if (!isTemplateObject(strings)) {
+      return new SQLHelper(strings, values);
+    }
+  } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
+    return new SQLHelper([strings], values);
+  }
+  return new Query(strings, values, this.flags, this.handler, this.pool);
+}
+
+function unsafeQuery(target: Target, text: string, values: any, flags: number, handler: QueryHandler): Query {
+  if (values == null) {
+    values = [];
+    flags |= SQLQueryFlags.simple;
+  } else if ($isArray(values)) {
+    values = arraySlice.$call(values);
+    if (values.length === 0) {
+      flags |= SQLQueryFlags.simple;
+    }
+  }
+  return new Query(text, values, target.flags | SQLQueryFlags.unsafe | flags, handler, target.pool);
+}
+
+function unsafe(this: Target, text: string, values?: unknown) {
+  return unsafeQuery(this, text, values, SQLQueryFlags.none, this.handler);
+}
+
+function rejectQuery(this: Query, err: Error) {
+  this.reject(err);
+}
+
+function onFileRead(this: Target, query: Query, text: string) {
+  const handle = query.setText(text);
+  if (handle !== null) {
+    this.handler(query, handle);
+  }
+}
+
+function readFileThenDispatch(this: Target, query: Query) {
+  Bun.file(query[_strings] as string)
+    .text()
+    .$then(onFileRead.bind(this, query), rejectQuery.bind(query));
+}
+
+function file(this: Target, path: string, values?: unknown) {
+  return unsafeQuery(this, path, values, SQLQueryFlags.deferredText, readFileThenDispatch.bind(this));
+}
+
+function runOn(pool: Pool, pooledConnection: PooledConnection | null, query: Query, handle: QueryHandle) {
+  try {
+    const connection = pool.getConnectionForQuery(pooledConnection);
+    query.active = true;
+    handle.run(connection, query);
+  } catch (err) {
+    query.reject(err as Error);
+  }
+}
+
+function onQueryConnected(
+  this: Pool,
+  query: Query,
+  handle: QueryHandle,
+  err: Error | null,
+  pooledConnection: PooledConnection | null,
+) {
+  query[_waiter] = null;
+  if (err) {
+    // The caller dropped it while it waited. As in onQuerySettled(): one that is only started ends no process.
+    if (this.closedAtOnce) {
+      $pokePromiseAsHandled(query);
+    }
+    return query.reject(err);
+  }
+  pooledConnection!.bindQuery?.(query);
+  runOn(this, pooledConnection, query, handle);
+}
+
+function dispatchToPool(this: Client, query: Query, handle: QueryHandle) {
+  const pool = this.pool;
+  if (pool.closed) {
+    return query.reject(pool.connectionClosedError());
+  }
+  pool.connect((query[_waiter] = onQueryConnected.bind(pool, query, handle)));
+}
+
+function refusal(scope: Scope): Error {
+  for (let around: Scope | null = scope; around !== null; around = around.parent) {
+    const { error } = around;
+    if (error !== null) {
+      return error;
+    }
+  }
+  return scope.kind === Kind.reservation
+    ? scope.pool.connectionClosedError()
+    : scope.pool.invalidTransactionStateError("cannot run a query after its transaction or savepoint ended");
+}
+
+function isIdle(scope: Scope) {
+  return scope.running.size === 0 && scope.children.size === 0;
+}
+
+function settleIfIdle(scope: Scope) {
+  const whenIdle = scope.whenIdle;
+  if (whenIdle !== null && isIdle(scope)) {
+    scope.whenIdle = null;
+    whenIdle();
+  }
+}
+
+function forget(this: Scope, query: Query) {
+  this.running.delete(query);
+  settleIfIdle(this);
+}
+
+function start(scope: Scope, query: Query, handle: QueryHandle) {
+  scope.running.add(query);
+  onQuerySettled(query, forget.bind(scope, query));
+  runOn(scope.pool, scope.connection, query, handle);
+}
+
+/// A statement of the caller.
+function dispatch(this: Scope, query: Query, handle: QueryHandle) {
+  if (
+    !this.accepting ||
+    // SQLite ends a transaction inside some failing statements. What follows would run in autocommit.
+    (this.kind !== Kind.reservation && this.pool.isInTransaction?.(this.connection) === false)
+  ) {
+    // as in onQuerySettled()
+    $pokePromiseAsHandled(query);
+    return query.reject(refusal(this));
+  }
+  start(this, query, handle);
+}
+
+/// BEGIN, and what follows the first statement of the end.
+function dispatchOwn(this: Scope, query: Query, handle: QueryHandle) {
+  if (this.connection === null) {
+    return query.reject(refusal(this));
+  }
+  start(this, query, handle);
+}
+
+/// What the end of a scope fails with when the scope around it ended first. Never leaves this file.
+const nothingToEnd = Symbol("nothingToEnd") as unknown as Error;
+
+/// The first statement of the end. What was handed over before it still precedes it, what comes later is refused.
+function dispatchEnd(this: Scope, commit: boolean, query: Query, handle: QueryHandle) {
+  const connection = this.connection;
+  if (connection === null) {
+    return query.reject(nothingToEnd);
+  }
+  shut(this);
+  abandonChildren(this, null);
+  start(this, query, handle);
+  // SQLite has run it. A COMMIT that failed left the transaction open.
+  if (commit && this.kind === Kind.transaction && this.pool.isInTransaction?.(connection) === true) {
+    send(this, this.statements!.ROLLBACK, dispatchOwn.bind(this)).then(undefined, noop);
+  }
+}
+
+function send(scope: Scope, text: string, handler: QueryHandler): Query {
+  return new Query(
+    text,
+    [],
+    scope.flags | SQLQueryFlags.unsafe | SQLQueryFlags.simple | SQLQueryFlags.internal,
+    handler,
+    scope.pool,
+  );
+}
+
+function shut(scope: Scope) {
+  scope.accepting = false;
+  // A savepoint is a part of its transaction. A transaction is not a part of its reservation.
+  if (scope.kind !== Kind.reservation) {
+    for (const child of scope.children) {
+      shut(child);
+    }
+  }
+}
+
+/// `reason`: of a close() that takes the connection away. cancel() then only stops the work on the server.
+function cancelRunning(scope: Scope, reason?: Error) {
+  for (const query of scope.running) {
+    if (!(query[_flags] & SQLQueryFlags.internal)) {
+      if (reason !== undefined) {
+        query.reject(reason);
+      }
+      query.cancel();
+    }
+  }
+  for (const child of scope.children) {
+    cancelRunning(child, reason);
+  }
+}
+
+const kindNames = ["reservation", "transaction", "savepoint"];
+
+/// A COPY stream that is open when its scope ends would hold the connection for ever. Returns the queries it told so.
+function abandonCopies(scope: Scope, ended: Scope, copies: Query[] = []) {
+  for (const query of scope.running) {
+    if (query[_flags] & SQLQueryFlags.copy) {
+      query[_copy].abandon(`the ${kindNames[ended.kind]} ended before the COPY stream did`);
+      copies.push(query);
+    }
+  }
+  // as in shut()
+  if (scope.kind !== Kind.reservation) {
+    for (const child of scope.children) {
+      abandonCopies(child, ended, copies);
+    }
+  }
+  return copies;
+}
+
+/// The transactions of a reservation run one at a time, so the oldest that is left has not started.
+function startNextTransaction(reservation: Scope) {
+  for (const next of reservation.children) {
+    const start = next.start!;
+    next.start = null;
+    return start();
+  }
+}
+
+/// Over, in order: the end was answered, or release(). The connection goes back to where it came from.
+function leave(scope: Scope, prepared = false) {
+  const connection = scope.connection;
+  if (connection === null) {
+    return;
+  }
+  scope.connection = null;
+  scope.accepting = false;
+  abandonChildren(scope, null);
+  const parent = scope.parent;
+  if (parent !== null) {
+    parent.children.delete(scope);
+    if (parent.kind === Kind.reservation) {
+      startNextTransaction(parent);
+    }
+    settleIfIdle(parent);
+    return;
+  }
+  scope.pool.detachConnectionCloseHandler(connection, scope.onConnectionClosed!);
+  if (scope.kind === Kind.reservation) {
+    reservations!.unregister(scope);
+  }
+  scope.pool.release(connection, prepared);
+}
+
+/// Over, out of order: the connection is lost (`err`), or the scope around it ended. Nothing is sent.
+function abandon(scope: Scope, err: Error | null) {
+  if (scope.connection === null) {
+    return;
+  }
+  scope.connection = null;
+  scope.accepting = false;
+  scope.error ??= err;
+  if (err !== null) {
+    for (const query of scope.running) {
+      query.reject(err);
+    }
+  }
+  abandonChildren(scope, err);
+  // savepoint() settles when its callback does.
+  if (scope.kind === Kind.transaction && !scope.awaitingAnswer) {
+    const failure = scope.failure;
+    settle(scope, scope.reject, failure !== null && err !== null ? withCause(err, failure.error) : refusal(scope));
+  }
+  const whenIdle = scope.whenIdle;
+  if (whenIdle !== null) {
+    scope.whenIdle = null;
+    whenIdle();
+  }
+}
+
+function abandonChildren(scope: Scope, err: Error | null) {
+  const children = scope.children;
+  for (const child of children) {
+    abandon(child, err);
+  }
+  children.clear();
+}
+
+function onConnectionClosed(this: Scope, err: Error) {
+  const connection = this.connection;
+  if (connection === null) {
+    return;
+  }
+  abandon(this, err);
+  if (this.kind === Kind.reservation) {
+    reservations!.unregister(this);
+  }
+  this.pool.release(connection);
+}
+
+function ownConnection(scope: Scope) {
+  scope.pool.attachConnectionCloseHandler(
+    scope.connection,
+    (scope.onConnectionClosed = onConnectionClosed.bind(scope)),
+  );
+}
+
+/// A lost connection rejects everything on it with one error object, so the cause goes on a copy.
+function withCause(error: unknown, cause: unknown) {
+  if (!Error.isError(error) || "cause" in error) {
+    return error;
+  }
+  const copy = new Error(error.message, { cause });
+  setPrototypeOf(copy, Object.getPrototypeOf(error));
+  return Object.assign(copy, error);
+}
+
+function stopWaiting(timer: ReturnType<typeof setTimeout>, resolve: () => void) {
+  clearTimeout(timer);
+  resolve();
+}
+
+function idleOrTimeout(scope: Scope, ms: number): Promise<void> | undefined {
+  if (ms === 0 || isIdle(scope)) {
+    return;
+  }
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const timer = setTimeout(resolve, ms);
+  timer.unref();
+  scope.whenIdle = stopWaiting.bind(null, timer, resolve);
+  return promise;
+}
+
+/// A query that outlives the scope keeps the scope, so the scope lets go of the promise.
+function settle(scope: Scope, settler: ((value: unknown) => void) | null, value: unknown) {
+  scope.resolve = scope.reject = scope.failure = null;
+  settler?.(value);
+}
+
+function finish(scope: Scope, commit: boolean, grace: number | undefined): Promise<any> {
+  return (scope.finishing ??= end(scope, commit, grace));
+}
+
+async function end(scope: Scope, commit: boolean, grace: number | undefined) {
+  let prepared = false;
+  try {
+    if (grace !== undefined) {
+      const idle = idleOrTimeout(scope, grace);
+      if (idle !== undefined) {
+        await idle;
+      }
+      cancelRunning(scope);
+    }
+    if (scope.connection === null) {
+      throw nothingToEnd;
+    }
+    // SQLite rolled it back by itself.
+    if (!commit && scope.pool.isInTransaction?.(scope.connection) === false) {
+      return;
+    }
+    const { BEFORE_COMMIT_OR_ROLLBACK, COMMIT, ROLLBACK } = scope.statements!;
+    const last = commit ? COMMIT : ROLLBACK;
+    if (BEFORE_COMMIT_OR_ROLLBACK) {
+      await send(scope, BEFORE_COMMIT_OR_ROLLBACK, dispatchEnd.bind(scope, false));
+      const answer = await send(scope, last, dispatchOwn.bind(scope));
+      prepared = commit;
+      return answer;
+    }
+    try {
+      return await send(scope, last, dispatchEnd.bind(scope, commit));
+    } catch (err) {
+      // A savepoint whose RELEASE failed is still there.
+      if (commit && scope.kind === Kind.savepoint && scope.connection !== null) {
+        await send(scope, ROLLBACK, dispatchOwn.bind(scope)).then(undefined, noop);
+      }
+      throw err;
+    }
+  } finally {
+    leave(scope, prepared);
+  }
+}
+
+async function run(scope: Scope, callback: TransactionCallback) {
+  const parent = scope.parent;
+  try {
+    // SAVEPOINT is a statement of the scope that savepoint() was called on: it goes through that scope's gate.
+    await (scope.kind === Kind.savepoint
+      ? send(parent!, scope.statements!.BEGIN, parent!.handler)
+      : send(scope, scope.statements!.BEGIN, dispatchOwn.bind(scope)));
+  } catch (err) {
+    leave(scope);
+    return settle(scope, scope.reject, err);
+  }
+  // close() or the loss of the connection came first
+  if (!scope.accepting) {
+    if (scope.finishing === null && scope.connection !== null) {
+      await finish(scope, false, undefined).$then(undefined, noop);
+    }
+    return settle(scope, scope.reject, refusal(scope));
+  }
+
+  let result: unknown;
+  try {
+    result = await callback(makeHandle(scope));
+    // A result is an array too, and Promise.all would copy it without its count, command and columns.
+    if ($isArray(result) && !SQLResultArray.isResult(result)) {
+      result = await Promise.all(result);
+    }
+  } catch (error) {
+    scope.failure = { error };
+  }
+  if (!isIdle(scope)) {
+    const copies = abandonCopies(scope, scope);
+    if (copies.length > 0) {
+      shut(scope);
+    }
+    for (let i = 0; i < copies.length; i++) {
+      try {
+        await copies[i];
+      } catch (error) {
+        scope.failure ??= { error };
+      }
+    }
+  }
+  const failure = scope.failure;
+
+  const closing = scope.finishing;
+  if (closing !== null || scope.connection === null) {
+    if (closing !== null) {
+      await closing.$then(undefined, noop);
+    }
+    return settle(scope, scope.reject, failure !== null ? failure.error : refusal(scope));
+  }
+
+  let answer: { command?: string | null } | undefined;
+  scope.awaitingAnswer = true;
+  try {
+    answer = await finish(scope, failure === null, undefined);
+  } catch (err) {
+    if (failure === null) {
+      return settle(scope, scope.reject, err === nothingToEnd ? refusal(scope) : err);
+    }
+    return settle(scope, scope.reject, err === nothingToEnd ? failure.error : withCause(err, failure.error));
+  }
+  if (failure !== null) {
+    return settle(scope, scope.reject, failure.error);
+  }
+  // PostgreSQL answers the COMMIT of an aborted transaction with the tag ROLLBACK.
+  if (scope.kind === Kind.transaction && answer?.command === "ROLLBACK") {
+    return settle(
+      scope,
+      scope.reject,
+      new PostgresError("COMMIT was rolled back by the server because the transaction was already aborted", {
+        code: "ERR_POSTGRES_COMMIT_ROLLED_BACK",
+      }),
+    );
+  }
+  settle(scope, scope.resolve, result);
+}
+
+function transactionCommands(pool: Pool, options: string | undefined, distributed: boolean): TransactionCommands {
+  if (!distributed) {
+    return pool.getTransactionCommands(options);
+  }
+  const commands = pool.getDistributedTransactionCommands(options!);
+  if (!commands) {
+    throw new Error(`This adapter doesn't support distributed transactions.`);
+  }
+  return commands;
+}
+
+function onTransactionConnected(
+  scope: Scope,
+  callback: TransactionCallback,
+  err: Error | null,
+  pooledConnection: PooledConnection | null,
+) {
+  if (err) {
+    return settle(scope, scope.reject, err);
+  }
+  scope.connection = pooledConnection;
+  ownConnection(scope);
+  run(scope, callback);
+}
+
+/// `fn.bind(undefined, scope, callback)` for later, when whoever gives up the connection calls it in their own async context.
+function inCallerContext<Rest extends unknown[]>(
+  fn: (scope: Scope, callback: TransactionCallback, ...rest: Rest) => void,
+  scope: Scope,
+  callback: TransactionCallback,
+): (...rest: Rest) => void {
+  // A transaction that runs as a disposed Bun.ModuleGraph never ends, and keeps the connection.
+  return AsyncContextFrame.currentGraph() !== undefined
+    ? fn.bind(undefined, scope, callback)
+    : AsyncContextFrame.run.bind(undefined, AsyncContextFrame.current(), fn, undefined, scope, callback);
+}
+
+function begin(this: Client | Scope, distributed: boolean, optionsOrFn: unknown, fn?: unknown) {
+  const pool = this.pool;
+  const reservation = this instanceof Scope ? this : null;
+  if (reservation !== null ? !reservation.accepting : pool.closed) {
+    return Promise.$reject(pool.connectionClosedError());
+  }
+
+  let options = optionsOrFn as string | undefined;
+  let callback = fn;
+  if (distributed) {
+    if (typeof optionsOrFn !== "string") {
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("name", optionsOrFn, "must be a string"));
+    }
+  } else if ($isCallable(optionsOrFn)) {
+    callback = optionsOrFn;
+    options = undefined;
+  } else if (typeof optionsOrFn !== "string") {
+    return Promise.$reject($ERR_INVALID_ARG_VALUE("options", optionsOrFn, "must be a string"));
+  }
+  if (!$isCallable(callback)) {
+    return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+  }
+
+  let statements: TransactionCommands;
+  try {
+    statements = transactionCommands(pool, options, distributed);
+  } catch (err) {
+    return Promise.$reject(err);
+  }
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const scope = new Scope(this.client, Kind.transaction, reservation, reservation && reservation.connection);
+  scope.statements = statements;
+  scope.distributed = distributed;
+  scope.resolve = resolve;
+  scope.reject = reject;
+  if (reservation === null) {
+    pool.connect(inCallerContext(onTransactionConnected, scope, callback as TransactionCallback), true);
+  } else if (reservation.children.add(scope).size === 1) {
+    run(scope, callback as TransactionCallback);
+  } else {
+    scope.start = inCallerContext(run, scope, callback as TransactionCallback);
+  }
+  return promise;
+}
+
+function transactionOf(scope: Scope) {
+  while (scope.kind === Kind.savepoint) {
+    scope = scope.parent!;
+  }
+  return scope;
+}
+
+function beginInsideTransaction(this: Scope, method: string) {
+  throw this.pool.invalidTransactionStateError(
+    transactionOf(this).distributed
+      ? `cannot call ${method} inside a distributed transaction`
+      : `cannot call ${method} inside a transaction use savepoint() instead`,
+  );
+}
+
+/// savepoint(fn), savepoint(name, fn), and the untyped savepoint(fn, name).
+function savepoint(this: Scope, nameOrFn: unknown, fnOrName?: unknown) {
+  let name: unknown;
+  let callback: unknown;
+  if ($isCallable(fnOrName)) {
+    callback = fnOrName;
+    name = $isCallable(nameOrFn) ? "" : nameOrFn;
+  } else {
+    callback = nameOrFn;
+    name = fnOrName;
+  }
+  if (name) {
+    name = String(name).replace(/[^a-zA-Z0-9_]/g, "_");
+  }
+
+  const transaction = transactionOf(this);
+  if (transaction.distributed) {
+    return Promise.$reject(
+      this.pool.invalidTransactionStateError("cannot call savepoint inside a distributed transaction"),
+    );
+  }
+  if (!this.accepting) {
+    return Promise.$reject(refusal(this));
+  }
+  if (!$isCallable(callback)) {
+    return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
+  }
+
+  // the format of the postgres package
+  const id = `s${transaction.savepoints++}${name ? `_${name}` : ""}`;
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const scope = new Scope(this.client, Kind.savepoint, this, this.connection);
+  scope.statements = {
+    BEGIN: `SAVEPOINT ${id}`,
+    COMMIT: `RELEASE SAVEPOINT ${id}`,
+    ROLLBACK: `ROLLBACK TO SAVEPOINT ${id}`,
+  };
+  scope.resolve = resolve;
+  scope.reject = reject;
+  this.children.add(scope);
+  run(scope, callback as TransactionCallback);
+  return promise;
+}
+
+async function closeTransaction(this: Scope, options?: CloseOptions) {
+  const grace = closeTimeoutMs(options) ?? 0;
+  if (this.connection === null) {
+    return;
+  }
+  const transaction = transactionOf(this);
+  const { finishing } = transaction;
+  if (finishing !== null) {
+    await finishing.$then(undefined, noop);
+    return;
+  }
+  shut(transaction);
+  transaction.error = transaction.pool.connectionClosedError();
+  try {
+    await finish(transaction, false, grace);
+  } catch (err) {
+    if (err !== nothingToEnd) {
+      throw err;
+    }
+  }
+}
+
+let reservations: FinalizationRegistry<Scope> | undefined;
+
+function releaseDropped(scope: Scope) {
+  release.$call(scope);
+}
+
+/// Does not wait for the hand-back: the caller can be the callback of a transaction that it waits for.
+function release(this: Scope) {
+  if (this.accepting) {
+    this.accepting = false;
+    if (isIdle(this)) {
+      leave(this);
+    } else {
+      this.whenIdle = leave.bind(null, this);
+      abandonCopies(this, this);
+    }
+  }
+  return Promise.$resolve(undefined);
+}
+
+async function endReservation(scope: Scope, grace: number) {
+  const idle = idleOrTimeout(scope, grace);
+  if (idle !== undefined) {
+    await idle;
+  }
+  const connection = scope.connection;
+  if (connection !== null) {
+    cancelRunning(scope, scope.pool.connectionClosedError());
+    // onConnectionClosed gives it back
+    connection.close();
+  }
+}
+
+async function closeReservation(this: Scope, options?: CloseOptions) {
+  const grace = closeTimeoutMs(options) ?? 0;
+  if (this.accepting) {
+    this.accepting = false;
+    this.finishing = endReservation(this, grace);
+  }
+  await this.finishing;
+}
+
+interface PendingReservation {
+  client: Client;
+  signal: AbortSignal | undefined;
+  resolve: (handle: Bun.ReservedSQL) => void;
+  reject: (reason: unknown) => void;
+  onConnected: ((err: Error | null, pooledConnection: PooledConnection | null) => void) | null;
+  onAbort: (() => void) | null;
+}
+
+function onReserveConnected(this: PendingReservation, err: Error | null, pooledConnection: PooledConnection | null) {
+  this.signal?.removeEventListener("abort", this.onAbort!);
+  if (err) {
+    return this.reject(err);
+  }
+  const scope = new Scope(this.client, Kind.reservation, null, pooledConnection);
+  ownConnection(scope);
+  const handle = makeHandle(scope);
+  (reservations ??= new FinalizationRegistry(releaseDropped)).register(handle, scope, scope);
+  this.resolve(handle);
+}
+
+/// Once the callback left the queue the caller owns a connection and must release() it: abort is a no-op.
+function onReserveAbort(this: PendingReservation) {
+  if (this.client.pool.cancelConnect(this.onConnected!)) {
+    this.reject(this.signal!.reason);
+  }
+}
+
+function reserve(this: Client, options?: { signal?: AbortSignal }) {
+  const pool = this.pool;
+  if (pool.closed) {
+    return Promise.$reject(pool.connectionClosedError());
+  }
+  if (!pool.supportsReservedConnections) {
+    return Promise.$reject(new Error("This adapter doesn't support connection reservation"));
+  }
+
+  const signal = options?.signal;
+  if (signal !== undefined) {
+    try {
+      validateAbortSignal(signal, "options.signal");
+    } catch (err) {
+      return Promise.$reject(err);
+    }
+    if (signal.aborted) {
+      return Promise.$reject(signal.reason);
+    }
+  }
+
+  const { promise, resolve, reject } = Promise.withResolvers<Bun.ReservedSQL>();
+  const pending: PendingReservation = { client: this, signal, resolve, reject, onConnected: null, onAbort: null };
+  pending.onConnected = onReserveConnected.bind(pending);
+  if (signal === undefined) {
+    pool.connect(pending.onConnected, true);
+    return promise;
+  }
+  pending.onAbort = onReserveAbort.bind(pending);
+  // A listener of the user on the same signal that calls stopImmediatePropagation() must not starve this one.
+  signal.addEventListener("abort", pending.onAbort, resistStopPropagation({ __proto__: null, once: true }));
+  pool.connect(pending.onConnected, true);
+  // connect() can run user code (a function-valued password) that aborts before the callback is queued.
+  if (signal.aborted) {
+    onReserveAbort.$call(pending);
+  }
+  return promise;
+}
+
+function validateChannel(channel: unknown): asserts channel is string {
+  if (typeof channel !== "string" || channel.length === 0) {
+    throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+  }
+  if (channel.includes("\0")) {
+    throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+  }
+  // PostgreSQL truncates longer identifiers, so notifications would arrive under a different name.
+  if (Buffer.byteLength(channel) > 63) {
+    throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be at most 63 bytes");
+  }
+}
+
+function validateCallback(name: string, fn: unknown, optional: boolean) {
+  if (!$isCallable(fn) && !(optional && fn === undefined)) {
+    throw $ERR_INVALID_ARG_TYPE(name, "function", fn);
+  }
+}
+
+function listenUnsupported() {
+  return Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
+}
+
+async function listen(this: Client, channel: unknown, onnotify: unknown, onlisten: unknown) {
+  validateChannel(channel);
+  validateCallback("onnotify", onnotify, false);
+  validateCallback("onlisten", onlisten, true);
+  const pool = this.pool;
+  return "listen" in pool
+    ? pool.listen(channel, onnotify as (payload: string) => void, onlisten as (() => void) | undefined)
+    : listenUnsupported();
+}
+
+function notify(this: Target, channel: unknown, payload: unknown) {
+  validateChannel(channel);
+  if (payload === undefined) {
+    payload = "";
+  } else if (typeof payload !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+  }
+  if (!("listen" in this.pool)) {
+    return listenUnsupported();
+  }
+  // it is sent even when nobody awaits it
+  return new Query(
+    "SELECT pg_notify($1, $2)",
+    [channel, payload],
+    this.flags | SQLQueryFlags.unsafe,
+    this.handler,
+    this.pool,
+  ).execute();
+}
+
+async function finishDistributed(this: Target, commit: boolean, name: string) {
+  const text = this.pool.getFinishDistributedSQL(commit, name);
+  return await unsafeQuery(this, text, undefined, SQLQueryFlags.none, this.handler).execute();
+}
+
+function array(this: Client, values: any[], typeNameOrID?: number | string) {
+  return this.pool.array(values, typeNameOrID);
+}
+
+function json(this: Client, value: unknown) {
+  const pool = this.pool;
+  return pool.json ? pool.json(value) : JSON.stringify(value);
+}
+
+function onClientConnected(
+  this: Pool,
+  handle: Bun.SQL,
+  resolve: (handle: Bun.SQL) => void,
+  reject: (err: Error) => void,
+  err: Error | null,
+  pooledConnection: PooledConnection | null,
+) {
+  if (err) {
+    return reject(err);
+  }
+  this.release(pooledConnection);
+  resolve(handle);
+}
+
+function connectClient(this: Client, handle: Bun.SQL) {
+  const pool = this.pool;
+  if (pool.closed) {
+    return Promise.$reject(pool.connectionClosedError());
+  }
+  if (pool.isConnected()) {
+    return Promise.$resolve(handle);
+  }
+  const { promise, resolve, reject } = Promise.withResolvers<Bun.SQL>();
+  pool.connect(onClientConnected.bind(pool, handle, resolve, reject));
+  return promise;
+}
+
+function connectScope(this: Scope, handle: Bun.SQL) {
+  return this.connection === null ? Promise.$reject(this.pool.connectionClosedError()) : Promise.$resolve(handle);
+}
+
+async function closeClient(this: Client, options?: CloseOptions) {
+  await this.pool.close(options);
+}
+
+function flushClient(this: Client) {
+  return this.pool.flush();
+}
+
+function flushScope(this: Scope) {
+  const connection = this.connection;
+  if (connection === null) {
+    throw this.pool.connectionClosedError();
+  }
+  return connection.flush ? connection.flush() : this.pool.flush();
+}
+
+const handleName = { __proto__: null, value: "sql", configurable: true };
+
+function makeHandle(target: Client | Scope) {
+  const client = target.client;
+  const handle: any = tag.bind(target);
+  defineProperty(handle, "name", handleName);
+  handle.unsafe = unsafe.bind(target);
+  handle.file = file.bind(target);
+  handle.notify = notify.bind(target);
+  handle.commitDistributed = finishDistributed.bind(target, true);
+  handle.rollbackDistributed = finishDistributed.bind(target, false);
+  // reserve() takes another connection from the pool, whatever it is called on, as in the postgres package
+  handle.reserve = client.reserve;
+  handle.listen = client.listen;
+  handle.array = client.array;
+  handle.json = client.json;
+  handle.options = client.options;
+  if (target instanceof Client) {
+    handle.connect = connectClient.bind(target, handle);
+    handle.flush = flushClient.bind(target);
+    handle.begin = handle.transaction = begin.bind(target, false);
+    handle.beginDistributed = handle.distributed = begin.bind(target, true);
+    handle.close = handle.end = closeClient.bind(target);
+    handle[Symbol.asyncDispose] = closeClient.bind(target, undefined);
+  } else {
+    handle.connect = connectScope.bind(target, handle);
+    handle.flush = flushScope.bind(target);
+    if (target.kind === Kind.reservation) {
+      handle.begin = handle.transaction = begin.bind(target, false);
+      handle.beginDistributed = handle.distributed = begin.bind(target, true);
+      handle.close = handle.end = closeReservation.bind(target);
+      handle.release = handle[Symbol.dispose] = handle[Symbol.asyncDispose] = release.bind(target);
+    } else {
+      handle.begin = handle.transaction = beginInsideTransaction.bind(target, "begin");
+      handle.beginDistributed = handle.distributed = beginInsideTransaction.bind(target, "beginDistributed");
+      handle.savepoint = savepoint.bind(target);
+      handle.close = handle.end = closeTransaction.bind(target);
+      handle[Symbol.asyncDispose] = closeTransaction.bind(target, undefined);
+    }
+  }
+  return setPrototypeOf(handle, SQLPrototype);
+}
+
+function SQL(
   stringOrUrlOrOptions: Bun.SQL.Options | string | undefined = undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options = {},
 ): Bun.SQL {
-  const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
-  const pool = adapterFromOptions(connectionInfo);
-
-  function onQueryDisconnected(this: Query<any, any>, err: Error) {
-    // connection closed mid query this will not be called if the query finishes first
-    const query = this;
-
-    if (err) {
-      return query.reject(err);
-    }
-
-    // query is cancelled when waiting for a connection from the pool
-    if (query.cancelled) {
-      return query.reject(pool.queryCancelledError());
-    }
-  }
-
-  function onQueryConnected(
-    this: Query<any, any>,
-    handle: BaseQueryHandle<any>,
-    err,
-    connectionHandle: ConnectionHandle,
-  ) {
-    const query = this;
-    if (err) {
-      // fail to aquire a connection from the pool
-      return query.reject(err);
-    }
-    // query is cancelled when waiting for a connection from the pool
-    if (query.cancelled) {
-      pool.release(connectionHandle); // release the connection back to the pool
-      return query.reject(pool.queryCancelledError());
-    }
-
-    if (connectionHandle.bindQuery) {
-      connectionHandle.bindQuery(query, onQueryDisconnected.bind(query));
-    }
-
-    try {
-      const connection = pool.getConnectionForQuery ? pool.getConnectionForQuery(connectionHandle) : connectionHandle;
-      const result = handle.run(connection, query);
-
-      if (result && $isPromise(result)) {
-        result.catch(err => query.reject(err));
-      }
-    } catch (err) {
-      query.reject(err);
-    }
-  }
-  function queryFromPoolHandler(query, handle, err) {
-    if (err) {
-      // fail to create query
-      return query.reject(err);
-    }
-
-    // query is cancelled
-    if (!handle || query.cancelled) {
-      return query.reject(pool.queryCancelledError());
-    }
-
-    pool.connect(onQueryConnected.bind(query, handle));
-  }
-
-  function queryFromPool(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
-  ) {
-    try {
-      return new Query(
-        strings,
-        values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
-        queryFromPoolHandler,
-        pool,
-      );
-    } catch (err) {
-      return Promise.$reject(err);
-    }
-  }
-
-  function unsafeQuery(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
-  ) {
-    try {
-      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
-      if ((values?.length ?? 0) === 0) {
-        flags |= SQLQueryFlags.simple;
-      }
-      return new Query(strings, values, flags, queryFromPoolHandler, pool);
-    } catch (err) {
-      return Promise.$reject(err);
-    }
-  }
-
-  function onTransactionQueryDisconnected(query: Query<any, any>) {
-    const transactionQueries = this;
-    transactionQueries.delete(query);
-  }
-
-  function queryFromTransactionHandler(transactionQueries, query, handle, err) {
-    const pooledConnection = this;
-    if (err) {
-      transactionQueries.delete(query);
-      return query.reject(err);
-    }
-
-    // query is cancelled
-    if (query.cancelled) {
-      transactionQueries.delete(query);
-      return query.reject(pool.queryCancelledError());
-    }
-
-    query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
-
-    try {
-      // Use adapter method to get the actual connection
-      const connection = pool.getConnectionForQuery ? pool.getConnectionForQuery(pooledConnection) : pooledConnection;
-      const result = handle.run(connection, query);
-      if (result && $isPromise(result)) {
-        result.catch(err => query.reject(err));
-      }
-    } catch (err) {
-      query.reject(err);
-    }
-  }
-
-  function queryFromTransaction(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
-    pooledConnection: PooledPostgresConnection,
-    transactionQueries: Set<Query<any, any>>,
-  ) {
-    try {
-      const query = new Query(
-        strings,
-        values,
-        connectionInfo.bigint
-          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
-          : SQLQueryFlags.allowUnsafeTransaction,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-        pool,
-      );
-
-      transactionQueries.add(query);
-      return query;
-    } catch (err) {
-      return Promise.$reject(err);
-    }
-  }
-
-  function unsafeQueryFromTransaction(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
-    pooledConnection: PooledPostgresConnection,
-    transactionQueries: Set<Query<any, any>>,
-  ) {
-    try {
-      let flags = connectionInfo.bigint
-        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
-        : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
-
-      if ((values?.length ?? 0) === 0) {
-        flags |= SQLQueryFlags.simple;
-      }
-      const query = new Query(
-        strings,
-        values,
-        flags,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
-        pool,
-      );
-      transactionQueries.add(query);
-      return query;
-    } catch (err) {
-      return Promise.$reject(err);
-    }
-  }
-
-  function onTransactionDisconnected(this: TransactionState, err: Error) {
-    const reject = this.reject;
-    this.connectionState |= ReservedConnectionState.closed;
-
-    for (const query of this.queries) {
-      query.reject(err);
-    }
-
-    if (err) {
-      return reject(err);
-    }
-  }
-
-  const listenable = "listen" in pool ? pool : null;
-  function validateChannel(channel: unknown): asserts channel is string {
-    if (typeof channel !== "string" || channel.length === 0) {
-      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
-    }
-    if (channel.includes("\0")) {
-      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
-    }
-    // PostgreSQL truncates longer identifiers, so notifications would arrive under a different name.
-    if (Buffer.byteLength(channel) > 63) {
-      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be at most 63 bytes");
-    }
-  }
-  function validateCallback(name: string, fn: unknown, optional: boolean) {
-    if (!$isCallable(fn) && !(optional && fn === undefined)) {
-      throw $ERR_INVALID_ARG_TYPE(name, "function", fn);
-    }
-  }
-  const listenUnsupported = () =>
-    Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
-  const listen: Bun.SQL["listen"] = async (channel, onnotify, onlisten) => {
-    validateChannel(channel);
-    validateCallback("onnotify", onnotify, false);
-    validateCallback("onlisten", onlisten, true);
-    return listenable ? listenable.listen(channel, onnotify, onlisten) : listenUnsupported();
-  };
-  // .execute(): queries are lazy, and notify() must send even when not awaited.
-  function makeNotify(target: { unsafe: Bun.SQL["unsafe"] }): Bun.SQL["notify"] {
-    return (channel, payload) => {
-      validateChannel(channel);
-      if (payload === undefined) payload = "";
-      else if (typeof payload !== "string") throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
-      if (!listenable) return listenUnsupported();
-      return target.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute() as unknown as Promise<void>;
-    };
-  }
-
-  // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
-  function runReservedTransaction(
-    reservedTransaction: Set<Promise<void>>,
-    pooledConnection,
-    callback: TransactionCallback,
-    options: string | undefined,
-    distributed: boolean,
-  ) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const finished = Promise.withResolvers<void>();
-    reservedTransaction.add(finished.promise);
-    // lets just reuse the same code path as the transaction begin
-    onTransactionConnected(
-      callback,
-      options,
-      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve),
-      settleReservedTransaction.bind(null, reservedTransaction, finished, reject),
-      true,
-      distributed,
-      null,
-      pooledConnection,
+  // Not `new.target !== SQL`: `new` on a Proxy of SQL works.
+  if (new.target !== undefined && new.target.prototype !== SQLPrototype) {
+    throw new TypeError(
+      "Bun.SQL cannot be subclassed. Its methods are own properties of the client, so a subclass cannot override them. Wrap the client instead.",
     );
-    return promise;
   }
-
-  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
-    const { resolve, reject } = this;
-
-    if (err) {
-      return reject(err);
-    }
-
-    let reservedTransaction = new Set<Promise<void>>();
-
-    const state: TransactionState = {
-      connectionState: ReservedConnectionState.acceptQueries,
-      reject,
-      storedError: null,
-      queries: new Set(),
-    };
-
-    function releaseReservation() {
-      if (state.connectionState & ReservedConnectionState.released) return;
-      state.connectionState |= ReservedConnectionState.released;
-      pool.release(pooledConnection);
-    }
-
-    const onDisconnected = onTransactionDisconnected.bind(state);
-    function onClose(err: Error) {
-      onDisconnected(err);
-      releaseReservation();
-    }
-    if (pooledConnection.onClose) {
-      pooledConnection.onClose(onClose);
-    }
-
-    function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-      if ($isArray(strings)) {
-        // detect if is tagged template
-        if (!$isArray(strings.raw)) {
-          return new SQLHelper(strings, values);
-        }
-      } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
-        return new SQLHelper([strings], values);
-      }
-      // we use the same code path as the transaction sql
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
-    }
-
-    reserved_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
-    };
-
-    reserved_sql.file = async (path: string, args = []) => {
-      return await Bun.file(path)
-        .text()
-        .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
-        });
-    };
-
-    reserved_sql.connect = () => {
-      if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-      return Promise.$resolve(reserved_sql);
-    };
-
-    reserved_sql.commitDistributed = async function (name: string) {
-      if (!pool.getCommitDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
-      }
-
-      const sql = pool.getCommitDistributedSQL(name);
-      return await reserved_sql.unsafe(sql);
-    };
-    reserved_sql.rollbackDistributed = async function (name: string) {
-      if (!pool.getRollbackDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
-      }
-
-      const sql = pool.getRollbackDistributedSQL(name);
-      return await reserved_sql.unsafe(sql);
-    };
-
-    // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
-    // this matchs the behavior of the postgres package
-    reserved_sql.reserve = (options?: { signal?: AbortSignal }) => sql.reserve(options);
-    reserved_sql.array = sql.array;
-    reserved_sql.listen = listen;
-    reserved_sql.notify = makeNotify(reserved_sql);
-    reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
-      // begin is allowed the difference is that we need to make sure to use the same connection and never release it
-      if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-      let callback = fn;
-
-      if (typeof name !== "string") {
-        return Promise.$reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
-      }
-
-      if (!$isCallable(callback)) {
-        return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
-      }
-      return runReservedTransaction(reservedTransaction, pooledConnection, callback, name, true);
-    };
-    reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
-      // begin is allowed the difference is that we need to make sure to use the same connection and never release it
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-      let callback = fn;
-      let options: string | undefined = options_or_fn as unknown as string;
-      if ($isCallable(options_or_fn)) {
-        callback = options_or_fn as unknown as TransactionCallback;
-        options = undefined;
-      } else if (typeof options_or_fn !== "string") {
-        return Promise.$reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
-      }
-      if (!$isCallable(callback)) {
-        return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
-      }
-      return runReservedTransaction(reservedTransaction, pooledConnection, callback, options, false);
-    };
-
-    reserved_sql.flush = () => {
-      if (state.connectionState & ReservedConnectionState.closed) {
-        throw pool.connectionClosedError();
-      }
-      // Use pooled connection's flush if available, otherwise use adapter's flush
-      if (pooledConnection.flush) {
-        return pooledConnection.flush();
-      }
-      return pool.flush();
-    };
-    reserved_sql.close = async (options?: { timeout?: number }) => {
-      const reserveQueries = state.queries;
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$resolve(undefined);
-      }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      let timeout = options?.timeout;
-      if (timeout) {
-        timeout = Number(timeout);
-        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
-        }
-        if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(reserveQueries);
-          const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
-
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
-        }
-      }
-      state.connectionState |= ReservedConnectionState.closed;
-      for (const query of reserveQueries) {
-        (query as Query<any, any>).cancel();
-      }
-
-      pooledConnection.close();
-
-      return Promise.$resolve(undefined);
-    };
-    reserved_sql.release = () => {
-      if (state.connectionState & ReservedConnectionState.released) {
-        return Promise.$resolve(undefined);
-      }
-      // just release the connection back to the pool
-      state.connectionState |= ReservedConnectionState.closed;
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      // Use adapter method to detach connection close handler
-      if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
-      }
-      releaseReservation();
-      return Promise.$resolve(undefined);
-    };
-    // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
-    reserved_sql[Symbol.asyncDispose] = () => reserved_sql.release();
-    reserved_sql[Symbol.dispose] = () => reserved_sql.release();
-
-    reserved_sql.options = sql.options;
-    reserved_sql.transaction = reserved_sql.begin;
-    reserved_sql.distributed = reserved_sql.beginDistributed;
-    reserved_sql.end = reserved_sql.close;
-    resolve(reserved_sql);
-  }
-
-  function onReserveConnectedWithSignal(this: ReserveAbortState, err: Error | null, pooledConnection) {
-    this.signal.removeEventListener("abort", this.onAbort!);
-    onReserveConnected.$call(this.promiseWithResolvers, err, pooledConnection);
-  }
-
-  function onReserveAbort(this: ReserveAbortState) {
-    // Once the callback left the queue a connection was handed out; the
-    // caller owns it and must release() it, so abort becomes a no-op.
-    if (pool.cancelReserve && pool.cancelReserve(this.onConnected!)) {
-      this.promiseWithResolvers.reject(this.signal.reason);
-    }
-  }
-  async function onTransactionConnected(
-    callback,
-    options,
-    resolve,
-    reject,
-    dontRelease,
-    distributed,
-    err,
-    pooledConnection,
-  ) {
-    /*
-    BEGIN; -- works on POSTGRES, MySQL (autocommit is true, no options accepted), and SQLite (no options accepted) (need to change to BEGIN TRANSACTION on MSSQL)
-    START TRANSACTION; -- works on POSTGRES, MySQL (autocommit is false, options accepted), (need to change to BEGIN TRANSACTION on MSSQL and BEGIN on SQLite)
-
-    -- Create a SAVEPOINT
-    SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to SAVE TRANSACTION on MSSQL)
-
-    -- QUERY
-
-    -- Roll back to SAVEPOINT if needed
-    ROLLBACK TO SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (need to change to ROLLBACK TRANSACTION on MSSQL)
-
-    -- Release the SAVEPOINT
-    RELEASE SAVEPOINT my_savepoint; -- works on POSTGRES, MySQL, and SQLite (MSSQL dont have RELEASE SAVEPOINT you just need to transaction again)
-
-    -- Commit the transaction
-    COMMIT; -- works on POSTGRES, MySQL, and SQLite (need to change to COMMIT TRANSACTION on MSSQL)
-    -- or rollback everything
-    ROLLBACK; -- works on POSTGRES, MySQL, and SQLite (need to change to ROLLBACK TRANSACTION on MSSQL)
-
-    */
-
-    if (err) {
-      return reject(err);
-    }
-
-    const state: TransactionState = {
-      connectionState: ReservedConnectionState.acceptQueries,
-      reject,
-      queries: new Set(),
-    };
-
-    let savepoints = 0;
-    let transactionSavepoints = new Set();
-
-    let BEGIN_COMMAND: string;
-    let ROLLBACK_COMMAND: string;
-    let COMMIT_COMMAND: string;
-    let SAVEPOINT_COMMAND: string;
-    let RELEASE_SAVEPOINT_COMMAND: string | null;
-    let ROLLBACK_TO_SAVEPOINT_COMMAND: string;
-    let BEFORE_COMMIT_OR_ROLLBACK_COMMAND: string | null = null;
-
-    if (distributed) {
-      // Get distributed transaction commands from adapter
-      const commands = pool.getDistributedTransactionCommands?.(options);
-      if (!commands) {
-        if (!dontRelease) {
-          pool.release(pooledConnection);
-        }
-        return reject(new Error(`This adapter doesn't support distributed transactions.`));
-      }
-
-      BEGIN_COMMAND = commands.BEGIN;
-      COMMIT_COMMAND = commands.COMMIT;
-      ROLLBACK_COMMAND = commands.ROLLBACK;
-      SAVEPOINT_COMMAND = commands.SAVEPOINT;
-      RELEASE_SAVEPOINT_COMMAND = commands.RELEASE_SAVEPOINT;
-      ROLLBACK_TO_SAVEPOINT_COMMAND = commands.ROLLBACK_TO_SAVEPOINT;
-      BEFORE_COMMIT_OR_ROLLBACK_COMMAND = commands.BEFORE_COMMIT_OR_ROLLBACK || null;
-    } else {
-      // Validate transaction options if provided
-      if (options && pool.validateTransactionOptions) {
-        const validation = pool.validateTransactionOptions(options);
-        if (!validation.valid) {
-          if (!dontRelease) {
-            pool.release(pooledConnection);
-          }
-          return reject(new Error(validation.error));
-        }
-      }
-
-      try {
-        const commands = pool.getTransactionCommands(options);
-        BEGIN_COMMAND = commands.BEGIN;
-        COMMIT_COMMAND = commands.COMMIT;
-        ROLLBACK_COMMAND = commands.ROLLBACK;
-        SAVEPOINT_COMMAND = commands.SAVEPOINT;
-        RELEASE_SAVEPOINT_COMMAND = commands.RELEASE_SAVEPOINT;
-        ROLLBACK_TO_SAVEPOINT_COMMAND = commands.ROLLBACK_TO_SAVEPOINT;
-        BEFORE_COMMIT_OR_ROLLBACK_COMMAND = commands.BEFORE_COMMIT_OR_ROLLBACK || null;
-      } catch (err) {
-        if (!dontRelease) {
-          pool.release(pooledConnection);
-        }
-        return reject(err);
-      }
-    }
-
-    const onClose = onTransactionDisconnected.bind(state);
-    // Use adapter method to attach connection close handler
-    if (pool.attachConnectionCloseHandler) {
-      pool.attachConnectionCloseHandler(pooledConnection, onClose);
-    }
-
-    function run_internal_transaction_sql(string) {
-      if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
-    }
-    function transaction_sql(
-      strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-      ...values: any[]
-    ) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-      if ($isArray(strings)) {
-        // detect if is tagged template
-        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-          return new SQLHelper(strings, values);
-        }
-      } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
-        return new SQLHelper([strings], values);
-      }
-
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
-    }
-    transaction_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
-    };
-    transaction_sql.file = async (path: string, args = []) => {
-      return await Bun.file(path)
-        .text()
-        .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
-        });
-    };
-    // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
-    // this matchs the behavior of the postgres package
-    transaction_sql.reserve = (options?: { signal?: AbortSignal }) => sql.reserve(options);
-    transaction_sql.array = sql.array;
-    transaction_sql.listen = listen;
-    transaction_sql.notify = makeNotify(transaction_sql);
-
-    transaction_sql.connect = () => {
-      if (state.connectionState & ReservedConnectionState.closed) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
-
-      return Promise.$resolve(transaction_sql);
-    };
-    transaction_sql.commitDistributed = async function (name: string) {
-      if (!pool.getCommitDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
-      }
-
-      const sql = pool.getCommitDistributedSQL(name);
-      return await run_internal_transaction_sql(sql);
-    };
-    transaction_sql.rollbackDistributed = async function (name: string) {
-      if (!pool.getRollbackDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
-      }
-
-      const sql = pool.getRollbackDistributedSQL(name);
-      return await run_internal_transaction_sql(sql);
-    };
-    // begin is not allowed on a transaction we need to use savepoint() instead
-    transaction_sql.begin = function () {
-      if (distributed) {
-        throw pool.invalidTransactionStateError("cannot call begin inside a distributed transaction");
-      }
-      throw pool.invalidTransactionStateError("cannot call begin inside a transaction use savepoint() instead");
-    };
-
-    transaction_sql.beginDistributed = function () {
-      if (distributed) {
-        throw pool.invalidTransactionStateError("cannot call beginDistributed inside a distributed transaction");
-      }
-      throw pool.invalidTransactionStateError(
-        "cannot call beginDistributed inside a transaction use savepoint() instead",
-      );
-    };
-
-    transaction_sql.flush = function () {
-      if (state.connectionState & ReservedConnectionState.closed) {
-        throw pool.connectionClosedError();
-      }
-      // Use pooled connection's flush if available, otherwise use adapter's flush
-      if (pooledConnection.flush) {
-        return pooledConnection.flush();
-      }
-      return pool.flush();
-    };
-    transaction_sql.close = async function (options?: { timeout?: number }) {
-      // we dont actually close the connection here, we just set the state to closed and rollback the transaction
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$resolve(undefined);
-      }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      const transactionQueries = state.queries;
-      let timeout = options?.timeout;
-      if (timeout) {
-        timeout = Number(timeout);
-        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
-        }
-
-        if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(transactionQueries);
-          const pending_savepoints = Array.from(transactionSavepoints);
-          const timer = setTimeout(async () => {
-            for (const query of transactionQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-            }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND);
-            state.connectionState |= ReservedConnectionState.closed;
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
-        }
-      }
-      for (const query of transactionQueries) {
-        (query as Query<any, any>).cancel();
-      }
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-      }
-      await run_internal_transaction_sql(ROLLBACK_COMMAND);
-      state.connectionState |= ReservedConnectionState.closed;
-    };
-    transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
-    transaction_sql.options = sql.options;
-
-    transaction_sql.transaction = transaction_sql.begin;
-    transaction_sql.distributed = transaction_sql.beginDistributed;
-    transaction_sql.end = transaction_sql.close;
-    function onSavepointFinished(savepoint_promise: Promise<any>) {
-      transactionSavepoints.delete(savepoint_promise);
-    }
-    async function run_internal_savepoint(save_point_name: string, savepoint_callback: TransactionCallback) {
-      await run_internal_transaction_sql(`${SAVEPOINT_COMMAND} ${save_point_name}`);
-
-      try {
-        let result = await savepoint_callback(transaction_sql);
-        if (RELEASE_SAVEPOINT_COMMAND) {
-          // mssql dont have release savepoint
-          await run_internal_transaction_sql(`${RELEASE_SAVEPOINT_COMMAND} ${save_point_name}`);
-        }
-        if ($isArray(result)) {
-          result = await Promise.all(result);
-        }
-        return result;
-      } catch (err) {
-        if (!(state.connectionState & ReservedConnectionState.closed)) {
-          await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
-        }
-        throw err;
-      }
-    }
-    if (distributed) {
-      transaction_sql.savepoint = async (_fn: TransactionCallback, _name?: string): Promise<any> => {
-        throw pool.invalidTransactionStateError("cannot call savepoint inside a distributed transaction");
-      };
-    } else {
-      transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
-        let savepoint_callback = fn;
-
-        if (
-          state.connectionState & ReservedConnectionState.closed ||
-          !(state.connectionState & ReservedConnectionState.acceptQueries)
-        ) {
-          throw pool.connectionClosedError();
-        }
-
-        if ($isCallable(name)) {
-          savepoint_callback = name as unknown as TransactionCallback;
-          name = "";
-        } else if (name) {
-          name = String(name).replace(/[^a-zA-Z0-9_]/g, "_");
-        }
-        if (!$isCallable(savepoint_callback)) {
-          throw $ERR_INVALID_ARG_VALUE("fn", savepoint_callback, "must be a function");
-        }
-        // matchs the format of the savepoint name in postgres package
-        const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
-        const promise = run_internal_savepoint(save_point_name, savepoint_callback);
-        transactionSavepoints.add(promise);
-        return await promise.finally(onSavepointFinished.bind(null, promise));
-      };
-    }
-    let needs_rollback = false;
-    try {
-      await run_internal_transaction_sql(BEGIN_COMMAND);
-      needs_rollback = true;
-      let transaction_result = await callback(transaction_sql);
-      if ($isArray(transaction_result)) {
-        transaction_result = await Promise.all(transaction_result);
-      }
-      // at this point we dont need to rollback anymore
-      needs_rollback = false;
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-      }
-      await run_internal_transaction_sql(COMMIT_COMMAND);
-      return resolve(transaction_result);
-    } catch (err) {
-      try {
-        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-            await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
-          }
-          await run_internal_transaction_sql(ROLLBACK_COMMAND);
-        }
-      } catch (err) {
-        return reject(err);
-      }
-      return reject(err);
-    } finally {
-      state.connectionState |= ReservedConnectionState.closed;
-      // Use adapter method to detach connection close handler
-      if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
-      }
-      if (!dontRelease) {
-        pool.release(pooledConnection);
-      }
-    }
-  }
-  function sql(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    ...values: any[]
-  ) {
-    if ($isArray(strings)) {
-      // detect if is tagged template
-      if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
-        return new SQLHelper(strings, values);
-      }
-    } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
-      return new SQLHelper([strings], values);
-    }
-
-    return queryFromPool(strings, values);
-  }
-
-  sql.unsafe = (string, args = []) => {
-    return unsafeQuery(string, args);
-  };
-  sql.file = async (path: string, args = []) => {
-    return await Bun.file(path)
-      .text()
-      .then(text => {
-        return unsafeQuery(text, args);
-      });
-  };
-
-  sql.reserve = (options?: { signal?: AbortSignal }) => {
-    if (pool.closed) {
-      return Promise.$reject(pool.connectionClosedError());
-    }
-
-    // Check if adapter supports reserved connections
-    if (pool.supportsReservedConnections && !pool.supportsReservedConnections()) {
-      return Promise.$reject(new Error("This adapter doesn't support connection reservation"));
-    }
-
-    const signal = options?.signal;
-    if (signal !== undefined) {
-      try {
-        validateAbortSignal(signal, "options.signal");
-      } catch (err) {
-        return Promise.$reject(err);
-      }
-      if (signal.aborted) {
-        return Promise.$reject(signal.reason);
-      }
-    }
-
-    // Try to reserve a connection - adapters that support it will handle appropriately
-    const promiseWithResolvers = Promise.withResolvers();
-    if (signal === undefined) {
-      pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
-      return promiseWithResolvers.promise;
-    }
-
-    const state: ReserveAbortState = { signal, promiseWithResolvers, onConnected: null, onAbort: null };
-    state.onConnected = onReserveConnectedWithSignal.bind(state);
-    state.onAbort = onReserveAbort.bind(state);
-    // resistStopPropagation: a user listener on the same signal calling
-    // stopImmediatePropagation() must not starve the cancellation.
-    signal.addEventListener("abort", state.onAbort, resistStopPropagation({ __proto__: null, once: true }));
-    pool.connect(state.onConnected, true);
-    // connect() can run user code synchronously (e.g. a function-valued
-    // password) before queueing the callback; an abort from inside that window
-    // finds nothing to cancel, so re-check. onReserveAbort is idempotent.
-    if (signal.aborted) {
-      onReserveAbort.$call(state);
-    }
-    return promiseWithResolvers.promise;
-  };
-
-  sql.array = (values: any[], typeNameOrID: number | string | undefined = undefined) => {
-    return pool.array(values, typeNameOrID);
-  };
-  sql.rollbackDistributed = async function (name: string) {
-    if (pool.closed) {
-      throw pool.connectionClosedError();
-    }
-
-    if (!pool.getRollbackDistributedSQL) {
-      throw Error(`This adapter doesn't support distributed transactions.`);
-    }
-
-    const sqlQuery = pool.getRollbackDistributedSQL(name);
-    return await sql.unsafe(sqlQuery);
-  };
-
-  sql.commitDistributed = async function (name: string) {
-    if (pool.closed) {
-      throw pool.connectionClosedError();
-    }
-
-    if (!pool.getCommitDistributedSQL) {
-      throw Error(`This adapter doesn't support distributed transactions.`);
-    }
-
-    const sqlQuery = pool.getCommitDistributedSQL(name);
-    return await sql.unsafe(sqlQuery);
-  };
-
-  sql.beginDistributed = (name: string, fn: TransactionCallback) => {
-    if (pool.closed) {
-      return Promise.$reject(pool.connectionClosedError());
-    }
-    let callback = fn;
-
-    if (typeof name !== "string") {
-      return Promise.$reject($ERR_INVALID_ARG_VALUE("name", name, "must be a string"));
-    }
-
-    if (!$isCallable(callback)) {
-      return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
-    }
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const useReserved = pool.supportsReservedConnections?.() ?? true;
-    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), useReserved);
-    return promise;
-  };
-
-  sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
-    if (pool.closed) {
-      return Promise.$reject(pool.connectionClosedError());
-    }
-    let callback = fn;
-    let options: string | undefined = options_or_fn as unknown as string;
-    if ($isCallable(options_or_fn)) {
-      callback = options_or_fn as unknown as TransactionCallback;
-      options = undefined;
-    } else if (typeof options_or_fn !== "string") {
-      return Promise.$reject($ERR_INVALID_ARG_VALUE("options", options_or_fn, "must be a string"));
-    }
-    if (!$isCallable(callback)) {
-      return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
-    }
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const useReserved = pool.supportsReservedConnections?.() ?? true;
-    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
-    return promise;
-  };
-  sql.connect = () => {
-    if (pool.closed) {
-      return Promise.$reject(pool.connectionClosedError());
-    }
-
-    if (pool.isConnected()) {
-      return Promise.$resolve(sql);
-    }
-
-    let { resolve, reject, promise } = Promise.withResolvers();
-    const onConnected = (err, connection) => {
-      if (err) {
-        return reject(err);
-      }
-      // we are just measuring the connection here lets release it
-      pool.release(connection);
-      resolve(sql);
-    };
-
-    pool.connect(onConnected);
-
-    return promise;
-  };
-
-  sql.close = async (options?: { timeout?: number }) => {
-    await pool.close(options);
-  };
-
-  sql[Symbol.asyncDispose] = () => sql.close();
-
-  sql.flush = () => pool.flush();
-  sql.options = connectionInfo;
-
-  sql.transaction = sql.begin;
-  sql.distributed = sql.beginDistributed;
-  sql.end = sql.close;
-  sql.listen = listen;
-  sql.notify = makeNotify(sql);
-  return sql;
-};
-
-var lazyDefaultSQL: Bun.SQL;
-
-function resetDefaultSQL(sql) {
-  lazyDefaultSQL = sql;
-  // this will throw "attempt to assign to readonly property"
-  // Object.assign(defaultSQLObject, lazyDefaultSQL);
-  // exportsObject.default = exportsObject.sql = lazyDefaultSQL;
+  const options = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
+  return makeHandle(new Client(adapterFromOptions(options), options));
 }
 
-function ensureDefaultSQL() {
-  if (!lazyDefaultSQL) {
-    // Shared by everything in the realm: not owned by whichever Bun.ModuleGraph uses it first.
-    resetDefaultSQL(AsyncContextFrame.run(undefined, SQL, undefined, undefined));
-  }
-}
-
-var defaultSQLObject: Bun.SQL = function sql(strings, ...values) {
-  if (new.target) {
-    return SQL(strings);
-  }
-
-  ensureDefaultSQL();
-
-  return lazyDefaultSQL(strings, ...values);
-} as Bun.SQL;
-
-defaultSQLObject.reserve = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.reserve(...args);
-};
-defaultSQLObject.array = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.array(...args);
-};
-defaultSQLObject.commitDistributed = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.commitDistributed(...args);
-};
-defaultSQLObject.rollbackDistributed = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.rollbackDistributed(...args);
-};
-defaultSQLObject.distributed = defaultSQLObject.beginDistributed = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.beginDistributed(...args);
-};
-
-defaultSQLObject.connect = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.connect(...args);
-};
-
-defaultSQLObject.unsafe = (...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.unsafe(...args);
-};
-
-defaultSQLObject.file = (filename: string, ...args) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.file(filename, ...args);
-};
-
-defaultSQLObject.transaction = defaultSQLObject.begin = function (...args: Parameters<typeof lazyDefaultSQL.begin>) {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.begin(...args);
-} as Bun.SQL["begin"];
-
-defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazyDefaultSQL.close>) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.close(...args);
-};
-defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.flush(...args);
-};
-defaultSQLObject.listen = (...args: Parameters<typeof lazyDefaultSQL.listen>) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.listen(...args);
-};
-defaultSQLObject.notify = (...args: Parameters<typeof lazyDefaultSQL.notify>) => {
-  ensureDefaultSQL();
-  return lazyDefaultSQL.notify(...args);
-};
-//define lazy properties
-defineProperties(defaultSQLObject, {
-  options: {
-    get: () => {
-      ensureDefaultSQL();
-      return lazyDefaultSQL.options;
-    },
-  },
-  [Symbol.asyncDispose]: {
-    get: () => {
-      ensureDefaultSQL();
-      return lazyDefaultSQL[Symbol.asyncDispose];
-    },
-  },
+// A builtin function has no `prototype`, and `instanceof` throws without one. A client is a function.
+const SQLPrototype = Object.create(Function.prototype, {
+  constructor: { value: SQL, writable: true, configurable: true },
 });
+defineProperty(SQL, "prototype", { value: SQLPrototype });
 
 SQL.SQLError = SQLError;
 SQL.PostgresError = PostgresError;
 SQL.SQLiteError = SQLiteError;
 SQL.MySQLError = MySQLError;
+Object.assign(SQL, transforms);
 
+let lazyDefaultSQL: any;
+
+function defaultSQL() {
+  // Shared by everything in the realm: not owned by whichever Bun.ModuleGraph uses it first.
+  return (lazyDefaultSQL ??= AsyncContextFrame.run(undefined, SQL, undefined, undefined));
+}
+
+function callDefaultSQL(member: string, ...args: unknown[]) {
+  return defaultSQL()[member].$apply(undefined, args);
+}
+
+function defaultSQLOptions() {
+  return defaultSQL().options;
+}
+
+function defaultSQLAsyncDispose() {
+  return defaultSQL()[Symbol.asyncDispose];
+}
+
+const defaultSQLObject: any = function sql(strings: any, options: any) {
+  if (new.target) {
+    return SQL(strings, options);
+  }
+  return defaultSQL().$apply(undefined, arguments);
+};
+
+const defaultSQLMembers = [
+  "unsafe",
+  "file",
+  "notify",
+  "commitDistributed",
+  "rollbackDistributed",
+  "reserve",
+  "listen",
+  "array",
+  "json",
+  "connect",
+  "flush",
+  "begin",
+  "transaction",
+  "beginDistributed",
+  "distributed",
+  "close",
+  "end",
+];
+for (let i = 0; i < defaultSQLMembers.length; i++) {
+  defaultSQLObject[defaultSQLMembers[i]] = callDefaultSQL.bind(undefined, defaultSQLMembers[i]);
+}
+defineProperty(defaultSQLObject, "options", { get: defaultSQLOptions });
+defineProperty(defaultSQLObject, Symbol.asyncDispose, { get: defaultSQLAsyncDispose });
+setPrototypeOf(defaultSQLObject, SQLPrototype);
+
+// Bun.sql and Bun.SQL
 export default {
-  sql: defaultSQLObject,
   default: defaultSQLObject,
   SQL,
-  Query,
-  postgres: SQL,
-  SQLError,
-  PostgresError,
-  MySQLError,
-  SQLiteError,
 };

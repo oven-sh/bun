@@ -329,6 +329,56 @@ describe("require(specifier)", () => {
     });
   });
 
+  describe("when the module throws after its require.cache entry was deleted", () => {
+    const evictsItself = {
+      "thrower.cjs": `
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        delete require.cache[__filename];
+        throw new Error("boom " + globalThis.runs);
+      `,
+    };
+    const evictedByChild = {
+      "thrower.cjs": `
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        require("./child.cjs");
+        throw new Error("boom " + globalThis.runs);
+      `,
+      "child.cjs": `delete require.cache[module.parent.filename];`,
+    };
+    it.concurrent.each([
+      ["by the module itself", evictsItself, "index.cjs"],
+      ["by a module it required", evictedByChild, "index.cjs"],
+      // A Bun.ModuleGraph has its own require.cache.
+      ["by the module itself, inside a Bun.ModuleGraph", evictsItself, "in-graph.mjs"],
+    ])("%s, the error is catchable and the next require() runs the module again", async (_, files, entry) => {
+      using dir = tempDir("bun-test-require-evicted", {
+        ...files,
+        "index.cjs": `
+          const id = require.resolve("./thrower.cjs");
+          for (let i = 0; i < 2; i++) {
+            try {
+              require(id);
+              console.log("no error");
+            } catch (e) {
+              console.log(e.message, id in require.cache, Bun.ModuleGraph.current !== undefined);
+            }
+          }
+        `,
+        "in-graph.mjs": `
+          import path from "node:path";
+          await new Bun.ModuleGraph().import(path.join(import.meta.dirname, "index.cjs"));
+        `,
+      });
+      const inGraph = entry === "in-graph.mjs";
+      expect(await bunRun(path.join(String(dir), entry))).toEqual({
+        stdout: `boom 1 false ${inGraph}\nboom 2 false ${inGraph}`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
   describe("require.main", () => {
     let dir: string;
 

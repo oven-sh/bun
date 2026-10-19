@@ -105,6 +105,9 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
+    /// A symlink whose target doesn't exist. It's treated like a missing entry, which is how
+    /// `stat()` reports it.
+    Dangling,
 }
 
 #[derive(Clone, Copy)]
@@ -1038,7 +1041,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         file_contents_ptr,
         shared_buffer.list.as_ptr()
     ));
-    let _ = file_contents_ptr;
     let file_contents: &'buf [u8] = &shared_buffer.list[..file_contents_len];
     Ok(PathContentsPair {
         contents: Cow::Borrowed(file_contents),

@@ -1,0 +1,5 @@
+async function a() {
+  const text = await disk.root.children!.get("files")!.children!.get("Research")!.children!.get("Report.sql")!.open!();
+  const other = await disk.root.children!.get("files")!.children!.get("Research")!.children!.get("Report.sql")!.open();
+  const third = disk.root.children!.get("files")!.children!.get("Research")!.children!.get("Report")!.open!();
+}

@@ -35,9 +35,7 @@ function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyn
   return result;
 }
 
-// Node's SafePromisePrototypeFinally() around the promise: the abort listener is removed when the promise
-// settles, and an abort rejection reaches the caller 6 ticks after the abort.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/timers/promises.js#L88-L91
+// As SafePromisePrototypeFinally() in Node's lib/timers/promises.js: an abort rejects the caller 6 ticks later.
 function removeAbortListenerWhenSettled(promise: Promise<unknown>, signal: AbortSignal, onCancel: () => void) {
   return promise.$then(
     value => {
@@ -233,7 +231,6 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
             return { done: false, value: value };
           } else if (signal?.aborted) {
             // The abort woke this next(). A rejected promise, not a throw: 4 ticks after the abort, as in Node.
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/timers/promises.js#L168-L175
             return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
           }
           return { done: true };

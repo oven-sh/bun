@@ -1805,6 +1805,10 @@ pub(crate) mod __gated_printer {
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
                         }
+                        // The inverted form prints as "!import.meta.main"
+                        ExprData::EImportMetaMain(left) if left.inverted => {
+                            v.left_level = Level::Call;
+                        }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"
                             if self.options.minify_syntax {
@@ -3310,6 +3314,13 @@ pub(crate) mod __gated_printer {
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
+                        //
+                        // The inverted form prints a prefix `!`, so it takes
+                        // the same parentheses as any other prefix unary.
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3321,12 +3332,22 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
-                        self.print_space_before_identifier();
+                        // This prints an equality expression, so it takes the
+                        // same parentheses as any other `==` / `!=`.
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        } else {
+                            self.print_space_before_identifier();
+                        }
                         self.add_source_mapping(expr.loc);
 
                         if let Some(require) = self.options.require_ref {
@@ -3353,6 +3374,10 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {
                             self.print(b"module");
+                        }
+
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

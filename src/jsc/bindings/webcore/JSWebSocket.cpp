@@ -939,12 +939,6 @@ WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
     return nullptr;
 }
 
-// https://github.com/oven-sh/bun/issues/11866
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
-{
-    return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
-}
-
 // Parses the `ws` module options shared by createWebSocket() and createWebSocketOverStream().
 static void convertConnectedOptionsForWs(JSGlobalObject* lexicalGlobalObject, JSObject* object, WebSocketConnectedOptions& options)
 {

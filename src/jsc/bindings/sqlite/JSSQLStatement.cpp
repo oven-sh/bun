@@ -2616,8 +2616,12 @@ JSSQLStatement::~JSSQLStatement()
     if (this->version_db) {
         this->version_db->statements.remove(this);
         if (this->version_db->hasCallbacks && Bun::sqliteCommitsWhenFinalized(stmt)) {
-            this->version_db->orphans.append(stmt);
-            return;
+            if (!this->version_db->closed) {
+                this->version_db->orphans.append(stmt);
+                return;
+            }
+            // A closed connection may never get another call, so end the write now (see Bun::sqliteFinalize).
+            sqlite3_interrupt(sqlite3_db_handle(stmt));
         }
     }
     finalizeStatement();

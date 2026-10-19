@@ -17716,7 +17716,7 @@ it.concurrent("doesn't install a bun.lock folder package whose path is longer th
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(err).toContain('refusing to install dependency okpkg with unsafe folder path "aaa');
+  expect(err).toContain("ENAMETOOLONG: folder path for package okpkg is too long");
   expect(out).not.toContain("1 package installed");
   expect(exitCode).toBe(1);
 });

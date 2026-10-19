@@ -130,7 +130,7 @@ impl RefState {
 enum DispatchState {
     /// No dispatch task is queued.
     Idle = 0,
-    /// A dispatch task is queued, or the running one will do another pass.
+    /// A dispatch task is queued, or the running one will queue another.
     Pending = 1,
     /// The dispatch task is walking the handles.
     Running = 2,
@@ -315,16 +315,18 @@ impl UvLoop {
         unsafe { self.vm.as_ref() }.global()
     }
 
-    /// Queues the dispatch task unless one is already queued. Any thread can call
-    /// this. Uses the same state machine as `ThreadSafeFunction::schedule_dispatch`.
+    /// Queues the dispatch task unless one is already queued. Any thread can call this.
     fn schedule_dispatch(&self) {
         let prev = self
             .dispatch_state
             .swap(DispatchState::Pending as u8, Ordering::SeqCst);
-        if prev != DispatchState::Idle as u8 {
-            // Already queued, or the running task will do another pass.
-            return;
+        if prev == DispatchState::Idle as u8 {
+            self.post_dispatch();
         }
+    }
+
+    /// Posts the dispatch task. The state is `Pending`, so no other thread posts one.
+    fn post_dispatch(&self) {
         let this: *const UvLoop = self;
         let task = ConcurrentTask::create_from(this.cast_mut());
         if let Posted::Refused(task) = self.handle.post(LoopKind::Regular, task) {
@@ -346,27 +348,26 @@ impl UvLoop {
         // shared references to it.
         let this = unsafe { &*this };
         let global = this.global();
-        loop {
-            this.dispatch_state
-                .store(DispatchState::Running as u8, Ordering::SeqCst);
-            // Don't run callbacks once the VM is stopping. Threadsafe functions do the same.
-            if global.bun_vm().script_allowed() {
-                this.run_pass(global);
-            }
-            // A send during the pass sets `Pending` instead of posting a task.
-            // This then fails, and the next pass runs that handle's callback.
-            if this
-                .dispatch_state
-                .compare_exchange(
-                    DispatchState::Running as u8,
-                    DispatchState::Idle as u8,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok()
-            {
-                return;
-            }
+        this.dispatch_state
+            .store(DispatchState::Running as u8, Ordering::SeqCst);
+        // Don't run callbacks once the VM is stopping. Threadsafe functions do the same.
+        if global.bun_vm().script_allowed() {
+            this.run_pass(global);
+        }
+        // A send during the pass sets `Pending` instead of posting a task, and this
+        // then fails. The next pass is a new task, so a thread that keeps sending
+        // can't hold the event loop back from its timers and sockets.
+        if this
+            .dispatch_state
+            .compare_exchange(
+                DispatchState::Running as u8,
+                DispatchState::Idle as u8,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            this.post_dispatch();
         }
     }
 
@@ -1251,16 +1252,43 @@ const _: () = assert!(core::mem::size_of::<UvWork>() <= UV_WORK_T_SIZE);
 /// the job's whole lifetime.
 struct UvWorkJob;
 
+/// Runs `after_work_cb` when dropped, because that's where the addon frees the
+/// request. A job is always dropped on the loop thread, and a stopping VM drops it
+/// without calling `then`. Any JS the callback tries to run then is refused.
+struct QueuedWork(JsPtr<UvWork>);
+
+impl Drop for QueuedWork {
+    fn drop(&mut self) {
+        let req = self.0.as_ptr();
+        // SAFETY: the request is alive for the job's lifetime (see `UvWorkJob`), and
+        // `state` doesn't change after the job is posted.
+        let (state, after_work_cb) =
+            unsafe { ((*req).state.load(Ordering::SeqCst), (*req).after_work_cb) };
+        // Still `Queued` if the pool handed the job back to a stopping VM without running it.
+        let status = if state == WorkState::Running as u32 {
+            0
+        } else {
+            UV_ECANCELED
+        };
+        bun_output::scoped_log!(uv, "uv_work_t {:?}: after_work_cb({})", req, status);
+        // The callback usually frees the request.
+        if let Some(after_work_cb) = after_work_cb {
+            // SAFETY: calls the addon's callback on the loop thread.
+            unsafe { after_work_cb(req, status) };
+        }
+    }
+}
+
 impl JobContext for UvWorkJob {
-    type OffThread = JsPtr<UvWork>;
+    type OffThread = QueuedWork;
     type Js = ();
 
     // SAFETY: never create a reference to the whole request, because `run` on the pool
     // thread can overlap `uv_cancel` on the loop thread. Access fields through the raw
     // pointer and borrow only `state`.
 
-    fn run(req: &mut JsPtr<UvWork>, done: Completion<Self>) -> Option<Completion<Self>> {
-        let req = req.as_ptr();
+    fn run(req: &mut QueuedWork, done: Completion<Self>) -> Option<Completion<Self>> {
+        let req = req.0.as_ptr();
         // SAFETY: the request is alive for the job's lifetime (see `UvWorkJob`), and
         // `work_cb` was written before the job was scheduled.
         let started = unsafe { &(*req).state }
@@ -1279,22 +1307,8 @@ impl JobContext for UvWorkJob {
         Some(done)
     }
 
-    fn then(req: JsPtr<UvWork>, _: (), cx: &JsThread<'_>) -> JsResult<()> {
-        let req = req.as_ptr();
-        // SAFETY: same as `run`. `state` doesn't change after the job is posted.
-        let (state, after_work_cb) =
-            unsafe { ((*req).state.load(Ordering::SeqCst), (*req).after_work_cb) };
-        let status = if state == WorkState::Cancelled as u32 {
-            UV_ECANCELED
-        } else {
-            0
-        };
-        bun_output::scoped_log!(uv, "uv_work_t {:?}: after_work_cb({})", req, status);
-        // The callback usually frees the request.
-        if let Some(after_work_cb) = after_work_cb {
-            // SAFETY: calls the addon's callback on the loop thread.
-            unsafe { after_work_cb(req, status) };
-        }
+    fn then(req: QueuedWork, _: (), cx: &JsThread<'_>) -> JsResult<()> {
+        drop(req);
         if cx.global().has_exception() {
             return Err(JsError::Thrown);
         }
@@ -1338,7 +1352,8 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
         .global()
         .js_thread_of_caller_no_frame();
     // SAFETY: the request outlives the job (fn contract, see `UvWorkJob`).
-    Job::<UvWorkJob>::schedule(&cx, unsafe { JsPtr::new(req_ref) }, ());
+    let work = QueuedWork(unsafe { JsPtr::new(req_ref) });
+    Job::<UvWorkJob>::schedule(&cx, work, ());
     0
 }
 

@@ -5922,13 +5922,15 @@ impl VirtualMachine {
     /// Returns a `'static` copy of `cwd`. Other threads keep slices of the cwd, so a published one
     /// is never overwritten or freed.
     fn intern_cwd(fs: &bun_resolver::fs::FileSystem, cwd: &[u8]) -> &'static [u8] {
-        static CACHE: bun_core::Mutex<Vec<&'static [u8]>> = bun_core::Mutex::new(Vec::new());
+        static CACHE: bun_core::Mutex<Option<bun_collections::HashMap<&'static [u8], ()>>> =
+            bun_core::Mutex::new(None);
         let mut cache = CACHE.lock();
-        if let Some(&interned) = cache.iter().find(|&&interned| interned == cwd) {
+        let cache = cache.get_or_insert_default();
+        if let Some((&interned, ())) = cache.get_key_value(cwd) {
             return interned;
         }
         let interned = bun_core::handle_oom(fs.dirname_store().append(cwd));
-        cache.push(interned);
+        cache.insert(interned, ());
         interned
     }
 

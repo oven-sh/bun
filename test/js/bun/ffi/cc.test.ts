@@ -193,8 +193,7 @@ it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw 
           }
         });
       }
-      let ptrReads = 0;
-      const counted = { get ptr() { ptrReads++; return address; } };
+      const object = { ptr: address };
       console.log(JSON.stringify({
         call_callback: outcomes("call_callback", callback, callback.ptr, { ptr: callback.ptr }, null, undefined, () => 1, {}, "x"),
         echo_ptr: outcomes("echo_ptr", address, 8, view, buffer, BigInt(address), { ptr: address }, null, undefined, {}, "x", true),
@@ -202,8 +201,7 @@ it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw 
         echo_buffer: outcomes("echo_buffer", view, new DataView(buffer), buffer, address, null, {}),
         echo_i64: outcomes("echo_i64", 5, -5.5, 2 ** 40, -(2n ** 63n), undefined, null, true, "5", {}),
         echo_u64: outcomes("echo_u64", 5, 2 ** 40, 2n ** 64n - 1n, undefined, null, true, "5", {}),
-        with_env: outcomes("with_env", [null, counted, 5], [null, {}, 5], [null, counted, "5"], [null, "x", counted], [null, view, 5n]),
-        ptrReads,
+        with_env: outcomes("with_env", [null, object, 5], [null, {}, 5], [null, object, "5"], [null, "x", object], [null, view, 5n]),
       }));
       callback.close();
     `,
@@ -225,9 +223,28 @@ it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw 
     echo_i64: ["5", "-5", String(2 ** 40), String(-(2n ** 63n)), T, T, T, T, T],
     echo_u64: ["5", String(2 ** 40), String(2n ** 64n - 1n), T, T, T, T, T],
     with_env: ["1", T, T, T, "1"],
-    ptrReads: 2,
   });
   expect(exitCode).toBe(0);
+});
+
+it("does not run a \`ptr\` getter, which could detach the buffer of an earlier argument", () => {
+  using dir = tempDir("bun-ffi-cc-ptr-getter", {
+    "echo.c": "void* echo_first(void* first, void* second) { return first; }",
+  });
+  const library = cc({
+    source: path.join(String(dir), "echo.c"),
+    symbols: { echo_first: { args: ["ptr", "ptr"], returns: "ptr" } },
+  });
+  const buffer = new ArrayBuffer(8);
+  const detaches = {
+    get ptr() {
+      buffer.transfer();
+      return 0;
+    },
+  };
+  expect(() => library.symbols.echo_first(new Uint8Array(buffer), detaches)).toThrow(TypeError);
+  expect(buffer.detached).toBe(false);
+  library.close();
 });
 
 it("throws for an empty source array", () => {

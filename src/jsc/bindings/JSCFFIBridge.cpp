@@ -8,10 +8,12 @@
 #include <JavaScriptCore/FFIContext.h>
 #include <JavaScriptCore/JSFFICallback.h>
 #include <JavaScriptCore/JSFFIFunction.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSObject.h>
+#include <wtf/text/MakeString.h>
 
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
@@ -132,10 +134,24 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto type = static_cast<JSC::FFI::Type>(abiType);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+
+    // The wrapper already holds raw pointers into the buffers of earlier arguments, and JS could free those buffers.
+    // writeSlotFromJSValue only runs JS to get `ptr` from an object, so read it here without running a getter.
+    bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
+    if (auto* object = value.getObject(); isPointer && object && !object->inherits<JSC::JSArrayBuffer>() && !object->inherits<JSC::JSFFICallback>()) {
+        value = object->getDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s));
+        if (!value || !(value.isNumber() || value.isBigInt())) {
+            JSC::throwTypeError(globalObject, scope, makeString("bun:ffi cannot convert argument to '"_s, JSC::FFI::name(type), '\''));
+            *threw = true;
+            return 0;
+        }
+    }
 
     uint64_t slot = 0;
     // Nothing could free a transcoded `cstring` after the call, so pass a null arena, which makes a JS string throw.
-    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), static_cast<JSC::FFI::Type>(abiType), JSC::JSValue::decode(encodedValue), slot, nullptr);
+    JSC::FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), type, value, slot, nullptr);
     if (scope.exception()) [[unlikely]] {
         *threw = true;
         return 0;

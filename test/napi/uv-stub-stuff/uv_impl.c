@@ -649,6 +649,46 @@ static napi_value test_async_stress(napi_env env, napi_callback_info info) {
   return NULL;
 }
 
+static struct {
+  uv_async_t handle;
+  pthread_t sender;
+  atomic_uint sends;
+  atomic_bool stop;
+} flood;
+
+static void *flood_sender(void *arg) {
+  while (!atomic_load(&flood.stop)) {
+    uv_async_send(&flood.handle);
+    atomic_fetch_add(&flood.sends, 1);
+  }
+  return NULL;
+}
+
+// Returns after a whole send ran during the callback, so the handle is always
+// pending again when the callback returns.
+static void flood_async_cb(uv_async_t *handle) {
+  unsigned start = atomic_load(&flood.sends);
+  while (atomic_load(&flood.sends) - start < 2)
+    sched_yield();
+}
+
+// startAsyncFlood() sends from another thread in a tight loop until
+// stopAsyncFlood() is called.
+static napi_value start_async_flood(napi_env env, napi_callback_info info) {
+  if (!init_async(env, get_loop(env, false), &flood.handle, flood_async_cb))
+    return NULL;
+  if (pthread_create(&flood.sender, NULL, flood_sender, NULL) != 0)
+    napi_throw_error(env, NULL, "pthread_create failed");
+  return NULL;
+}
+
+static napi_value stop_async_flood(napi_env env, napi_callback_info info) {
+  atomic_store(&flood.stop, true);
+  pthread_join(flood.sender, NULL);
+  uv_close((uv_handle_t *)&flood.handle, NULL);
+  return NULL;
+}
+
 static uv_async_t unref_test_handle;
 
 // testAsyncRef() checks that uv_ref and uv_unref are idempotent. Returns
@@ -675,6 +715,9 @@ static napi_value test_async_ref(napi_env env, napi_callback_info info) {
 }
 
 // --- uv_queue_work ----------------------------------------------------------
+
+// Requests whose after_work_cb hasn't run, in every thread's copy of the addon.
+static atomic_int pending_work_requests;
 
 struct work_test {
   uv_work_t req;
@@ -721,6 +764,7 @@ static void work_test_after_work_cb(uv_work_t *req, int status) {
   report(&test->reporter, "after", status, passed);
   reporter_destroy(&test->reporter);
   free(test);
+  atomic_fetch_sub(&pending_work_requests, 1);
 }
 
 static struct work_test *queue_work(napi_env env, napi_value callback) {
@@ -734,6 +778,7 @@ static struct work_test *queue_work(napi_env env, napi_value callback) {
     napi_throw_error(env, NULL, "uv_queue_work failed");
     return NULL;
   }
+  atomic_fetch_add(&pending_work_requests, 1);
   return test;
 }
 
@@ -757,6 +802,13 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
     return NULL;
   napi_value result;
   napi_create_int32(env, uv_cancel((uv_req_t *)&test->req), &result);
+  return result;
+}
+
+static napi_value get_pending_work_requests(napi_env env,
+                                            napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, atomic_load(&pending_work_requests), &result);
   return result;
 }
 
@@ -1199,6 +1251,12 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_async_stress, NULL, &fn);
   napi_set_named_property(env, exports, "testAsyncStress", fn);
 
+  napi_create_function(env, NULL, 0, start_async_flood, NULL, &fn);
+  napi_set_named_property(env, exports, "startAsyncFlood", fn);
+
+  napi_create_function(env, NULL, 0, stop_async_flood, NULL, &fn);
+  napi_set_named_property(env, exports, "stopAsyncFlood", fn);
+
   napi_create_function(env, NULL, 0, test_async_ref, NULL, &fn);
   napi_set_named_property(env, exports, "testAsyncRef", fn);
 
@@ -1207,6 +1265,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_cancel_work, NULL, &fn);
   napi_set_named_property(env, exports, "testCancelWork", fn);
+
+  napi_create_function(env, NULL, 0, get_pending_work_requests, NULL, &fn);
+  napi_set_named_property(env, exports, "pendingWorkRequests", fn);
 
   napi_create_function(env, NULL, 0, test_mutex_init_destroy, NULL, &fn);
   napi_set_named_property(env, exports, "testMutexInitDestroy", fn);

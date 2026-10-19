@@ -364,6 +364,20 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a thread that calls uv_async_send in a tight loop doesn't starve JS timers", async () => {
+    // The child hangs if the timer never fires, and this times out.
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.startAsyncFlood();
+      setTimeout(() => {
+        addon.stopAsyncFlood();
+        console.log("timer fired");
+      }, 1);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("timer fired\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("uv_close with a send pending only runs close_cb, and a later close or send is a no-op", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       console.log("after close", JSON.stringify(addon.testAsyncCloseWithSendPending(report)));
@@ -406,6 +420,24 @@ describe.if(!isWindows)("uv stubs", () => {
     const cancelled = `cancel 0\nafter ${-constants.errno.ECANCELED} 124\n`;
     const tooLate = `cancel ${-constants.errno.EBUSY}\nafter 0 127\n`;
     expect([cancelled, tooLate]).toContain(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a Worker that exits with work queued still runs after_work_cb", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        \`
+          const addon = require(${JSON.stringify(addonPath)});
+          for (let i = 0; i < 4; i++) addon.testQueueWork(() => {});
+          process.exit(0);
+        \`,
+        { eval: true },
+      );
+      worker.on("exit", code => console.log("worker exited", code, "with", addon.pendingWorkRequests(), "pending"));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("worker exited 0 with 0 pending\n");
     expect(exitCode).toBe(0);
   });
 

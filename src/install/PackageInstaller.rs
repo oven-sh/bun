@@ -1903,10 +1903,19 @@ impl<'a> PackageInstaller<'a> {
                 // transitive folder dependencies are not hoisted
                 let is_transitive =
                     !is_workspace && !self.lockfile().is_workspace_tree_id(self.current_tree_id);
-                if folder.len() >= self.folder_path_buf.len()
-                    || (is_transitive
-                        && bin::bin_target_escapes_package_dir(folder)
-                        && !self.lockfile().is_trusted_folder_dependency(dependency_id))
+                if folder.len() >= self.folder_path_buf.len() {
+                    if log_level != Options::LogLevel::Silent {
+                        Output::err(
+                            "ENAMETOOLONG",
+                            "folder path for package <b>{}<r> is too long",
+                            (bstr::BStr::new(pkg_name.slice(string_buf!())),),
+                        );
+                    }
+                    return self.fail(is_pending_package_install, log_level);
+                }
+                if is_transitive
+                    && bin::bin_target_escapes_package_dir(folder)
+                    && !self.lockfile().is_trusted_folder_dependency(dependency_id)
                 {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(

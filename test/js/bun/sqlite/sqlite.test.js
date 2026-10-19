@@ -6350,6 +6350,20 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
       expect(calls).toEqual([]);
     });
 
+    it("releases the file when it's collected after close(), even if the Database isn't", () => {
+      using dir = tempDir("sqlite-abandoned-insert", {});
+      const file = path.join(String(dir), "x.sqlite");
+      const calls = [];
+      using db = open(calls, file);
+      abandonInsert(db, calls);
+      db.close();
+      Bun.gc(true);
+      expect(calls).toEqual([]);
+      using other = new Database(file);
+      // Throws "database is locked" while the INSERT is still open.
+      other.run("CREATE TABLE t (a)");
+    });
+
     it("doesn't call the hook when the ModuleGraph that opened its Database is disposed", () => {
       const calls = [];
       const graph = new Bun.ModuleGraph();

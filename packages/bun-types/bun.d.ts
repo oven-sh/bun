@@ -3494,6 +3494,10 @@ declare module "bun" {
      * This is also enabled automatically for any package with
      * `"sideEffects": false` in its `package.json`.
      *
+     * An unused re-export is skipped even when it points at another package
+     * that has side effects. Import that package directly (`import "pkg"`)
+     * to load it.
+     *
      * @example
      * ```ts
      * await Bun.build({

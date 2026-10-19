@@ -35,21 +35,17 @@ impl<K, V> Entry<K, V> {
         self.hash == EMPTY_HASH
     }
 
+    /// Key/value of an empty entry (hash == EMPTY_HASH) are never read.
+    /// `mem::zeroed()` cannot be used here: K may be `&[u8]` (or any `Copy`
+    /// type with a niche), for which all-zero bytes violate the validity
+    /// invariant regardless of whether the value is later read. The caller
+    /// gives the unread placeholder instead.
     #[inline]
-    fn empty() -> Self
-    where
-        K: Copy + Default,
-        V: Copy + Default,
-    {
-        // Key/value of an empty entry (hash == EMPTY_HASH) are never read.
-        // `mem::zeroed()` cannot be used here: K may be `&[u8]` (or any `Copy`
-        // type with a niche), for which all-zero bytes violate the validity
-        // invariant regardless of whether the value is later read. Use
-        // `Default` for the unread placeholder instead.
+    fn empty(key: K, value: V) -> Self {
         Self {
             hash: EMPTY_HASH,
-            key: K::default(),
-            value: V::default(),
+            key,
+            value,
         }
     }
 }
@@ -91,13 +87,13 @@ pub const fn static_slots(capacity: usize) -> usize {
 // The inline `[Entry; CAPACITY + overflow]` array length depends on a const fn
 // of `CAPACITY`, which requires nightly `feature(generic_const_exprs)`.
 // Stable workaround (same as ArrayBitSet): callers pass `SLOTS = static_slots(CAPACITY)`
-// as a second const param; a const-assert in `Default::default()` checks they match.
+// as a second const param; a const-assert in `new()` checks they match.
 pub struct StaticHashMap<
     K,
     V,
     Ctx,
     const CAPACITY: usize,
-    const SLOTS: usize, // = static_slots(CAPACITY), asserted in default()
+    const SLOTS: usize, // = static_slots(CAPACITY), asserted in new()
 > {
     pub entries: [Entry<K, V>; SLOTS],
     pub len: usize,
@@ -106,10 +102,12 @@ pub struct StaticHashMap<
     _ctx: PhantomData<Ctx>,
 }
 
-impl<K: Copy + Default, V: Copy + Default, Ctx, const CAPACITY: usize, const SLOTS: usize> Default
-    for StaticHashMap<K, V, Ctx, CAPACITY, SLOTS>
+impl<K: Copy, V: Copy, Ctx, const CAPACITY: usize, const SLOTS: usize>
+    StaticHashMap<K, V, Ctx, CAPACITY, SLOTS>
 {
-    fn default() -> Self {
+    /// An empty map. `key` and `value` fill the empty slots; nothing reads
+    /// them there.
+    pub fn new(key: K, value: V) -> Self {
         const {
             assert!((CAPACITY as u64).is_power_of_two());
             assert!(
@@ -118,7 +116,7 @@ impl<K: Copy + Default, V: Copy + Default, Ctx, const CAPACITY: usize, const SLO
             );
         };
         Self {
-            entries: [Entry::empty(); SLOTS],
+            entries: [Entry::empty(key, value); SLOTS],
             len: 0,
             shift: compute_shift(CAPACITY as u64),
             _ctx: PhantomData,
@@ -175,27 +173,23 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn put_assume_capacity(&mut self, key: K, value: V)
     where
         K: Copy,
-        V: Copy + Default,
+        V: Copy,
         Ctx: HashContext<K>,
     {
-        let result = self.get_or_put_assume_capacity(key);
-        if !result.found_existing {
-            *result.value_ptr = value;
-        }
+        self.get_or_put_assume_capacity(key, value);
     }
 
-    fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, V>
+    /// `value` is what a new entry holds. An entry that exists keeps its value.
+    fn get_or_put_assume_capacity(&mut self, key: K, value: V) -> GetOrPutResult<'_, V>
     where
         K: Copy,
-        V: Copy + Default,
+        V: Copy,
         Ctx: HashContext<K>,
     {
-        // `value` is never read until the caller writes via `value_ptr`. Use
-        // `Default` for the placeholder — V may not be zero-valid.
         let mut it: Entry<K, V> = Entry {
             hash: Ctx::ctx_hash(&key),
             key,
-            value: V::default(),
+            value,
         };
         let shift = self.shift();
         let mut i = to_idx(it.hash >> shift);
@@ -266,8 +260,8 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
 
     fn delete(&mut self, key: K) -> Option<V>
     where
-        K: Copy + Default,
-        V: Copy + Default,
+        K: Copy,
+        V: Copy,
         Ctx: HashContext<K>,
     {
         let hash = Ctx::ctx_hash(&key);
@@ -297,7 +291,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
             self.storage_mut()[i] = next;
             i += 1;
         }
-        self.storage_mut()[i] = Entry::empty();
+        self.storage_mut()[i] = Entry::empty(key, value);
         *self.len_mut() -= 1;
 
         Some(value)
@@ -359,7 +353,7 @@ mod tests {
         const SLOTS: usize = static_slots(CAP);
         // Boxed: ~15 KB of entries is fine on the heap, gratuitous on the stack.
         let mut map: Box<StaticHashMap<usize, usize, AutoContext, CAP, SLOTS>> =
-            Box::new(Default::default());
+            Box::new(StaticHashMap::new(0, 0));
 
         // Miri is ~100× slower; 2 seeds still cover the put/get/delete cycle.
         const SEEDS: u64 = if cfg!(miri) { 2 } else { 128 };

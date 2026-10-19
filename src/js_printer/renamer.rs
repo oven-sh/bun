@@ -550,8 +550,7 @@ impl SlotAndCount {
 /// The linker's one name for each binding that crosses chunks. Values live in the linker arena.
 pub type CrossChunkNames = HashMap<Ref, &'static [u8]>;
 
-type FileRowMap =
-    bun_collections::hashbrown::HashMap<u32, u32, core::hash::BuildHasherDefault<IdHasher>>;
+type FileRowMap = bun_collections::hashbrown::HashMap<u32, u32, BuildIdHasher>;
 
 /// Source index -> row of `NumberRenamer::names`.
 enum RowOfSource {
@@ -582,13 +581,23 @@ pub struct NumberRenamer {
 type NameIds = bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
 /// Name id -> index into `NestedRenamer::slots`, for the names the file's
 /// nested scopes bind or renumber; every other id reads the root's slot.
-type OverlayMap =
-    bun_collections::hashbrown::HashMap<u32, u32, core::hash::BuildHasherDefault<IdHasher>>;
+type OverlayMap = bun_collections::hashbrown::HashMap<u32, u32, BuildIdHasher>;
 
 /// Name ids are dense small integers; multiply-shift spreads them for
 /// hashbrown's top-bit tag.
-#[derive(Default)]
 struct IdHasher(u64);
+
+#[derive(Clone, Copy)]
+struct BuildIdHasher;
+
+impl core::hash::BuildHasher for BuildIdHasher {
+    type Hasher = IdHasher;
+
+    #[inline]
+    fn build_hasher(&self) -> IdHasher {
+        IdHasher(0)
+    }
+}
 
 impl core::hash::Hasher for IdHasher {
     #[inline]
@@ -849,7 +858,9 @@ impl NumberRenamer {
                 rows[first as usize],
             ),
             _ => {
-                let rows = files_in_chunk.iter().copied().zip(0u32..).collect();
+                let mut rows =
+                    FileRowMap::with_capacity_and_hasher(files_in_chunk.len(), BuildIdHasher);
+                rows.extend(files_in_chunk.iter().copied().zip(0u32..));
                 (RowOfSource::Own(rows), 0)
             }
         };
@@ -866,7 +877,7 @@ impl NumberRenamer {
             names: vec![Vec::new(); files_in_chunk.len()].into_boxed_slice(),
             cross_chunk_names: BackRef::new(cross_chunk_names),
             arena: Bump::new(),
-            ids: NameIds::with_capacity_and_hasher(capacity, Default::default()),
+            ids: NameIds::with_capacity_and_hasher(capacity, bun_wyhash::BuildHasher),
             slots: Vec::with_capacity(capacity),
         });
         // `root_names` owns its keys and is dropped by the caller; copy them.
@@ -1122,10 +1133,10 @@ impl<'r> NestedRenamer<'r> {
             uses,
             source_index,
             names,
-            overlay: OverlayMap::default(),
+            overlay: OverlayMap::with_hasher(BuildIdHasher),
             next_local_id: root.slots.len() as u32,
             slots: Vec::new(),
-            local_ids: NameIds::default(),
+            local_ids: NameIds::with_hasher(bun_wyhash::BuildHasher),
             undo: Vec::new(),
             scope: ROOT_SCOPE,
             next_scope: ROOT_SCOPE + 1,

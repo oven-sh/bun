@@ -1346,7 +1346,17 @@ impl core::hash::Hasher for IdentityU64Hasher {
         self.0
     }
 }
-type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
+#[derive(Clone, Copy)]
+pub struct IndexMapHasher;
+
+impl core::hash::BuildHasher for IndexMapHasher {
+    type Hasher = IdentityU64Hasher;
+
+    #[inline]
+    fn build_hasher(&self) -> IdentityU64Hasher {
+        IdentityU64Hasher(0)
+    }
+}
 
 pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
@@ -2177,7 +2187,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         // intentionally left uninitialized.
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
-            addr_of_mut!((*slot).index).write(IndexMap::default());
+            addr_of_mut!((*slot).index).write(IndexMap::with_hasher(IndexMapHasher));
             addr_of_mut!((*slot).backing_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
@@ -2339,6 +2349,24 @@ pub trait Allocator: 'static {}
 #[derive(Clone, Copy, Default)]
 pub struct DefaultAlloc;
 impl Allocator for DefaultAlloc {}
+
+/// A type with one value and no state: an allocator handle such as `Global` or
+/// [`AstAlloc`], or the hash context of a map. A container that is generic
+/// over such a type makes the value itself, so no caller passes one.
+///
+/// An allocator that owns or borrows memory cannot implement this. A container
+/// that is to hold one needs an `*_in(alloc)` constructor.
+pub trait Stateless: Copy {
+    const INSTANCE: Self;
+}
+
+impl Stateless for std::alloc::Global {
+    const INSTANCE: Self = std::alloc::Global;
+}
+
+impl Stateless for DefaultAlloc {
+    const INSTANCE: Self = DefaultAlloc;
+}
 
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // an allocator-borrowing discipline (avoid double-free), which Rust's

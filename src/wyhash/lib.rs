@@ -780,7 +780,17 @@ pub fn auto_hash<K: core::hash::Hash + ?Sized>(key: &K) -> u64 {
 /// `BuildHasher` for `std::collections::HashMap` so containers can opt out of
 /// SipHash. Deterministic across runs and ~3-5× faster than `RandomState` on
 /// the short identifier keys the parser/printer/renamer churn.
-pub type BuildHasher = core::hash::BuildHasherDefault<OneShotHasher>;
+#[derive(Clone, Copy)]
+pub struct BuildHasher;
+
+impl core::hash::BuildHasher for BuildHasher {
+    type Hasher = OneShotHasher;
+
+    #[inline(always)]
+    fn build_hasher(&self) -> OneShotHasher {
+        OneShotHasher { hash: 0 }
+    }
+}
 
 /// `bun.hash(bytes)` — wyhash with seed 0.
 #[inline]

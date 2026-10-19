@@ -52,7 +52,7 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
 
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Stateless};
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
 /// element struct.
@@ -869,9 +869,9 @@ impl<T> Slice<T> {
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
 
-impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
+impl<T, A: Allocator + Stateless> Default for MultiArrayList<T, A> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(A::INSTANCE)
     }
 }
 
@@ -904,9 +904,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     /// no allocator handle). `Slice` has no `Drop`; call [`Slice::deinit_owned`].
     pub fn to_owned_slice(&mut self) -> Slice<T>
     where
-        A: Default,
+        A: Stateless,
     {
-        let old = ManuallyDrop::new(core::mem::replace(self, Self::new_in(A::default())));
+        let old = ManuallyDrop::new(core::mem::replace(self, Self::new_in(A::INSTANCE)));
         old.slice()
     }
 

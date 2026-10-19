@@ -3578,12 +3578,11 @@ pub mod default_trusted_dependencies {
     >;
 
     static MAP: LazyLock<Box<Map>> = LazyLock::new(|| {
-        let mut map = Box::<Map>::default();
+        let mut map = Box::new(Map::new(&[], ()));
         for &dep in DEFAULT_TRUSTED_DEPENDENCIES_LIST.iter() {
             debug_assert!(map.len < MAX_DEFAULT_TRUSTED_DEPENDENCIES);
-            let entry = map.get_or_put_assume_capacity(dep);
+            let entry = map.get_or_put_assume_capacity(dep, ());
             debug_assert!(!entry.found_existing);
-            *entry.value_ptr = ();
         }
         map
     });

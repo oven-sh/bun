@@ -34,8 +34,8 @@ impl<A: MapAllocator> Table<A> {
     #[inline]
     fn new() -> Self {
         Table {
-            pages: Vec::new_in(A::default()),
-            slots: Vec::new_in(A::default()),
+            pages: Vec::new_in(A::INSTANCE),
+            slots: Vec::new_in(A::INSTANCE),
             first_page: 0,
         }
     }
@@ -82,8 +82,7 @@ impl<A: MapAllocator> Table<A> {
         if number < self.first_page {
             let missing = (self.first_page - number).max(self.pages.len() as u32);
             let missing = missing.min(self.first_page);
-            let mut pages =
-                Vec::with_capacity_in(missing as usize + self.pages.len(), A::default());
+            let mut pages = Vec::with_capacity_in(missing as usize + self.pages.len(), A::INSTANCE);
             pages.resize(missing as usize, 0);
             pages.extend_from_slice(&self.pages);
             self.pages = pages;
@@ -111,7 +110,7 @@ impl<K, A: MapAllocator> IdIndex<K, A> {
     #[inline]
     fn new() -> Self {
         IdIndex {
-            keys: Vec::new_in(A::default()),
+            keys: Vec::new_in(A::INSTANCE),
             places: Table::new(),
         }
     }
@@ -196,7 +195,7 @@ impl<K, V, A: MapAllocator> IdMap<K, V, A> {
     pub(crate) fn new() -> Self {
         Self {
             index: IdIndex::new(),
-            values: Vec::new_in(A::default()),
+            values: Vec::new_in(A::INSTANCE),
         }
     }
     #[inline]

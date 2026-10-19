@@ -45,8 +45,12 @@ pub(crate) type Digest = [u8; 32];
 /// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
 /// `eql` still compares the full digest. `store_hash = false` since recompute
 /// is a single load.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct DigestContext;
+
+impl bun_alloc::Stateless for DigestContext {
+    const INSTANCE: Self = DigestContext;
+}
 
 impl ArrayHashContext<Digest> for DigestContext {
     #[inline]

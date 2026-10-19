@@ -207,6 +207,10 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct EffectiveUrlContext;
+
+impl bun_alloc::Stateless for EffectiveUrlContext {
+    const INSTANCE: Self = EffectiveUrlContext;
+}
 impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
     fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate

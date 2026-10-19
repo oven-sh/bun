@@ -24,8 +24,16 @@ pub struct IdentityContext<Key>(PhantomData<Key>);
 #[derive(Default, Clone, Copy)]
 pub struct ArrayIdentityContext;
 
+impl bun_alloc::Stateless for ArrayIdentityContext {
+    const INSTANCE: Self = ArrayIdentityContext;
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct ArrayIdentityContextU64;
+
+impl bun_alloc::Stateless for ArrayIdentityContextU64 {
+    const INSTANCE: Self = ArrayIdentityContextU64;
+}
 
 // Inherent assoc types are unstable, so expose this as a free path alias.
 // Callers: `identity_context::U64`.

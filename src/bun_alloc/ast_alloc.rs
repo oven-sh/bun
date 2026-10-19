@@ -312,6 +312,10 @@ impl Drop for ScopedAstAlloc {
 #[derive(Clone, Copy, Default)]
 pub struct AstAlloc;
 
+impl crate::Stateless for AstAlloc {
+    const INSTANCE: Self = AstAlloc;
+}
+
 /// `Vec` whose backing buffer lives in the thread-local AST allocation state.
 pub type AstVec<T> = Vec<T, AstAlloc>;
 

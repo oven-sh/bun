@@ -12,8 +12,12 @@ pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 // `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
 type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct EnvMapContext;
+
+impl bun_alloc::Stateless for EnvMapContext {
+    const INSTANCE: Self = EnvMapContext;
+}
 
 impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {

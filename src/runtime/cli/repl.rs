@@ -176,7 +176,16 @@ struct History {
     position: usize,
     temp_line: Option<Box<[u8]>>,
     file_path: Option<Box<[u8]>>,
-    modified: bool,
+    /// The file does not end in a newline, so the next append starts with one.
+    unterminated: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HistoryWrite {
+    /// The newest entry goes after what the file holds.
+    Append,
+    /// The entries replace what the file holds.
+    Rewrite,
 }
 
 impl History {
@@ -186,7 +195,7 @@ impl History {
             position: 0,
             temp_line: None,
             file_path: None,
-            modified: false,
+            unterminated: false,
         }
     }
 
@@ -215,49 +224,54 @@ impl History {
                 self.entries.push(Box::<[u8]>::from(line));
             }
         }
+        self.unterminated = !content.is_empty() && !content.ends_with(b"\n");
 
         // Trim to max size
-        while self.entries.len() > MAX_HISTORY_SIZE {
-            let _ = self.entries.remove(0);
+        let excess = self.entries.len().saturating_sub(MAX_HISTORY_SIZE);
+        self.entries.drain(..excess);
+        // `add` only appends. A file that holds twice the cap is cut back here to the newest.
+        if excess >= MAX_HISTORY_SIZE {
+            self.write(HistoryWrite::Rewrite);
         }
 
         self.position = self.entries.len();
         Ok(())
     }
 
-    fn save(&mut self) {
-        if !self.modified {
-            return;
-        }
+    /// The only writer of the history file.
+    fn write(&mut self, how: HistoryWrite) {
         let Some(path) = self.file_path.as_deref() else {
             return;
         };
+        let rewrite = how == HistoryWrite::Rewrite;
 
-        // Build content
-        let start = if self.entries.len() > MAX_HISTORY_SIZE {
-            self.entries.len() - MAX_HISTORY_SIZE
-        } else {
-            0
+        let flags = sys::O::WRONLY | sys::O::CREAT | if rewrite { 0 } else { sys::O::APPEND };
+        let fd = match sys::open_a(path, flags, 0o600) {
+            sys::Result::Ok(fd) => fd,
+            sys::Result::Err(_) => return,
         };
+        #[cfg(unix)]
+        let _ = sys::fchmod(fd, 0o600);
 
-        let mut content: Vec<u8> = Vec::new();
-        for entry in &self.entries[start..] {
+        let entries = &self.entries[if rewrite { 0 } else { self.entries.len() - 1 }..];
+        let len: usize = entries.iter().map(|entry| entry.len() + 1).sum();
+        let mut content: Vec<u8> = Vec::with_capacity(len + 1);
+        if self.unterminated && !rewrite {
+            content.push(b'\n');
+        }
+        for entry in entries {
             content.extend_from_slice(entry);
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
-            sys::Result::Ok(fd) => sys::File::from_fd(fd),
-            sys::Result::Err(_) => return,
-        };
-        #[cfg(unix)]
-        let _ = sys::fchmod(file.fd(), 0o600);
-        match file.write_all(&content) {
-            sys::Result::Ok(()) => {}
-            sys::Result::Err(_) => return,
+        // The length is set after the write: `O::TRUNC` leaves an empty file if the write fails.
+        let written = sys::File::borrow(&fd).write_all(&content).is_ok()
+            && (!rewrite || sys::ftruncate(fd, content.len() as i64).is_ok());
+        if written {
+            self.unterminated = false;
         }
-
-        self.modified = false;
+        // `File` never closes fd 0 to 2, and this is one of them after the REPL's code closed it.
+        let _ = sys::FdExt::close_allowing_standard_io(fd, None);
     }
 
     fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
@@ -275,13 +289,15 @@ impl History {
 
         self.entries.push(Box::<[u8]>::from(line));
         self.position = self.entries.len();
-        self.modified = true;
 
         // Trim if too large
         while self.entries.len() > MAX_HISTORY_SIZE {
             let _ = self.entries.remove(0);
             self.position = self.position.saturating_sub(1);
         }
+
+        // Written now: `process.exit()` and a signal end the process without any code of the REPL.
+        self.write(HistoryWrite::Append);
         Ok(())
     }
 
@@ -2508,7 +2524,6 @@ impl<'a> Repl<'a> {
         }
 
         self.restore_terminal();
-        self.history.save();
         Ok(())
     }
 
@@ -2839,7 +2854,6 @@ impl<'a> Repl<'a> {
 impl<'a> Drop for Repl<'a> {
     fn drop(&mut self) {
         self.restore_terminal();
-        self.history.save();
         // line_editor, history, multiline_buffer, editor_buffer, last_result,
         // last_error dropped automatically (ProtectedJSValue unprotects).
     }

@@ -1,14 +1,11 @@
-//! Classes and interfaces checked against their base types, and errors specific to class bodies:
-//! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript
-//! file); 2510 2545 2797 2675 (the base type of a class); 2422 2500 (the types it implements); 2499
-//! (the base types of an interface); 2725 (a class named `Object`); 2376 2377 2401 17005 (the
-//! position of the `super()` call); 2715 (an abstract property read during instance
-//! initialization).
+//! Classes and interfaces checked against their base types, and errors specific to class bodies: 4112 4113 4114 4115
+//! 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript file); 2510 2545 2797 2675 (the base type
+//! of a class); 2422 2500 (the types it implements); 2499 (the base types of an interface); 2376 2377 2401 17005 (the
+//! position of the `super()` call).
 //!
 //! Mirrors `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`, `checkMembersForOverrideModifier`,
-//! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration`,
-//! `checkClassNameCollisionWithObject`, `checkConstructorDeclaration` and `checkPropertyAccessibilityAtLocation` in
-//! TypeScript 7.0.2's checker.go.
+//! `checkMemberForOverrideModifier`, `isValidBaseType`, `checkInterfaceDeclaration` and `checkConstructorDeclaration`
+//! in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::MemberOwner;
@@ -52,8 +49,7 @@ fn js_override_code(code: u32) -> u32 {
 impl<'p> Checker<'p, '_> {
     // ───────────────────────────── heritage clauses of a class ─────────────────────────────
 
-    /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses, and
-    /// `checkClassNameCollisionWithObject`.
+    /// `checkClassLikeDeclaration`, from `baseTypeNode` to the `implements` clauses.
     pub(super) fn report_class_like_declaration(&mut self, file: FileId, c: ClassId, sym: Sym) {
         let hir = self.hir(file);
         let class = &hir[c];

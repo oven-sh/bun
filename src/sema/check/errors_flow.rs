@@ -1,10 +1,8 @@
-//! Reachability: 7027 7028 7029, 2355 2366 2534 7030. Also checks that a generator matches its generator function's
-//! return type annotation.
+//! Reachability: 7027, 2355 2366 2534 7030. Also checks that a generator matches its generator function's return type
+//! annotation.
 //!
-//! Mirrors `checkSourceElementUnreachable`, `checkLabeledStatement`, `checkSwitchStatement`,
-//! `checkAllCodePathsInNonVoidFunctionReturnOrThrow`, `checkReturnStatement`,
-//! `checkGeneratorInstantiationAssignabilityToReturnType`, `isPostSuperFlowNode` and
-//! `checkGrammarBreakOrContinueStatement` in TypeScript 7.0.2's checker.go, flow.go and grammarchecks.go.
+//! Mirrors `checkSourceElementUnreachable`, `checkAllCodePathsInNonVoidFunctionReturnOrThrow` and
+//! `checkGeneratorInstantiationAssignabilityToReturnType` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, Parent, UNREACHABLE};

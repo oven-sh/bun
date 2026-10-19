@@ -1,9 +1,8 @@
-//! Misplaced or conflicting declarations:
-//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2374, 2717 2403 2687.
+//! Misplaced or conflicting declarations: 2372 2373, 2428, 2374, 2717 2403 2687.
 //!
-//! Mirrors `checkParameter`, the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`,
-//! `checkAliasSymbol`, `getSymbolFlags`, `getExternalModuleMember`, `checkTypeForDuplicateIndexSignatures` and
-//! `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, and `Resolve` in its nameresolver.go.
+//! Mirrors the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`,
+//! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, and
+//! `Resolve` in its nameresolver.go.
 
 use super::*;
 use crate::bind::{Decl, PatParent, SymbolId};

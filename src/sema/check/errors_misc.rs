@@ -1,5 +1,5 @@
 //! Smaller checks of expressions and statements, called where the type is computed or by the walk: 1345 2872 2873, 2869
-//! 2871 5076, 2703 2704 2790 18011, 2378, 2678.
+//! 2871 5076, 2703 2704 2790 18011, 2378, and 2678 through `check_type_comparable_to`.
 //!
 //! Mirrors `checkTruthinessOfType`, `checkNullishCoalesceOperands`, `checkDeleteExpression`, `checkAccessorDeclaration`
 //! and `checkSwitchStatement` in TypeScript 7.0.2's checker.go.

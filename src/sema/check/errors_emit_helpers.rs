@@ -1,4 +1,5 @@
-//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that isn't a module.
+//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that isn't a module, which
+//! `resolve_external_module_at` reports.
 //!
 //! With `importHelpers`, syntax the target doesn't support is emitted as calls to functions imported from `tslib`,
 //! which must exist. Mirrors `checkExternalEmitHelpers`, `resolveHelpersModule`, `getHelperNames` and the callers of

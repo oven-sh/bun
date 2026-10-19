@@ -1,7 +1,7 @@
 //! Aliases, module specifier resolution, and a few file-level checks:
 //! 2303; 18042 18043; 1205 1269 1288 1293 1448 1484 1485 2748 2865; 2866; 1272; 1379 1380; 2308;
 //! 1544; 6137 6142 7042 2846 5097 2876 2877 2878, 1471 1479 1541 1542; 7036; 1470 17013; 1006;
-//! 2578.
+//! 2578. `resolve_alias` reports 2303 and `check_target_of_alias_declaration` reports 1544. Both are called from here.
 //!
 //! Mirrors `checkAliasSymbol`, `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`,
 //! `getExportsOfModuleWorker`, `getExternalModuleMember`, `resolveExternalModule`, `checkImportCallExpression`,

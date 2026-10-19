@@ -1,4 +1,5 @@
-//! Circularity errors: 2313, and 2502 2577 7022 7023 7024.
+//! Circularity errors: 2313, and 2502 2577 7022 7023 7024. `report_circularity_error` reports 7022 when
+//! `check_circular_resolutions` requests the types.
 //!
 //! In TypeScript 7.0.2's checker.go these are reported when `pushTypeResolution` finds the requested resolution already
 //! in progress, in `getBaseConstructorTypeOfClass`, `getBaseTypes` and `getResolvedBaseConstraint`. Every entry from

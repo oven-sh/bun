@@ -1,5 +1,5 @@
 //! Names that the emitted code reserves, and names that a type can't have: 2441 2529 18027 2818, 2725, 2414 2427 2431
-//! 2457 2368.
+//! 2457 2368. The callers of `check_type_name_is_reserved` pass in 2427, 2457 and 2368.
 
 use super::errors_operators::language_version;
 use super::*;

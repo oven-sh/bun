@@ -1,7 +1,7 @@
 //! Errors about JSX: 17004 2874 2875 2879 and the codes that replace them, 7026 and 2339 for tags that aren't
 //! components, 2604 2322 2769 6229 for the attributes a tag accepts, 2558 2743 2344 for its type arguments, 2745 2746
 //! 2747 2710 for children, 2783 for attributes a spread overwrites, 2786, 2609 17016 17017, and the grammar: 17000
-//! 17001 2639 18007.
+//! 17001 2639 18007. `resolve_call` reports 2769, 2743 and 2344, and the assignability checks report 2322.
 //!
 //! Mirrors `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxPreconditions`, `getIntrinsicTagSymbol`,
 //! `getJsxNamespace`, `getJsxFactoryEntity`, `getJSXFragmentType`, `resolveJsxOpeningLikeElement`,

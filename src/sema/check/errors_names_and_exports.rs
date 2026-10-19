@@ -1,10 +1,9 @@
-//! Property names, names in namespaces, and module exports: 2464, 2694 2713 2724 2749, 1117 1118 1119 2300, 2528 2661,
-//! 1361 1362.
+//! Property names, names in namespaces, and type-only names used as values: 2464, 2694 2713 2724 2749, 1361 1362.
 //!
-//! Mirrors `checkComputedPropertyName`, `resolveQualifiedName`, `checkGrammarObjectLiteralExpression`,
-//! `checkExportSpecifier`, `getTypeOnlyAliasDeclarationEx` and the end of `onSuccessfullyResolvedSymbol` in TypeScript
-//! 7.0.2's checker.go and grammarchecks.go, `IsValidTypeOnlyAliasUseSite` in its ast/utilities.go, and the errors that
-//! `declareSymbolEx` in its binder.go reports for default exports.
+//! Mirrors `checkComputedPropertyName`, `resolveQualifiedName`, `getTypeOnlyAliasDeclarationEx` and the end of
+//! `onSuccessfullyResolvedSymbol` in TypeScript 7.0.2's checker.go, and `IsValidTypeOnlyAliasUseSite` in its
+//! ast/utilities.go. Also has the position where `declareSymbolEx` in its binder.go reports a conflicting default
+//! export or `export =`.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;

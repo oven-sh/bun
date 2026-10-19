@@ -1,13 +1,11 @@
-//! Type nodes, and indexed access: 1257 1265 1266 2574 (tuple types), 1338 2838 (`infer`), 1354 (`readonly`), 2795
-//! (`intrinsic`), 2526 (`this`), 1021 1268 1337 (index signatures), 18016 (private names), 1176 (interfaces), 1099 1009
-//! (type argument lists), 2848 2635 (instantiation expressions), 2536 4105 2542 2862 2514 (`T[K]`, `a[k]`).
+//! Type nodes, and indexed access types: 1257 1265 1266 2574 (tuple types), 1338 2838 (`infer`), 1354 (`readonly`),
+//! 2795 (`intrinsic`), 1021 1268 1337 (index signatures), 18016 (private names), 1176 (interfaces), 2848 (instantiation
+//! expressions), 2536 4105 (`T[K]`), and 2514 for `T[-1]` through `type_from_node`.
 //!
-//! Mirrors `checkTupleType`, `checkInferType`, `getThisType`, `checkTypeAliasDeclaration`,
-//! `checkObjectTypeForDuplicateDeclarations`, `checkPropertySignature`, `checkMethodDeclaration`,
-//! `checkIndexedAccessIndexType`, `getPropertyTypeForIndexType`, `checkExpressionWithTypeArguments` and
-//! `getInstantiationExpressionType` in TypeScript 7.0.2's checker.go, and `checkGrammarIndexSignatureParameters`,
-//! `checkGrammarTypeArguments`, `checkGrammarInterfaceDeclaration` and `checkGrammarTypeOperatorNode` in its
-//! grammarchecks.go.
+//! Mirrors `checkTupleType`, `checkInferType`, `checkTypeAliasDeclaration`, `checkPropertySignature`,
+//! `checkMethodDeclaration`, `checkIndexedAccessIndexType` and `checkExpressionWithTypeArguments` in TypeScript 7.0.2's
+//! checker.go, and `checkGrammarIndexSignatureParameters`, `checkGrammarInterfaceDeclaration` and
+//! `checkGrammarTypeOperatorNode` in its grammarchecks.go.
 //!
 //! Anything a file's HIR doesn't store (parentheses around types, the position of a type argument list) is read from
 //! the source text.
@@ -493,7 +491,7 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── instantiation expressions ─────────────────────────────
 
-    /// `checkExpressionWithTypeArguments` for an `f<T>` that isn't called: 1009, 2848 for `a instanceof B<T>`, 2635.
+    /// `checkExpressionWithTypeArguments` for an `f<T>` that isn't called: 2848 for `a instanceof B<T>`.
     fn check_instantiation_expressions(&mut self, file: FileId, exprs: &ExprsByKind) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         for i in exprs.of(ExprTag::Instantiation).iter().map(|e| e.idx()) {

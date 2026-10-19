@@ -1,10 +1,14 @@
-//! Iteration and destructuring: 2488 2504 2493, 2405 2407, 2339 2537 2538 and 2341 2445 2446 for the properties a
-//! destructuring assignment reads, 2531 2532 2533 2571 for a pattern that destructures nothing, and 2322 where the
-//! destructured value is assigned.
+//! Iteration and destructuring: 2405 2407, and 2531 2532 2533 2571 for a pattern that destructures nothing. Helpers in
+//! other files, called from here, report the rest:
+//! - `iterated_type_or_element_type`: 2488 2504.
+//! - `indexed_access_of_binding_element`: 2493 2339 2537 2538 for the properties and elements a destructuring
+//!   assignment reads.
+//! - `check_property_accessibility_at_location`: 2341 2445 2446 for those properties.
+//! - `check_type_assignable_to_and_optionally_elaborate`: 2322 where the destructured value is assigned.
 //!
-//! Mirrors `checkForOfStatement`, `checkForInStatement`, `getIteratedTypeOrElementType`, `checkDestructuringAssignment`
-//! with its callees, `checkVariableLikeDeclaration` for binding patterns, `checkYieldExpression`, and
-//! `checkSignatureDeclaration` for a generator's return type annotation, in TypeScript 7.0.2's checker.go.
+//! Mirrors `checkForOfStatement`, `checkForInStatement`, `checkIteratedTypeOrElementType`,
+//! `checkDestructuringAssignment` with its callees, and `checkVariableLikeDeclaration` for binding patterns, in
+//! TypeScript 7.0.2's checker.go.
 
 use super::errors_access::PropertyAccess;
 use super::errors_operators::{

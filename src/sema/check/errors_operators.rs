@@ -1,10 +1,9 @@
-//! The remaining checks of operators, assertions, templates and `yield`: 1186 1355 1360, 2412 2462 2566 2701 2731 2737,
-//! 2778 2779, 2796, 2860 2861, 7057, and 2364 for `=`.
+//! The remaining checks of operators, assertions, templates and `yield`: 1186 1355 1360, 2462 2566 2731 2737, 2779,
+//! 2860 2861, 7057, and 2364 for `=`.
 //!
-//! Mirrors `checkAssignmentOperator` for `=`, the pattern grammar part of `checkDestructuringAssignment`,
-//! `checkAssertion`, `checkSatisfiesExpression`, `checkTemplateExpression`, `resolveTaggedTemplateExpression`,
-//! `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.0.2's checker.go, and
-//! `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` in its grammarchecks.go.
+//! Mirrors `checkAssignmentOperator` for `=`, `checkAssertion`, `checkSatisfiesExpression`, `checkTemplateExpression`,
+//! `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.0.2's
+//! checker.go, and `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` in its grammarchecks.go.
 
 use super::*;
 use crate::bind::Parent;

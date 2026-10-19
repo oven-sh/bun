@@ -216,6 +216,7 @@
 #include "JSHTTPParser.h"
 #include <exception>
 #include <mutex>
+#include <openssl/mem.h>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -3190,6 +3191,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
+// The native frames of a checkpoint stay on the stack while its jobs run. A slot they never write keeps the bytes
+// the last callback left at that address, and a collection during a job reads those bytes as a reference to a cell.
+static NEVER_INLINE SUPPRESS_ASAN void zeroStackUnderCheckpoint()
+{
+    uintptr_t words[256];
+    OPENSSL_cleanse(words, sizeof(words));
+}
+
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3251,6 +3260,8 @@ uint8_t GlobalObject::drainMicrotasks()
             return *result;
     }
 
+    if (!vm.defaultMicrotaskQueue().isEmpty())
+        zeroStackUnderCheckpoint();
     vm.drainMicrotasks();
     if (auto result = endedByException())
         return *result;

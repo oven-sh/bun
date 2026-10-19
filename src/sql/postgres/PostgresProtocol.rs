@@ -20,7 +20,6 @@ pub const BIND_COMPLETE: [u8; 5] = tag_len(b'2', 4);
 pub const PARSE_COMPLETE: [u8; 5] = tag_len(b'1', 4);
 
 pub const SYNC: [u8; 5] = tag_len(b'S', 4);
-pub const FLUSH: [u8; 5] = tag_len(b'H', 4);
 pub const NO_DATA: [u8; 5] = tag_len(b'n', 4);
 
 pub fn write_query<Context: WriterContext>(

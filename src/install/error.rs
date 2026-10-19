@@ -14,8 +14,6 @@ pub enum Error {
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("DeviceBusy")]
-    DeviceBusy,
     #[error("TarballHTTP400")]
     TarballHTTP400,
     #[error("TarballHTTP401")]
@@ -50,6 +48,8 @@ pub enum Error {
     DanglingSymlink,
     #[error("UnsupportedYarnLockfileVersion")]
     UnsupportedYarnLockfileVersion,
+    #[error("InvalidYarnBerryLockfile")]
+    InvalidYarnBerryLockfile,
     #[error("InvalidPackageJSON")]
     InvalidPackageJSON,
     #[error("LockfileResolveFailed")]
@@ -70,6 +70,8 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
+    #[error("InvalidDependencyName")]
+    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
     #[error("InvalidPackageID")]
@@ -152,12 +154,8 @@ pub enum Error {
     IntegrityCheckFailed,
     #[error("RepositoryNotFound")]
     RepositoryNotFound,
-    #[error("DebugTextLockfileRoundTrip")]
-    DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
     NoPackage,
-    #[error("BrokenPipe")]
-    BrokenPipe,
     #[error("WriteFailed")]
     WriteFailed,
     #[error("InvalidCharacter")]
@@ -176,12 +174,6 @@ pub enum Error {
     CorruptLockfile,
     #[error("Lockfile is missing resolution data")]
     LockfileIsMissingResolutionData,
-    #[error("MissingPackageName")]
-    MissingPackageName,
-    #[error("GlobError")]
-    GlobError,
-    #[error("Invalid")]
-    Invalid,
     #[error("Lockfile validation failed: list is impossibly long")]
     LockfileValidationFailedListIsImpossiblyLong,
     #[error("Lockfile validation failed: alignment mismatch")]
@@ -198,18 +190,8 @@ pub enum Error {
     LockfileValidationFailedInvalidBinTag,
     #[error("Lockfile validation failed: invalid package scripts")]
     LockfileValidationFailedInvalidPackageScripts,
-    #[error("NPMLockfileVersionMismatch")]
-    NPMLockfileVersionMismatch,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("PathTooLong")]
-    PathTooLong,
-    #[error("LockfileWorkspaceMissingResolved")]
-    LockfileWorkspaceMissingResolved,
-    #[error("NotAllPackagesGotResolved")]
-    NotAllPackagesGotResolved,
-    #[error("DependencyLoop")]
-    DependencyLoop,
     #[error("NotSupported")]
     NotSupported,
     #[error("Unexpected")]
@@ -264,7 +246,6 @@ impl Error {
             Self::SymLinkLoop => "SymLinkLoop",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::DeviceBusy => "DeviceBusy",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
             Self::TarballHTTP402 => "TarballHTTP402",
@@ -282,6 +263,7 @@ impl Error {
             Self::BufferTooSmall => "BufferTooSmall",
             Self::DanglingSymlink => "DanglingSymlink",
             Self::UnsupportedYarnLockfileVersion => "UnsupportedYarnLockfileVersion",
+            Self::InvalidYarnBerryLockfile => "InvalidYarnBerryLockfile",
             Self::InvalidPackageJSON => "InvalidPackageJSON",
             Self::LockfileResolveFailed => "LockfileResolveFailed",
             Self::DistTagNotFound => "DistTagNotFound",
@@ -292,6 +274,7 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
+            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",
@@ -337,9 +320,7 @@ impl Error {
             Self::Fail => "Fail",
             Self::IntegrityCheckFailed => "IntegrityCheckFailed",
             Self::RepositoryNotFound => "RepositoryNotFound",
-            Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
-            Self::BrokenPipe => "BrokenPipe",
             Self::WriteFailed => "WriteFailed",
             Self::InvalidCharacter => "InvalidCharacter",
             Self::InvalidLockfile => "InvalidLockfile",
@@ -351,9 +332,6 @@ impl Error {
             }
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
-            Self::MissingPackageName => "MissingPackageName",
-            Self::GlobError => "GlobError",
-            Self::Invalid => "Invalid",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"
             }
@@ -378,12 +356,7 @@ impl Error {
             Self::LockfileValidationFailedInvalidPackageScripts => {
                 "Lockfile validation failed: invalid package scripts"
             }
-            Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::PathTooLong => "PathTooLong",
-            Self::LockfileWorkspaceMissingResolved => "LockfileWorkspaceMissingResolved",
-            Self::NotAllPackagesGotResolved => "NotAllPackagesGotResolved",
-            Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
@@ -443,7 +416,6 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
         }
     }
 }
@@ -464,7 +436,6 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidLockfile,
         }
     }
@@ -477,6 +448,7 @@ impl From<Error> for bun_core::Error {
             Error::Alloc(a) => bun_core::Error::Alloc(a),
             Error::WriteFailed => bun_core::Error::WriteFailed,
             Error::InvalidCharacter => bun_core::Error::InvalidCharacter,
+            Error::FileNotFound => bun_core::Error::FileNotFound,
             _ => bun_core::Error::Unexpected,
         }
     }

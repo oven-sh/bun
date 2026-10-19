@@ -9,7 +9,7 @@ bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
 // to the cell. `deinit` consumes/frees the C++ allocation and so stays
 // `unsafe fn` (double-free precondition).
 unsafe extern "C" {
-    safe fn Bun__SecretsJobOptions__runTask(ctx: &mut SecretsJobOptions, global: &JSGlobalObject);
+    safe fn Bun__SecretsJobOptions__runTask(ctx: &mut SecretsJobOptions);
     safe fn Bun__SecretsJobOptions__runFromJS(
         ctx: &mut SecretsJobOptions,
         global: &JSGlobalObject,
@@ -32,21 +32,14 @@ impl Drop for SecretsOptions {
 /// `Bun.secrets.{get,set,delete}` off the JS thread.
 pub(crate) struct SecretsJob {
     options: SecretsOptions,
-    global: crate::JsPtr<JSGlobalObject>,
 }
 
 impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Strong;
 
-    fn run(
-        this: &mut Self,
-        vm: &crate::vm_handle::Borrow,
-        done: crate::Completion<Self>,
-    ) -> Option<crate::Completion<Self>> {
-        // SAFETY: the creating global, alive under the borrow; C++ only threads it through.
-        let global = unsafe { this.global.under_borrow(vm) };
-        Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0), global);
+    fn run(this: &mut Self, done: crate::Completion<Self>) -> Option<crate::Completion<Self>> {
+        Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0));
         Some(done)
     }
 
@@ -71,16 +64,15 @@ impl crate::JobContext for SecretsJob {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Secrets__scheduleJob(
     global: &JSGlobalObject,
+    callframe: &crate::CallFrame,
     options: *mut SecretsJobOptions,
     promise: JSValue,
 ) {
-    let cx = global.js_thread();
+    let cx = global.js_thread(global.bun_vm().context_of_caller(callframe));
     crate::Job::<SecretsJob>::schedule(
         &cx,
         SecretsJob {
             options: SecretsOptions(options),
-            // SAFETY: the creating global outlives every borrow of its VM.
-            global: unsafe { crate::JsPtr::new(core::ptr::NonNull::from(global)) },
         },
         Strong::create(promise, global),
     );

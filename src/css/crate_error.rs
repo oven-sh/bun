@@ -6,8 +6,6 @@ pub enum Error {
     InvalidCharacter,
     #[error("UnsupportedCSSTarget")]
     UnsupportedCSSTarget,
-    #[error("CSSPrintError")]
-    CSSPrintError,
 }
 
 impl Error {
@@ -17,7 +15,6 @@ impl Error {
             Self::Overflow => "Overflow",
             Self::InvalidCharacter => "InvalidCharacter",
             Self::UnsupportedCSSTarget => "UnsupportedCSSTarget",
-            Self::CSSPrintError => "CSSPrintError",
         }
     }
 }

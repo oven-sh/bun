@@ -118,8 +118,8 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
 
   test("empty string", () => {
     expect($.braces("")).toEqual([""]);
-    expect($.braces("", { parse: true })).toBeString();
-    expect($.braces("", { tokenize: true })).toBeString();
+    expect(($.braces as any)("", { parse: true })).toBeString();
+    expect(($.braces as any)("", { tokenize: true })).toBeString();
   });
 
   test("unicode", () => {
@@ -217,6 +217,52 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
     `);
     expect(exitCode).toBe(0);
   });
+
+  // The expander hands out output slots from a counter that is bumped once per
+  // slot, so after the last of N slots it holds N. The expansion cap admits
+  // N = 65536, one more than the old u16 counter could hold, so a word with
+  // exactly 65536 variants tripped the overflow check in debug builds.
+  // Each case runs in a subprocess because that check aborts the process. The
+  // child prints [count, first, last]; the last variant lives in the slot whose
+  // claim used to overflow.
+  describe("exactly 65536 variants", () => {
+    async function expandInChild(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    test.concurrent("shell word with 16 flat groups (2^16)", async () => {
+      const result = await expandInChild(`
+        const word = Buffer.alloc(16 * "{a,b}".length, "{a,b}").toString();
+        const words = (await Bun.$\`echo \${{ raw: word }}\`.text()).trimEnd().split(" ");
+        console.log(JSON.stringify([words.length, words[0], words.at(-1)]));
+      `);
+      expect(result).toEqual({
+        stdout: JSON.stringify([65536, "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("$.braces() with 8 nested groups (4^8)", async () => {
+      const result = await expandInChild(`
+        const word = Buffer.alloc(8 * "{{a,b},{c,d}}".length, "{{a,b},{c,d}}").toString();
+        const out = Bun.$.braces(word);
+        console.log(JSON.stringify([out.length, out[0], out.at(-1)]));
+      `);
+      expect(result).toEqual({
+        stdout: JSON.stringify([65536, "aaaaaaaa", "dddddddd"]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // A `{...}` group with no top-level comma is literal text in bash. The brace
@@ -285,5 +331,36 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
       stderr: "bun: no matches found: {x},*.txt\n",
       exitCode: 1,
     });
+  });
+});
+
+describe("$.braces arguments", () => {
+  test("input is ToString", () => {
+    expect($.braces(12 as any)).toEqual(["12"]);
+    expect($.braces({ toString: () => "a{b,c}" } as any)).toEqual(["ab", "ac"]);
+  });
+
+  test("a word with nothing to expand comes back as it was", () => {
+    expect($.braces("a\ud800b")).toEqual(["a\ud800b"]);
+  });
+
+  test("options are an object, null or undefined", () => {
+    for (const options of [undefined, null, {}, [], () => {}]) {
+      expect($.braces("a{b,c}", options as any)).toEqual(["ab", "ac"]);
+    }
+    for (const options of [5, "s", true, Symbol("s")]) {
+      expect(() => $.braces("a{b,c}", options as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "BracesOptions must be an object",
+        }),
+      );
+    }
+  });
+
+  test("an argument that was not passed is undefined", () => {
+    expect(($.braces as any)()).toEqual(["undefined"]);
+    expect($.braces(undefined as any)).toEqual(["undefined"]);
   });
 });

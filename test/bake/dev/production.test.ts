@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -302,6 +302,160 @@ export default function GettingStarted() {
     expect(blogIndex).toContain(platformPath('/pages/blog/[...slug].tsx"'));
   });
 
+  test("params are collected from the page's parent routes too", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-nested-params", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/[category]/[id].tsx": `
+export default function Item({ params }) {
+  return <p>{params.category + "/" + params.id}</p>;
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [
+      { params: { category: "tech", id: "bun" } },
+      { params: { category: "news", id: "release" } },
+    ],
+  };
+}
+`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const htmlFiles = Array.from(new Bun.Glob("dist/**/*.html").scanSync(dir))
+      .sort()
+      .map(p => normalizePath(p));
+    expect(htmlFiles).toEqual(["dist/news/release/index.html", "dist/tech/bun/index.html"]);
+    expect(await Bun.file(path.join(dir, "dist", "tech", "bun", "index.html")).text()).toContain("tech/bun");
+  });
+
+  test("optional catch-all routes are rejected", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-optional-catch-all", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/docs/[[...slug]].tsx": `
+export default function Docs() {
+  return <p>docs</p>;
+}
+`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("catch-all routes are not supported in static site generation");
+    expect(exitCode).toBe(1);
+  });
+
+  test("two pages resolving to the same route are reported", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+      "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+    });
+
+    const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
+  // The bundler has no transform for these modules yet. The build used to abort
+  // in the parser instead of reporting the file.
+  test.concurrent.each([
+    ["with a semicolon", `"use server";\nexport async function save() {\n  return "saved";\n}\n`],
+    ["without a semicolon", `'use server'\nexport async function save() {\n  return "saved";\n}\n`],
+  ])('a "use server" module is a build error (%s)', async (_, actions) => {
+    using dir = tempDir("bake-production-use-server", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
+      "routes/index.ts": `
+import "../actions";
+export default function () {
+  return new Response("Hello");
+}
+`,
+      "actions.ts": actions,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('error: "use server" is not supported yet');
+    expect(normalizePath(stderr)).toContain("/actions.ts:1:1");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // A production build has no client references without a separate SSR graph.
+  // The build used to abort instead of reporting the file: in the parser when it
+  // wraps an exported value, and in the linker when it has nothing to wrap.
+  test.concurrent.each([
+    ["an exported function", `export function Button() {}`],
+    ["an export clause", `function Button() {}\nexport { Button };`],
+  ])('a "use client" module without a separate SSR graph is a build error (%s)', async (_, exports) => {
+    const framework = {
+      ...minimalFramework,
+      serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: false },
+    };
+    using dir = tempDir("bake-production-use-client-single-graph", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(framework)} } };`,
+      "routes/index.ts": `
+import { Button } from "../components/Button";
+export default function () {
+  return new Response("Hello, " + typeof Button);
+}
+`,
+      "components/Button.ts": `"use client";\n${exports}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      `error: "use client" is not supported yet in a production build unless 'framework.serverComponents.separateSSRGraph' is true`,
+    );
+    expect(normalizePath(stderr)).toContain("/components/Button.ts:1:1");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test('a framework entry point that a "browser" map disables is reported', async () => {
+    using dir = tempDir("bake-production-disabled-entry", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
+      "client.ts": `export {};`,
+      "server.ts": `export function render() { return new Response("ok"); }`,
+      "routes/index.ts": `export default () => new Response("ok");`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
+    expect(exitCode).toBe(1);
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,
@@ -593,5 +747,37 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  test("a page can make a WebSocket while it is prerendered", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-websocket", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `export default function IndexPage() {
+  const socket = new WebSocket("ws://127.0.0.1:1/");
+  socket.onerror = () => {};
+  const state = socket.readyState;
+  socket.close();
+  return <div>readyState={state}</div>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html"))
+      .text()
+      .catch(() => buildProc.stderr.toString());
+    expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
+    expect(buildProc.exitCode).toBe(0);
   });
 });

@@ -265,37 +265,45 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       },
     );
 
-    // The reply goes out on the raw socket in the call of end(), and the response never ends.
-    test.concurrent("the FIN follows the bytes of req.socket.end(data)", async () => {
-      const reply = Buffer.concat([
-        Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`),
-        Buffer.alloc(SIZE, "r"),
-      ]);
-      const { promise: ended, resolve: onEnd } = Promise.withResolvers<number>();
-      const serverSocket = watchServerSocket();
-      await using server = createServer((req, res) => {
-        serverSocket.watch(req.socket);
-        capSendBuffer(req.socket);
-        req.socket.end(reply);
-        setImmediate(() => onEnd(res.writableLength));
-      });
-      const { client, outcome, body } = await connect(server);
-      try {
-        client.write(GET);
-        const held = await ended;
-        client.resume();
-        expect({
-          outcome: await outcome,
-          body: body(),
-          held: held > 0,
-          serverSocketOpen: serverSocket.open,
-        }).toEqual(finAfterBytes);
-        client.end();
-        await serverSocket.closed;
-      } finally {
-        client.destroy();
-      }
-    });
+    // The reply goes out on the raw socket, and the response never ends.
+    test.concurrent.each(["req.socket.end(data)", "req.socket.write(data), then req.socket.end()"])(
+      "the FIN follows the bytes of %s",
+      async form => {
+        const reply = Buffer.concat([
+          Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`),
+          Buffer.alloc(SIZE, "r"),
+        ]);
+        const { promise: ended, resolve: onEnd } = Promise.withResolvers<number>();
+        const serverSocket = watchServerSocket();
+        await using server = createServer((req, res) => {
+          serverSocket.watch(req.socket);
+          capSendBuffer(req.socket);
+          if (form === "req.socket.end(data)") {
+            req.socket.end(reply);
+            setImmediate(() => onEnd(res.writableLength));
+          } else {
+            req.socket.write(reply);
+            endLater(res, () => req.socket.end()).then(onEnd);
+          }
+        });
+        const { client, outcome, body } = await connect(server);
+        try {
+          client.write(GET);
+          const held = await ended;
+          client.resume();
+          expect({
+            outcome: await outcome,
+            body: body(),
+            held: held > 0,
+            serverSocketOpen: serverSocket.open,
+          }).toEqual(finAfterBytes);
+          client.end();
+          await serverSocket.closed;
+        } finally {
+          client.destroy();
+        }
+      },
+    );
 
     // uWS reads nothing behind a FIN, so the FIN waits for the request body of a response that has not ended. Node
     // sends the FIN first and reads the body behind it. Either way the whole body arrives, the request behind it
@@ -342,6 +350,46 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
         }).toEqual(finAfterBytes);
         await requestEnded;
         expect(seen).toEqual({ bytes: BODY.length, ended: true });
+        client.end();
+        await serverSocket.closed;
+      } finally {
+        client.destroy();
+      }
+    });
+
+    // Nothing reads the request body when end() runs, so its buffer is full and the reads of the connection are
+    // stopped. A reader that attaches later still gets the whole body, and then the FIN comes.
+    test.concurrent("a reader that attaches after end() gets the whole request body", async () => {
+      const BODY = Buffer.alloc(2 * 1024 * 1024, "b");
+      const { promise: request, resolve: onRequest } = Promise.withResolvers<IncomingMessage>();
+      const { promise: ended, resolve: onEnd } = Promise.withResolvers<number>();
+      const serverSocket = watchServerSocket();
+      await using server = createServer((req, res) => {
+        serverSocket.watch(req.socket);
+        req.on("error", () => {});
+        res.on("error", () => {});
+        writeBody(res);
+        endLater(res, () => req.socket.end()).then(onEnd);
+        onRequest(req);
+      });
+      const { client, outcome, wholeBody, body } = await connect(server);
+      try {
+        client.write(`POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${BODY.length}\r\n\r\n`);
+        client.write(BODY);
+        const held = await ended;
+        client.resume();
+        await wholeBody;
+        const req = await request;
+        let uploaded = 0;
+        req.on("data", (chunk: Buffer) => (uploaded += chunk.length));
+        await once(req, "end");
+        expect(uploaded).toBe(BODY.length);
+        expect({
+          outcome: await outcome,
+          body: body(),
+          held: held > 0,
+          serverSocketOpen: serverSocket.open,
+        }).toEqual(finAfterBytes);
         client.end();
         await serverSocket.closed;
       } finally {
@@ -470,15 +518,15 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       },
     );
 
-    // A CONNECT that is pipelined behind a response whose bytes still wait. The tunnel writes nothing, and it
-    // still reads behind its FIN.
+    // A CONNECT that is pipelined behind a response whose bytes still wait. The tunnel writes nothing. Behind its
+    // FIN it still reads, also when the server closes: a tunnel is not an idle connection.
     test.concurrent.each(["has not ended", "has ended"])(
       "the FIN of a tunnel follows the response before it, which %s, and the tunnel still reads",
       async state => {
         const { promise: dispatched, resolve: onDispatch } = Promise.withResolvers<ServerResponse>();
         const { promise: ended, resolve: onEnd } = Promise.withResolvers<number>();
         const { promise: tunnelRead, resolve: onTunnelRead } = Promise.withResolvers<string>();
-        await using server = createServer((req, res) => {
+        const server = createServer((req, res) => {
           res.on("error", () => {});
           writeBody(res);
           if (state === "has ended") res.end();
@@ -504,11 +552,13 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
             body: SIZE,
             held: true,
           });
+          server.close();
           client.write("PING");
           expect(await tunnelRead).toBe("PING");
         } finally {
           client.destroy();
           server.closeAllConnections();
+          if (server.listening) server.close();
         }
       },
     );

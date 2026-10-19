@@ -904,15 +904,12 @@ impl Arguments {
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
             if options_or_callable.is_object() {
-                // default true
+                // Node validates neither: `persistent` counts when truthy, `bigint` when `true`: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2586-L2602
                 persistent = options_or_callable
-                    .get_boolean_strict(cx.global(), "persistent")?
+                    .get_boolean_loose(cx.global(), "persistent")?
                     .unwrap_or(true);
 
-                // default false
-                bigint = options_or_callable
-                    .get_boolean_strict(cx.global(), "bigint")?
-                    .unwrap_or(false);
+                bigint = options_or_callable.get(cx.global(), "bigint")? == Some(JSValue::TRUE);
 
                 if let Some(interval_) = options_or_callable.get(cx.global(), "interval")? {
                     if !interval_.is_number() && !interval_.is_any_int() {

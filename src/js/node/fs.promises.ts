@@ -9,6 +9,7 @@ const {
   validateAbortSignal,
   validateEncoding,
 } = require("internal/validators");
+const { getIgnoringObjectPrototype } = require("internal/shared");
 
 const constants = $processBindingConstants.fs;
 
@@ -66,6 +67,23 @@ function watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
+  let persistent: unknown, recursive: unknown, encoding: unknown, verbose: unknown;
+  if (options) {
+    if (typeof options !== "object" && typeof options !== "function") validateObject(options, "options");
+    persistent = getIgnoringObjectPrototype(options, "persistent");
+    recursive = getIgnoringObjectPrototype(options, "recursive");
+    encoding = getIgnoringObjectPrototype(options, "encoding");
+    verbose = getIgnoringObjectPrototype(options as { verbose?: unknown }, "verbose");
+  }
+  // Node rejects null and "". Here they mean not given, as before: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L392-L393
+  if (recursive == null || recursive === "") recursive = false;
+  else validateBoolean(recursive, "options.recursive");
+  if (persistent == null || persistent === "") persistent = true;
+  else if (typeof persistent !== "boolean") {
+    // Node checks the path before `persistent`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L379
+    require("internal/validators").getValidatedFsPath(filename);
+    validateBoolean(persistent, "options.persistent");
+  }
   const queue = $createFIFO();
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
@@ -97,17 +115,25 @@ function watch(
     };
   }
 
-  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
-      return;
-    }
-    queue.push({ __proto__: null, eventType, filename });
-    if (nextEventResolve) {
-      const resolve = nextEventResolve;
-      nextEventResolve = null;
-      resolve();
-    }
-  });
+  const watcher = fs.watch(
+    filename,
+    persistent,
+    recursive,
+    encoding,
+    signal,
+    verbose,
+    (eventType: string, filename: string | Buffer | undefined) => {
+      if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
+        return;
+      }
+      queue.push({ __proto__: null, eventType, filename });
+      if (nextEventResolve) {
+        const resolve = nextEventResolve;
+        nextEventResolve = null;
+        resolve();
+      }
+    },
+  );
 
   function onAbort() {
     watcher.close();

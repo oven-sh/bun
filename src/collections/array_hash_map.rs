@@ -160,9 +160,8 @@ impl ArrayHashContext<[u8]> for CaseInsensitiveAsciiStringContext {
 // GetOrPutResult / Entry / Iterator
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Result of `get_or_put*`. When `found_existing == false`, `*value_ptr` is a
-/// freshly-defaulted slot the caller is expected to overwrite (the value type
-/// carries a `Default` bound on the inserting paths).
+/// Result of `get_or_put*`. When `found_existing == false`, `*value_ptr` holds
+/// what the caller's `init` made, and the caller is expected to overwrite it.
 pub struct GetOrPutResult<'a, K, V> {
     pub found_existing: bool,
     pub index: usize,
@@ -1156,36 +1155,38 @@ impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
             MapEntry::Vacant(v) => v.insert(f()),
         }
     }
-    pub fn or_default(self) -> &'a mut V
-    where
-        V: Default,
-    {
-        self.or_insert_with(V::default)
-    }
 }
 
-impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
-    /// Look up `key`; if absent, append it with a defaulted
-    /// value slot and return `found_existing = false`.
-    pub fn get_or_put(&mut self, key: K) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
+impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
+    /// Look up `key`; if absent, append it with the value that `init` makes
+    /// and return `found_existing = false`.
+    pub fn get_or_put(
+        &mut self,
+        key: K,
+        init: fn() -> V,
+    ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
             return Ok(self.gop_at(i, true));
         }
-        let i = self.push_entry(key, V::default(), h);
+        let i = self.push_entry(key, init(), h);
         Ok(self.gop_at(i, false))
     }
 
     /// Like [`get_or_put`] but skips the grow
     /// check. Caller must have called `ensure_unused_capacity` first.
-    pub fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, K, V> {
+    pub fn get_or_put_assume_capacity(
+        &mut self,
+        key: K,
+        init: fn() -> V,
+    ) -> GetOrPutResult<'_, K, V> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
             return self.gop_at(i, true);
         }
         // PERF: `push_within_capacity` is unstable; `push` is a no-grow
         // when the prior `ensure_unused_capacity` reserved the slot.
-        let i = self.push_entry(key, V::default(), h);
+        let i = self.push_entry(key, init(), h);
         self.gop_at(i, false)
     }
 
@@ -1195,28 +1196,24 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
         key: K,
         value: V,
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
-        let gop = self.get_or_put(key)?;
-        if !gop.found_existing {
-            // SAFETY: re-borrow at same index — `gop` borrows `self` so go
-            // through the slot it already points at.
-            *gop.value_ptr = value;
+        let h = self.ctx.hash(&key);
+        if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
+            return Ok(self.gop_at(i, true));
         }
-        // Can't return `gop` while it borrows in the branch above without
-        // NLL gymnastics; recompute via index.
-        let i = gop.index;
-        let found = gop.found_existing;
-        Ok(self.gop_at(i, found))
+        let i = self.push_entry(key, value, h);
+        Ok(self.gop_at(i, false))
     }
 }
 
-impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
+impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Look up by `key` using `adapter` for hash/eql;
-    /// on miss, append a *defaulted* `K`/`V` pair — caller fills both via
-    /// `key_ptr` / `value_ptr`.
+    /// on miss, append the `K`/`V` pair that `init` makes — caller fills both
+    /// via `key_ptr` / `value_ptr`.
     pub fn get_or_put_adapted<Q: ?Sized, Ad>(
         &mut self,
         key: &Q,
         adapter: &Ad,
+        init: fn() -> (K, V),
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
     where
         Ad: ArrayHashAdapter<Q, K>,
@@ -1225,7 +1222,8 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if let Some(i) = self.find_hash(h, |k, idx| adapter.eql(key, k, idx)) {
             return Ok(self.gop_at(i, true));
         }
-        let i = self.push_entry(K::default(), V::default(), h);
+        let (new_key, new_value) = init();
+        let i = self.push_entry(new_key, new_value, h);
         Ok(self.gop_at(i, false))
     }
 }
@@ -1370,19 +1368,20 @@ impl<V, C: ArrayHashContext<[u8]>, A: MapAllocator> StringArrayHashMap<V, C, A> 
     }
 }
 
-impl<V: Default, C: ArrayHashContext<[u8]>, A: MapAllocator> StringArrayHashMap<V, C, A> {
+impl<V, C: ArrayHashContext<[u8]>, A: MapAllocator> StringArrayHashMap<V, C, A> {
     /// See `ArrayHashMap::get_or_put`. The key is boxed on insert; callers that
     /// then write `*gop.key_ptr = Box::from(key)` are doing a redundant alloc —
     /// harmless.
     pub fn get_or_put(
         &mut self,
         key: &[u8],
+        init: fn() -> V,
     ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             return Ok(self.inner.gop_at(i, true));
         }
-        let i = self.inner.push_entry(box_key::<A>(key), V::default(), h);
+        let i = self.inner.push_entry(box_key::<A>(key), init(), h);
         Ok(self.inner.gop_at(i, false))
     }
 
@@ -1801,12 +1800,16 @@ impl<V, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
 /// `StringArrayHashMap` instead.
 pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
-impl<V: Default, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
+impl<V, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
     /// Single hash + single probe via `raw_entry_mut`; the key `Box` is only
     /// allocated on miss. Callers whose key bytes already outlive the map
     /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
     /// box.
-    pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
+    pub fn get_or_put(
+        &mut self,
+        key: &[u8],
+        init: fn() -> V,
+    ) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);
         Ok(
@@ -1821,9 +1824,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V,
                 },
                 RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
                     found_existing: false,
-                    value_ptr: v
-                        .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
-                        .1,
+                    value_ptr: v.insert_hashed_nocheck(hash, owned_key::<A>(key), init()).1,
                 },
             },
         )

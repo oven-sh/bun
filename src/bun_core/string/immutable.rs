@@ -1792,13 +1792,6 @@ pub struct LineRange {
     pub(crate) end: u32,
 }
 
-impl LineRange {
-    #[inline]
-    pub fn new() -> Self {
-        Self { start: 0, end: 0 }
-    }
-}
-
 pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     text: &[u8],
     target_line: u32,

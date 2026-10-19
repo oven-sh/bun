@@ -6,8 +6,8 @@ use crate::LinkerContext;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
-    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImport, CrossChunkImportItem, Index, IndexInt, Ref, RefImportData,
+    ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub(crate) fn compute_cross_chunk_dependencies(

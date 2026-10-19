@@ -68,7 +68,7 @@ impl<'a> Entry<'a> {
             version: &[],
             resolved: None,
             integrity: None,
-            dependencies: [None; 4],
+            dependencies: [const { None }; 4],
             commit: None,
             workspace: false,
             file: None,
@@ -417,7 +417,7 @@ impl<'a> YarnLock<'a> {
         // Every `link:` entry has version 0.0.0, so the key needs the path to tell them apart.
         let link = new_entry.link.as_deref().unwrap_or(b"");
         // A name and a version only identify a package when it comes from a registry.
-        let (file, resolved, commit) = if new_entry.is_registry_entry() {
+        let (file, resolved, commit): (&[u8], &[u8], &[u8]) = if new_entry.is_registry_entry() {
             (&[], &[], &[])
         } else {
             (

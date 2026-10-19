@@ -3841,10 +3841,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             if self.processing_declarations() {
                 self.attlists
                     .entry(element)
-                    .or_insert_with(|| AttList {
-                        defs: Vec::new(),
-                        by_name: HashMap::init(),
-                    })
+                    .or_insert_with(AttList::new)
                     .declare(AttDef {
                         name,
                         cdata,

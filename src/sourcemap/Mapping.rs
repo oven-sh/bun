@@ -58,17 +58,6 @@ pub struct MappingWithoutName {
 }
 
 impl MappingWithoutName {
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            generated: LineColumnOffset::new(),
-            original: LineColumnOffset::new(),
-            source_index: 0,
-        }
-    }
-}
-
-impl MappingWithoutName {
     fn to_named(&self) -> Mapping {
         Mapping {
             generated: self.generated,

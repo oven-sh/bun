@@ -2826,7 +2826,7 @@ macro_rules! moved_lists {
         macro_rules! few {
             ($list:expr) => {
                 match $list.is_empty() {
-                    true => ArenaFew::default(),
+                    true => ArenaFew::new(),
                     false => few_to_arena(std::mem::take(&mut $list), $arena),
                 }
             };

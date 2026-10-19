@@ -27,7 +27,7 @@ pub struct ThreadCaches([Option<Box<Scratch>>; 2]);
 impl ThreadCaches {
     #[inline]
     pub fn new() -> Self {
-        Self([None; 2])
+        Self([const { None }; 2])
     }
 }
 

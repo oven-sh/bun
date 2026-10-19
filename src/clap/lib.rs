@@ -264,16 +264,6 @@ pub struct Param<Id> {
     pub takes_value: Values,
 }
 
-impl<Id: Default> Default for Param<Id> {
-    fn default() -> Self {
-        Self {
-            id: Id::default(),
-            names: Names::new(),
-            takes_value: Values::None,
-        }
-    }
-}
-
 // NOTE: the runtime spec parser (`fn parse_param` / `parse_long_names` /
 // `parse_param_rest` / `ParseParamError` / `TokenizeAny`) was removed — the
 // canonical implementation lives in `bun_clap_macros` and runs at compile time
@@ -765,7 +755,7 @@ mod tests {
                     long: Some(b"long"),
                     ..Names::new()
                 },
-                ..Default::default()
+                takes_value: Values::None,
             },
             parse_param!("-s, --long Help text"),
         );
@@ -780,7 +770,7 @@ mod tests {
                     short: Some(b's'),
                     ..Names::new()
                 },
-                ..Default::default()
+                takes_value: Values::None,
             },
             parse_param!("-s Help text"),
         );
@@ -795,7 +785,7 @@ mod tests {
                     long: Some(b"long"),
                     ..Names::new()
                 },
-                ..Default::default()
+                takes_value: Values::None,
             },
             parse_param!("--long Help text"),
         );

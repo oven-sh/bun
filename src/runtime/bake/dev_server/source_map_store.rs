@@ -23,12 +23,6 @@ pub(crate) struct Key(pub(crate) u64);
 
 impl Key {
     #[inline]
-    pub(crate) fn new() -> Self {
-        Self(0)
-    }
-}
-impl Key {
-    #[inline]
     pub(crate) const fn init(v: u64) -> Self {
         Self(v)
     }

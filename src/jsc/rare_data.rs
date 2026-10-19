@@ -414,7 +414,7 @@ pub struct ProxyEnvSlots([Option<Arc<RefCountedEnvValue>>; PROXY_ENV_KEYS.len()]
 impl ProxyEnvSlots {
     #[inline]
     pub fn new() -> Self {
-        Self([None; PROXY_ENV_KEYS.len()])
+        Self([const { None }; PROXY_ENV_KEYS.len()])
     }
 }
 
@@ -471,7 +471,7 @@ impl ProxyEnvSlots {
     /// slot refs and put the captured values back into `map`. Caller holds
     /// the `ProxyEnvStorage` lock, like the setter.
     pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
-        self.0 = [None; 8];
+        self.0 = [const { None }; PROXY_ENV_KEYS.len()];
         for (key, value) in &snapshot.entries {
             match value {
                 Some(value) => bun_core::handle_oom(map.put(key, value)),

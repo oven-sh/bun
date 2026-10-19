@@ -91,6 +91,7 @@ impl List {
             &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
+            || ((), ()),
         )?;
         debug_assert!(!gop.found_existing);
         Ok(())

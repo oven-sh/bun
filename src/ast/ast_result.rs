@@ -247,17 +247,6 @@ pub struct DynamicImportUse {
     pub needs_namespace_object: bool,
 }
 
-impl DynamicImportUse {
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            aliases: crate::StoreSlice::EMPTY,
-            items: crate::StoreSlice::EMPTY,
-            needs_namespace_object: false,
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct DynamicImportItem {
     pub local: Ref,

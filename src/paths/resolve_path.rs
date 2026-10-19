@@ -2195,6 +2195,7 @@ impl PosixToWinNormalizer {
     pub fn new() -> Self {
         Self {
             #[cfg(windows)]
+            _raw_bytes: crate::path_buffer_pool::get(),
             #[cfg(not(windows))]
             _raw_bytes: (),
         }

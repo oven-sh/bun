@@ -1131,8 +1131,9 @@ ${type.members.map(member => `    pub ${member.rustName}: ${fieldType(member.typ
 `;
   if (type.accepted && type.hasDefault) {
     const value = (t: Type) => t.toRust(t instanceof DefaultType ? t.value : undefined, scope);
-    text += `impl${lifetime} Default for ${type.name}${lifetime} {
-    fn default() -> Self {
+    text += `impl${lifetime} ${type.name}${lifetime} {
+    /// Every member absent.
+    pub fn new() -> Self {
         Self {
 ${type.members.map(member => `            ${member.rustName}: ${value(member.type)},`).join("\n")}
         }

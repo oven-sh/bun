@@ -387,13 +387,6 @@ impl<'a, K: Copy + Into<u32>, V, A: MapAllocator> IdEntry<'a, K, V, A> {
     pub(crate) fn or_insert(self, default: V) -> &'a mut V {
         self.or_insert_with(|| default)
     }
-    #[inline]
-    pub(crate) fn or_default(self) -> &'a mut V
-    where
-        V: Default,
-    {
-        self.or_insert_with(V::default)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

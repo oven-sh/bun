@@ -247,10 +247,18 @@ impl<'a> ExportMap<'a> {
 type Dependencies<'a> = Rc<[Option<ExportMap<'a>>]>;
 
 /// The dependencies that a call has not come to yet.
-#[derive(Default)]
 struct Rest<'a> {
     dependencies: Dependencies<'a>,
     asked: usize,
+}
+
+impl<'a> Rest<'a> {
+    fn new() -> Self {
+        Rest {
+            dependencies: Rc::from([]),
+            asked: 0,
+        }
+    }
 }
 
 impl<'a> Iterator for Rest<'a> {
@@ -395,7 +403,7 @@ impl<'a> ExportMaps<'a> {
     fn dependencies_of(&self, map: ExportMap<'a>) -> Dependencies<'a> {
         let star_exports = &map.facts.record.star_exports;
         if star_exports.is_empty() {
-            return Rc::default();
+            return Rc::from([]);
         }
         if let Some(known) = self.dependencies.borrow().get(&map.id()) {
             return Rc::clone(known);

@@ -491,7 +491,7 @@ mod tests {
                     short: Some(b'a'),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
@@ -499,7 +499,7 @@ mod tests {
                     short: Some(b'b'),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 2,
@@ -508,7 +508,6 @@ mod tests {
                     ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
-                ..Default::default()
             },
             clap::Param {
                 id: 3,
@@ -517,7 +516,6 @@ mod tests {
                     ..clap::Names::new()
                 },
                 takes_value: clap::Values::Many,
-                ..Default::default()
             },
         ];
 
@@ -597,7 +595,7 @@ mod tests {
                     long: Some(b"aa"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
@@ -605,7 +603,7 @@ mod tests {
                     long: Some(b"bb"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 2,
@@ -614,7 +612,6 @@ mod tests {
                     ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
-                ..Default::default()
             },
             clap::Param {
                 id: 3,
@@ -623,7 +620,6 @@ mod tests {
                     ..clap::Names::new()
                 },
                 takes_value: clap::Values::Many,
-                ..Default::default()
             },
         ];
 
@@ -665,7 +661,7 @@ mod tests {
         let params: [clap::Param<u8>; 1] = [clap::Param {
             id: 0,
             takes_value: clap::Values::One,
-            ..Default::default()
+            names: clap::Names::new(),
         }];
 
         test_no_err(
@@ -694,7 +690,7 @@ mod tests {
                     long: Some(b"aa"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
@@ -703,7 +699,7 @@ mod tests {
                     long: Some(b"bb"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 2,
@@ -713,12 +709,11 @@ mod tests {
                     ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
-                ..Default::default()
             },
             clap::Param {
                 id: 3,
                 takes_value: clap::Values::One,
-                ..Default::default()
+                names: clap::Names::new(),
             },
         ];
 
@@ -846,7 +841,7 @@ mod tests {
                     long: Some(b"aa"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
@@ -856,7 +851,6 @@ mod tests {
                     ..clap::Names::new()
                 },
                 takes_value: clap::Values::One,
-                ..Default::default()
             },
         ];
         test_err(&params, &[b"q"], b"Invalid argument 'q'\n");
@@ -895,12 +889,12 @@ mod tests {
                     long: Some(b"aa"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
                 takes_value: clap::Values::Many,
-                ..Default::default()
+                names: clap::Names::new(),
             },
         ];
         let args: &[&[u8]] = &[b"--q", b"x", b"--aa", b"--q=1", b"--", b"--aa"];
@@ -938,12 +932,12 @@ mod tests {
                     long: Some(b"aa"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
                 takes_value: clap::Values::Many,
-                ..Default::default()
+                names: clap::Names::new(),
             },
         ];
         let args: &[&[u8]] = &[
@@ -991,12 +985,12 @@ mod tests {
                     long: Some(b"aa"),
                     ..clap::Names::new()
                 },
-                ..Default::default()
+                takes_value: clap::Values::None,
             },
             clap::Param {
                 id: 1,
                 takes_value: clap::Values::Many,
-                ..Default::default()
+                names: clap::Names::new(),
             },
         ];
         let parse = |args: &[&[u8]]| {

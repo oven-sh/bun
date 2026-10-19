@@ -179,7 +179,7 @@ impl<'a> Graph<'a> {
             deferred_pending: 0,
             defer_epoch: 0,
             cancelled: false,
-            build_graphs: EnumMap::default(),
+            build_graphs: EnumMap::from_fn(|_| PathToSourceIndexMap::new()),
             server_component_boundaries: server_component_boundary::List::new(),
             html_imports: HtmlImports::new(),
             estimated_file_loader_count: 0,

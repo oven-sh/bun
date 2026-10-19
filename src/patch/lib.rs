@@ -961,7 +961,8 @@ fn patch_file_second_pass<'a>(
                 result
                     .parts
                     .push(PatchFilePart::FileDeletion(Box::new(FileDeletion {
-                        hunk: file.hunks.first_mut().map(mem::take).map(Box::new),
+                        hunk: (file.hunks.first_mut())
+                            .map(|hunk| Box::new(mem::replace(hunk, Hunk::new()))),
                         path,
                         mode: parse_file_mode(file.deleted_file_mode.unwrap())
                             .ok_or(ParseErr::bad_file_mode)?,
@@ -978,7 +979,8 @@ fn patch_file_second_pass<'a>(
                 result
                     .parts
                     .push(PatchFilePart::FileCreation(Box::new(FileCreation {
-                        hunk: file.hunks.first_mut().map(mem::take).map(Box::new),
+                        hunk: (file.hunks.first_mut())
+                            .map(|hunk| Box::new(mem::replace(hunk, Hunk::new()))),
                         path,
                         mode: parse_file_mode(file.new_file_mode.unwrap())
                             .ok_or(ParseErr::bad_file_mode)?,

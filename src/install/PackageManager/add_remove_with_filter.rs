@@ -705,7 +705,7 @@ pub(super) fn update_filtered_workspaces_and_install(
             if !remove_dependencies_from_package_json(&mut root, &updates) {
                 continue;
             }
-            (Box::new([]), StringArrayHashMap::init())
+            (Box::from([]), StringArrayHashMap::init())
         } else {
             let wanted_len = move_to_front(&mut updates, &wanted);
             reset_e_strings(&mut updates);

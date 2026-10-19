@@ -279,7 +279,8 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`. As an argument, with
+A dictionary whose members can all be absent has a `new()` constructor, which makes it with
+every member absent. As an argument, with
 `.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
 `options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
 

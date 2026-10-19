@@ -69,9 +69,14 @@ macro_rules! stacks {
     ($($(#[$doc:meta])* $field:ident: $ty:ty,)*) => {
         /// The lists that are being parsed, innermost last: nodes that have to be contiguous are
         /// collected here and appended to the file together.
-        #[derive(Default)]
         pub(crate) struct Stacks {
             $($(#[$doc])* pub(crate) $field: Vec<$ty>,)*
+        }
+
+        impl Stacks {
+            pub(crate) fn new() -> Self {
+                Stacks { $($field: Vec::new(),)* }
+            }
         }
 
         /// The lengths of the stacks.
@@ -351,7 +356,7 @@ pub(crate) fn run<'a>(
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
     let mut f = (scratch.recycled.take()).unwrap_or_else(|| Box::new(FileBuilder::new()));
     let mut file = recycled_file(&mut f);
-    let mut stacks = std::mem::take(&mut scratch.stacks);
+    let mut stacks = std::mem::replace(&mut scratch.stacks, Stacks::new());
     stacks.clear();
     let mut declared = std::mem::replace(&mut scratch.declared, Declared::new());
     declared.begin(

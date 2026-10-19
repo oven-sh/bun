@@ -2246,11 +2246,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 vm: jsc::VirtualMachine::get(),
                 framework: core::mem::replace(
                     &mut bake_options.framework,
-                    crate::bake::config::framework::Framework::new(),
+                    crate::bake::Framework::new(),
                 ),
                 bundler_options: core::mem::replace(
                     &mut bake_options.bundler_options,
-                    crate::bake::config::bundler::SplitBundlerOptions::new(),
+                    crate::bake::SplitBundlerOptions::new(),
                 ),
                 broadcast_console_log_from_browser_to_server: broadcast,
             }) {

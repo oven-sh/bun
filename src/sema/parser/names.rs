@@ -176,7 +176,7 @@ impl Names {
             spans: KNOWN_SPANS.0.to_vec(),
             cooked: KNOWN_TEXTS.concat(),
             mentioned: [0; MENTIONED_WORDS],
-            known_in_file: [0; 3],
+            known_in_file: [0; KNOWN_TEXTS.len().div_ceil(64)],
             known,
             known_long,
             known_others,
@@ -327,7 +327,7 @@ impl Names {
         self.cooked.truncate(KNOWN_SPANS.1);
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
-        self.known_in_file = [0; 3];
+        self.known_in_file = [0; KNOWN_TEXTS.len().div_ceil(64)];
     }
 
     #[inline(always)]

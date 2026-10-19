@@ -462,7 +462,7 @@ macro_rules! __object_pool_storage {
         ::std::thread_local! {
             static __OBJECT_POOL_DATA: ::core::cell::RefCell<
                 $crate::pool::DataStruct<$ty>
-            > = ::core::cell::RefCell::new($crate::pool::DataStruct::default());
+            > = ::core::cell::RefCell::new($crate::pool::DataStruct::new());
         }
         impl $crate::pool::PoolStorage<$ty> for __ObjectPoolStorage {
             fn with<R>(
@@ -486,7 +486,7 @@ macro_rules! __object_pool_storage {
                 ::std::thread_local! {
                     static __OBJECT_POOL_DATA: ::core::cell::RefCell<
                         $crate::pool::DataStruct<$ty>
-                    > = ::core::cell::RefCell::new($crate::pool::DataStruct::default());
+                    > = ::core::cell::RefCell::new($crate::pool::DataStruct::new());
                 }
                 __OBJECT_POOL_DATA.with(|cell| f(cell))
             }

@@ -538,12 +538,11 @@ impl FormatOptions {
             b"checkIgnorePragma" => self.check_ignore_pragma = boolean()?,
             // oxfmt's: `true`, `false` or `{ "sortScripts": true }`.
             b"sortPackageJson" => {
-                self.sort_package_json =
-                    boolean()?.then(crate::json::sort_package_json::SortPackageJson::new)
+                self.sort_package_json = boolean()?.then(crate::json::SortPackageJson::new)
             }
             b"sortPackageJson.sortScripts" => {
                 self.sort_package_json
-                    .get_or_insert_with(crate::json::sort_package_json::SortPackageJson::new)
+                    .get_or_insert_with(crate::json::SortPackageJson::new)
                     .sort_scripts = boolean()?;
             }
             // oxfmt's: `true`, `false` or an object, whose properties come as `jsdoc.<name>`.

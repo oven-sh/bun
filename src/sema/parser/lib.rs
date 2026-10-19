@@ -197,7 +197,6 @@ pub enum Goal {
 
 /// What a thread keeps from one file to the next: the caches of names, and the capacity of every
 /// list.
-#[derive(Default)]
 pub struct Scratch {
     names: names::Names,
     stops: bun_highway::ScannerStopsBuffer,
@@ -216,6 +215,19 @@ pub struct Scratch {
 }
 
 impl Scratch {
+    pub fn new() -> Self {
+        Scratch {
+            names: names::Names::new(),
+            stops: bun_highway::ScannerStopsBuffer::new(),
+            stacks: parser::Stacks::new(),
+            declared: parser::Declared::new(),
+            recycled: None,
+            jsdoc_wanted: 0,
+            html_opens: lexer::HtmlOpens::new(),
+            has_only_ambiguous_awaits: false,
+        }
+    }
+
     /// Takes the lists of `file` for the next file.
     pub fn recycle(&mut self, file: Box<FileBuilder>) {
         self.recycled = Some(file);

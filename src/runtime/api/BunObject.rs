@@ -834,7 +834,7 @@ pub(crate) fn open_in_editor<'a>(
             let prev_name = edit.name;
 
             if !strings::eql_long(prev_name, name, true) {
-                let prev = core::mem::replace(edit, crate::cli::open_full::EditorContext::new());
+                let prev = core::mem::replace(edit, crate::cli::open::EditorContext::new());
                 // Own the bytes in `name_storage` and
                 // hand back a thread-lifetime borrow.
                 let prev_storage = core::mem::replace(&mut slot.name_storage, name.to_vec());

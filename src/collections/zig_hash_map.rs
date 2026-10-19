@@ -413,18 +413,16 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     }
 
     /// Single-probe insert-or-lookup. Uninit values cannot be exposed through
-    /// a `&mut V`, so `V: Default` and on miss the slot is default-initialised
-    /// — callers overwrite `*value_ptr` when `!found_existing`.
+    /// a `&mut V`, so on miss the slot holds what `init` makes — callers
+    /// overwrite `*value_ptr` when `!found_existing`.
     pub fn get_or_put(
         &mut self,
         key: K,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
-    where
-        V: Default,
-    {
+        init: fn() -> V,
+    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError> {
         let (idx, found_existing) = self.get_or_put_slot(&key);
         if !found_existing {
-            self.slots[idx] = Some((key, V::default()));
+            self.slots[idx] = Some((key, init()));
         }
         let value_ptr = &mut self.slots[idx].as_mut().unwrap().1;
         Ok(crate::hash_map::GetOrPutResult {
@@ -648,12 +646,6 @@ where
             MapEntry::Occupied(o) => o.into_mut(),
             MapEntry::Vacant(v) => v.insert(f()),
         }
-    }
-    pub fn or_default(self) -> &'a mut V
-    where
-        V: Default,
-    {
-        self.or_insert_with(V::default)
     }
 }
 

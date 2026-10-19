@@ -19,13 +19,6 @@ identity_hash_int!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 #[derive(Clone, Copy)]
 pub struct IdentityContext<Key>(PhantomData<Key>);
 
-impl<Key> IdentityContext<Key> {
-    #[inline]
-    pub fn new() -> Self {
-        Self(core::marker::PhantomData)
-    }
-}
-
 /// When storing hashes as keys in a hash table, we don't want to hash the hashes or else we increase the chance of collisions. This is also marginally faster since it means hashing less stuff.
 /// `ArrayIdentityContext` and `IdentityContext` are distinct because ArrayHashMap expects u32 hashes but HashMap expects u64 hashes.
 #[derive(Clone, Copy)]

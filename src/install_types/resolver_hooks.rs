@@ -814,13 +814,6 @@ macro_rules! negatable_names {
 pub struct OperatingSystem(pub u16);
 
 impl OperatingSystem {
-    #[inline]
-    pub fn new() -> Self {
-        Self(0)
-    }
-}
-
-impl OperatingSystem {
     pub const NONE: Self = Self(0);
     pub const ALL: Self = Self(Self::ALL_VALUE);
 
@@ -883,13 +876,6 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 pub struct Libc(pub u8);
 
 impl Libc {
-    #[inline]
-    pub fn new() -> Self {
-        Self(0)
-    }
-}
-
-impl Libc {
     pub const NONE: Self = Self(0);
     pub(crate) const ALL: Self = Self(Self::ALL_VALUE);
 
@@ -943,13 +929,6 @@ negatable_names! { Libc: u8, LIBC_NAMES => [ b"musl" => MUSL, b"glibc" => GLIBC 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Architecture(pub u16);
-
-impl Architecture {
-    #[inline]
-    pub fn new() -> Self {
-        Self(0)
-    }
-}
 
 impl Architecture {
     pub const NONE: Self = Self(0);

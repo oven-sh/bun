@@ -654,7 +654,7 @@ macro_rules! put_host_functions {
             __obj.put(
                 __g,
                 $name.as_bytes(),
-                $crate::jsc::JSFunction::create(__g, $name, $f, $arity, ::core::default::Default::default()),
+                $crate::jsc::JSFunction::create(__g, $name, $f, $arity, $crate::jsc::CreateJSFunctionOptions::new()),
             );
         )*
         __obj

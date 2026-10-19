@@ -21,12 +21,6 @@ pub(crate) struct OwnerPacked(pub(crate) u32);
 
 impl OwnerPacked {
     #[inline]
-    pub(crate) fn init() -> Self {
-        Self(0)
-    }
-}
-impl OwnerPacked {
-    #[inline]
     pub(crate) fn new(side: Side, file: u32) -> Self {
         Self(file | ((side as u32) << 31))
     }

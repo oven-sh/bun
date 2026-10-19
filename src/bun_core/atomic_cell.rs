@@ -127,12 +127,6 @@ impl<T: Atom> AtomicCell<T> {
     }
 }
 
-impl<T: Copy + Default> Default for AtomicCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("AtomicCell").field(&self.load()).finish()
@@ -535,12 +529,6 @@ impl<T: ?Sized> ThreadCell<T> {
     #[inline]
     pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()
-    }
-}
-
-impl<T: Default> Default for ThreadCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
     }
 }
 

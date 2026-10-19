@@ -109,21 +109,6 @@ impl<T> JsCell<T> {
     }
 }
 
-impl<T: Default> JsCell<T> {
-    /// Move the value out, leaving `T::default()` behind.
-    #[inline(always)]
-    pub fn take(&self) -> T {
-        self.replace(T::default())
-    }
-}
-
-impl<T: Default> Default for JsCell<T> {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 impl<T: Clone> Clone for JsCell<T> {
     #[inline(always)]
     fn clone(&self) -> Self {

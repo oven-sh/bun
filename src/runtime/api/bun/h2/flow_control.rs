@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use super::wire::{DEFAULT_WINDOW_SIZE, ErrorCode, MAX_WINDOW_SIZE};
+use super::wire::{ErrorCode, MAX_WINDOW_SIZE};
 
 /// Outbound (send) window. Signed because a SETTINGS-driven INITIAL_WINDOW_SIZE decrease can push
 /// it negative (§6.9.2) — legal; we just stop sending until it recovers.

@@ -37,12 +37,6 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     }
 }
 
-impl<Value: Default, M: RawMutex> Default for GuardedBy<Value, M> {
-    fn default() -> Self {
-        Self::init(Value::default())
-    }
-}
-
 impl<Value> GuardedBy<Value, Mutex> {
     /// `const` constructor for `static` initializers (`Mutex::new()` is `const`;
     /// [`init`](Self::init) is not).

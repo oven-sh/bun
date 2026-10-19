@@ -650,12 +650,6 @@ impl<T> Mutex<T> {
     }
 }
 
-impl<T: Default> Default for Mutex<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 /// Poison-free `std::sync::RwLock<T>` wrapper. See module note on [`Mutex`].
 pub struct RwLock<T>(std::sync::RwLock<T>);
 
@@ -680,12 +674,6 @@ impl<T> RwLock<T> {
         self.0
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-impl<T: Default> Default for RwLock<T> {
-    fn default() -> Self {
-        Self::new(T::default())
     }
 }
 
@@ -2003,11 +1991,6 @@ impl<T> RacyCell<T> {
         self.0.set(value)
     }
 }
-impl<T: Default> Default for RacyCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
 
 // ─── ThreadLock (from bun_safety) ─────────────────────────────────────────
 // Debug-only re-entrancy guard. Release builds compile to a ZST.
@@ -3285,15 +3268,6 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndex<I, M> {
         self.0.fmt(f)
     }
 }
-/// `Default` = index 0 (matches the hand-rolled `#[derive(Default)]` newtypes
-/// this replaced). NOT the `Optional::none` sentinel.
-impl<I: Default, M> Default for GenericIndex<I, M> {
-    #[inline]
-    fn default() -> Self {
-        Self(I::default(), core::marker::PhantomData)
-    }
-}
-
 impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     /// Prefer over a raw cast — asserts `int != MAX` (would alias `.none`).
     #[inline]

@@ -1132,7 +1132,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // With a payload order file the chunk's code is in the link's one payload, and the file says
                         // where (`bytecode_entry_offset`) once that is encoded (below).
                         let bytecode = if bytecode_order.is_some() {
-                            Some(Box::new([]))
+                            Some(Box::from([]))
                         } else {
                             crate::bundle_v2::dispatch::generate_cached_bytecode(
                                 c.options.output_format,
@@ -1837,7 +1837,7 @@ fn append_internal_module_bytecode(
                         );
                     }
                     linked.output_files.push(output_files.len() as u32);
-                    Box::new([])
+                    Box::from([])
                 })
         } else {
             match target_section {

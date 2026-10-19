@@ -134,8 +134,8 @@ macro_rules! shell_builtins {
             fn make_impl(kind: Kind) -> Impl {
                 match kind {
                     $( Kind::$UV => Impl::$UV, )*
-                    $( Kind::$IV => Impl::$IV(Default::default()), )*
-                    $( Kind::$BV => Impl::$BV(Box::default()), )*
+                    $( Kind::$IV => Impl::$IV(crate::shell::builtins::$i_mod::$IT::new()), )*
+                    $( Kind::$BV => Impl::$BV(Box::new(crate::shell::builtins::$b_mod::$BT::new())), )*
                 }
             }
 

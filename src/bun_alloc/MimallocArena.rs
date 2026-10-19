@@ -370,12 +370,6 @@ impl MimallocArena {
         }
     }
 
-    /// `bumpalo::Bump::alloc_slice_fill_default` parity.
-    #[inline]
-    pub fn alloc_slice_fill_default<T: Default>(&self, len: usize) -> &mut [T] {
-        self.alloc_slice_fill_with(len, |_| T::default())
-    }
-
     /// `bumpalo::Bump::alloc_slice_fill_copy` parity.
     #[inline]
     pub fn alloc_slice_fill_copy<T: Copy>(&self, len: usize, value: T) -> &mut [T] {

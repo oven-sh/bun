@@ -4155,7 +4155,7 @@ fn number<V: Send + Sync>(
 ) -> Vec<Box<[u32]>> {
     // Nothing that is published references a task-local record of the kind.
     if tasks.iter().all(|task| task.records.is_empty()) {
-        return tasks.iter().map(|_| Box::new([])).collect();
+        return tasks.iter().map(|_| Box::from([])).collect();
     }
     let place = |task: usize, position: usize| (task as u64) << 32 | position as u64;
     // GROUP: for each record, the `place` of the first record with the same hash.
@@ -4212,7 +4212,7 @@ fn number<V: Send + Sync>(
         .collect();
     // LINK
     let mut links: Vec<(usize, &mut Taken<V>, Box<[u32]>)> = (tasks.iter_mut().enumerate())
-        .map(|(t, task)| (t, &mut **task, Box::new([])))
+        .map(|(t, task)| (t, &mut **task, Box::from([])))
         .collect();
     for_each_mut(&mut links, in_parallel, &|(t, task, link)| {
         let mut ids = vec![u32::MAX; task.len].into_boxed_slice();

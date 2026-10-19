@@ -1103,12 +1103,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process_handle = std::mem::replace(
-            spawned,
-            bun_spawn::PosixSpawnResult::new(),
-            bun_spawn::WindowsSpawnResult::new(),
-        )
-        .to_process_handle(event_loop);
+        let process_handle =
+            std::mem::replace(spawned, spawn::SpawnResult::new()).to_process_handle(event_loop);
         let process: *mut Process = process_handle.as_ptr();
 
         // Derive the raw backref once and use it for all subsequent field

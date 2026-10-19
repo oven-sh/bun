@@ -19,16 +19,6 @@ struct SegmentInfo<'a> {
     invalid_nodes: SmallVec<[Expr<'a>; 1]>,
 }
 
-impl<'a> SegmentInfo<'a> {
-    #[inline]
-    fn new() -> Self {
-        Self {
-            super_called: false,
-            invalid_nodes: SmallVec::new(),
-        }
-    }
-}
-
 struct FuncInfo<'a> {
     /// It is the constructor of a class that has a valid `extends`.
     is_constructor_of_derived_class: bool,

@@ -197,16 +197,6 @@ pub struct HeaderEntry {
     pub value: StringPointer,
 }
 
-impl HeaderEntry {
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            name: StringPointer::new(),
-            value: StringPointer::new(),
-        }
-    }
-}
-
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
 /// Column accessors for `HeaderEntry` MultiArrayList storage.

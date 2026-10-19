@@ -593,13 +593,19 @@ impl ClauseItem {
     }
 }
 
-// EnumMap<_, u32>::default() zero-fills.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct SlotCounts {
     pub slots: symbol::SlotNamespaceCountsArray,
 }
 
 impl SlotCounts {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            slots: symbol::SlotNamespaceCountsArray::from_fn(|_| 0),
+        }
+    }
+
     pub fn union_max(&mut self, other: SlotCounts) {
         for (a, b) in self.slots.values_mut().zip(other.slots.values()) {
             if *a < *b {

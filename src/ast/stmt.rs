@@ -182,7 +182,7 @@ macro_rules! impl_statement_data {
         $(
             impl StatementData for $ity {
                 #[inline]
-                fn wrap_ref(_ptr: StoreRef<Self>) -> Data { Data::$ivariant(<$ity>::default()) }
+                fn wrap_ref(_ptr: StoreRef<Self>) -> Data { Data::$ivariant(<$ity>::new()) }
                 #[inline]
                 fn store_alloc(self) -> Data { Data::$ivariant(self) }
                 #[inline]

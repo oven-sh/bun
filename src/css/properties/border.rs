@@ -278,7 +278,7 @@ macro_rules! impl_fallbacks {
                     fallbacks.insert(self.$field.get_necessary_fallbacks(targets));
                 )+
 
-                let mut res: SmallList<$T, 2> = SmallList::default();
+                let mut res: SmallList<$T, 2> = SmallList::new();
                 if fallbacks.contains(ColorFallbackKind::RGB) {
                     res.append(Self {
                         $(

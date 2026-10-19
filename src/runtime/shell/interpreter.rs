@@ -1836,7 +1836,6 @@ impl Bufio {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShellExecEnvKind {
-    Normal,
     CmdSubst,
     Subshell,
     Pipeline,
@@ -1949,9 +1948,7 @@ impl ShellExecEnv {
                 },
                 OutKind::Ignore => Bufio::Owned(Vec::<u8>::new()),
                 OutKind::Pipe => match kind {
-                    ShellExecEnvKind::Normal | ShellExecEnvKind::CmdSubst => {
-                        Bufio::Owned(Vec::<u8>::new())
-                    }
+                    ShellExecEnvKind::CmdSubst => Bufio::Owned(Vec::<u8>::new()),
                     ShellExecEnvKind::Subshell | ShellExecEnvKind::Pipeline => {
                         Bufio::Borrowed(parent_buf)
                     }

@@ -3,6 +3,7 @@
 // and then translated to bun:test using Claude.
 import { expect, test } from "bun:test";
 import { getEventListeners } from "events";
+import { bunEnv, bunExe } from "harness";
 import { aborted } from "util";
 
 test("aborted works when provided a resource that was already aborted", async () => {
@@ -77,21 +78,45 @@ test("aborted with gc cleanup", async () => {
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
 });
 
-test("fails with error if not provided abort signal", async () => {
-  const invalidSignals = [{}, null, undefined, Symbol(), [], 1, 0, 1n, true, false, "a", () => {}];
+// The tests for invalid arguments are in util-aborted-async.test.ts, which also runs under Node.
 
-  for (const sig of invalidSignals) {
-    await expect(() => aborted(sig as any, {})).toThrow();
-  }
-});
+test("the registry callback of aborted() does not keep the resource of the first call alive", async () => {
+  // The first call creates the FinalizationRegistry of aborted(), and the registry keeps its callback for
+  // the life of the process. So the callback must not be a closure of that call. JSC usually drops the
+  // variables that a closure does not use. The option below keeps them all, as debugger bytecode does.
+  const script = `
+    import { getEventListeners } from "node:events";
+    import { aborted } from "node:util";
 
-test("fails if not provided a resource", async () => {
-  const ac = new AbortController();
-  const invalidResources = [null, undefined, 0, 1, 0n, 1n, Symbol(), "", "a"];
-
-  for (const resource of invalidResources) {
-    await expect(() => aborted(ac.signal, resource)).toThrow();
-  }
+    const ac = new AbortController();
+    let collected = false;
+    const registry = new FinalizationRegistry(() => {
+      collected = true;
+    });
+    (() => {
+      const resource = {};
+      registry.register(resource, undefined);
+      aborted(ac.signal, resource);
+    })();
+    // aborted() removes its listener after the resource is collected.
+    for (let round = 0; round < 100 && !(collected && getEventListeners(ac.signal, "abort").length === 0); round++) {
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+    }
+    console.log(JSON.stringify({ collected, listeners: getEventListeners(ac.signal, "abort").length }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_JSC_forceDebuggerBytecodeGeneration: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '{"collected":true,"listeners":0}\n',
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("aborted resolves every waiter on the same signal with undefined", async () => {

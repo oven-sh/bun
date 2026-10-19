@@ -965,6 +965,8 @@ pub(super) struct Repl<'a> {
     stdin_buf: [u8; 256],
     stdin_buf_start: usize,
     stdin_buf_end: usize,
+    /// The last read of stdin returned no bytes. A read that failed leaves this `false`.
+    stdin_at_eof: bool,
 
     // JavaScript VM (JSC_BORROW per LIFETIMES.tsv)
     pub(super) vm: Option<&'a VirtualMachine>,
@@ -1001,6 +1003,7 @@ impl<'a> Repl<'a> {
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
             stdin_buf_end: 0,
+            stdin_at_eof: false,
             vm: None,
             global: None,
             // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
@@ -1174,9 +1177,13 @@ impl<'a> Repl<'a> {
         let stdin = sys::File::stdin();
         let n = match stdin.read(&mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
-            sys::Result::Err(_) => return None,
+            sys::Result::Err(_) => {
+                self.stdin_at_eof = false;
+                return None;
+            }
         };
         if n == 0 {
+            self.stdin_at_eof = true;
             return None;
         }
         self.stdin_buf_start = 1;
@@ -2343,10 +2350,20 @@ impl<'a> Repl<'a> {
         self.refresh_line();
 
         while self.running {
-            let Some(key) = self.read_key() else {
-                // EOF
-                self.leave_input(b"");
-                break;
+            let key = match self.read_key() {
+                Some(key) => key,
+                // The end of a pipe or a file ends the last line as Enter does. Not on a terminal:
+                // a read of no bytes from one can be a hang-up or a read timeout.
+                None if self.stdin_at_eof
+                    && !Output::is_stdin_tty()
+                    && !self.line_editor.buffer.is_empty() =>
+                {
+                    Key::Enter
+                }
+                None => {
+                    self.leave_input(b"");
+                    break;
+                }
             };
 
             // Reset double-Ctrl+C state on any other key

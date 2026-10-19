@@ -2112,48 +2112,78 @@ c {
       "/imported.css": `.i { c: d }`,
     },
     outfile: "/out.css",
+    minifyWhitespace: true,
     onAfterBundle(api) {
-      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
-        @layer first;
+      api.expectFile("/out.css").toBe("@layer first;@layer second{.i{c:d}}@layer third{.t{c:d}}\n");
+    },
+  });
 
-        /* imported.css */
-        @layer second {
-          .i {
-            c: d;
+  // esbuild's TestCSSAtLayerBeforeImportBundle, with its snapshot.
+  itBundled("css/CSSAtLayerBeforeImportBundle", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer layer1, layer2.layer3;
+        @import "a.css";
+        @import "b.css";
+        @layer layer6.layer7, layer8;
+      `,
+      "/a.css": /* css */ `
+        @layer layer4 {
+          a { color: red }
+        }
+      `,
+      "/b.css": /* css */ `
+        @layer layer5 {
+          b { color: red }
+        }
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+        @layer layer1, layer2.layer3;
+
+        /* a.css */
+        @layer layer4 {
+          a {
+            color: red;
+          }
+        }
+
+        /* b.css */
+        @layer layer5 {
+          b {
+            color: red;
           }
         }
 
         /* entry.css */
-        @layer third {
-          .t {
-            c: d;
-          }
-        }
+        @layer layer6.layer7, layer8;
       `);
     },
   });
 
-  itBundled("css/CSSAtLayerStatementBeforeAtImportTailwind", {
+  itBundled("css/CSSAtLayerStatementBeforeAtImportInImportedFile", {
     files: {
       "/entry.css": /* css */ `
-        @import "./tailwind/index.css";
+        @import "./ui/index.css";
         @layer components { .card { c: e } }
       `,
-      "/tailwind/index.css": /* css */ `
+      "/ui/index.css": /* css */ `
         @layer theme, base, components, utilities;
         @import "./theme.css" layer(theme);
         @import "./utilities.css" layer(utilities);
       `,
-      "/tailwind/theme.css": `:root { --x: 1 }`,
-      "/tailwind/utilities.css": `.u { c: d }`,
+      "/ui/theme.css": `:root { --x: 1 }`,
+      "/ui/utilities.css": `.u { c: d }`,
     },
     outfile: "/out.css",
     minifyWhitespace: true,
     onAfterBundle(api) {
       api
         .expectFile("/out.css")
-        .toEqualIgnoringWhitespace(
-          "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer utilities{.u{c:d}}@layer components{.card{c:e}}",
+        .toBe(
+          "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer utilities{.u{c:d}}@layer components{.card{c:e}}\n",
         );
     },
   });
@@ -2177,11 +2207,171 @@ c {
     onAfterBundle(api) {
       api
         .expectFile("/out.css")
-        .toEqualIgnoringWhitespace(
-          "@layer outer;@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap{@layer leafy{.leaf{c:d}}}}@supports (display:flex){@layer wrap{@layer after;.mid{c:d}}}",
+        .toBe(
+          "@layer outer;@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap{@layer leafy{.leaf{c:d}}}}@supports (display:flex){@layer wrap{@layer after;.mid{c:d}}}\n",
         );
     },
   });
+
+  itBundled("css/CSSAtLayerStatementBeforeAtImportUnderMedia", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer outer;
+        @import "./mid.css" print;
+      `,
+      "/mid.css": /* css */ `
+        @layer inner;
+        @import "./leaf.css";
+        .mid { c: d }
+      `,
+      "/leaf.css": `@layer leafy { .leaf { c: d } }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(
+          "@layer outer;@media print{@layer inner;}@media print{@layer leafy{.leaf{c:d}}}@media print{.mid{c:d}}\n",
+        );
+    },
+  });
+
+  itBundled("css/CSSAtLayerStatementBeforeAtImportFromJS", {
+    files: {
+      "/entry.js": `import "./entry.css";`,
+      "/entry.css": /* css */ `
+        @layer first;
+        @import "./imported.css" layer(second);
+        .e { c: d }
+      `,
+      "/imported.css": `.i { c: d }`,
+    },
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toBe("@layer first;@layer second{.i{c:d}}.e{c:d}\n");
+    },
+  });
+
+  // An entry with no conditions must not stand for the same list under "layer(wrap)":
+  // "a" and "wrap.a" are different layers. esbuild drops the inner statement here.
+  itBundled("css/CSSAtLayerStatementBeforeAtImportSameListInLayeredImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer a, b;
+        @import "./lib.css" layer(wrap);
+        .e { c: d }
+      `,
+      "/lib.css": /* css */ `
+        @layer a, b;
+        @import "./leaf.css";
+        @layer b { .lb { c: d } }
+        @layer a { .la { c: d } }
+      `,
+      "/leaf.css": `.leaf { c: d }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(
+          "@layer a,b;@layer wrap{@layer a,b;}@layer wrap{.leaf{c:d}}@layer wrap{@layer b{.lb{c:d}}@layer a{.la{c:d}}}.e{c:d}\n",
+        );
+    },
+  });
+
+  // The second "@layer a;" is the layer list that stands for the first copy of f.css.
+  itBundled("css/CSSAtLayerStatementBeforeAtImportImportedTwice", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./f.css";
+        @import "./g.css";
+        @import "./f.css";
+      `,
+      "/f.css": /* css */ `
+        @layer a;
+        @import "./leaf.css";
+        .f { c: d }
+      `,
+      "/g.css": `@layer b { .g { c: d } }`,
+      "/leaf.css": `.leaf { c: d }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe("@layer a;@layer a;@layer b{.g{c:d}}.leaf{c:d}.f{c:d}\n");
+    },
+  });
+
+  // A statement stays in the body of its file when no earlier entry prints it:
+  // a file with no "@import", and a file that is imported into an anonymous layer.
+  const layerStatementsThatStayInTheBody: Record<string, { files: Record<string, string>; out: string }> = {
+    NoImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @layer theme, base, components, utilities;
+          @layer theme { :root { --x: 1 } }
+          @layer base { html { c: d } }
+          @layer components {}
+          @layer utilities { .u { c: d } }
+        `,
+      },
+      out: "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer base{html{c:d}}@layer utilities{.u{c:d}}",
+    },
+    AfterARuleThatMinifyRemoves: {
+      files: {
+        "/entry.css": /* css */ `
+          .empty {}
+          @layer a, b;
+          @layer b { .x { c: d } }
+          @layer a { .x { c: e } }
+        `,
+      },
+      out: "@layer a,b;@layer b{.x{c:d}}@layer a{.x{c:e}}",
+    },
+    AnonymousLayerImport: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css" layer;
+          .z { c: d }
+        `,
+        "/lib.css": /* css */ `
+          @layer p, q;
+          @import "./leaf.css";
+          @layer q { .x { c: e } }
+          @layer p { .x { c: f } }
+        `,
+        "/leaf.css": `.leaf { c: d }`,
+      },
+      out: "@layer{.leaf{c:d}}@layer{@layer p,q;@layer q{.x{c:e}}@layer p{.x{c:f}}}.z{c:d}",
+    },
+    ImportedBareAndLayered: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./lib.css";
+          @import "./lib.css" layer(wrap);
+        `,
+        "/lib.css": /* css */ `
+          @layer p, q;
+          @layer q { .x { c: e } }
+          @layer p { .x { c: f } }
+        `,
+      },
+      out: "@layer p,q;@layer q{.x{c:e}}@layer p{.x{c:f}}@layer wrap{@layer p,q;@layer q{.x{c:e}}@layer p{.x{c:f}}}",
+    },
+  };
+  for (const [name, { files, out }] of Object.entries(layerStatementsThatStayInTheBody)) {
+    itBundled(`css/CSSAtLayerStatementStaysInBody${name}`, {
+      files,
+      outfile: "/out.css",
+      minifyWhitespace: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toBe(out + "\n");
+      },
+    });
+  }
 
   // External imports are hoisted to the top, and only "@layer" statements may
   // precede an "@import". Bun rejects an "@import" that follows any other rule,
@@ -2198,9 +2388,7 @@ c {
     outfile: "/out.css",
     minifyWhitespace: true,
     async onAfterBundle(api) {
-      api
-        .expectFile("/out.css")
-        .toEqualIgnoringWhitespace('@layer first;@import "https://example.com/e.css";@layer second{.l{c:d}}');
+      api.expectFile("/out.css").toBe('@layer first;@import "https://example.com/e.css";@layer second{.l{c:d}}\n');
       await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
     },
   });
@@ -2219,8 +2407,8 @@ c {
     async onAfterBundle(api) {
       api
         .expectFile("/out.css")
-        .toEqualIgnoringWhitespace(
-          '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}',
+        .toBe(
+          '@import "https://example.com/e.css" layer(wrap) supports(display:flex);@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap;}\n',
         );
       await Bun.build({ entrypoints: [api.outfile], outdir: api.join("again") });
     },

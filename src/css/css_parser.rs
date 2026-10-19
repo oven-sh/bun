@@ -659,8 +659,6 @@ pub trait CustomAtRuleParser {
 
     fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32);
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>);
-    /// A top-level `@layer a, b;` statement that precedes every `@import`.
-    fn on_layer_statement_before_import(this: &mut Self, layers: &SmallList<LayerName, 1>);
     fn enclosing_layer_length(this: &mut Self) -> u32;
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName);
     fn reset_enclosing_layer(this: &mut Self, len: u32);
@@ -713,7 +711,8 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub(crate) import_records: *mut Vec<ImportRecord>,
     pub(crate) layer_names: Vec<LayerName>,
-    pub(crate) layers_pre_import: Vec<LayerName>,
+    /// `layer_names` as it was when the first `@import` was parsed.
+    pub(crate) layers_pre_import: Option<Vec<LayerName>>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
@@ -762,6 +761,14 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     ) {
         if !this.track_layers_and_imports {
             return;
+        }
+        if this.layers_pre_import.is_none() {
+            let mut names = Vec::new();
+            names.ensure_unused_capacity(this.layer_names.len() as usize);
+            for name in this.layer_names.slice() {
+                names.append_assume_capacity(name.deep_clone(this.arena));
+            }
+            this.layers_pre_import = Some(names);
         }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
@@ -816,18 +823,6 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         }
     }
 
-    fn on_layer_statement_before_import(this: &mut Self, layers: &SmallList<LayerName, 1>) {
-        if !this.track_layers_and_imports {
-            return;
-        }
-        this.layers_pre_import
-            .ensure_unused_capacity(layers.len() as usize);
-        for layer in layers.slice() {
-            this.layers_pre_import
-                .append_assume_capacity(layer.deep_clone(this.arena));
-        }
-    }
-
     fn enclosing_layer_length(this: &mut Self) -> u32 {
         this.enclosing_layer.v.len()
     }
@@ -844,7 +839,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn take_layers_pre_import(this: &mut Self) -> Vec<LayerName> {
-        core::mem::take(&mut this.layers_pre_import)
+        this.layers_pre_import.take().unwrap_or_default()
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -1345,24 +1340,12 @@ mod rule_parsers {
                     ));
                     Ok(())
                 }
-                AtRulePrelude::Layer(layer)
-                    if (this.state as u8) <= (TopLevelState::Layers as u8) =>
-                {
-                    if layer.len() == 0 {
-                        return Err(());
-                    }
-                    this.state = TopLevelState::Layers;
-                    AtRuleParserT::on_layer_statement_before_import(this.at_rule_parser, &layer);
-                    this.rules
-                        .v
-                        .push(CssRule::LayerStatement(LayerStatementRule {
-                            names: layer,
-                            loc,
-                        }));
-                    Ok(())
-                }
                 layer @ AtRulePrelude::Layer(_) => {
-                    this.state = TopLevelState::Body;
+                    if (this.state as u8) <= (TopLevelState::Layers as u8) {
+                        this.state = TopLevelState::Layers;
+                    } else {
+                        this.state = TopLevelState::Body;
+                    }
                     let mut nested_parser = this.nested();
                     <NestedRuleParser<'_, AtRuleParserT> as AtRuleParser>::rule_without_block(
                         &mut nested_parser,
@@ -2342,9 +2325,8 @@ pub struct StyleSheet<AtRule> {
     pub css_modules: Option<css_modules::Config>,
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
-    /// Every `@layer` name seen after the first `@import`, in cascade order.
     pub layer_names: Vec<LayerName>,
-    /// The names of the `@layer` statements that precede every `@import`.
+    /// The `@layer` names declared before the first `@import`. Empty when there is no `@import`.
     pub layers_pre_import: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
@@ -2577,7 +2559,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: false,
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
-                layers_pre_import: Vec::new(),
+                layers_pre_import: None,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2790,7 +2772,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
-                layers_pre_import: Vec::new(),
+                layers_pre_import: None,
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };

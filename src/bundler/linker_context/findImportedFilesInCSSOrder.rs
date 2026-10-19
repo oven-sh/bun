@@ -145,19 +145,24 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // Any pre-import layers come first
-            if !repr.layers_pre_import.is_empty() {
+            // Any pre-import layers come first. Inside an anonymous layer a
+            // separate entry would print as a layer of its own.
+            if !repr.layers_pre_import.is_empty()
+                && !wrapping_conditions
+                    .slice()
+                    .iter()
+                    .any(ImportConditions::has_anonymous_layer)
+            {
                 // See the LayerName nominal-type note at `Layers::borrow`.
                 let layers_ptr =
                     core::ptr::NonNull::from(&repr.layers_pre_import).cast::<Vec<LayerName>>();
                 self.order.push(CssImportOrder {
-                    kind: CssImportOrderKind::Layers(Layers::borrow(layers_ptr)),
+                    kind: CssImportOrderKind::Layers(Layers::pre_import(layers_ptr)),
                     // SAFETY: arena-backed `Vec` header; `CssImportOrder`
                     // suppresses `Drop` on it (see the note at `bitwise_copy`),
                     // so the aliased buffer is freed once with the arena.
                     conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                    // SAFETY: same single-free invariant as `conditions`.
-                    condition_import_records: unsafe { bitwise_copy(wrapping_import_records) },
+                    condition_import_records: Vec::new(),
                 });
             }
 
@@ -463,6 +468,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             indices: Vec<u32>,
         }
         let mut layer_duplicates: Vec<DuplicateEntry> = Vec::new();
+        let mut pre_import_entries: Vec<u32> = Vec::new();
 
         'next_forward: for entry in order.slice_mut() {
             debug_css_order(
@@ -470,6 +476,29 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                 &wip_order,
                 CssOrderDebugStep::WhileOptimizingRedundantLayerRules,
             );
+            // A file's own statements are kept once per condition list, and they
+            // never make another entry redundant.
+            if let CssImportOrderKind::Layers(Layers::PreImport(list)) = &entry.kind {
+                let is_repeat = pre_import_entries.iter().any(|&kept| {
+                    let kept = wip_order.at(kept as usize);
+                    matches!(
+                        &kept.kind,
+                        CssImportOrderKind::Layers(Layers::PreImport(other))
+                            if core::ptr::eq(other.get(), list.get())
+                    ) && import_conditions_are_equal(
+                        kept.conditions.slice_const(),
+                        entry.conditions.slice_const(),
+                    )
+                });
+                if !is_repeat {
+                    pre_import_entries.push(wip_order.len() as u32);
+                    // SAFETY: `entry` is moved back into `order` via `memcpy_and_reset`
+                    // below (which `set_len(0)`s without dropping), so each value is
+                    // dropped at most once.
+                    wip_order.push(unsafe { bitwise_copy(entry) });
+                }
+                continue 'next_forward;
+            }
             match &mut entry.kind {
                 // Simplify the conditions since we know they only wrap "@layer"
                 CssImportOrderKind::Layers(layers) => {
@@ -777,7 +806,7 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
     out
 }
 
-fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
+pub(crate) fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
     if a.len() != b.len() {
         return false;
     }

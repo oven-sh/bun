@@ -1395,6 +1395,7 @@ pub enum CssImportOrderKind {
     /// We don't want to redundantly print the rules of these redundant imports
     /// BUT, the imports may include layers.
     /// We'll just print layer name declarations so that the original ordering is preserved.
+    /// `Layers::PreImport` is the other producer: the statements a file has ahead of its first "@import".
     #[strum(serialize = "layers")]
     Layers(Layers),
     #[strum(serialize = "external_path")]
@@ -1412,21 +1413,23 @@ pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),
+    /// A stylesheet's `layers_pre_import`, borrowed. The order passes keep this entry as it is.
+    PreImport(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
 }
 
 impl Layers {
     #[inline]
     pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
         match self {
-            Layers::Borrowed(p) => p.get(),
+            Layers::Borrowed(p) | Layers::PreImport(p) => p.get(),
             Layers::Owned(b) => b,
         }
     }
 
     /// Cow::Borrowed constructor.
     ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
+    /// Takes `NonNull` (not `&Vec`) because the callers in
+    /// `findImportedFilesInCSSOrder.rs` type-pun the lifetime-erased shadow
     /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
     /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
@@ -1435,6 +1438,12 @@ impl Layers {
     #[inline]
     pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
         Layers::Borrowed(bun_ptr::BackRef::from(p))
+    }
+
+    /// `borrow()` for a stylesheet's `layers_pre_import`.
+    #[inline]
+    pub(crate) fn pre_import(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
+        Layers::PreImport(bun_ptr::BackRef::from(p))
     }
 
     /// Drop owned (arena-backed, so no-op) and
@@ -1447,12 +1456,12 @@ impl Layers {
     /// If borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
     pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
-        if let Layers::Borrowed(p) = *self {
+        if let Layers::Borrowed(p) | Layers::PreImport(p) = *self {
             *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
         }
         match self {
             Layers::Owned(b) => b,
-            Layers::Borrowed(_) => unreachable!(),
+            Layers::Borrowed(_) | Layers::PreImport(_) => unreachable!(),
         }
     }
 }

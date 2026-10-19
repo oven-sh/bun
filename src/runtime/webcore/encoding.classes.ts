@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -23,11 +23,6 @@ export default [
       decode: {
         fn: "decode",
         length: 1,
-
-        DOMJIT: {
-          returns: "JSString",
-          args: ["JSUint8Array"],
-        },
       },
     },
   }),

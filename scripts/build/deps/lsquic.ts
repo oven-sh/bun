@@ -14,7 +14,7 @@
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
 
-const LSQUIC_COMMIT = "3181911301b1aa4f54c1ed690901abc674ee08fb";
+const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
 // gQUIC (Google QUIC, pre-IETF) sources are excluded — Bun only negotiates
 // IETF QUIC. The unconditional engine/global references to gQUIC vtables are
@@ -93,7 +93,6 @@ const liblsquic: string[] = [
 
 export const lsquic: Dependency = {
   name: "lsquic",
-  versionMacro: "LSQUIC",
 
   source: () => ({
     kind: "github-archive",
@@ -128,6 +127,13 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // A connection that sent GOAWAY answered every new peer stream with
+    // STOP_SENDING, unidirectional ones included. A client that opens its
+    // QPACK encoder stream after the GOAWAY (lsquic does, on a connection
+    // whose first request ran server.stop()) has to treat that as
+    // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
+    // requests the graceful stop was draining. Reject only request streams.
+    "patches/lsquic/goaway-accept-uni-streams.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

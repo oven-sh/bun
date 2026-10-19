@@ -5,7 +5,7 @@
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_collections::VecExt;
 use bun_core::{StackCheck, String as BunString, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, StringJsc as _};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use
@@ -13,9 +13,8 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 #[inline]
 fn js_err(e: JsError) -> ToJSError {
     match e {
-        JsError::Thrown => ToJSError::JSError,
+        JsError::Thrown | JsError::Terminated => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,
-        JsError::Terminated => ToJSError::JSTerminated,
     }
 }
 
@@ -24,12 +23,11 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
 }
 
 /// The inverse of [`js_err`], for host functions returning a data-format
-/// parse (JSON/XML rows never produce the identifier / macro variants).
+/// parse (JSON/XML rows never produce the conversion variants).
 pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
     match e {
         ToJSError::OutOfMemory => JsError::OutOfMemory,
         ToJSError::JSError => JsError::Thrown,
-        ToJSError::JSTerminated => JsError::Terminated,
         _ => global.throw(format_args!("Cannot convert value to JS")),
     }
 }
@@ -72,7 +70,12 @@ fn data_to_js_with_check(
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
         ExprData::EObjectJSON(e) => object_json_to_js(e, global),
         ExprData::EArrayJSON(e) => array_json_to_js(e, global),
-        ExprData::EString(e) => string_to_js(e, global),
+        ExprData::EString(e) => {
+            if let Some(kind) = e.toml_datetime {
+                return toml_datetime_to_js(global, e.slice8(), kind).map_err(js_err);
+            }
+            string_to_js(e, global)
+        }
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
         ExprData::EBoolean(boolean) | ExprData::EBranchBoolean(boolean) => Ok(if boolean.value {
@@ -180,7 +183,7 @@ extern "C" fn Bun__JSONRows__wtf8ToJS(
     let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
     match utf8_bytes_to_js(bytes, global) {
         Ok(value) => value,
-        // Only the string's to_js can fail here (JSError / JSTerminated): the
+        // Only the string's to_js can fail here (JSError): the
         // exception is pending and the caller RETURN_IF_EXCEPTIONs on empty.
         Err(_) => JSValue::ZERO,
     }
@@ -217,19 +220,37 @@ fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSVa
     json_rows_to_js(root, this.tape(), global)
 }
 
+/// A TOML date/time literal as the Temporal object of its kind. `text` must
+/// be ASCII that `Temporal.*.from` accepts verbatim.
+pub fn toml_datetime_to_js(
+    global: &JSGlobalObject,
+    text: &[u8],
+    kind: E::TomlDateTimeKind,
+) -> bun_jsc::JsResult<JSValue> {
+    debug_assert!(text.is_ascii());
+    // SAFETY: `text` is a live slice for the duration of the call.
+    unsafe {
+        bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
+            global,
+            text.as_ptr(),
+            text.len(),
+            kind as u8,
+        )
+    }
+}
+
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     if bytes.is_empty() {
-        let empty = BunString::EMPTY;
-        return bun_string_jsc::to_js(&empty, global).map_err(js_err);
+        return Ok(JSValue::js_empty_string(global));
     }
     if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
-        let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
+        let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
         chars.copy_from_slice(&utf16);
-        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+        out.into_js(global).map_err(js_err)
     } else {
-        let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
+        let (out, chars) = BunString::create_uninitialized_latin1(bytes.len());
         chars.copy_from_slice(bytes);
-        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+        out.into_js(global).map_err(js_err)
     }
 }
 
@@ -260,17 +281,16 @@ macro_rules! impl_string_to_js {
             }
 
             if !s.is_present() {
-                let emp = BunString::EMPTY;
-                return bun_string_jsc::to_js(&emp, global).map_err(js_err);
+                return Ok(JSValue::js_empty_string(global));
             }
 
             if s.is_utf8() {
                 utf8_bytes_to_js(s.slice8(), global)
             } else {
                 let utf16 = s.slice16();
-                let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
+                let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
                 chars.copy_from_slice(utf16);
-                bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+                out.into_js(global).map_err(js_err)
             }
         }
     };

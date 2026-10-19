@@ -1,7 +1,93 @@
+const path = require("node:path");
+
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
   return {
     ...nativeModule,
+
+    test_v8_function_script_origin() {
+      function namedFunction(a, b) {
+        return a + b;
+      }
+      const arrowFunction = (a, b) => a + b;
+      class DefaultConstructor {
+        method() {}
+      }
+      class ExplicitConstructor {
+        constructor() {}
+      }
+      class Derived extends DefaultConstructor {}
+      const AnonymousClass = class {};
+      const cases = [
+        ["named function", namedFunction],
+        ["arrow function", arrowFunction],
+        ["class with default constructor", DefaultConstructor],
+        ["class with explicit constructor", ExplicitConstructor],
+        ["derived class with default constructor", Derived],
+        ["anonymous class expression", AnonymousClass],
+        ["class method", DefaultConstructor.prototype.method],
+        ["builtin function", Array.prototype.map],
+        ["bound function", namedFunction.bind(null)],
+        ["native addon function", nativeModule.get_function_script_origin],
+      ];
+      for (const [description, fn] of cases) {
+        console.log(`====== ${description}`);
+        const { file, line, column } = nativeModule.get_function_script_origin(fn);
+        console.log("file:", typeof file === "string" ? path.basename(file) : file);
+        console.log("file is absolute:", typeof file === "string" && path.isAbsolute(file));
+        console.log("line:", line, "column:", column);
+      }
+    },
+
+    test_v8_value_to_int32() {
+      const cases = [
+        ["int", 42],
+        ["negative int", -7],
+        ["fraction", 3.99],
+        ["negative fraction", -3.99],
+        ["INT32_MAX + 1", 2 ** 31],
+        ["UINT32_MAX + 6", 2 ** 32 + 5],
+        ["INT32_MIN - 1", -(2 ** 31) - 1],
+        ["NaN", NaN],
+        ["Infinity", Infinity],
+        ["numeric string", "123"],
+        ["hex string", "0x10"],
+        ["true", true],
+        ["null", null],
+        ["undefined", undefined],
+        ["object with valueOf", { valueOf: () => 77.5 }],
+        [
+          "object with throwing valueOf",
+          {
+            valueOf() {
+              throw new Error("valueOf threw");
+            },
+          },
+        ],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        try {
+          console.log("result:", nativeModule.perform_to_int32(value));
+        } catch (e) {
+          console.log("threw:", e.message);
+        }
+      }
+    },
+
+    // Bun only: 48k collected instances with 128 internal fields each. Their
+    // field storage is about 2 KB per instance, 100 MiB if none of it is freed.
+    test_v8_internal_field_object_leak() {
+      nativeModule.create_objects_with_internal_fields(256, 128);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 24; i++) {
+        nativeModule.create_objects_with_internal_fields(2000, 128);
+        Bun.gc(true);
+      }
+      const after = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    },
 
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
@@ -116,6 +202,61 @@ module.exports = debugMode => {
         }
         console.log("constructor is", ret.constructor.name);
       }
+    },
+
+    call_function_bare_through_closure() {
+      const { return_this } = nativeModule;
+      // return_this is captured by keep, so the bare call below is resolved through the closure's
+      // scope object, which JSC leaves in the call's this slot. The callback must still see the
+      // sloppy-mode receiver (globalThis), never that scope object.
+      function keep() {
+        return return_this;
+      }
+      console.log("bare call returned globalThis:", return_this() === globalThis);
+      keep();
+    },
+
+    native_accessor_holder_on_property_access() {
+      const obj = nativeModule.create_object_with_holder_accessor();
+      console.log("getter holder is the object:", obj.holder === obj);
+      obj.holder = 1;
+      console.log("setter holder is the object:", nativeModule.global_get() === obj);
+    },
+
+    // Bun only: V8 itself installs a native data property as a data property, so Bun is the one
+    // runtime where its getter and setter exist as functions that can be called with any receiver.
+    native_accessor_holder_for_weird_receivers() {
+      const obj = nativeModule.create_object_with_holder_accessor();
+      const { get, set } = Object.getOwnPropertyDescriptor(obj, "holder");
+      // get and set are captured by keep, so the bare calls below are resolved through the
+      // closure's scope object, which JSC leaves in the call's this slot.
+      function keep() {
+        return [get, set];
+      }
+      const describe = value => {
+        if (value === globalThis) return "globalThis";
+        if (value === obj) return "the object";
+        if (value instanceof Number) return "a Number object";
+        return typeof value;
+      };
+      const holderSeenBySetter = receiver => {
+        nativeModule.global_set(undefined);
+        set.call(receiver, 1);
+        return nativeModule.global_get();
+      };
+      console.log("bare getter():", describe(get()));
+      console.log("getter.call(undefined):", describe(get.call(undefined)));
+      console.log("getter.call(null):", describe(get.call(null)));
+      console.log("getter.call(5):", describe(get.call(5)));
+      console.log("getter.call(obj):", describe(get.call(obj)));
+      nativeModule.global_set(undefined);
+      set(1);
+      console.log("bare setter():", describe(nativeModule.global_get()));
+      console.log("setter.call(undefined):", describe(holderSeenBySetter(undefined)));
+      console.log("setter.call(null):", describe(holderSeenBySetter(null)));
+      console.log("setter.call(5):", describe(holderSeenBySetter(5)));
+      console.log("setter.call(obj):", describe(holderSeenBySetter(obj)));
+      keep();
     },
 
     test_v8_object_get_set_exceptions() {

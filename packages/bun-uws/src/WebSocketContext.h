@@ -38,17 +38,6 @@ private:
     us_socket_group_t group{};
     WebSocketContextData<SSL, USERDATA> data;
 
-    /* WebSocket::getContextData() recovers &data as
-     * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
-     * WebSocket.h. That's only sound if `group` is the first member and `data`
-     * sits immediately after it with no inserted base/field. */
-    static void layoutAssert() {
-        static_assert(offsetof(WebSocketContext, group) == 0,
-                      "WebSocket::getContextData layout assumption broken");
-        static_assert(offsetof(WebSocketContext, data) == sizeof(us_socket_group_t),
-                      "WebSocket::getContextData layout assumption broken");
-    }
-
 public:
     /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
      * so a reorder there can't silently mis-route us. */
@@ -84,8 +73,49 @@ private:
         return true;
     }
 
-    static void forceClose(WebSocketState<isServer> */*wState*/, void *s, std::string_view reason = {}) {
-        us_socket_close((us_socket_t *) s, (int) reason.length(), (void *) reason.data());
+    /* noinline: called from a dozen cold branches in the parser */
+    __attribute__((noinline)) static void failConnection(WebSocketState<isServer> */*wState*/, void *s, const WebSocketFailure &failure, unsigned int detail = 0) {
+        ((WebSocket<SSL, isServer, USERDATA> *) s)->failConnection(failure, detail);
+    }
+
+    static void handleCloseFrame(WebSocket<SSL, isServer, USERDATA> *webSocket, char *data, size_t length) {
+        protocol::CloseFrame closeFrame = protocol::parseClosePayload(data, length, getExtS((us_socket_t *) webSocket)->skipUTF8Validation);
+        if (closeFrame.failure) {
+            webSocket->failConnection(*closeFrame.failure, closeFrame.code);
+        } else {
+            webSocket->conclude(closeFrame.code, closeFrame.message);
+        }
+    }
+
+    /* Skip auto-pongs above 16 MiB of backpressure. The peer can send unlimited pings, so unbounded replies would let
+     * it exhaust our memory. This applies even when maxBackpressure is 0 and app sends aren't capped.
+     * RFC 6455 5.5.3 allows answering only the most recent ping. */
+    static void sendAutomaticPong(WebSocket<SSL, isServer, USERDATA> *webSocket, std::string_view payload) {
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) webSocket);
+        if (!getExtS((us_socket_t *) webSocket)->autoPong || webSocketData->closeFrameSent || webSocket->getBufferedAmount() > 16 * 1024 * 1024) {
+            return;
+        }
+        webSocket->send(payload, OpCode::PONG);
+    }
+
+    /* On error, fails the connection and returns false */
+    static bool inflateMessage(void *s, char *&data, size_t &length) {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getExtS((us_socket_t *) s);
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
+        LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) s)));
+
+        /* Decompress using shared or dedicated decompressor */
+        InflateResult inflated = webSocketData->inflationStream
+            ? webSocketData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, false)
+            : loopData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, true);
+
+        if (inflated.closeCode) {
+            failConnection(nullptr, s, inflated.closeCode == FAIL_TOO_BIG_MESSAGE.closeCode ? FAIL_TOO_BIG_MESSAGE : FAIL_INVALID_COMPRESSED_DATA);
+            return false;
+        }
+        data = (char *) inflated.data.data();
+        length = inflated.data.length();
+        return true;
     }
 
     /* Returns true on breakage */
@@ -103,27 +133,14 @@ private:
                 if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME) {
                         webSocketData->compressionStatus = WebSocketData::CompressionStatus::ENABLED;
 
-                        LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) s)));
-                        /* Decompress using shared or dedicated decompressor */
-                        std::optional<std::string_view> inflatedFrame;
-                        if (webSocketData->inflationStream) {
-                            inflatedFrame = webSocketData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, false);
-                        } else {
-                            inflatedFrame = loopData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, true);
-                        }
-
-                        if (!inflatedFrame.has_value()) {
-                            forceClose(webSocketState, s, ERR_TOO_BIG_MESSAGE_INFLATION);
+                        if (!inflateMessage(s, data, length)) {
                             return true;
-                        } else {
-                            data = (char *) inflatedFrame->data();
-                            length = inflatedFrame->length();
                         }
                 }
 
                 /* Check text messages for Utf-8 validity */
-                if (opCode == 1 && !protocol::isValidUtf8((unsigned char *) data, length)) {
-                    forceClose(webSocketState, s, ERR_INVALID_TEXT);
+                if (opCode == 1 && !webSocketContextData->skipUTF8Validation && !protocol::isValidUtf8((unsigned char *) data, length)) {
+                    failConnection(webSocketState, s, FAIL_INVALID_TEXT);
                     return true;
                 }
 
@@ -135,13 +152,14 @@ private:
                     }
                 }
             } else {
-                /* Allocate fragment buffer up front first time */
+                /* Allocate fragment buffer up front first time, but at most 16 MiB. The length comes from the
+                 * frame header, which the peer controls, so don't trust it for large allocations. */
                 if (!webSocketData->fragmentBuffer.length()) {
-                    webSocketData->fragmentBuffer.reserve(length + remainingBytes);
+                    webSocketData->fragmentBuffer.reserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {
-                    forceClose(webSocketState, s, ERR_TOO_BIG_MESSAGE);
+                    failConnection(webSocketState, s, FAIL_TOO_BIG_MESSAGE);
                     return true;
                 }
                 webSocketData->fragmentBuffer.append(data, length);
@@ -157,25 +175,11 @@ private:
                             /* 9 bytes of padding for libdeflate, 4 for zlib */
                             webSocketData->fragmentBuffer.append("123456789");
 
-                            LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(us_socket_group((us_socket_t *) s)));
-
-                            /* Decompress using shared or dedicated decompressor */
-                            std::optional<std::string_view> inflatedFrame;
-                            if (webSocketData->inflationStream) {
-                                inflatedFrame = webSocketData->inflationStream->inflate(loopData->zlibContext, {webSocketData->fragmentBuffer.data(), webSocketData->fragmentBuffer.length() - 9}, webSocketContextData->maxPayloadLength, false);
-                            } else {
-                                inflatedFrame = loopData->inflationStream->inflate(loopData->zlibContext, {webSocketData->fragmentBuffer.data(), webSocketData->fragmentBuffer.length() - 9}, webSocketContextData->maxPayloadLength, true);
-                            }
-
-                            if (!inflatedFrame.has_value()) {
-                                forceClose(webSocketState, s, ERR_TOO_BIG_MESSAGE_INFLATION);
+                            data = webSocketData->fragmentBuffer.data();
+                            length = webSocketData->fragmentBuffer.length() - 9;
+                            if (!inflateMessage(s, data, length)) {
                                 return true;
-                            } else {
-                                data = (char *) inflatedFrame->data();
-                                length = inflatedFrame->length();
                             }
-
-
                     } else {
                         // reset length and data ptrs
                         length = webSocketData->fragmentBuffer.length();
@@ -183,8 +187,8 @@ private:
                     }
 
                     /* Check text messages for Utf-8 validity */
-                    if (opCode == 1 && !protocol::isValidUtf8((unsigned char *) data, length)) {
-                        forceClose(webSocketState, s, ERR_INVALID_TEXT);
+                    if (opCode == 1 && !webSocketContextData->skipUTF8Validation && !protocol::isValidUtf8((unsigned char *) data, length)) {
+                        failConnection(webSocketState, s, FAIL_INVALID_TEXT);
                         return true;
                     }
 
@@ -206,12 +210,11 @@ private:
 
             if (!remainingBytes && fin && !webSocketData->controlTipLength) {
                 if (opCode == CLOSE) {
-                    auto closeFrame = protocol::parseClosePayload(data, length);
-                    webSocket->end(closeFrame.code, std::string_view(closeFrame.message, closeFrame.length));
+                    handleCloseFrame(webSocket, data, length);
                     return true;
                 } else {
                     if (opCode == PING) {
-                        webSocket->send(std::string_view(data, length), (OpCode) OpCode::PONG);
+                        sendAutomaticPong(webSocket, std::string_view(data, length));
                         if (webSocketContextData->pingHandler) {
                             webSocketContextData->pingHandler(webSocket, {data, length});
                             if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
@@ -235,12 +238,11 @@ private:
                 if (!remainingBytes && fin) {
                     char *controlBuffer = (char *) webSocketData->fragmentBuffer.data() + webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength;
                     if (opCode == CLOSE) {
-                        protocol::CloseFrame closeFrame = protocol::parseClosePayload(controlBuffer, webSocketData->controlTipLength);
-                        webSocket->end(closeFrame.code, std::string_view(closeFrame.message, closeFrame.length));
+                        handleCloseFrame(webSocket, controlBuffer, webSocketData->controlTipLength);
                         return true;
                     } else {
                         if (opCode == PING) {
-                            webSocket->send(std::string_view(controlBuffer, webSocketData->controlTipLength), (OpCode) OpCode::PONG);
+                            sendAutomaticPong(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
                             if (webSocketContextData->pingHandler) {
                                 webSocketContextData->pingHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
@@ -281,18 +283,11 @@ private:
         /* For whatever reason, if we already have emitted close event, do not emit it again */
         WebSocketData *webSocketData = (WebSocketData *) (us_socket_ext(s));
         if (webSocketData->socketData && webSocketData->onSocketClosed) {
-            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s);
+            webSocketData->onSocketClosed(webSocketData->socketData, SSL, (us_socket_t *) s, 0, false);
         }
         if (!webSocketData->isShuttingDown) {
             /* Emit close event */
             auto *webSocketContextData = getExtS(s);
-
-            /* At this point we iterate all currently held subscriptions and emit an event for all of them */
-            if (webSocketData->subscriber && webSocketContextData->subscriptionHandler) {
-                for (Topic *t : webSocketData->subscriber->topics) {
-                    webSocketContextData->subscriptionHandler((WebSocket<SSL, isServer, USERDATA> *) s, t->name, (int) t->size() - 1, (int) t->size());
-                }
-            }
 
             /* Make sure to unsubscribe from any pub/sub node at exit */
             webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
@@ -322,8 +317,11 @@ private:
         auto *webSocketContextData = getExtS(s);
         auto *asyncSocket = (AsyncSocket<SSL> *) s;
 
-        /* Every time we get data and not in shutdown state we simply reset the timeout */
-        asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
+        /* Every time we get data and not in shutdown state we simply reset the timeout.
+         * We can still get data while paused (the rest of a TLS read); keep the timeout disabled then. */
+        if (!s->flags.is_paused) {
+            asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
+        }
         webSocketData->hasTimedOut = false;
 
         /* We always cork on data */
@@ -334,15 +332,6 @@ private:
 
         /* Uncorking a closed socekt is fine, in fact it is needed */
         asyncSocket->uncork();
-
-        /* If uncorking was successful and we are in shutdown state then send TCP FIN */
-        if (asyncSocket->getBufferedAmount() == 0) {
-            /* We can now be in shutdown state */
-            if (webSocketData->isShuttingDown) {
-                /* Shutting down a closed socket is handled by uSockets and just fine */
-                asyncSocket->shutdown();
-            }
-        }
 
         return s;
     }
@@ -360,8 +349,7 @@ private:
         AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
         WebSocketData *webSocketData = (WebSocketData *)(us_socket_ext(s));
 
-        /* We store old backpressure since it is unclear whether write drained anything,
-         * however, in case of coming here with 0 backpressure we still need to emit drain event */
+        /* We store old backpressure since it is unclear whether write drained anything */
         size_t backpressure = asyncSocket->getBufferedAmount();
 
         /* Drain as much as possible */
@@ -371,8 +359,12 @@ private:
         /* Also reset timeout if we came here with 0 backpressure */
         if (!backpressure || backpressure > asyncSocket->getBufferedAmount()) {
             auto *webSocketContextData = getExtS(s);
-            asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
-            webSocketData->hasTimedOut = false;
+            if (webSocketData->isShuttingDown) {
+                asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.second);
+            } else if (!s->flags.is_paused) {
+                asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
+                webSocketData->hasTimedOut = false;
+            }
         }
 
         /* Are we in (WebSocket) shutdown mode? */
@@ -382,8 +374,10 @@ private:
                 /* Now perform the actual TCP/TLS shutdown which was postponed due to backpressure */
                 asyncSocket->shutdown();
             }
-        } else if (!backpressure || backpressure > asyncSocket->getBufferedAmount()) {
-            /* Only call drain if we actually drained backpressure or if we came here with 0 backpressure */
+        } else if (backpressure > asyncSocket->getBufferedAmount() || (!backpressure && webSocketData->needsDrainEvent)) {
+            /* Only call drain if we actually drained backpressure, or a later send() already did. Coming here with
+             * 0 backpressure isn't enough: pause() and resume() also make the socket poll for writable. */
+            webSocketData->needsDrainEvent = asyncSocket->getBufferedAmount() != 0;
             auto *webSocketContextData = getExtS(s);
             if (webSocketContextData->drainHandler) {
                 webSocketContextData->drainHandler((WebSocket<SSL, isServer, USERDATA> *) s);
@@ -421,9 +415,8 @@ private:
             return s;
         }
 
-        /* Timeout is very simple; we just close it */
-        /* Warning: we happen to know forceClose will not use first parameter so pass nullptr here */
-        forceClose(nullptr, s, ERR_WEBSOCKET_TIMEOUT);
+        /* Assume the peer is unreachable and skip the close frame. The reason length doubles as the close code. */
+        us_socket_close(s, (int) ERR_WEBSOCKET_TIMEOUT.length(), (void *) ERR_WEBSOCKET_TIMEOUT.data());
 
         return s;
     }
@@ -452,6 +445,13 @@ public:
      * SSL_CTX needed — the socket already has its `s->ssl` from accept time. */
     static WebSocketContext *create(Loop *loop, TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) {
         WebSocketContext *webSocketContext = new WebSocketContext(topicTree);
+        /* WebSocket::getContextData() recovers &data as
+         * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
+         * WebSocket.h. That's only sound if `group` is the first member and `data`
+         * sits immediately after it with no inserted base/field. (offsetof is not
+         * usable here: the struct is not standard-layout.) The layout can differ
+         * per ABI, so check it in every build; this runs once per context. */
+        RELEASE_ASSERT((void *) &webSocketContext->data == (void *) ((us_socket_group_t *) webSocketContext + 1));
         us_socket_group_init(&webSocketContext->group, (us_loop_t *) loop, &wsVTable, webSocketContext);
         return webSocketContext;
     }

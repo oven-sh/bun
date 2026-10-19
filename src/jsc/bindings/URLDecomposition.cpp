@@ -116,19 +116,6 @@ static unsigned countASCIIDigits(StringView string)
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
-    // Apply the Unicode 16 IDNA delta to the host span only (see DOMURL.cpp). The port span must
-    // stay verbatim (the delta strips ignored-class chars, which could validate a bad port).
-    // Non-special schemes and '['-prefixed (IPv6) hosts never run IDNA.
-    String mappedValue;
-    if (fullURL.hasSpecialScheme() && !value.startsWith('[')) {
-        size_t hostEnd = value.reverseFind(':');
-        auto hostSpan = hostEnd == notFound ? value : value.left(hostEnd);
-        if (Bun::containsUnicode16IDNADeltaSource(hostSpan)) {
-            auto mappedHost = Bun::applyUnicode16IDNADelta(hostSpan.toString());
-            mappedValue = hostEnd == notFound ? mappedHost : makeString(mappedHost, value.substring(hostEnd));
-            value = mappedValue;
-        }
-    }
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
@@ -170,13 +157,6 @@ String URLDecomposition::hostname() const
 void URLDecomposition::setHostname(StringView host)
 {
     auto fullURL = this->fullURL();
-    // See setHost: the input is a hostname by definition, and only special
-    // schemes run IDNA on it.
-    String mappedHost;
-    if (fullURL.hasSpecialScheme() && !host.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(host)) {
-        mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
-        host = mappedHost;
-    }
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
     if (fullURL.hasOpaquePath())

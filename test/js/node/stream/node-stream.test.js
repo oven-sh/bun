@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -476,6 +476,36 @@ it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys
   expect(r.errored?.message).toBe("start-boom");
 });
 
+// Delivering a 64 KiB file chunk re-enters the native reader: push() over the
+// highWaterMark pauses it, and the next _read unpauses it mid-delivery. On
+// Windows that used to free the buffer an in-flight libuv file read was still
+// writing into, corrupting the heap (#39890).
+it("Readable.fromWeb(Bun.file().stream()) survives pause/unpause during chunk delivery (#39890)", async () => {
+  using dir = tempDir("fromweb-file-39890", {
+    "repro.ts": `
+      import { Readable } from "node:stream";
+      const big = Buffer.alloc(1024 * 1024, 0x61);
+      await Bun.write("big.bin", big);
+      const parts = [];
+      for await (const chunk of Readable.fromWeb(Bun.file("big.bin").stream())) {
+        parts.push(chunk);
+      }
+      const out = Buffer.concat(parts);
+      if (!out.equals(big)) throw new Error("round-trip mismatch: " + out.length);
+      console.log("OK");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repro.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "OK\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 it("Readable.fromWeb piped to a Writable surfaces web stream errors on the destination", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -596,6 +626,64 @@ it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web sourc
     name: "RangeError",
     message: "consumer-gone",
   });
+});
+
+// A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
+// buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
+// emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so
+// nothing is buffered or due at that point, and it emits only 'close'.
+describe.each([
+  ["Blob.stream()", size => new Blob([Buffer.alloc(size, "x")]).stream()],
+  ["Response.body", size => new Response(Buffer.alloc(size, "x")).body],
+])("Readable.fromWeb(%s): destroy() inside a 'data' listener", (_, makeWeb) => {
+  // With today's chunking, 100 bytes are the only chunk and EOF is due a tick later, 16484 bytes are two chunks with
+  // the last one buffered behind the first, and 1 MiB has more buffered behind every chunk.
+  it.each([100, 16384 + 100, 1024 * 1024])("of a %d byte body stops 'data' and 'end'", async size => {
+    const r = Readable.fromWeb(makeWeb(size));
+    const events = [];
+    const { promise: closed, resolve } = Promise.withResolvers();
+    r.on("data", () => {
+      events.push(`data destroyed=${r.destroyed}`);
+      r.destroy();
+    });
+    r.on("end", () => events.push("end"));
+    r.on("close", () => {
+      events.push("close");
+      resolve();
+    });
+    await closed;
+    expect(events).toEqual(["data destroyed=false", "close"]);
+  });
+});
+
+it("Readable.fromWeb: destroy() on a paused stream keeps the buffered chunk for read(), as in Node", async () => {
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(1024, "x")]).stream());
+  const { promise, resolve } = Promise.withResolvers();
+  r.once("readable", () => {
+    r.destroy();
+    resolve(r.read());
+  });
+  const chunk = await promise;
+  expect(chunk?.length).toBe(1024);
+});
+
+// Once the source has ended, what is buffered is all that is left. Node delivers it after destroy(), and to drop it
+// would let 'end' follow data that never arrived.
+it("Readable.fromWeb: a stream that ended while paused still delivers every byte after destroy(), as in Node", async () => {
+  const size = 16384 + 100;
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream());
+  let bytes = 0;
+  r.on("data", chunk => {
+    bytes += chunk.length;
+    r.destroy();
+  });
+  r.pause();
+  const closed = new Promise(resolve => r.once("close", resolve));
+  r.read(0);
+  while (!r._readableState.ended) await new Promise(resolve => setImmediate(resolve));
+  r.resume();
+  await closed;
+  expect(bytes).toBe(size);
 });
 
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
@@ -1710,6 +1798,38 @@ describe("pipeline real error overrides AbortError (nodejs/node#62113)", () => {
     });
     expect(caught.name).toBe("Error");
     expect(caught.message).toBe("realboom");
+  });
+});
+
+// Symbol.asyncDispose destroys an unfinished stream with `new AbortError()`:
+// node's default message has no trailing period and, with no signal involved,
+// no cause (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L980).
+describe("Symbol.asyncDispose destroys with node's default AbortError", () => {
+  const cases = [
+    ["Readable", () => new Readable({ read() {} })],
+    [
+      "Writable",
+      () =>
+        new Writable({
+          write(chunk, encoding, cb) {
+            cb();
+          },
+        }),
+    ],
+  ];
+
+  it.each(cases)("%s", async (_, create) => {
+    const stream = create();
+    const errored = new Promise(resolve => stream.once("error", resolve));
+    await stream[Symbol.asyncDispose]();
+    const err = await errored;
+    expect(err).toBeInstanceOf(Error);
+    expect({ name: err.name, code: err.code, message: err.message, hasCause: "cause" in err }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      message: "The operation was aborted",
+      hasCause: false,
+    });
   });
 });
 

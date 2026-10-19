@@ -113,6 +113,8 @@ typedef struct {
     /* Maximum socket lifetime in seconds before forced closure (defaults to
      * disabled) */
     unsigned short maxLifetime;
+    bool autoPong;
+    bool skipUTF8Validation;
 
     uws_websocket_upgrade_handler upgrade;
     uws_websocket_handler open;
@@ -132,13 +134,6 @@ typedef void (*uws_listen_domain_handler)(
 typedef void (*uws_method_handler)(uws_res_t* response, uws_req_t* request,
     void* user_data);
 typedef void (*uws_filter_handler)(uws_res_t* response, int, void* user_data);
-typedef void (*uws_missing_server_handler)(const char* hostname,
-    void* user_data);
-typedef void (*uws_get_headers_server_handler)(const char* header_name,
-    size_t header_name_size,
-    const char* header_value,
-    size_t header_value_size,
-    void* user_data);
 
 struct us_loop_t* uws_get_loop();
 

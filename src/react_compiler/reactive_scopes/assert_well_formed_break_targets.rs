@@ -7,7 +7,8 @@
 //!
 //! Corresponds to `src/ReactiveScopes/AssertWellFormedBreakTargets.ts`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
+use std::cell::Cell;
 
 use crate::hir::{
     BlockId, ReactiveFunction, ReactiveTerminal, ReactiveTerminalStatement,
@@ -17,14 +18,25 @@ use crate::hir::{
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 
 /// Assert that all break/continue targets reference existent labels.
-pub(crate) fn assert_well_formed_break_targets(func: &ReactiveFunction, env: &Environment) {
-    let visitor = Visitor { env };
-    let mut state: HashSet<BlockId> = HashSet::new();
+pub(crate) fn assert_well_formed_break_targets(
+    func: &ReactiveFunction,
+    env: &Environment,
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
+    let visitor = Visitor {
+        env,
+        is_well_formed: Cell::new(true),
+    };
+    let mut state: HashSet<BlockId> = HashSet::default();
     visit_reactive_function(func, &visitor, &mut state);
+    crate::diagnostics::invariant(
+        visitor.is_well_formed.get(),
+        "Unexpected break/continue to invalid label",
+    )
 }
 
 struct Visitor<'a> {
     env: &'a Environment,
+    is_well_formed: Cell<bool>,
 }
 
 impl<'a> ReactiveFunctionVisitor for Visitor<'a> {
@@ -41,11 +53,9 @@ impl<'a> ReactiveFunctionVisitor for Visitor<'a> {
         let terminal = &stmt.terminal;
         match terminal {
             ReactiveTerminal::Break { target, .. } | ReactiveTerminal::Continue { target, .. } => {
-                assert!(
-                    seen_labels.contains(target),
-                    "Unexpected break/continue to invalid label: {:?}",
-                    target
-                );
+                if !seen_labels.contains(target) {
+                    self.is_well_formed.set(false);
+                }
             }
             _ => {}
         }

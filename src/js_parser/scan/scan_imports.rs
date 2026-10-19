@@ -1,4 +1,3 @@
-#![allow(clippy::needless_range_loop)]
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
@@ -265,10 +264,20 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
-                        if (is_typescript_enabled
+                        // Exports deleted on request (`replace_exports`) take the imports that only
+                        // they used with them.
+                        let unused_after_deleted_exports = p.options.features.replace_exports.count()
+                            > 0
                             && found_imports
-                            && is_unused_in_typescript
-                            && !p.options.preserve_unused_imports_ts)
+                            && st.star_name_loc.is_empty()
+                            // SAFETY: arena-owned slice; see above.
+                            && st.items.slice().is_empty()
+                            && st.default_name.is_none();
+                        if unused_after_deleted_exports
+                            || (is_typescript_enabled
+                                && found_imports
+                                && is_unused_in_typescript
+                                && !p.options.preserve_unused_imports_ts)
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports
@@ -682,6 +691,26 @@ impl<'a> ImportScanner<'a> {
                 js_ast::StmtData::SExportDefault(mut st) => {
                     // Capture default_name now and record the export after the body below.
                     let deferred_default_name = st.default_name;
+                    let alias_of_import = match &st.value {
+                        js_ast::StmtOrExpr::Expr(expr) if p.options.bundle => {
+                            let ref_ = match expr.data {
+                                js_ast::ExprData::EIdentifier(id) => id.ref_,
+                                js_ast::ExprData::EImportIdentifier(id) => id.ref_,
+                                _ => Ref::NONE,
+                            };
+                            if ref_.is_symbol()
+                                && p.symbols[ref_.inner_index() as usize].kind
+                                    == js_ast::symbol::Kind::Import
+                                && p.symbols[ref_.inner_index() as usize].import_item_status
+                                    != js_ast::ImportItemStatus::Generated
+                            {
+                                ref_
+                            } else {
+                                Ref::NONE
+                            }
+                        }
+                        _ => Ref::NONE,
+                    };
 
                     // Rewrite this export to be:
                     // exports.default =
@@ -708,6 +737,9 @@ impl<'a> ImportScanner<'a> {
                     // This is defer'd so that we still record export default for identifiers
                     if let Some(ref_) = deferred_default_name.ref_.to_nullable() {
                         let _ = p.record_export(deferred_default_name.loc, b"default", ref_);
+                        if alias_of_import.is_valid() {
+                            p.export_default_alias_of_import = alias_of_import;
+                        }
                     }
                 }
                 js_ast::StmtData::SExportClause(st) => {

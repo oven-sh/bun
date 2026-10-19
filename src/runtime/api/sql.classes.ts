@@ -1,4 +1,4 @@
-import { ClassDefinition, define } from "../../codegen/class-definitions";
+import { ClassDefinition, define } from "../../codegen/class-definitions.ts";
 
 const types = ["PostgresSQL", "MySQL"];
 const rustPaths = {
@@ -13,51 +13,51 @@ for (const type of types) {
     define({
       name: `${type}Connection`,
       rustPath: rustPaths[`${type}Connection`],
-      construct: true,
-      finalize: true,
+      noConstructor: true,
+      refCounted: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
-      klass: {
-        //   escapeString: {
-        //     fn: "escapeString",
-        //   },
-        //   escapeIdentifier: {
-        //     fn: "escapeIdentifier",
-        //   },
-      },
       JSType: "0b11101110",
       proto: {
         close: {
           fn: "doClose",
         },
-        connected: {
-          getter: "getConnected",
-        },
-        ref: {
-          fn: "doRef",
-        },
-        unref: {
-          fn: "doUnref",
-        },
         flush: {
           fn: "doFlush",
         },
-        queries: {
-          getter: "getQueries",
-          this: true,
+        hold: {
+          fn: "doHold",
         },
-        onconnect: {
-          getter: "getOnConnect",
-          setter: "setOnConnect",
-          this: true,
+        unhold: {
+          fn: "doUnhold",
         },
-        onclose: {
-          getter: "getOnClose",
-          setter: "setOnClose",
-          this: true,
+        inTransaction: {
+          getter: "getInTransaction",
         },
+        ...(type === "PostgresSQL"
+          ? {
+              ref: {
+                fn: "doRef",
+              },
+              sasl: {
+                getter: "getSasl",
+              },
+              onnotification: {
+                getter: "getOnNotification",
+                setter: "setOnNotification",
+                this: true,
+              },
+            }
+          : {}),
       },
-      values: ["onconnect", "onclose", "queries"],
+      values: [
+        "onconnect",
+        "onclose",
+        "onretire",
+        "checkServerIdentity",
+        "columnTransform",
+        ...(type === "PostgresSQL" ? ["onnotification"] : []),
+      ],
     }),
   );
 
@@ -65,11 +65,10 @@ for (const type of types) {
     define({
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
-      construct: true,
-      finalize: true,
+      noConstructor: true,
+      refCounted: true,
       configurable: false,
       JSType: "0b11101110",
-      klass: {},
       proto: {
         run: {
           fn: "doRun",
@@ -77,10 +76,6 @@ for (const type of types) {
         },
         cancel: {
           fn: "doCancel",
-          length: 0,
-        },
-        done: {
-          fn: "doDone",
           length: 0,
         },
         setMode: {
@@ -91,8 +86,37 @@ for (const type of types) {
           fn: "setPendingValueFromJS",
           length: 1,
         },
+        describeResult: {
+          fn: "describeResult",
+          length: 1,
+        },
+        ...(type === "PostgresSQL"
+          ? {
+              setCopy: {
+                fn: "setCopy",
+                length: 2,
+              },
+              copyWrite: {
+                fn: "copyWrite",
+                length: 1,
+              },
+              copyDone: {
+                fn: "copyDone",
+                length: 0,
+              },
+              copyFail: {
+                fn: "copyFail",
+                length: 1,
+              },
+              copyResume: {
+                fn: "copyResume",
+                length: 0,
+              },
+            }
+          : {}),
       },
-      values: ["pendingValue", "target", "columns", "binding"],
+      values:
+        type === "PostgresSQL" ? ["pendingValue", "target", "binding", "copy"] : ["pendingValue", "target", "binding"],
       estimatedSize: true,
     }),
   );

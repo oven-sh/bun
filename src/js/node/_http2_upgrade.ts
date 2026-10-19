@@ -18,7 +18,9 @@ interface UpgradeContextType {
   rawSocket: import("node:net").Socket;
   nativeHandle: NativeHandle | null;
   events: UpgradeEvents | null;
+  onRawSocketError: ((err: Error) => void) | null;
   handedOver: boolean;
+  errorEmitted: boolean;
 }
 
 interface Http2SecureServer {
@@ -65,7 +67,19 @@ function UpgradeContext(
   this.rawSocket = rawSocket;
   this.nativeHandle = null;
   this.events = null;
+  this.onRawSocketError = null;
   this.handedOver = false;
+  this.errorEmitted = false;
+}
+
+// Until the handover the connection is the server's, so its error is the
+// server's 'tlsClientError', once: a close that follows an error reports the
+// aborted handshake too. Same guard as tls.Server's kerrorEmitted (net.ts).
+function emitTlsClientError(tlsSocket: TLSProxySocket, err: Error) {
+  const ctx = tlsSocket._ctx;
+  if (ctx.handedOver || ctx.errorEmitted) return;
+  ctx.errorEmitted = true;
+  ctx.server.emit("tlsClientError", err, tlsSocket);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +224,7 @@ function socketHandshake(
 
   if (!success) {
     const err = require("internal/tls").tlsHandshakeError(verifyError);
-    ctx.server.emit("tlsClientError", err, tlsSocket);
+    emitTlsClientError(tlsSocket, err);
     tlsSocket.destroy(err);
     return;
   }
@@ -231,7 +245,7 @@ function socketHandshake(
     if (verifyError) {
       tlsSocket.authorized = false;
       tlsSocket.authorizationError = verifyError.code || verifyError.message;
-      ctx.server.emit("tlsClientError", verifyError, tlsSocket);
+      emitTlsClientError(tlsSocket, verifyError);
       if (rejectUnauthorized ?? tlsSocket._rejectUnauthorized) {
         tlsSocket.emit("secure", tlsSocket);
         tlsSocket.destroy(verifyError);
@@ -260,7 +274,9 @@ function socketHandshake(
 
 // Node reports a wrapped socket's errors on the TLS socket over it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function onRawSocketError(this: TLSProxySocket, err: Error) {
-  if (!this.destroyed) this.destroy(err);
+  if (this.destroyed) return;
+  emitTlsClientError(this, err);
+  this.destroy(err);
 }
 
 // onTlsClose: when the TLS socket closes (e.g. H2 session destroyed), clean up
@@ -275,6 +291,10 @@ function onTlsClose(this: TLSProxySocket) {
   raw.removeListener("end", ev[1]);
   raw.removeListener("drain", ev[2]);
   raw.removeListener("close", ev[3]);
+  // The raw socket is still sending close_notify. A failure there has no session to go to, and must not be uncaught.
+  raw.removeListener("error", ctx.onRawSocketError!);
+  ctx.onRawSocketError = null;
+  raw.on("error", noop);
 }
 
 // ---------------------------------------------------------------------------
@@ -381,10 +401,8 @@ function upgradeRawSocketToH2(
       data: {},
     });
   } catch (e) {
-    // Same surface as tls.Server's own 'connection' listener when the credentials fail to build.
-    rawSocket.destroy();
-    tlsSocket.destroy();
-    server.emit("error", e);
+    rawSocket.destroy(e as Error);
+    tlsSocket.destroy(e as Error);
     return true;
   }
 
@@ -401,7 +419,7 @@ function upgradeRawSocketToH2(
   rawSocket.on("end", events[1]);
   rawSocket.on("drain", events[2]);
   rawSocket.on("close", events[3]);
-  rawSocket.on("error", onRawSocketError.bind(tlsSocket));
+  rawSocket.on("error", (tlsSocket._ctx.onRawSocketError = onRawSocketError.bind(tlsSocket)));
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

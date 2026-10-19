@@ -8,7 +8,7 @@ use enum_map::EnumMap;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
-use crate::{AdditionalFile, BundleV2, ThreadPool};
+use crate::{BundleV2, ThreadPool};
 
 use bun_ast::Index;
 
@@ -76,7 +76,9 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: HtmlImports,
 
-    pub(crate) estimated_file_loader_count: usize,
+    /// Files whose parse result registered an asset (`unique_key_for_additional_file`).
+    /// Zero skips `process_files_to_copy`.
+    pub(crate) asset_file_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
     /// pre-allocations without re-iterating the file listing.
@@ -106,9 +108,11 @@ pub struct InputFile {
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
+    /// Index into `Graph::additional_output_files`. `process_files_to_copy` sets it for every
+    /// reachable file whose parse result registered an asset (`unique_key_for_additional_file`).
+    pub asset_output_file: Option<u32>,
     // No `arena` field — the owned fields
     // (Box/Vec) carry their allocator.
-    pub additional_files: AstVec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
@@ -121,7 +125,7 @@ impl Default for InputFile {
             secondary_path: AstAlloc::vec(),
             loader: options::Loader::default(),
             side_effects: SideEffects::default(),
-            additional_files: AstAlloc::vec(),
+            asset_output_file: None,
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
@@ -138,7 +142,7 @@ bun_collections::multi_array_columns! {
         secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
-        additional_files: AstVec<AdditionalFile>,
+        asset_output_file: Option<u32>,
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
@@ -173,7 +177,7 @@ impl<'a> Graph<'a> {
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
-            estimated_file_loader_count: 0,
+            asset_file_count: 0,
             css_file_count: 0,
             additional_output_files: Vec::new(),
             kit_referenced_server_data: false,
@@ -219,6 +223,14 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// The output file that `process_files_to_copy` made for an asset.
+    pub(crate) fn asset_output_file(&self, source_index: usize) -> &options::OutputFile {
+        match self.input_files.items_asset_output_file()[source_index] {
+            Some(id) => &self.additional_output_files[id as usize],
+            None => bun_core::Output::panic(format_args!("Internal error: missing asset file")),
+        }
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

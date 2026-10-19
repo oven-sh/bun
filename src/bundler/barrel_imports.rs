@@ -389,7 +389,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
+    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target);
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,

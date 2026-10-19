@@ -28,9 +28,9 @@ use enumset::EnumSet;
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::shell::util::OutKind;
 
-/// Local helper: `OutKind` → tag-name string for logs.
+/// `OutKind` → tag-name string for logs.
 #[inline]
-fn out_kind_str(k: OutKind) -> &'static str {
+pub(crate) fn out_kind_str(k: OutKind) -> &'static str {
     match k {
         OutKind::Stdout => "stdout",
         OutKind::Stderr => "stderr",

@@ -13,7 +13,7 @@ use crate::shell::interpreter::{
 use crate::shell::io::{ArrayBufSink, CmdIO, CmdIn, CmdOut, IO, JsObject, OutFd};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
+use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind, out_kind_str};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
@@ -1147,13 +1147,7 @@ impl Cmd {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
-        log!(
-            "cmd close buffered {}",
-            match kind {
-                OutKind::Stdout => "stdout",
-                OutKind::Stderr => "stderr",
-            }
-        );
+        log!("cmd close buffered {}", out_kind_str(kind));
         if let Some(e) = err {
             self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
         }

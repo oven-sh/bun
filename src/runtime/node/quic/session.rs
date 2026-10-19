@@ -823,10 +823,8 @@ impl QuicSession {
         self.stream_is_live(p).then(|| unsafe { &*p })
     }
 
-    /// `on_conn_closed` nulls `conn` before any event drains, so a stream
-    /// that lsquic did not finish, whose `StreamClosed` is dispatched with
-    /// no conn, was closed by the connection's death. Its close is the
-    /// session's to report.
+    /// The connection's death closed this stream (`on_conn_closed` nulls
+    /// `conn` before any event drains), so the session reports its close.
     fn defers_stream_close(&self, stream: &super::stream::QuicStream) -> bool {
         self.conn.get().is_null() && stream.unfinished_at_close()
     }
@@ -1482,10 +1480,8 @@ impl QuicSession {
                     stream.release_close_root();
                     return Ok(());
                 }
-                // The connection took this stream down. It stays registered
-                // so the session's close reaches it through
-                // `session.destroy(error)` with the connection's error, the
-                // way Node's FinishClose destroys every open stream.
+                // Stays registered so `session.destroy(error)` reaches it
+                // with the connection's error, as Node's FinishClose does.
                 if self.defers_stream_close(stream) {
                     return Ok(());
                 }

@@ -408,10 +408,10 @@ describe("a stream left open when the connection closes", () => {
     } as SessionOptions);
     await client.opened;
     // Opens a client stream, writes one byte, and returns its server side.
-    async function open(direction: "bidi" | "uni" = "bidi") {
+    async function open(direction: "bidi" | "uni" = "bidi", { observeClosed = true } = {}) {
       const stream =
         direction === "uni" ? await client.createUnidirectionalStream() : await client.createBidirectionalStream();
-      stream.closed.catch(() => {});
+      if (observeClosed) stream.closed.catch(() => {});
       stream.writer.writeSync(Uint8Array.of(1));
       const peer = accepted.shift() ?? (await new Promise<{ session: any; stream: any }>(r => waiters.push(r)));
       return { stream, peer };
@@ -482,7 +482,10 @@ describe("a stream left open when the connection closes", () => {
     const serverClosed = settle(peer.stream.closed);
     // Wait until the body (the FIN rides on its last frame) reached the
     // client before the peer dies.
-    while (stream.stats.bytesReceived < 4n) await new Promise(r => setImmediate(r));
+    for (let turns = 0; stream.stats.bytesReceived < 4n; turns++) {
+      if (turns > 10_000) throw new Error(`body never arrived: ${stream.stats.bytesReceived} bytes`);
+      await new Promise(r => setImmediate(r));
+    }
 
     peer.session.destroy(undefined, { code: 2n, type: "application" });
     await streamClosed;
@@ -663,6 +666,19 @@ describe("a stream left open when the connection closes", () => {
     expect(await streamClosed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
 
     expect(await settleRead(stream[Symbol.asyncIterator]().next())).toBe("rejected ERR_QUIC_APPLICATION_ERROR");
+  });
+
+  test("a stream nobody observes raises no unhandled rejection when the connection dies", async () => {
+    const { server, client, peer, open } = await openPair();
+    await using _server = server;
+    // Neither `closed` nor a read is ever looked at on this stream.
+    await open("bidi", { observeClosed: false });
+    const sessionClosed = settle(client.closed);
+
+    peer.session.destroy(undefined, { code: 2n, type: "application" });
+
+    // An unhandled rejection would fail this test file.
+    expect(await sessionClosed).toBe("rejected ERR_QUIC_APPLICATION_ERROR 2");
   });
 
   test("iterating a write-only stream after the connection error ends without an error", async () => {

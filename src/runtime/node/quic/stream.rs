@@ -128,8 +128,7 @@ pub(crate) struct QuicStream {
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
-    /// Set in `on_stream_close` when lsquic had not finished the stream:
-    /// frames of it were still in flight.
+    /// lsquic reported the close while frames were still in flight.
     unfinished_at_close: Cell<bool>,
     destroyed: Cell<bool>,
 }
@@ -338,12 +337,9 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
-    /// lsquic reported this stream's close while frames of it were still in
-    /// flight. With the connection gone, that close is the connection's
-    /// death, not the stream's own end: Node keeps such a stream until the
-    /// acknowledgement and destroys it with the session's close error, so
-    /// its close must wait for the session's close instead of being reported
-    /// as clean.
+    /// With the connection gone, a close reported while frames were in flight
+    /// is the connection's death, not the stream's own end (Node keeps such a
+    /// stream until the acknowledgement and gives it the session's error).
     pub(super) fn unfinished_at_close(&self) -> bool {
         self.unfinished_at_close.get()
     }
@@ -437,6 +433,20 @@ impl QuicStream {
                 s.reset_code = code;
             }
         });
+        // lsquic has queued its RESET_STREAM by now (this runs after the
+        // frame's callback). End our write side so the stream can finish
+        // once the reset is acknowledged, as ngtcp2 does.
+        self.outbound.with_mut(|o| {
+            o.data.clear();
+            o.end = PendingEnd::None;
+        });
+        if let Some(s) = self.ls() {
+            if self.with_state(|st| st.read_ended != 0) {
+                s.close();
+            } else {
+                s.shutdown(1);
+            }
+        }
     }
 
     fn mark_reset(&self, code: u64) {
@@ -603,9 +613,8 @@ impl QuicStream {
             unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
         }
         self.outbound.with_mut(|o| o.data.clear());
-        // Received bytes stay readable: the reader drains them and then sees
-        // the end, as Node's CapReadable does. Only a peer reset discards
-        // them (`mark_reset`).
+        // Received bytes stay readable, as Node's CapReadable does; only a
+        // peer reset discards them (`mark_reset`).
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
@@ -1190,21 +1199,6 @@ lsquic_callback! {
         if how == 1 || how == 2 {
             // Node rejects only the STOP_SENDING caller's `closed`.
             qs.peer_stop_sending_code.set(Some(code));
-            // lsquic answered with RESET_STREAM and dropped the buffered
-            // data. End our write side too, so the stream can finish once
-            // the reset is acknowledged (ngtcp2 closes the send side the same
-            // way). A bidi stream whose read side is open keeps reading.
-            qs.outbound.with_mut(|o| {
-                o.data.clear();
-                o.end = PendingEnd::None;
-            });
-            if let Some(s) = qs.ls() {
-                if qs.with_state(|st| st.read_ended != 0) {
-                    s.close();
-                } else {
-                    s.shutdown(1);
-                }
-            }
             if let Some(session) = qs.session_ref() {
                 // Node's `onstream` still observes a live writer.
                 session.push_event(SessionEvent::StreamStopSending {

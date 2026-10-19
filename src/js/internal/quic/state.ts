@@ -881,9 +881,8 @@ class QuicStreamState {
   }
 
   [kFinishClose]() {
-    // Copy the final values out of the shared buffer so the getters keep
-    // reporting the final state after the native stream is gone, the same
-    // way QuicStreamStats does.
+    // Keep the final values readable after the native stream is gone, as
+    // QuicStreamStats does.
     const handle = this.#handle;
     const copy = new Uint8Array(
       new Uint8Array(

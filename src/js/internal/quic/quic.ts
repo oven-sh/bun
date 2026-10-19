@@ -1755,11 +1755,8 @@ class QuicStream {
       });
     }
 
-    // The stream was destroyed before a FIN arrived: the read is truncated.
-    // The close carries the reason (the session's error, or the error
-    // passed to destroy()), so a rejected `closed` rethrows here and a
-    // clean close ends the iteration. A stream with no read side has
-    // nothing to truncate.
+    // Destroyed before a FIN arrived: the read is truncated, and `closed`
+    // carries the reason (Node does the same).
     const readable = !(inner.direction === kStreamDirectionUnidirectional && inner.isLocal);
     if (readable && this.destroyed && !inner.state.finReceived) {
       await this.closed;
@@ -2095,16 +2092,17 @@ class QuicStream {
         this.#handle.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
       }
     }
-    // A stream the connection's own close takes down gets the session's
-    // error on `closed` but no `onerror` call: in Node the native close
-    // reports each such stream before the session's destroy() runs.
+    // Node reports a stream the connection closed without an `onerror` call.
+    // `session.closed` carries the same error, so its rejection of `closed`
+    // is not left unhandled.
+    const closedByConnection = cascadingFromSessionDestroy && isQuicSessionClosedByNative(inner.session);
     const { onerror } = inner;
-    if (
-      error !== undefined &&
-      typeof onerror === "function" &&
-      !(cascadingFromSessionDestroy && isQuicSessionClosedByNative(inner.session))
-    ) {
+    if (error !== undefined && typeof onerror === "function" && !closedByConnection) {
       invokeOnerror(onerror, error);
+    }
+    if (closedByConnection && error !== undefined) {
+      inner.pendingClose ??= PromiseWithResolvers();
+      markPromiseAsHandled(inner.pendingClose.promise);
     }
     const handle = this.#handle;
     this[kFinishClose](error);

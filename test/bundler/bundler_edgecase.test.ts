@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+import { decodeSourceMappingsLine, itBundled, type BundlerTestInput } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
 // directory, never relative to the importing chunk (esbuild's semantics).
@@ -2947,6 +2947,363 @@ describe("bundler", () => {
     entryPoints: ["/entry.js"],
     target: "bun",
     run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
+  });
+  // A `var` reads `undefined` before its statement and can be declared twice,
+  // so its store has a place in the module. For a module wrapped in `__esm`
+  // only the name goes outside the closure. Each expected output below is
+  // what node prints for the same modules.
+  {
+    const modules = {
+      "/twice.mjs": `var mode = "dev"; console.log("twice", mode); var mode = "prod"; console.log("twice", mode); export { mode };`,
+      "/counter.mjs": `var n = 0; n++; console.log("counter", n); var n = 10; console.log("counter", n); export { n };`,
+      "/early.mjs": `console.log("early", typeof x); var x = 1; export { x };`,
+      "/guard.mjs": `console.log("guard", started ? "skipped" : "starting"); var started = true; export { started };`,
+      // Control: this value never left the closure.
+      "/computed.mjs": `console.log("computed", typeof y); var y = Math.max(1, 2); export { y };`,
+    };
+    const each = (line: (path: string) => string) =>
+      Object.keys(modules)
+        .map(path => line("." + path))
+        .join("\n");
+    const stdout = "twice dev\ntwice prod\ncounter 1\ncounter 10\nearly undefined\nguard starting\ncomputed undefined";
+    const byRequire = { "/entry.cjs": each(path => `require("${path}");`), ...modules };
+    const byImport = { "/entry.mjs": each(path => `await import("${path}");`), ...modules };
+    const throughStaticImport = {
+      "/entry.cjs": `require("./mid.mjs");`,
+      "/mid.mjs": each(path => `import "${path}";`) + "\nexport const mid = 1;",
+      ...modules,
+    };
+    const minify = { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true };
+    const variants: Record<string, Partial<BundlerTestInput> & Pick<BundlerTestInput, "files">> = {
+      Require: { files: byRequire },
+      RequireCLI: { files: byRequire, backend: "cli" },
+      RequireFormatCjs: { files: byRequire, format: "cjs" },
+      // An ES module entry: iife output never calls a CommonJS entry point.
+      RequireFormatIife: {
+        files: { "/entry.mjs": each(path => `require("${path}");`) + "\nexport {};", ...modules },
+        format: "iife",
+      },
+      RequireMinify: { files: byRequire, ...minify },
+      RequireTargetNode: { files: byRequire, target: "node" },
+      RequireTargetBun: { files: byRequire, target: "bun" },
+      RequireSplitting: { files: byRequire, splitting: true, outdir: "/out", outputPaths: ["/out/entry.js"] },
+      Import: { files: byImport },
+      ImportMinify: { files: byImport, ...minify },
+      ThroughStaticImport: { files: throughStaticImport },
+    };
+    for (const [name, variant] of Object.entries(variants)) {
+      itBundled(`edgecase/EsmWrapVarStoreKeepsItsPlace${name}`, { run: { stdout }, ...variant });
+    }
+  }
+  itBundled("edgecase/EsmWrapVarWrittenBeforeItsStatement", {
+    files: {
+      "/entry.cjs": `
+        require("./assign.mjs");
+        require("./setup.mjs");
+        require("./twice.mjs");
+        require("./loops.mjs");
+        require("./folded.mjs");
+        require("./block.mjs");
+      `,
+      "/assign.mjs": `x = 5; var x = 1; console.log("assign", x); export { x };`,
+      "/setup.mjs": `
+        setup();
+        var ready = false;
+        console.log("setup", ready);
+        function setup() { ready = true; }
+        export { ready };
+      `,
+      "/twice.mjs": `
+        var a = function () { return "a"; }; const r1 = a(); var a = function () { return "b"; }; console.log("function", r1, a());
+        var b = () => "a"; const r2 = b(); var b = () => "b"; console.log("arrow", r2, b());
+        var c = class { static n = "a"; }; const r3 = c.n; var c = class { static n = "b"; }; console.log("class", r3, c.n);
+        export { a, b, c };
+      `,
+      "/loops.mjs": `
+        var out = [];
+        var i = 0;
+        while (i < 2) { out.push("first" + i); i++; }
+        var i = 0;
+        while (i < 2) { out.push("second" + i); i++; }
+        console.log(out.join(" "));
+        export { out };
+      `,
+      // Constant folding makes these values movable.
+      "/folded.mjs": `
+        console.log("folded", typeof cached, typeof limit, typeof label);
+        var cached = !0;
+        var limit = 1024 * 4;
+        var label = "a" + "b";
+        export { cached, limit, label };
+      `,
+      "/block.mjs": `
+        if (globalThis) { var mode = "block"; }
+        var mode = "top";
+        console.log("block", mode, read());
+        function read() { return mode; }
+        export { mode };
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout:
+        "assign 1\nsetup false\nfunction a b\narrow a b\nclass a b\nfirst0 first1 second0 second1\nfolded undefined undefined undefined\nblock top top",
+    },
+  });
+  // The earlier store can also sit in a body without braces, and the `var` in
+  // a `for` head without an initializer. Each value is what node gives. The
+  // first test of each pair reads the variable in the module body.
+  {
+    const cases: Record<string, [body: string, value: string]> = {
+      ifBody: [`if (globalThis) var x = 1; var x = 2;`, `x`],
+      elseBody: [`if (!globalThis) {} else var x = 1; var x = 2;`, `x`],
+      whileBody: [`var n = 1; while (n--) var x = 1; var x = 2;`, `x`],
+      doBody: [`do var x = 1; while (0); var x = 2;`, `x`],
+      exported: [`if (globalThis) var x = 1; export var x = 2;`, `x`],
+      twoNames: [`if (globalThis) var x = 1; var x = 2, y = 3; var y = 4;`, `[x, y]`],
+      forHead: [`for (var i; !i;) i = 1; var i = 0;`, `i`],
+      readFirst: [`globalThis.seen = typeof x; var x = 2; if (globalThis) var x = 1;`, `globalThis.seen`],
+    };
+    const stdout = JSON.stringify({
+      ifBody: 2,
+      elseBody: 2,
+      whileBody: 2,
+      doBody: 2,
+      exported: 2,
+      twoNames: [2, 4],
+      forHead: 0,
+      readFirst: "undefined",
+    });
+    const files = (read: "inBody" | "read()") => ({
+      "/entry.mjs":
+        "const out = {};\n" +
+        Object.keys(cases)
+          .map(name => `out.${name} = (await import("./${name}.mjs")).${read};`)
+          .join("\n") +
+        "\nconsole.log(JSON.stringify(out));",
+      ...Object.fromEntries(
+        Object.entries(cases).map(([name, [body, value]]) => [
+          `/${name}.mjs`,
+          `${body} export const inBody = ${value}; export function read() { return ${value}; }`,
+        ]),
+      ),
+    });
+    for (const minifySyntax of [false, true]) {
+      const suffix = minifySyntax ? "MinifySyntax" : "";
+      itBundled(`edgecase/EsmWrapVarStoreAfterBracelessBody${suffix}`, {
+        files: files("inBody"),
+        minifySyntax,
+        run: { stdout },
+      });
+      // The second test reads it from outside. It is a todo until #45705: a `var`
+      // in a body without braces is a second variable inside the closure, and the
+      // stores inside the closure write that one. `read()` then gives `undefined`
+      // for each `x` and `i`.
+      itBundled(`edgecase/EsmWrapVarStoreAfterBracelessBodyReadFromOutside${suffix}`, {
+        todo: true,
+        files: files("read()"),
+        minifySyntax,
+        run: { stdout },
+      });
+    }
+  }
+  itBundled("edgecase/EsmWrapVarReadThroughCycle", {
+    files: {
+      "/entry.cjs": `
+        require("./a.mjs");
+        console.log("end", require("./b.mjs").later());
+      `,
+      "/a.mjs": `
+        import "./b.mjs";
+        export var K = "K";
+        export var fn = () => 1;
+        export function declared() {}
+        console.log("a done", K);
+      `,
+      "/b.mjs": `
+        import { K, fn, declared } from "./a.mjs";
+        console.log("b first", K, typeof fn, typeof declared);
+        export function later() { return K; }
+      `,
+    },
+    run: { stdout: "b first undefined undefined function\na done K\nend K" },
+  });
+  // "/m.mjs" holds nothing that must stay in a closure, but "/x.mjs" runs
+  // before it and reads `m` through the function of "/n.mjs".
+  itBundled("edgecase/EsmWrapVarOfLeafReadThroughCycle", {
+    files: {
+      "/entry.cjs": `require("./n.mjs");`,
+      "/m.mjs": `export var m = 1;`,
+      "/n.mjs": `
+        import "./x.mjs";
+        import { m } from "./m.mjs";
+        export function peek() { return typeof m; }
+      `,
+      "/x.mjs": `
+        import { peek } from "./n.mjs";
+        console.log("x sees m:", peek());
+      `,
+    },
+    run: { stdout: "x sees m: undefined" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("init_m()");
+    },
+  });
+  itBundled("edgecase/EsmWrapVarAfterThrowAndAfterAwait", {
+    files: {
+      "/entry.mjs": `
+        for (const i of [1, 2]) {
+          try { require("./throws.mjs"); } catch (e) { console.log("threw", i, e.message); }
+        }
+        console.log("peek", globalThis.peek());
+        const ns = await import("./awaits.mjs");
+        console.log("entry", ns.v);
+      `,
+      "/throws.mjs": `
+        globalThis.peek = () => typeof before + "," + typeof after;
+        var before = 1;
+        if (globalThis.peek) throw new Error("boom");
+        var after = 2;
+        export { before, after };
+      `,
+      "/awaits.mjs": `
+        console.log("early", typeof v);
+        await 0;
+        export var v = "v";
+        console.log("late", v);
+      `,
+    },
+    target: "bun",
+    run: { stdout: "threw 1 boom\nthrew 2 boom\npeek number,undefined\nearly undefined\nlate v\nentry v" },
+  });
+  // A lifted `exports.k = 1` prints as `var k = 1`, and it is a store too.
+  itBundled("edgecase/EsmWrapLiftedCommonJSExportKeepsItsPlace", {
+    files: {
+      "/entry.cjs": `require("./mid.mjs");`,
+      "/mid.mjs": `
+        import { k } from "./lib.cjs";
+        console.log("mid", k);
+      `,
+      "/lib.cjs": `
+        console.log("lib", typeof helper());
+        exports.k = 1;
+        function helper() { return exports.k; }
+      `,
+    },
+    run: { stdout: "lib undefined\nmid 1" },
+  });
+  // A script: here a function and a `var` can share a name, in either order.
+  itBundled("edgecase/EsmWrapVarMergedWithFunction", {
+    files: {
+      "/entry.cjs": `require("./function-first.js"); require("./var-first.js");`,
+      "/function-first.js": `
+        console.log("before", typeof f);
+        function f() { return 1; }
+        var f = 2;
+        console.log("after", typeof f);
+      `,
+      "/var-first.js": `
+        console.log("before", typeof f);
+        var f = 2;
+        function f() { return 1; }
+        console.log("after", typeof f);
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: "before function\nafter number\nbefore function\nafter number" },
+  });
+  // A read of `let`, `const` or `class` before its statement throws in the
+  // source, so those values still leave the closure, and a module that holds
+  // nothing else still needs no `init_` call.
+  itBundled("edgecase/EsmWrapLexicalValuesNeedNoWrapper", {
+    files: {
+      "/entry.js": `
+        const lazy = await import("./lazy.js");
+        console.log(lazy.x, lazy.y(), new lazy.Z().z(), lazy.w());
+      `,
+      "/lazy.js": `
+        export const x = 123;
+        export let y = function () { return x; };
+        export class Z { z() { return y(); } }
+        export function w() { return new Z().z(); }
+      `,
+    },
+    run: { stdout: "123 123 123 123" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("init_");
+    },
+  });
+  // The binding of `export default` is not a `var` either, whichever symbol
+  // holds it: a named function expression binds its own name.
+  itBundled("edgecase/EsmWrapDefaultExportValueNeedsNoWrapper", {
+    files: {
+      "/entry.js": `
+        const fn = await import("./fn.js");
+        const asyncFn = await import("./async-fn.js");
+        const generator = await import("./generator.js");
+        const cls = await import("./class.js");
+        const arrow = await import("./arrow.js");
+        console.log(
+          fn.default(),
+          await asyncFn.default(),
+          generator.default().next().value,
+          new cls.default().name(),
+          arrow.default(),
+          require("./required.js").default(),
+        );
+      `,
+      "/fn.js": `export default (function foo() { return "fn"; });`,
+      "/async-fn.js": `export default (async function foo() { return "asyncFn"; });`,
+      "/generator.js": `export default (function* foo() { yield "generator"; });`,
+      "/class.js": `export default (class Foo { name() { return "class"; } });`,
+      "/arrow.js": `export default () => "arrow";`,
+      "/required.js": `export default (function foo() { return "required"; });`,
+    },
+    run: { stdout: "fn asyncFn generator class arrow required" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("init_");
+    },
+  });
+  // A `var` store that runs at its statement is only right for a reader that
+  // runs after the module: these two depend on the order of `export * from`.
+  itBundled("edgecase/EsmWrapVarReadThroughExportStar", {
+    files: {
+      "/entry.cjs": `require("./a.mjs");`,
+      "/a.mjs": `
+        export * from "./c.mjs";
+        import "./b.mjs";
+        console.log("a");
+      `,
+      "/b.mjs": `
+        import { peek } from "./peek.mjs";
+        console.log("b sees", peek());
+      `,
+      "/c.mjs": `
+        console.log("c");
+        export var C = "C";
+      `,
+      "/peek.mjs": `
+        import * as a from "./a.mjs";
+        export function peek() { return typeof a.C; }
+      `,
+    },
+    run: { stdout: "c\nb sees string\na" },
+  });
+  itBundled("edgecase/EsmWrapVarReadThroughExportStarOfAsyncModule", {
+    files: {
+      "/entry.mjs": `
+        const m = await import("./m.mjs");
+        console.log("entry sees", m.v, typeof m.f);
+      `,
+      "/m.mjs": `export * from "./t.mjs";`,
+      "/t.mjs": `
+        await 0;
+        export var v = "V";
+        export var f = function () {};
+      `,
+    },
+    run: { stdout: "entry sees V function" },
   });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.

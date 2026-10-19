@@ -755,19 +755,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                                 // Convert the declarations to assignments
                                 let mut value = Expr::EMPTY;
+                                let symbols = hoist.symbols;
                                 for decl in local.decls.slice() {
                                     if let Some(initializer) = decl.value {
-                                        // Keep in sync with `needs_wrapper_ref` in the parser.
-                                        if initializer.can_be_moved()
-                                            && matches!(decl.binding.data, B::B::BIdentifier(_))
-                                        {
+                                        // `needs_wrapper_ref` in the parser asks the same question.
+                                        if local.value_can_leave_esm_wrapper(decl, |ref_| {
+                                            symbols.get().get_const(ref_)
+                                        }) {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {
                                                 binding: decl.binding,
                                                 value: decl.value,
                                             });
                                         } else {
-                                            // A pattern runs getters or the iterator, so it stays inside the wrapper
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                             let binding = Binding::to_expr(
                                                 &hoist.without_bound_items(decl.binding),

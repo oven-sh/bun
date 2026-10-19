@@ -6,6 +6,7 @@
 //! `crate::StoreSlice` doc).
 
 use crate::g as G;
+use crate::symbol::{self, Symbol};
 use crate::{
     Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
     StmtNodeIndex, StmtNodeList, StmtOrExpr,
@@ -267,6 +268,23 @@ impl Local {
         self.kind == other.kind
             && self.is_export == other.is_export
             && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
+    }
+
+    /// Whether the linker may print `decl` with its value above the `__esm` wrapper of its module.
+    pub fn value_can_leave_esm_wrapper<'s>(
+        &self,
+        decl: &G::Decl,
+        symbol_of: impl FnOnce(Ref) -> Option<&'s Symbol>,
+    ) -> bool {
+        // A pattern runs getters or the iterator.
+        let crate::binding::Data::BIdentifier(id) = decl.binding.data else {
+            return false;
+        };
+        // Before its statement a lifted `exports.x` or a `var` reads `undefined`. The rest throw.
+        let store_keeps_its_place = self.origin.is_commonjs_export()
+            // Not a function's name, which the linker binds for `export default (function f() {})`.
+            || symbol_of(id.get().r#ref).is_some_and(|bound| bound.kind == symbol::Kind::Hoisted);
+        !store_keeps_its_place && decl.value.is_some_and(|value| value.can_be_moved())
     }
 }
 

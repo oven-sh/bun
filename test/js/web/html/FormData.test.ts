@@ -409,7 +409,7 @@ describe("FormData", () => {
         "-e",
         `
           // With a 64 KiB limit the list is capped at 2730 entries.
-          const form = FormData.from("a&".repeat(2730));
+          const form = FormData.from(Buffer.alloc(5460, "a&").toString());
           const part = '--b\\r\\nContent-Disposition: form-data; name="a"\\r\\n\\r\\n\\r\\n';
           const multipart = Buffer.from(part.repeat(2731) + "--b--\\r\\n");
           for (const grow of [

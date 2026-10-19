@@ -301,7 +301,9 @@ it("import long string should not segfault", async () => {
 
 it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path buffer until it is normalized", () => {
   using dir = tempDir("resolve-long-specifier", { "index.js": "" });
-  expect(Bun.resolveSync(`${dir}${"/".repeat(5000)}index.js`, String(dir))).toBe(join(String(dir), "index.js"));
+  expect(Bun.resolveSync(`${dir}${Buffer.alloc(5000, "/").toString()}index.js`, String(dir))).toBe(
+    join(String(dir), "index.js"),
+  );
 });
 
 it("import override to node builtin", async () => {
@@ -890,11 +892,11 @@ describe("package.json sideEffects entries longer than the maximum path length",
 // The resolver uses more stack per nesting level of an `exports` target than the JSON parser does.
 describe("package.json exports targets nested too deeply", () => {
   const targets = {
-    array: "[".repeat(40000) + '"./t.js"' + "]".repeat(40000),
+    array: Buffer.alloc(40000, "[").toString() + '"./t.js"' + Buffer.alloc(40000, "]").toString(),
     conditions:
       Array.from({ length: 30000 }, (_, i) => (i % 2 ? '{"node":' : '{"default":')).join("") +
       '"./t.js"' +
-      "}".repeat(30000),
+      Buffer.alloc(30000, "}").toString(),
   };
 
   it.concurrent.each(Object.entries(targets))("nested %s doesn't overflow the stack", async (shape, target) => {

@@ -5600,7 +5600,7 @@ it("moves import() and require() of a conditional into each branch", () => {
 it.concurrent("doesn't crash on a deeply nested import() or require() of a long conditional chain", async () => {
   const script = `
     const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
-    const chain = "(" + "a ? 'b' : ".repeat(4000) + "'c')";
+    const chain = "(" + Buffer.alloc(40000, "a ? 'b' : ").toString() + "'c')";
     for (const callee of ["import", "require", "require.resolve"]) {
       // The depth limit differs between builds, so go deeper until the parser throws.
       for (let depth = 250; ; depth += 250) {
@@ -5660,7 +5660,7 @@ it.concurrent("reports only the stack overflow when the visit pass overflows", a
   const script = `
     const chain = "a" + ".b".repeat(${isDebug ? 20_000 : 100_000});
     // A skipped identifier has no symbol. This name's length is larger than the symbol table.
-    const name = "L".repeat(2000);
+    const name = Buffer.alloc(2000, "L").toString();
     const legacyDecorators = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
     const cases = [
       ["[" + chain + ", " + name + " = 1] = y;"],

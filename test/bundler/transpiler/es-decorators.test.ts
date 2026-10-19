@@ -1021,7 +1021,7 @@ describe("ES Decorators", () => {
 
     test.concurrent("throws a stack overflow error for a long chain of calls in a field initializer", async () => {
       const result = await inChild(`
-        const source = "class A { @d #p() {} x = a" + "()".repeat(100000) + "; }";
+        const source = "class A { @d #p() {} x = a" + Buffer.alloc(200000, "()").toString() + "; }";
         let message = "no error";
         try {
           new Bun.Transpiler({ loader: "ts" }).transformSync(source);

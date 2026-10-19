@@ -337,7 +337,7 @@ it("throws when the pair list can't grow", async () => {
       "-e",
       `
         // With a 64 KiB limit the list is capped at 4096 pairs.
-        const full = "a&".repeat(4096);
+        const full = Buffer.alloc(8192, "a&").toString();
         const params = new URLSearchParams(full);
         for (const grow of [() => params.append("a", ""), () => params.set("b", ""), () => new URLSearchParams(full + "a")]) {
           try {

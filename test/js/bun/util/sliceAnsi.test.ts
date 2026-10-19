@@ -1685,14 +1685,14 @@ describe("Bun.sliceAnsi", () => {
         `const red = "\\x1b[31m";
         const ellipsis = "\\u2026" + "\\u200b".repeat(10); // width 1, 11 characters
         const cases = {
-          sgrAtLimit: [red + "a".repeat(65527), 1],
-          sgrPastLimit: [red + "a".repeat(65528), 1],
+          sgrAtLimit: [red + Buffer.alloc(65527, "a").toString(), 1],
+          sgrPastLimit: [red + Buffer.alloc(65528, "a").toString(), 1],
           wideSgrPastLimit: [red + "\\u3042".repeat(65528), 2],
-          ellipsisBothAtLimit: ["a".repeat(65518), 1, 65517, ellipsis],
-          ellipsisBothPastLimit: ["a".repeat(65519), 1, 65518, ellipsis],
-          linkAtLimit: ["\\x1b]8;;" + "u".repeat(65523) + "\\x07ab", 1],
-          linkPastLimit: ["\\x1b]8;;" + "u".repeat(65524) + "\\x07ab", 1],
-          shortSliceOfLongInput: [red + "a".repeat(70000), 0, 4, ellipsis],
+          ellipsisBothAtLimit: [Buffer.alloc(65518, "a").toString(), 1, 65517, ellipsis],
+          ellipsisBothPastLimit: [Buffer.alloc(65519, "a").toString(), 1, 65518, ellipsis],
+          linkAtLimit: ["\\x1b]8;;" + Buffer.alloc(65523, "u").toString() + "\\x07ab", 1],
+          linkPastLimit: ["\\x1b]8;;" + Buffer.alloc(65524, "u").toString() + "\\x07ab", 1],
+          shortSliceOfLongInput: [red + Buffer.alloc(70000, "a").toString(), 0, 4, ellipsis],
         };
         const results = {};
         for (const [name, args] of Object.entries(cases)) {

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SourceMapConsumer } from "source-map";
-import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+import { SourceMapConsumer, type RawSourceMap } from "source-map";
+import { itBundled, type BundlerTestBundleAPI, type BundlerTestInput } from "./expectBundled";
 import { checkGraph, run } from "./splitting-fuzz";
 
 const env = {
@@ -26,7 +26,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/client.js",
@@ -56,7 +56,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -82,7 +82,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -112,7 +112,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -147,7 +147,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -193,7 +193,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -227,7 +227,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -256,7 +256,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: [
       {
@@ -283,7 +283,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -321,7 +321,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline",
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -520,8 +520,7 @@ describe("bundler", () => {
       pinned,
       folded,
       ...options
-    }: Omit<Parameters<typeof itBundled>[1], "onAfterBundle"> &
-      Record<"pinned" | "folded", (api: BundlerTestBundleAPI) => void>,
+    }: Omit<BundlerTestInput, "onAfterBundle"> & Record<"pinned" | "folded", (api: BundlerTestBundleAPI) => void>,
   ) {
     const entry = options.entryPoints![0].replace(/^\/|\.[jt]s$/g, "");
     itBundled(id, {
@@ -1490,6 +1489,140 @@ describe("bundler", () => {
       { file: "/out/dbp-1.js", stdout: "c\na" },
       { file: "/out/dbp-activity-showcase.js", stdout: "c\na\nx\nb\ndone" },
     ],
+  });
+
+  // m2.js, m5.js and m6.js import each other, in a chunk that worker.js and the import() in index.js share. m5.js reads
+  // v6 at load. worker.js enters the cycle at m6.js, so m5.js comes first in its order. The import() enters it at m5.js,
+  // so m6.js comes first in its order, and the chunk follows that one.
+  const cycleWithLoadTimeRead = {
+    "/index.js": `import("./m5.js").then(m => console.log("ok", m.w5));`,
+    "/worker.js": `import "./flag.js"; import "./m6.js"; console.log("worker");`,
+    "/flag.js": `globalThis.IS_WORKER = true;`,
+    "/m2.js": `export { v5 as x } from "./m5.js"; export function v2() { return 2 }`,
+    "/m5.js": /* js */ `
+      import { v2 } from "./m2.js"; import { v6 } from "./m6.js";
+      export function v5() { return v2 }
+      export const w5 = globalThis.IS_WORKER ? null : v6.toUpperCase();
+    `,
+    "/m6.js": `import { v2 } from "./m2.js"; export const w6 = typeof v2; export let v6 = "six";`,
+  };
+  for (const [name, options] of Object.entries<Partial<Parameters<typeof itBundled>[1]>>({
+    "": {},
+    "EntriesSwapped": { entryPoints: ["/worker.js", "/index.js"] },
+    "Browser": { target: "browser" },
+    "Minified": { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
+    "HashedEntry": {
+      entryNaming: "[name].entry-[hash].[ext]",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "index");
+        launchHashedEntry(api, "worker");
+      },
+    },
+  })) {
+    itBundled("splitting/SharedChunkOwnerLoadTimeRead" + name, {
+      files: cycleWithLoadTimeRead,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      run: [
+        { file: "/out/index.js", stdout: "ok SIX" },
+        { file: "/out/worker.js", stdout: "worker" },
+      ],
+    });
+  }
+
+  // Without flag.js, worker.js throws unbundled too. index.js still loads.
+  itBundled("splitting/SharedChunkOwnerLoadTimeReadThrowingEntry", {
+    files: {
+      ...cycleWithLoadTimeRead,
+      "/worker.js": `import "./m6.js"; console.log("worker");`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "ok SIX" },
+  });
+
+  // store.js reads api.js only through a function that it calls at load.
+  itBundled("splitting/SharedChunkOwnerLoadTimeReadThroughFunction", {
+    files: {
+      "/main.js": `import { store } from "./store.js"; console.log("main", store);`,
+      "/worker.js": `import "./flag.js"; import { api } from "./api.js"; console.log("worker", api.name);`,
+      "/flag.js": `globalThis.IS_WORKER = true;`,
+      "/store.js": /* js */ `
+        import { describe } from "./describe.js";
+        export const store = globalThis.IS_WORKER ? "no store" : "store of " + describe();
+      `,
+      "/describe.js": `import { api } from "./api.js"; export function describe() { return api.name; }`,
+      "/api.js": `import "./store.js"; export const api = { name: "api" };`,
+    },
+    entryPoints: ["/worker.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main store of api" },
+      { file: "/out/worker.js", stdout: "worker api" },
+    ],
+  });
+
+  // api.js names store only in a function that it stores, so it can come ahead of store.js.
+  itBundled("splitting/SharedChunkOwnerLoadTimeReadStoredFunction", {
+    files: {
+      "/main.js": `import { store } from "./store.js"; console.log("main", store);`,
+      "/worker.js": /* js */ `
+        import "./flag.js"; import { api, getStore } from "./api.js";
+        console.log("worker", api.name, typeof getStore);
+      `,
+      "/flag.js": `globalThis.IS_WORKER = true;`,
+      "/store.js": /* js */ `
+        import { api } from "./api.js";
+        export const store = globalThis.IS_WORKER ? "no store" : "store of " + api.name;
+      `,
+      "/api.js": /* js */ `
+        import { store } from "./store.js";
+        export const api = { name: "api" };
+        export const getStore = () => store;
+      `,
+    },
+    entryPoints: ["/worker.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main store of api" },
+      { file: "/out/worker.js", stdout: "worker api function" },
+    ],
+  });
+
+  // m6.js names v5 only in a function that it stores, so the order of a.js breaks no read and the chunk stays with it.
+  // m5.js needs what m6.js sets on cfg.
+  itBundled("splitting/SharedChunkOwnerKeepsChunkWithStoredFunction", {
+    files: {
+      "/a.js": `import { label } from "./m5.js"; console.log("a", label);`,
+      "/b.js": `import { getV5 } from "./m6.js"; console.log("b", typeof getV5);`,
+      "/m5.js": /* js */ `
+        import "./m6.js"; import { cfg } from "./cfg.js";
+        export let v5 = 1;
+        export const label = cfg.name.toUpperCase();
+      `,
+      "/m6.js": /* js */ `
+        import { v5 } from "./m5.js"; import { cfg } from "./cfg.js";
+        cfg.name = "app";
+        export const getV5 = () => v5;
+      `,
+      "/cfg.js": `export const cfg = {};`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/a.js", stdout: "a APP" },
   });
 
   // Ported from Rolldown's code_splitting/issue_5276_2.
@@ -3992,7 +4125,7 @@ describe("bundler", () => {
         console.log(result.outputs.length);
       `,
     });
-    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutInternals } = env;
+    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutInternals } = env as NodeJS.Dict<string>;
     const chunks = async (...flags: string[]) => {
       const { stdout, ...rest } = await run([bunExe(), ...flags, "build.js"], String(dir), withoutInternals);
       return { stdout: stdout.trim(), ...rest };
@@ -4720,7 +4853,7 @@ describe("bundler", () => {
     // `util("admin")` follows the dynamic import on the same line, so the map
     // only points at it if the mappings were shifted by the difference between
     // the placeholder and the path written over it.
-    async function expectUtilCallToBeMapped(code: string, map: object) {
+    async function expectUtilCallToBeMapped(code: string, map: RawSourceMap) {
       const generatedLines = code.split("\n");
       const line = generatedLines.findIndex(l => l.includes('util("admin")')) + 1;
       expect(line).toBeGreaterThan(0);

@@ -316,7 +316,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
-  cxxSources.push(...codegen.bindgenV2Cpp);
 
   // All deps must be ready (headers extracted, libs built) before compile.
   //

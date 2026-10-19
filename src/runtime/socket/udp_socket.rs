@@ -96,17 +96,13 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
-    // Reached on every POSIX platform when recvmmsg fails. That is also how
-    // a connected socket's ICMP error (so_error) arrives.
+    // recvmmsg failed. A connected socket's ICMP error (so_error) arrives this way too.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = this.enter_owners_context();
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
-    // A callback earlier in the same poll dispatch may have left a
-    // TerminationException pending: loop.c's recv do-while can reach this
-    // right after an `on_data` iteration's callback.
-    // `to_js` below and the error handler both enter JS, which trips
-    // executeCallImpl's assertNoException(). Mirrors on_data / on_drain.
+    // An `on_data` callback earlier in this poll dispatch may have left a TerminationException
+    // pending, and entering JS with one trips assertNoException(). Mirrors on_data / on_drain.
     if global_this.has_exception() {
         return;
     }

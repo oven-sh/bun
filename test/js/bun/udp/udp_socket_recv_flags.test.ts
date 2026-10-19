@@ -125,12 +125,12 @@ describe("udpSocket() and ICMP errors", () => {
       // error before the receive path does, and then throws it.
       let stop = false;
       const pump = (async () => {
-        for (let i = 0; i < 500 && !stop; i++) {
+        for (let i = 0; i < 100 && !stop; i++) {
           if (sender.closed) return onError(new Error("the socket was closed instead of reporting the error"));
           try {
             sender.send("dead");
           } catch {}
-          await Bun.sleep(10);
+          await echoRoundTrips();
         }
       })();
       const err = await errored;

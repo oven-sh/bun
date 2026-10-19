@@ -40,13 +40,17 @@ afterAll(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("parallel requests, single origin", () => {
+  // One case at a time. Every origin and proxy here shares this process's
+  // event loop, so overlapping cases only deepen its TLS handshake queue. On
+  // a slow host (debug build) the oldest handshakes then outlive Bun.serve's
+  // 10 s wait for a first request, and fetch() fails with ECONNRESET.
   for (const { proxyTls, originTls, keepalive } of cartesian({
     proxyTls: [false, true] as const,
     originTls: [false, true] as const,
     keepalive: [false, true] as const,
   })) {
     const N = 32;
-    test.concurrent(
+    test.serial(
       `${N}× parallel ${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin keepalive=${keepalive}`,
       async () => {
         // Use Bun.serve here so keepalive reuse actually works on the

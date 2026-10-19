@@ -1654,8 +1654,8 @@ fn run_one(
         return None;
     }
 
-    // What is found in each file. An invalid task is retried, so a file can be visited twice: the
-    // last visit replaces the first, in place.
+    // What is found in each file. A discarded task's files are rechecked, so a file can be visited
+    // twice: the last visit replaces the first, in place.
     type Sections = Vec<(bun_sema::program::FileId, Vec<Walked>)>;
     let sections: Guarded<Sections> = Guarded::new(Vec::new());
     let write_unit = |checker: &mut bun_sema::check::Checker<'_, '_>,
@@ -1801,15 +1801,7 @@ fn run_one(
             progress: None,
             only: None,
             order: 1,
-            digests: false,
-            task_clock: None,
-            plan_options: bun_sema_driver::PlanOptions {
-                reproduces_symbol_ids: false,
-                // The tests run side by side, each on one thread. The plan of several threads is the
-                // one with steps, publishing and validation.
-                tasks_on_one_thread: true,
-                ..Default::default()
-            },
+            plan_options: bun_sema_driver::PlanOptions::default(),
             retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],

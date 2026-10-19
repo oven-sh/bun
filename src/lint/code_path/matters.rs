@@ -106,11 +106,11 @@ impl Matters {
                         op: None, target, ..
                     } => {
                         matches!(kind_of(target), Some(K::Array(_) | K::Object(_)))
-                            || match bound.expr_parent.get(i) {
-                                Some(&Parent::Expr(parent)) => {
+                            || match bound.parent_of_expr(hir::ExprId(i as u32)) {
+                                Parent::Expr(parent) => {
                                     matches!(kind_of(parent), Some(K::Array(_)))
                                 }
-                                Some(Parent::Prop(_)) => true,
+                                Parent::Prop(_) => true,
                                 _ => false,
                             }
                     }

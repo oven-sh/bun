@@ -24,13 +24,13 @@ use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
     Details, LintMessage, LintOptions, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId,
-    apply_fixes, is_parse_error,
+    apply_fixes, breaks_syntax,
 };
 use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, is_same_path, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
-use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
+use bun_sema_driver::host::{AlreadyRead, Provided, as_read, from_native, is_bundled, to_native};
 use bun_sema_driver::{Category, Diagnostic, Libs, Refused, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
@@ -438,6 +438,8 @@ fn check_and_lint_in(
                     crate::lint::unused_directives_as_oxlint(&mut result, false);
                 }
                 context.promote_suggestions(&mut result);
+                // After the first pass, only files that were fixed are linted.
+                context.count_redeclarations(file, &mut result, !is_first_pass);
                 // What the type checker reports is known when all files are checked.
                 let is_reported = !result.messages.is_empty()
                     || !result.suppressed.is_empty()
@@ -485,8 +487,6 @@ fn check_and_lint_in(
         progress: None,
         only: None,
         order: 1,
-        digests: false,
-        task_clock: None,
         plan_options: bun_sema_driver::PlanOptions {
             after_file_is_for_checked_files: true,
             // As in an editor, which is what `projectService` of typescript-eslint is.
@@ -621,17 +621,25 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
                 "\nSee https://github.com/oxc-project/tsgolint/issues/351 for more information.",
             );
         }
+        // The `stylish`, `unix` and `json` formats don't show help text, so outside oxlint mode the message includes
+        // it.
+        let is_oxlint = context.of_oxlint.is_some();
         let message = LintMessage {
             rule_id: Some(RuleId::Unknown(b"typescript/tsconfig-error"[..].into())),
             severity: Severity::Error,
-            message: b"Invalid tsconfig".to_vec(),
+            message: match is_oxlint {
+                true => b"Invalid tsconfig".to_vec(),
+                false => [&b"Invalid tsconfig: "[..], text].concat(),
+            },
             line: diagnostic.line,
             column: diagnostic.column,
             end: has_place.then_some((diagnostic.end_line, diagnostic.end_column)),
-            details: Some(Box::new(Details {
-                help: help.into(),
-                ..Details::default()
-            })),
+            details: is_oxlint.then(|| {
+                Box::new(Details {
+                    help: help.into(),
+                    ..Details::default()
+                })
+            }),
             ..LintMessage::default()
         };
         let at = match noted.iter().position(|it| it.path == path) {
@@ -639,7 +647,7 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
             None => {
                 noted.push(FileResult {
                     messages: Vec::new(),
-                    text: crate::fs::read(path).ok(),
+                    text: crate::git::read(context.only, &crate::paths::from_native(path)).ok(),
                     ..FileResult::ignored(path.to_vec(), b"")
                 });
                 noted.len() - 1
@@ -727,6 +735,8 @@ struct Fixing {
     is_over: bool,
     /// The rules whose fixes the last pass applied, then `is_fixed` and `fixes` as they were before that pass.
     last_pass: Option<(Vec<RuleId>, bool, usize)>,
+    /// [`LintResult::tolerated_errors`] of `previous`.
+    tolerated_before: usize,
 }
 
 /// Lints `files` with types. `None` for a file that has to be linted without.
@@ -743,13 +753,19 @@ pub(crate) fn lint(
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
+    let mut staged = (context.only).map_or_else(AlreadyRead::default, |it| it.already_read(true));
+    // Also add each staged text under the path the file is linted as, which may contain a symlink.
+    staged.extend(files.iter().filter_map(|file| {
+        let text = context.only?.staged_text(file.path)?.to_vec();
+        Some((from_native(file.path), as_read(file.path, text, true)))
+    }));
     let mut is_first_pass = true;
     while !pending.is_empty() {
         let changed = states
             .iter()
             .zip(files)
             .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
-        let changed = changed.collect();
+        let changed = staged.clone().into_iter().chain(changed).collect();
         let linted = check_and_lint(
             context,
             environment,
@@ -766,14 +782,13 @@ pub(crate) fn lint(
                 (Some(linted), _) => linted,
                 // It was in a program before it was fixed.
                 (None, Some(current)) => (
-                    context.verify(file.path, current, file.config),
+                    context.verify_pass(file.path, current, file.config, state.previous.is_some()),
                     Some(current.clone()),
                 ),
                 (None, None) => continue,
             };
             // The fixes of the last pass are taken back.
-            if !result.messages.is_empty()
-                && result.messages.iter().all(is_parse_error)
+            if breaks_syntax(&result, state.tolerated_before)
                 && let (Some(before), Some((rules, was_fixed, fixes))) =
                     (state.previous.take(), state.last_pass.take())
             {
@@ -855,6 +870,7 @@ pub(crate) fn lint(
             state.is_fixed = true;
             state.fixes += fixed.count;
             let before_the_last = state.previous.replace(text.clone());
+            state.tolerated_before = result.tolerated_errors;
             let is_circular = state.passes > 1 && before_the_last.as_ref() == Some(&fixed.output);
             if is_circular {
                 on_circular_fixes(file.path);

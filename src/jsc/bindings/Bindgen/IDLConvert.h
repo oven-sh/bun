@@ -46,6 +46,10 @@ template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSour
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 
+template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = name;
+};
+
 namespace Bindgen {
 
 // Specialized by generated code. `result` was just default-constructed.
@@ -110,7 +114,7 @@ private:
         if constexpr (options.toStringOtherwise)
             isRefused = (options.refuseUndefined && value.isUndefined()) || (options.refuseNull && value.isNull());
         else
-            isRefused = !options.fromString || !value.inherits<JSC::StringObject>();
+            isRefused = !options.fromString || options.refuseStringObject || !value.inherits<JSC::StringObject>();
         if (isRefused) {
             ctx.throwTypeMustBe(globalObject, scope, expected);
             return;
@@ -183,6 +187,25 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::Default
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, JSClass::info()->className));
+    }
+};
+
+template<typename JSClass, auto name>
+struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (auto* object = dynamicDowncast<JSClass>(value)) {
+            if (void* wrapped = object->wrapped())
+                return wrapped;
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>()));
     }
 };
 

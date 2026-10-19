@@ -474,6 +474,10 @@ pub mod bv2_impl {
             /// Mirrors `Framework.is_built_in_react` — read by
             /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
             pub(crate) is_built_in_react: bool,
+            /// The absolute folders of the routers with `clientPages`. In the browser build, the
+            /// files under them lose the page data functions (`getServerSideProps`, ...), which
+            /// run on the server only, and the imports that only those use.
+            pub(crate) client_page_dirs: Vec<Box<[u8]>>,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -485,13 +489,24 @@ pub mod bv2_impl {
                 server_components: Option<ServerComponents>,
                 react_fast_refresh: Option<ReactFastRefresh>,
                 is_built_in_react: bool,
+                client_page_dirs: Vec<Box<[u8]>>,
             ) -> Self {
                 Self {
                     built_in_modules,
                     server_components,
                     react_fast_refresh,
                     is_built_in_react,
+                    client_page_dirs,
                 }
+            }
+
+            /// Whether `path` is under a router folder with `clientPages`.
+            pub(crate) fn is_client_page_file(&self, path: &[u8]) -> bool {
+                self.client_page_dirs.iter().any(|dir| {
+                    path.len() > dir.len()
+                        && path.starts_with(dir)
+                        && bun_core::path_sep::is_sep_any(path[dir.len()])
+                })
             }
         }
         /// `Framework.ServerComponents` — full string
@@ -6642,7 +6657,10 @@ pub mod bv2_impl {
                 }
 
                 if let Some(fw) = &self.framework {
-                    if fw.server_components.is_some() {
+                    // In the dev server, the HMR runtime provides `bun:bake/client` and
+                    // `bun:bake/server` to every framework. A production build has their data only
+                    // with server components.
+                    if fw.server_components.is_some() || self.dev_server.is_some() {
                         let is_server = ctx.target.is_server_side();
                         let src = if is_server {
                             &bake::SERVER_VIRTUAL_SOURCE

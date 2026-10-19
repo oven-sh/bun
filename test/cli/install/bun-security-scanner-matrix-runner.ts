@@ -135,7 +135,7 @@ function expectationsFor(options: SecurityScannerTestOptions): { before: Project
   const proceeds =
     scannerRuns && (scannerReturns === "none" || (scannerReturns === "warn" && hasTTY && ttyResponse === "y"));
 
-  // install and remove trust an existing lockfile, add and update always re-resolve what they were given.
+  // install and remove trust an existing lockfile. add and update always resolve what they were given again.
   let manifests: string[];
   if (!hasLockfile) {
     manifests = tree;
@@ -244,7 +244,7 @@ function expectationsFor(options: SecurityScannerTestOptions): { before: Project
   if (!proceeds) {
     installedAfter = installsScannerFirst ? [...installedBefore, SCANNER_PACKAGE] : installedBefore;
   } else if (removes && hasExistingNodeModules && linker === "isolated") {
-    // The isolated linker only unlinks a removed package, its store entry stays behind.
+    // The isolated linker only unlinks a removed package. Its store entry stays behind.
     installedAfter = installedBefore;
   } else {
     // `remove is-even` without node_modules installs is-even: it is still a dependency of is-odd. This is what
@@ -520,7 +520,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   return test.concurrent.skip(testName, () => {});
                 }
 
-                // Every case has its own directory and registry, so the whole matrix can run at once.
+                // Every case has its own directory and registry, so the whole matrix can run at the same time.
                 test.concurrent(testName, async () => {
                   await runSecurityScannerTest(expect, {
                     command,

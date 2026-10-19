@@ -64,7 +64,7 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
                 flat_contents,
                 ..
             } => rest.extend([&**break_contents, &**flat_contents]),
-            Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => {}
+            Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) | Doc::KeepBlanks => {}
         }
     }
     Some(found)
@@ -100,7 +100,8 @@ fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
             | Doc::Group { .. }
             | Doc::LineSuffix(_)
             | Doc::LineSuffixBoundary
-            | Doc::Line(_) => {}
+            | Doc::Line(_)
+            | Doc::KeepBlanks => {}
         }
     }
     false
@@ -287,6 +288,8 @@ impl<'a> Writer<'a> {
             Doc::Line(Line::Soft) => f.write_element(FormatElement::Line(LineMode::Soft)),
             Doc::Line(Line::Hard) => f.write_element(FormatElement::Line(LineMode::Hard)),
             Doc::Line(Line::Literal) => f.write_text(b"\n", None),
+            // Style sheets never produce it.
+            Doc::KeepBlanks => {}
         }
     }
 }

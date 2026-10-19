@@ -110,7 +110,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const getBunServerOpenCount = $newRustFunction("node_http_binding.rs", "getBunServerOpenCount", 1);
+const getBunServerOpenCount = $bindgen("node_http_binding.bind.ts", "getBunServerOpenCount");
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");

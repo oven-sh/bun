@@ -2575,15 +2575,9 @@ impl<'a> Parser<'a> {
             match contents[cursor] {
                 b'\n' => break,
                 b'@' => {
-                    cursor += 1;
-                    if cursor >= contents.len() {
-                        break;
-                    }
-                    if contents[cursor] != b'b' {
-                        cursor += 1;
-                        continue;
-                    }
-                    let slice = &contents[cursor..];
+                    // A match leaves the cursor on the keyword's last byte. The step below
+                    // then lands on the byte after the keyword: the `\n` when it ends the line.
+                    let slice = &contents[cursor + 1..];
                     if slice.starts_with(b"bun-cjs") {
                         state.seen_cjs = true;
                         cursor += b"bun-cjs".len();

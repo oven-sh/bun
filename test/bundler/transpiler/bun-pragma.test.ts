@@ -1,5 +1,6 @@
-import { promises as fs } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { promises as fs, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import vm from "node:vm";
 import path from "path";
 
 const fixturePath = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "bun-pragma", ...segs);
@@ -16,6 +17,12 @@ const runFixture = async (path: string): Promise<number> => {
   await child.exited;
   expect(child.exitCode).not.toBeNull();
   return child.exitCode!;
+};
+
+const run = async (cwd: string, entry: string, env: NodeJS.Dict<string> = bunEnv) => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), entry], env, cwd, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
 };
 
 describe("@bun pragma", () => {
@@ -40,6 +47,65 @@ describe("@bun pragma", () => {
       const fullpath = path.join(failPath, file);
       const exitCode = await runFixture(fullpath);
       expect(exitCode).toBe(ERR);
+    });
+  });
+
+  // The pragma line alone says what the file is: an ES module or CommonJS, with or without bytecode.
+  describe("keywords are read from the pragma line only", () => {
+    // An ES module. Read as CommonJS, it throws "Expected CommonJS module to have a function wrapper".
+    const esm = `console.log("@bun-cjs is on the second line");\n`;
+    describe.each([
+      ["a keyword ends the pragma line", `// @bun @bytecode\n${esm}`],
+      ["a lone @ ends the pragma line", `// @bun @\n${esm}`],
+      ["the pragma line is below a hashbang line", `#!/usr/bin/env bun\n// @bun @bytecode\n${esm}`],
+    ])("%s", (_, source) => {
+      it.concurrent.each([
+        ["as the entry point", "mod.js"],
+        ["through require()", "require.cjs"],
+        ["through import()", "import.mjs"],
+      ])("%s", async (_, entry) => {
+        using dir = tempDir("bun-pragma-line", {
+          "mod.js": source,
+          "require.cjs": `require("./mod.js");`,
+          "import.mjs": `await import("./mod.js");`,
+        });
+        expect(await run(String(dir), entry)).toEqual({
+          stdout: "@bun-cjs is on the second line\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    // `// @bun @bun-cjs` does not ask for bytecode, so the loader must not read `<file>.jsc`. The `.jsc` here is
+    // one that JSC accepts for this exact text, so a cache hit in the log shows that the loader read it.
+    const wrapper = (pragma: string) =>
+      `${pragma}\n(function(exports, require, module, __filename, __dirname) {// built by @bytecode-labs\nconsole.log("ran");})\n`;
+    it.concurrent.each([
+      ["// @bun @bun-cjs", false],
+      ["// @bun @bytecode @bun-cjs", true],
+    ])("%s above a line with the text @bytecode: reads the .jsc = %p", async (pragma, readsSidecar) => {
+      const source = wrapper(pragma);
+      using dir = tempDir("bun-pragma-sidecar", { "mod.cjs": source });
+      const file = path.join(String(dir), "mod.cjs");
+      writeFileSync(file + ".jsc", new vm.Script(source, { filename: file, produceCachedData: true }).cachedData!);
+      const { stdout, stderr, exitCode } = await run(String(dir), "mod.cjs", {
+        ...bunEnv,
+        BUN_JSC_verboseDiskCache: "1",
+      });
+      expect({ stdout, cacheHit: stderr.includes("[Disk Cache] Cache hit for sourceCode"), exitCode }).toEqual({
+        stdout: "ran\n",
+        cacheHit: readsSidecar,
+        exitCode: 0,
+      });
+    });
+
+    // Every `@` of the pragma line can start a keyword, also the one directly after another `@`.
+    it.concurrent("`// @bun @@bun-cjs` is CommonJS", async () => {
+      using dir = tempDir("bun-pragma-line", {
+        "mod.js": `// @bun @@bun-cjs\n(function(exports, require, module, __filename, __dirname) {console.log("ran");})\n`,
+      });
+      expect(await run(String(dir), "mod.js")).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
     });
   });
 });

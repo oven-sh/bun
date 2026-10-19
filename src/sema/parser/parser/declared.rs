@@ -520,7 +520,7 @@ impl Declared {
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     pub(crate) fn may_redeclare(&mut self) {

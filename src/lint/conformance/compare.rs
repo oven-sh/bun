@@ -3,7 +3,7 @@
 
 use bstr::BString;
 use bun_lint::fix::{Fix, SuggestionKind};
-use bun_lint::linter::{LintMessage, RuleId, Utf16Offsets};
+use bun_lint::linter::{LintMessage, RuleId, Suggestion, Utf16Offsets};
 use bun_lint::options::Json;
 use bun_lint::runner::RuleEntry;
 use bun_lint::utils::sort;
@@ -14,6 +14,25 @@ pub struct Outcome {
     pub messages: Vec<Reported>,
     pub output: Option<Vec<u8>>,
     pub has_parse_errors: bool,
+    /// True if any message has a [held-back](held_back) fix.
+    pub holds_back_a_fix: bool,
+}
+
+/// Returns the fix that upstream applies with `--fix` but that needs `--fix-dangerously` here, because it can change
+/// what the program does. It's compared as a regular fix, so its text is still checked, and the case is
+/// [counted](Counts::holding_back_a_fix).
+fn held_back(message: &LintMessage) -> Option<&Suggestion> {
+    let is_fix = |it: &&Suggestion| it.kind == SuggestionKind::DangerousFix;
+    match message.fix {
+        Some(_) => None,
+        None => message.suggestions.iter().find(is_fix),
+    }
+}
+
+/// Returns the fix that upstream's `--fix` applies for `message`.
+fn fix_of(message: &LintMessage) -> Option<&Fix> {
+    let held_back = || held_back(message).map(|it| &it.fix);
+    message.fix.as_ref().or_else(held_back)
 }
 
 /// A message, as far as it is compared.
@@ -49,8 +68,9 @@ pub struct Suggested {
 impl Outcome {
     /// `messages`: what the linter says about `code` in a test of the rule `entry`.
     pub fn new(entry: &'static RuleEntry, code: &[u8], messages: &[LintMessage]) -> Outcome {
-        let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
+        let mut fixes: Vec<_> = messages.iter().filter_map(fix_of).collect();
         Outcome {
+            holds_back_a_fix: messages.iter().any(|it| held_back(it).is_some()),
             has_parse_errors: messages
                 .iter()
                 .any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
@@ -90,8 +110,9 @@ impl Reported {
             line: message.line,
             column: message.column,
             end: message.end,
-            fix: message.fix.as_ref().map(edit),
+            fix: fix_of(message).map(edit),
             suggestions: (message.suggestions.iter())
+                .filter(|it| !held_back(message).is_some_and(|fix| std::ptr::eq(*it, fix)))
                 .map(|it| Suggested {
                     message_id: (*it.message_id).into(),
                     desc: it.message.clone().into(),
@@ -183,6 +204,9 @@ pub struct Counts {
     pub in_another_order: AtomicUsize,
     /// `--in-order`: such a case fails.
     pub fails_on_order: bool,
+    /// Passing cases where `--fix` applies fewer fixes than upstream's `--fix`. The rest need `--fix-suggestions` or
+    /// `--fix-dangerously`.
+    pub holding_back_a_fix: AtomicUsize,
 }
 
 /// The order of what starts at the same place depends on the order in which ESLint visits the
@@ -225,6 +249,7 @@ pub(crate) fn problem_of_oxlint(
     sort::sort_by_key(&mut outcome.messages, |it| (it.line, it.column));
     // `output` is compared below.
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
+    outcome.holds_back_a_fix = false;
     if let Some(problem) = problem_of(Some(outcome), case, counts) {
         return Some(problem);
     }
@@ -263,8 +288,7 @@ pub(crate) fn problem_of_oxlint(
             ],
         ),
     ];
-    let mut before = code.to_vec();
-    for (key, kinds) in steps {
+    let outputs = steps.map(|(_, kinds)| {
         // oxlint applies the first of several.
         let mut fixes: Vec<&Fix> = (messages.iter())
             .filter_map(|it| {
@@ -272,21 +296,30 @@ pub(crate) fn problem_of_oxlint(
                 it.fix.as_ref().or_else(|| suggested.map(|it| &it.fix))
             })
             .collect();
-        let actual = bun_lint::fix::apply_fixes(code, &mut fixes).unwrap_or_else(|| code.to_vec());
+        bun_lint::fix::apply_fixes(code, &mut fixes).unwrap_or_else(|| code.to_vec())
+    });
+    let (mut before, mut holds_back_a_fix) = (code.to_vec(), false);
+    for (step, (key, _)) in steps.iter().enumerate() {
         let expected = string_of(case, key).unwrap_or(&before).to_vec();
-        if actual != expected {
-            return Some(Problem {
-                summary: "output differs",
-                details: format!(
-                    "  {}\n  expected: {:?}\n  actual: {:?}",
-                    bstr::BStr::new(key),
-                    bstr::BStr::new(&expected),
-                    bstr::BStr::new(&actual)
-                ),
-            });
+        // Output that oxlint produces with these flags may need more flags here, but never fewer.
+        match outputs.iter().skip(step).position(|it| *it == expected) {
+            Some(0) => {}
+            Some(_) => holds_back_a_fix = true,
+            None => {
+                return Some(Problem {
+                    summary: "output differs",
+                    details: format!(
+                        "  {}\n  expected: {:?}\n  actual: {:?}",
+                        bstr::BStr::new(key),
+                        bstr::BStr::new(&expected),
+                        bstr::BStr::new(outputs.get(step).map_or(&[][..], Vec::as_slice))
+                    ),
+                });
+            }
         }
         before = expected;
     }
+    (counts.holding_back_a_fix).fetch_add(usize::from(holds_back_a_fix), Ordering::Relaxed);
     None
 }
 
@@ -325,5 +358,6 @@ pub fn problem_of(outcome: Option<Outcome>, case: &Json, counts: &Counts) -> Opt
             format!("  expected: {expected:?}\n  actual: {actual:?}"),
         );
     }
+    (counts.holding_back_a_fix).fetch_add(usize::from(outcome.holds_back_a_fix), Ordering::Relaxed);
     None
 }

@@ -404,9 +404,11 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY moved
         /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
+        #[derive(Clone)]
         pub enum BuiltInModule {
-            Import(Box<[u8]>),
-            Code(Box<[u8]>),
+            Import(std::borrow::Cow<'static, [u8]>),
+            /// `Cow::Borrowed` is one of Bun's embedded sources.
+            Code(std::borrow::Cow<'static, [u8]>),
         }
 
         /// `EntryPointList` flags.
@@ -459,7 +461,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::framework_router` reads it.
+        /// stays in T6 because only `bake::router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -472,10 +474,14 @@ pub mod bv2_impl {
             /// Mirrors `Framework.is_built_in_react` — read by
             /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
             pub(crate) is_built_in_react: bool,
+            /// The absolute folders of the routers with `clientPages`. In the browser build, the
+            /// files under them lose the page data functions (`getServerSideProps`, ...), which
+            /// run on the server only, and the imports that only those use.
+            pub(crate) client_page_dirs: Vec<Box<[u8]>>,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
-            /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
+            /// `bun_runtime::bake::Framework::as_bundler_view`; the
             /// runtime owns the canonical `bake.Framework` and projects the
             /// fields the bundler reads.
             pub fn new(
@@ -483,13 +489,24 @@ pub mod bv2_impl {
                 server_components: Option<ServerComponents>,
                 react_fast_refresh: Option<ReactFastRefresh>,
                 is_built_in_react: bool,
+                client_page_dirs: Vec<Box<[u8]>>,
             ) -> Self {
                 Self {
                     built_in_modules,
                     server_components,
                     react_fast_refresh,
                     is_built_in_react,
+                    client_page_dirs,
                 }
+            }
+
+            /// Whether `path` is under a router folder with `clientPages`.
+            pub(crate) fn is_client_page_file(&self, path: &[u8]) -> bool {
+                self.client_page_dirs.iter().any(|dir| {
+                    path.len() > dir.len()
+                        && path.starts_with(dir)
+                        && bun_core::path_sep::is_sep_any(path[dir.len()])
+                })
             }
         }
         /// `Framework.ServerComponents` — full string
@@ -600,7 +617,7 @@ pub mod bv2_impl {
             use super::Side;
 
             /// `OpaqueFileId` is the insertion index into `EntryPointMap.files`.
-            /// This is the same newtype as `framework_router::OpaqueFileId`; the
+            /// This is the same newtype as `router::OpaqueFileId`; the
             /// bake crate re-exports that one and converts via `.get()` only at
             /// the FFI boundary.
             #[repr(transparent)]
@@ -3155,7 +3172,7 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             // intern via `dupe_alloc` BEFORE writing back into `result` /
             // the path-to-source-index map. The dev-server path builds a fresh
-            // `bake_types::EntryPointList` with `Box<[u8]>` keys (DevServer.rs:3027)
+            // `bake_types::EntryPointList` with `Box<[u8]>` keys (bake/dev_server/bundle.rs)
             // that drops as soon as `enqueue_entry_points_dev_server` returns;
             // `resolve_with_framework` then lifetime-erases that key into the
             // returned `Path`, so without interning here `ParseTask.path.text` (and
@@ -4352,25 +4369,48 @@ pub mod bv2_impl {
 
             let import_records = self.graph.ast.items_import_records();
 
+            // Check for either node or bun builtins
+            // We don't use the list from .bun because that includes third-party packages in some cases.
+            let is_builtin = |specifier: &[u8]| {
+                bun_resolve_builtins::HardcodedModule::Alias::has(
+                    specifier,
+                    Target::Node,
+                    Default::default(),
+                ) || specifier.starts_with(b"bun:")
+                    || specifier == b"bun"
+            };
+
+            let sources = self.graph.input_files.items_source();
+
             for source_index in reachable_files {
                 let records: &[ImportRecord] =
                     import_records[source_index.get() as usize].as_slice();
+                // A package may import itself by name, which is not a dependency to install. The
+                // resolver already read this directory while bundling, so this is a cache hit.
+                let own_name: &[u8] = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(
+                        sources[source_index.get() as usize].path.source_dir(),
+                    )
+                    .and_then(|dir| dir.enclosing_package_json)
+                    .map_or(&b""[..], |package_json| &*package_json.name);
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
                     {
-                        let path = &record.path.text;
-                        // External dependency
-                        if !path.is_empty()
-                        // Check for either node or bun builtins
-                        // We don't use the list from .bun because that includes third-party packages in some cases.
-                        && !bun_resolve_builtins::HardcodedModule::Alias::has(path, Target::Node, Default::default())
-                        && !path.starts_with(b"bun:")
-                        && path != b"bun"
+                        let path: &[u8] = record.path.text;
+                        // Record the package name only: `lodash/debounce` is part of `lodash`.
+                        if let Some(name) = bun_resolver::package_json::Package::parse_name(path)
+                            && name != own_name
+                            && !is_builtin(path)
+                            && !is_builtin(name)
+                            // An npm scope is never empty, so `@/x` can only be a tsconfig `paths`
+                            // alias that matched nothing.
+                            && !name.starts_with(b"@/")
+                            && strings::is_npm_package_name_ignore_length(name)
                         {
-                            if strings::is_npm_package_name_ignore_length(path) {
-                                external_deps.insert(path)?;
-                            }
+                            external_deps.insert(name)?;
                         }
                     }
                 }
@@ -6617,7 +6657,10 @@ pub mod bv2_impl {
                 }
 
                 if let Some(fw) = &self.framework {
-                    if fw.server_components.is_some() {
+                    // In the dev server, the HMR runtime provides `bun:bake/client` and
+                    // `bun:bake/server` to every framework. A production build has their data only
+                    // with server components.
+                    if fw.server_components.is_some() || self.dev_server.is_some() {
                         let is_server = ctx.target.is_server_side();
                         let src = if is_server {
                             &bake::SERVER_VIRTUAL_SOURCE

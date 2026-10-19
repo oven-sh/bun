@@ -1,14 +1,16 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::{
-    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, matches_type_or_base_type,
-    parse_type_or_value_specifiers, type_matches_some_specifier,
+    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, is_declared_in_ambient_module,
+    is_global_reg_exp_type, is_global_type, matches_type_or_base_type, parse_type_or_value_specifiers,
+    type_matches_some_specifier,
 };
-use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint::types::{IdMap, IdSet, Type, TypeFlags};
 
 /// Enforce template literal expressions to be of `string` type.
 pub struct RestrictTemplateExpressions {
     allow: Vec<TypeOrValueSpecifier>,
+    /// True if `allow` isn't configured.
+    allows_the_default: bool,
     /// `string`, and what `allowAny`, `allowBoolean`, `allowNullish`, `allowNumber` and `allowNever`
     /// add to it.
     allowed_flags: TypeFlags,
@@ -19,9 +21,23 @@ pub struct RestrictTemplateExpressions {
 const INVALID_TYPE: Message =
     Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
 
+const ALLOWED_BY_DEFAULT: [&str; 3] = ["Error", "URL", "URLSearchParams"];
+
+/// Upstream's default only allows these names `from: "lib"`. Without the `DOM` lib, which `bun init` doesn't enable,
+/// `URL` comes from `@types/node` as `interface URL extends url.URL {}`, and its `searchParams` is `node:url`'s
+/// `URLSearchParams`.
+fn is_allowed_global(ty: Type) -> bool {
+    is_global_type(ty, &ALLOWED_BY_DEFAULT)
+        || ty.get_symbol().is_some_and(|symbol| {
+            matches!(symbol.name(), b"URL" | b"URLSearchParams")
+                && (is_declared_in_ambient_module(symbol, b"node:url")
+                    || is_declared_in_ambient_module(symbol, b"url"))
+        })
+}
+
 impl RestrictTemplateExpressions {
     /// `on_the_way`: the arrays that `inner_type` is in. `type A = A[]` has no end.
-    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut FxHashSet<Type<'a>>) -> bool {
+    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> bool {
         if inner_type.is_unresolved() || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return true;
         }
@@ -34,6 +50,9 @@ impl RestrictTemplateExpressions {
         inner_type.has_flags(self.allowed_flags)
             || !self.allow.is_empty()
                 && matches_type_or_base_type(|it| type_matches_some_specifier(it, &self.allow), inner_type)
+            || self.allows_the_default
+                && inner_type.file().language().stands_alone
+                && matches_type_or_base_type(is_allowed_global, inner_type)
             || self.allow_array
                 && inner_type.is_array_or_tuple_type()
                 && inner_type.get_number_index_type().is_some_and(|it| {
@@ -41,10 +60,14 @@ impl RestrictTemplateExpressions {
                         return true;
                     }
                     let is_allowed = self.recursively_check_type(it, on_the_way);
-                    on_the_way.remove(&inner_type);
+                    on_the_way.remove(inner_type);
                     is_allowed
                 })
-            || self.allow_reg_exp && get_type_name(inner_type) == b"RegExp"
+            || self.allow_reg_exp
+                && match inner_type.file().language().is_oxlint {
+                    true => is_global_reg_exp_type(inner_type),
+                    false => get_type_name(inner_type) == b"RegExp",
+                }
     }
 }
 
@@ -54,7 +77,7 @@ impl Rule for RestrictTemplateExpressions {
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::Template]);
     /// Whether a type is allowed. Each constituent of a union is looked at, and many expressions have the same type.
-    type State<'a> = FxHashMap<Type<'a>, bool>;
+    type State<'a> = IdMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -74,17 +97,18 @@ impl Rule for RestrictTemplateExpressions {
             allow: match options.has("allow") {
                 true => parse_type_or_value_specifiers(options.array("allow")),
                 false => vec![TypeOrValueSpecifier::Lib {
-                    name: vec![b"Error".to_vec(), b"URL".to_vec(), b"URLSearchParams".to_vec()],
+                    name: ALLOWED_BY_DEFAULT.iter().map(|it| it.as_bytes().to_vec()).collect(),
                 }],
             },
+            allows_the_default: !options.has("allow"),
             allowed_flags,
             allow_array: options.bool_or("allowArray", false),
             allow_reg_exp: options.bool_or("allowRegExp", true),
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Type<'a>, bool>> {
-        Some(FxHashMap::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<IdMap<Type<'a>, bool>> {
+        Some(IdMap::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -98,11 +122,18 @@ impl Rule for RestrictTemplateExpressions {
         }
         for expression in template.exprs() {
             let expression_type = get_constrained_type_at_location(expression);
-            let is_allowed = || self.recursively_check_type(expression_type, &mut FxHashSet::default());
-            if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
-                cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text()).labels_with(|labels| {
+            let is_allowed = *cx.state.get_or_insert_with(expression_type, || {
+                self.recursively_check_type(expression_type, &mut IdSet::new())
+            });
+            if !is_allowed {
+                // tsgolint reports the ParenthesizedExpression.
+                let report = match cx.language().is_oxlint {
+                    true => cx.report(expression.outer_span(), INVALID_TYPE),
+                    false => cx.report(expression, INVALID_TYPE),
+                };
+                report.data("type", expression_type.to_text()).labels_with(|labels| {
                     labels.first(format!("Type: {}", bstr::BStr::new(&expression_type.to_text())));
-                    labels.push(expression, "");
+                    labels.push(expression.outer_span(), "");
                 });
             }
         }

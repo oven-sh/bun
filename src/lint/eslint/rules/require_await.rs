@@ -112,6 +112,7 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
     };
     cx.report(place, MISSING_AWAIT)
         .called_with(func)
+        .unless_claimed(func)
         .data("name", name)
         .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| {
             let file = fixer.file();

@@ -200,6 +200,13 @@ pub fn is_absolute(p: &[u8]) -> bool {
     bun_core::path_sep::is_absolute_native(p)
 }
 
+/// Like [`is_absolute`], but on Windows the path must also start with a drive letter or a UNC root,
+/// because what `\dir` refers to depends on the current drive.
+pub fn is_fully_qualified(p: &[u8]) -> bool {
+    is_absolute(p)
+        && !(cfg!(windows) && bun_core::strings::is_windows_absolute_path_missing_drive_letter(p))
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
 // legitimate callers:
@@ -434,8 +441,7 @@ pub use env_path::EnvPath;
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     /// `\??\` — NT object-manager prefix (UTF-16).
-    pub(crate) const NT_OBJECT_PREFIX: [u16; 4] =
-        ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
+    pub const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
     /// `\??\UNC\` — NT object-manager UNC prefix (UTF-16).
     pub(crate) const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
         '\\' as u16,
@@ -572,6 +578,12 @@ pub mod fs {
             } else {
                 d
             }
+        }
+
+        /// The directory the process started in; `process.chdir()` does not move it.
+        #[inline]
+        pub fn initial_top_level_dir(&self) -> &[u8] {
+            self.top_level_dir.as_slice()
         }
 
         /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns

@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::oxlint::AmbientAncestors;
-use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::cell::RefCell;
 
@@ -107,7 +107,7 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
 #[derive(Default)]
 pub struct State<'a> {
     /// Where a function is called first.
-    first_calls: RefCell<FxHashMap<Symbol<'a>, u32>>,
+    first_calls: RefCell<IdMap<Symbol<'a>, u32>>,
     /// ESLint's `isInLoop`
     loops: RefCell<AncestorMemo<'a, bool>>,
     ambient: AmbientAncestors<'a>,
@@ -119,8 +119,7 @@ impl<'a> State<'a> {
         *self
             .first_calls
             .borrow_mut()
-            .entry(function)
-            .or_insert_with(|| {
+            .get_or_insert_with(function, || {
                 let calls = function
                     .references()
                     .filter(|it| it.expr().is_some_and(ast_utils::is_callee));
@@ -320,10 +319,9 @@ fn fix_as_oxlint<'a>(
             return None;
         }
     }
-    let is_let = statement.flags().contains(Flags::AMBIENT)
-        || declarations
-            .iter()
-            .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
+    let is_let = declarations
+        .iter()
+        .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));
     let after = file.slice(Span::after(var, span.end));
@@ -363,24 +361,20 @@ impl Rule for NoVar {
         {
             return;
         }
-        if let Node::Stmt(parent) = statement.parent()
-            && let StmtKind::Module(module) = parent.kind()
-            && matches!(module.name(), ModuleName::Global)
-            && !statement.is_exported()
-        {
-            return;
-        }
         let span = statement.span_without_export();
-        // oxlint says nothing about ambient declarations, and points at the keyword.
-        let is_oxlint = cx.language().is_oxlint;
-        if is_oxlint
-            && cx
+        // `declare var`, or a `var` in `declare global`, declares that a global exists. Only a `var` becomes a property
+        // of `globalThis`, and only a `var` can be declared in two files, so with `let` the project would stop type
+        // checking. ESLint and oxlint only skip `declare global`.
+        if statement.flags().contains(Flags::AMBIENT)
+            || cx
                 .state
                 .ambient
                 .has_ambient_typescript_ancestor(statement.into())
         {
             return;
         }
+        // oxlint reports only the `var` keyword.
+        let is_oxlint = cx.language().is_oxlint;
         let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
         cx.report(place, UNEXPECTED_VAR)
             .called_with(statement)

@@ -129,8 +129,7 @@ pub(super) struct CallState<'a> {
 /// What `push_inference_context` replaces in the checker, and `pop_inference_context` puts back.
 struct OutsideInferenceContext {
     mode_of_recheck: CheckMode,
-    rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
-    rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
+    rechecked: Rechecked,
     /// The argument for `end_recheck`.
     recheck: (usize, usize),
 }
@@ -176,7 +175,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.is_context_sensitive(file, hir[p].value)
             }),
             ExprKind::Array(items) => hir.ids(items).any(|i| self.is_context_sensitive(file, i)),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.is_context_sensitive(file, yes) || self.is_context_sensitive(file, no)
             }
             ExprKind::Binary {
@@ -396,8 +396,13 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
-        // being resolved is resolved again, any number of times: see `recheck_in_flow_loop`.
-        if in_progress_at.is_some_and(|at| self.flow_loop_pushed_since(at).is_some()) {
+        // being resolved is resolved again, any number of times. See `recheck_in_flow_loop`. A call
+        // that is re-entered through a resolution is also resolved again, because that resolution
+        // is the guard.
+        if in_progress_at.is_some_and(|at| {
+            self.flow_loop_pushed_since(at).is_some()
+                || self.stack[at..].iter().any(|&q| self.is_resolution(q))
+        }) {
             self.resolution_start = self.stack.len();
         }
         let entered = self.enter(Query::Call(file, call));
@@ -486,8 +491,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else if let Some(stored) = stored
             && !is_in_flow_loop(self)
         {
-            // A task that sees the call resolved also sees this: both are published at the same
-            // barrier.
+            // A task that sees the call resolved also sees this: one commit publishes both.
             if let Some(reported) = reported {
                 (self.p.call_diagnostics).insert_ref(&self.task, (file, call), reported, stored);
             }
@@ -541,15 +545,15 @@ impl<'p, 's> Checker<'p, 's> {
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
         let hir = self.hir(file);
         let mut out = Args::new();
-        if !hir
+        if hir
             .ids(args)
             .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
         {
+            for a in hir.ids(args) {
+                self.each_effective_arg(file, a, |arg| out.push(arg));
+            }
+        } else {
             out.extend(hir.ids(args).map(Arg::Expr));
-            return out;
-        }
-        for a in hir.ids(args) {
-            self.each_effective_arg(file, a, |arg| out.push(arg));
         }
         out
     }
@@ -616,7 +620,7 @@ impl<'p, 's> Checker<'p, 's> {
         let FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
             return None;
         };
-        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
+        let Parent::Expr(parent) = bound.parent_of_expr(e) else {
             return None;
         };
         let ExprKind::Call(c) = hir[parent].kind else {
@@ -688,6 +692,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn has_correct_arity(
         &mut self,
         s: &CallState<'_>,
+        sig: SigId,
         params: &List<'_, SigParam>,
     ) -> bool {
         let (file, call, node, args) = (s.file, s.call, s.node, s.args);
@@ -700,41 +705,42 @@ impl<'p, 's> Checker<'p, 's> {
             _ => args.len(),
         };
         let spread = args.iter().position(|a| a.is_spread());
-        let is_incomplete = self.is_call_incomplete(file, call, node);
+        let is_incomplete = |c: &Self| c.is_call_incomplete(file, call, node);
         let is_open = matches!(params, List::Own(_));
-        self.has_correct_arity_for_count(params, is_open, actual, spread, is_incomplete)
+        self.has_correct_arity_for_count(sig, params, is_open, actual, spread, &is_incomplete)
     }
 
     /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
     /// `is_open`: `sig_params` could not store `params`, so a cycle through the type of a parameter
-    /// is found where tsgo asks for that type.
+    /// is found where tsgo asks for that type. `is_incomplete` computes `callIsIncomplete`.
     fn has_correct_arity_for_count(
         &mut self,
+        sig: SigId,
         params: &[SigParam],
         is_open: bool,
         actual: usize,
         spread: Option<usize>,
-        is_incomplete: bool,
+        is_incomplete: &dyn Fn(&Self) -> bool,
     ) -> bool {
         // Which parameters accept `void` only matters where a required one is omitted. That
-        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, and
-        // where `is_open`.
+        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, for a
+        // type that `params` lacks, and where `is_open`.
         let rest = params.last().filter(|p| p.rest);
         if !is_open
             && spread.is_none()
             && !rest.is_some_and(|p| self.is_tuple(p.ty))
-            && !params.iter().any(SigParam::is_named_by_pattern)
+            && !(params.iter()).any(|p| p.is_named_by_pattern() || p.ty == TypeId::UNRESOLVED)
         {
             if actual > params.len() {
                 return rest.is_some();
             }
             let may_be_omitted = |p: &SigParam| p.optional || p.rest && !p.is_required_rest;
-            if is_incomplete || params[actual..].iter().all(may_be_omitted) {
+            if params[actual..].iter().all(may_be_omitted) || is_incomplete(self) {
                 return true;
             }
         }
         let count = self.parameter_count(params);
-        let least = self.min_argument_count(params);
+        let least = self.min_argument_count_asked(Some(sig), params);
         if is_open {
             // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
             // down to one that does not accept `void`.
@@ -753,7 +759,7 @@ impl<'p, 's> Checker<'p, 's> {
         if actual > count && !has_rest {
             return false;
         }
-        if is_incomplete {
+        if is_incomplete(self) {
             return true;
         }
         // `acceptsVoid`: only a parameter that accepts `void` may be omitted. For a parameter whose
@@ -762,7 +768,7 @@ impl<'p, 's> Checker<'p, 's> {
             if is_open && let Some(param) = params.get(i) {
                 self.request_type_of_parameter(param);
             }
-            let Some(ty) = self.param_type_at(params, i) else {
+            let Some(ty) = self.param_type_asked_at(sig, params, i) else {
                 return false;
             };
             if !self.some_type(ty, |_, m| m == TypeId::VOID || m == TypeId::UNRESOLVED) {
@@ -807,6 +813,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.resolve_error_call(file, exprs)
                 };
             }
+            let type_args = hir.list_at(type_args);
             self.look_at_type_nodes(file, type_args);
             let type_args = self.types_from_nodes(file, type_args);
             let node = CallLike::Call(c);
@@ -1010,9 +1017,9 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if !matches!(hir[data.callee].kind, ExprKind::Super) {
-            self.look_at_type_nodes(file, data.type_args);
+            self.look_at_type_nodes(file, hir.list_at(data.type_args));
         }
-        let type_args = self.types_from_nodes(file, data.type_args);
+        let type_args = self.types_from_nodes(file, hir.list_at(data.type_args));
         let args = self.effective_args(file, data.args);
         let node = CallLike::Call(id);
         let this_arg = self.this_argument_of_call(file, call, node);
@@ -1112,8 +1119,6 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Option<TypeId> {
-        // `getPropertyNameForKnownSymbolName`
-        self.resolve_known_symbol(b"hasInstance");
         let name = self.atoms().symbol_name(b"hasInstance");
         // `getPropertyOfType`: an index signature is not a property.
         let mut methods = Vec::new();
@@ -1329,8 +1334,8 @@ impl<'p, 's> Checker<'p, 's> {
         s.candidate_for_type_argument_error = None;
         if s.is_single_non_generic_candidate {
             let candidate = s.candidates[0];
-            let params = self.sig_params(candidate);
-            if !s.type_args.is_empty() || !self.has_correct_arity(s, &params) {
+            let params = self.sig_params_with_first(candidate, 0);
+            if !s.type_args.is_empty() || !self.has_correct_arity(s, candidate, &params) {
                 return None;
             }
             if !self.is_signature_applicable(s, candidate, relation, CheckMode::empty(), false) {
@@ -1342,9 +1347,9 @@ impl<'p, 's> Checker<'p, 's> {
         for index in 0..s.candidates.len() {
             let candidate = s.candidates[index];
             let type_params = self.sig_type_params(candidate);
-            let params = self.sig_params(candidate);
+            let params = self.sig_params_with_first(candidate, 0);
             if !self.has_correct_type_argument_arity(&type_params, s.type_args.len())
-                || !self.has_correct_arity(s, &params)
+                || !self.has_correct_arity(s, candidate, &params)
             {
                 continue;
             }
@@ -1362,7 +1367,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let mapper = self.mapper_from(&type_params, &filled);
                     check_candidate = self.instantiate_sig(candidate, mapper);
                 } else {
-                    let mut context = Inference::for_params(&type_params, Some(candidate));
+                    let mut context =
+                        Box::new(Inference::for_params(&type_params, Some(candidate)));
                     context.any_default = self.hir(s.file).is_js;
                     let check_mode = s.arg_check_mode | CheckMode::SKIP_GENERIC_FUNCTIONS;
                     let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
@@ -1378,8 +1384,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 // The instantiation of a generic rest type can change the arity.
                 if has_generic_rest {
-                    let instantiated = self.sig_params(check_candidate);
-                    if !self.has_correct_arity(s, &instantiated) {
+                    let instantiated = self.sig_params_with_first(check_candidate, 0);
+                    if !self.has_correct_arity(s, check_candidate, &instantiated) {
                         s.candidate_for_argument_arity_error = Some(check_candidate);
                         continue;
                     }
@@ -1401,8 +1407,8 @@ impl<'p, 's> Checker<'p, 's> {
                         &context.inferred_type_params,
                     );
                     if has_generic_rest {
-                        let instantiated = self.sig_params(check_candidate);
-                        if !self.has_correct_arity(s, &instantiated) {
+                        let instantiated = self.sig_params_with_first(check_candidate, 0);
+                        if !self.has_correct_arity(s, check_candidate, &instantiated) {
                             s.candidate_for_argument_arity_error = Some(check_candidate);
                             continue;
                         }
@@ -1431,7 +1437,7 @@ impl<'p, 's> Checker<'p, 's> {
         s: &CallState<'_>,
         signature: SigId,
         check_mode: CheckMode,
-        context: &mut Inference,
+        context: &mut Box<Inference>,
     ) -> MapperId {
         let (file, call, args) = (s.file, s.call, s.args);
         if let CallLike::Jsx(j) = s.node
@@ -1608,9 +1614,9 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkIdentifier` returns the declared type of a variable that is assigned. A
             // declaration that precedes has been checked, so that type is resolved.
             ExprKind::Ident(_) => {
-                let symbol = bound.expr_symbol[e.idx()];
+                let symbol = bound.symbol_of_expr(e);
                 symbol.is_some() && self.target_kind(file, e).definite && {
-                    let declarations = &bound.symbols[symbol.idx()].decls;
+                    let declarations = bound.symbol(symbol).decls;
                     !declarations.is_empty()
                         && declarations.iter().all(|&declaration| {
                             matches!(declaration, Decl::Var(name) | Decl::Param(name)
@@ -1662,7 +1668,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         arg: Arg,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         let (ty, node) = match arg {
@@ -1836,7 +1842,7 @@ impl<'p, 's> Checker<'p, 's> {
             FnOwner::Member(member) => bound.member_symbol[member.idx()],
             _ => bound.fn_symbol[func.idx()],
         };
-        let declarations = &bound.symbols.get(symbol.idx())?.decls;
+        let declarations = bound.symbols.get(symbol.idx())?.decls;
         if declarations.len() < 2 {
             return None;
         }
@@ -1874,7 +1880,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) {
                     let strings = self.global_ref_checked(known::TemplateStringsArray, &[]);
                     let no_label = LabeledDeclaration::NONE;
-                    args.insert(0, Arg::Type(strings, no_label, hir[id].template));
+                    args.insert(0, Arg::Type(strings, no_label, hir.template_of(id)));
                 }
                 args
             }
@@ -1927,7 +1933,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> usize {
         let (mut best, mut most): (usize, Option<usize>) = (0, None);
         for (i, &candidate) in candidates.iter().enumerate() {
-            let params = self.sig_params(candidate);
+            let params = self.sig_params_with_first(candidate, 0);
             let count = self.parameter_count(&params);
             if self.has_effective_rest_parameter(&params) || count >= args_count {
                 return i;
@@ -1966,7 +1972,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.instantiate_sig(candidate, mapper);
         }
         // `inferSignatureInstantiationForOverloadFailure`
-        let mut context = Inference::for_params(&type_params, Some(candidate));
+        let mut context = Box::new(Inference::for_params(&type_params, Some(candidate)));
         context.any_default = self.hir(s.file).is_js;
         let check_mode = CheckMode::SKIP_CONTEXT_SENSITIVE | CheckMode::SKIP_GENERIC_FUNCTIONS;
         let mapper = self.infer_type_arguments(s, candidate, check_mode, &mut context);
@@ -2139,7 +2145,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_argument_nodes(&self, node: InstantiationExpression) -> (FileId, IdList<TypeNodeId>) {
         match node {
             InstantiationExpression::Expr(file, e) => match self.hir(file)[e].kind {
-                ExprKind::Instantiation { type_args, .. } => (file, type_args),
+                ExprKind::Instantiation { type_args, .. } => {
+                    (file, self.hir(file).list_at(type_args))
+                }
                 _ => (file, IdList::default()),
             },
             InstantiationExpression::TypeNode(file, node) => match self.hir(file)[node].kind {
@@ -2254,6 +2262,7 @@ impl<'p, 's> Checker<'p, 's> {
             construct,
             index,
             instantiation_expression: Some(node),
+            created_from: Some((ty, TypeId::NEVER)),
             mapper,
             ..Shape::new_in(self.arena)
         })
@@ -2276,7 +2285,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 (
                     SigSymbol::Function(symbol),
-                    SigParent::Block(file, bound.stmt_parent[stmt.idx()]),
+                    SigParent::Block(file, bound.parent_of_stmt(stmt)),
                 )
             }
             FnOwner::Member(member) => {
@@ -2535,7 +2544,7 @@ impl<'p, 's> Checker<'p, 's> {
         args: &[Arg],
         index: usize,
         rest: TypeId,
-        mut context: Option<&mut Inference>,
+        mut context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
@@ -2704,7 +2713,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(this_arg) = this_arg else {
             return TypeId::VOID;
         };
-        let chain = match self.bound(file).expr_parent[this_arg.idx()] {
+        let chain = match self.bound(file).parent_of_expr(this_arg) {
             Parent::Expr(access) => match self.hir(file)[access].kind {
                 ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                 _ => Chain::No,
@@ -2810,7 +2819,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> TypeId {
         self.push_contextual_type(file, e, Some(contextual_type), false);
@@ -2832,7 +2841,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
         check: impl FnOnce(&mut Self, CheckMode) -> TypeId,
     ) -> TypeId {
@@ -2850,11 +2859,11 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         e: ExprId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         check_mode: CheckMode,
     ) -> (CheckMode, OutsideInferenceContext) {
-        let context = inference_context
-            .map(|inference| std::mem::replace(inference, Inference::for_params(&[], None)));
+        let context =
+            inference_context.map(|inference| std::mem::replace(inference, self.spare_inference()));
         let mut check_mode = check_mode | CheckMode::CONTEXTUAL;
         if context.is_some() {
             check_mode |= CheckMode::INFERENTIAL;
@@ -2868,8 +2877,7 @@ impl<'p, 's> Checker<'p, 's> {
             mode_of_recheck: std::mem::replace(&mut self.mode_of_recheck, check_mode),
             // A result computed under one pushed contextual type is not valid under another, or
             // under none.
-            rechecked_exprs: std::mem::take(&mut self.rechecked_exprs),
-            rechecked_members: std::mem::take(&mut self.rechecked_members),
+            rechecked: self.set_rechecked_aside(),
             recheck: self.begin_recheck(),
         };
         (check_mode, outside)
@@ -2883,15 +2891,14 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
         contextual_type: TypeId,
-        inference_context: Option<&mut Inference>,
+        inference_context: Option<&mut Box<Inference>>,
         outside: OutsideInferenceContext,
         ty: TypeId,
     ) -> TypeId {
         self.end_recheck(outside.recheck);
-        self.rechecked_exprs = outside.rechecked_exprs;
-        self.rechecked_members = outside.rechecked_members;
+        self.restore_rechecked(outside.rechecked);
         self.mode_of_recheck = outside.mode_of_recheck;
-        let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, Self::is_literal) && {
+        let is_literal_of_contextual_type = self.maybe_type_of_kind(ty, tf::LITERAL) && {
             let instantiated =
                 self.instantiate_contextual_type(contextual_type, file, e, ContextFlags::empty());
             self.is_literal_context(ty, instantiated)
@@ -2904,7 +2911,9 @@ impl<'p, 's> Checker<'p, 's> {
         let lent = self.inference_contexts.pop().and_then(|info| info.context);
         if let (Some(inference), Some(mut lent)) = (inference_context, lent) {
             lent.intra_expression_inference_sites.clear();
-            *inference = lent;
+            // The placeholder was never used, so it's still empty and can be reused.
+            self.spare_inferences
+                .push(std::mem::replace(inference, lent));
         }
         ty
     }
@@ -3007,7 +3016,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mapper = self.inference_mapper_comparing(&inference, compare);
-        self.instantiate_sig(sig, mapper)
+        let instantiated = self.instantiate_sig(sig, mapper);
+        // `getSignatureInstantiation` erases the type parameters. One that is a clone and is inferred to be itself
+        // (`wrap(id)` where `Id<string>` is both the type of `id` and what is expected) leaves the mapper as it is.
+        if self.sig_type_params(instantiated).is_empty() {
+            instantiated
+        } else {
+            self.without_filling_in_type_arguments(instantiated)
+        }
     }
 
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.
@@ -3246,6 +3262,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         if self.iife_resolving.contains(&(file, call)) {
             // `anySignature`: the contextual type is `any`.
+            self.note_state_was_read();
             return Some(TypeId::ANY);
         }
         let pulls = self.pulls_contextual_types();
@@ -3303,6 +3320,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .any(|r| r.0 == file && r.1 == call)
             && self.stack.contains(&Query::Call(file, call))
         {
+            self.note_state_was_read();
             return Some(TypeId::ANY);
         }
         let resolved = self.resolved_signature(file, call);
@@ -3311,14 +3329,16 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sig) = resolved.sig else {
             return (self.has_any_flag(resolved.ret)).then_some(TypeId::ANY);
         };
-        let params = self.sig_params(sig);
+        let params = self.sig_params_with_first(sig, 0);
         let param = match params.last() {
             // What `getSpreadArgumentType` pushes for an element of a tuple is more precise.
             Some(last) if last.rest && index + 1 >= params.len() => {
                 self.contextual_indexed_access(last.ty, index + 1 - params.len())
             }
             // `getTypeAtPosition`: where there is no parameter the contextual type is `any`.
-            _ => self.param_type_at(&params, index).unwrap_or(TypeId::ANY),
+            _ => self
+                .param_type_asked_at(sig, &params, index)
+                .unwrap_or(TypeId::ANY),
         };
         Some(self.without_no_infer(param))
     }

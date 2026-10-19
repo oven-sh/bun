@@ -67,7 +67,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -190,7 +189,6 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
-#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -394,6 +392,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;
+            // The boundary of "=strict": see JSC::SourceProvenance.
+            if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
+                JSC::Options::disallowNonStaticCode() = true;
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
@@ -1489,7 +1490,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.span8().data(),
+            byteCast<uint8_t>(encodedString.span8().data()),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2143,7 +2144,7 @@ void GlobalObject::finishCreation(VM& vm)
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
-    m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
@@ -2401,6 +2402,9 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(WebCore::createJSSQLStatementStructure(init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLDatabaseStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(WebCore::createJSSQLDatabaseStructure(init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(

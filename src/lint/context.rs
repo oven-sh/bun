@@ -53,6 +53,8 @@ pub struct Details {
     pub end_position: Option<Position>,
     /// [`Report::comments_apply_at`]
     pub comments_apply_at: Option<Span>,
+    /// [`Report::claims`], or [`Report::unless_claimed`]
+    pub(crate) claim: Option<Claim>,
     /// [`Report::listened_on`]
     pub listened_on: Option<Span>,
     /// What is said at the place of the report.
@@ -105,6 +107,49 @@ pub(crate) struct Sink {
     pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
     /// A rule has asked for [`File::modules`]: the file may be linted again.
     pub(crate) asks_about_modules: Cell<bool>,
+    /// The rules of the [pairs](crate::rule_set::Pairs) that are at work on the file, by [`CxBase::rule`], each with the number
+    /// of its pair in the file and whether it is the rule with types.
+    pub(crate) paired: RefCell<SmallVec<[(u16, u8, bool); 8]>>,
+}
+
+/// The node that a rule of a [pair](crate::rule_set::Pairs) reports a problem in, by its span. Nodes in each other can start
+/// at the same place or end at the same place: `a.filter(f)[0].filter(f)`, `async () => async () => 1`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Claim {
+    start: u32,
+    end: u32,
+    pair: u8,
+    /// The report is of the rule with types.
+    pub(crate) with_types: bool,
+}
+
+impl Claim {
+    /// What the report of the rule with types has for the same node.
+    pub(crate) fn with_types(self) -> Claim {
+        Claim {
+            with_types: true,
+            ..self
+        }
+    }
+}
+
+impl Sink {
+    /// `rule`: [`CxBase::rule`]. `None`: it is not the rule with types, or the one without, of a pair that is at work on the
+    /// file. So code that both rules of a pair run can claim and report unless claimed.
+    fn claim_of(&self, rule: u16, with_types: bool, node: Span) -> Option<Claim> {
+        let paired = self.paired.borrow();
+        let pair = paired
+            .iter()
+            .find(|it| it.0 == rule && it.2 == with_types)?
+            .1;
+        let Span { start, end } = node;
+        Some(Claim {
+            start,
+            end,
+            pair,
+            with_types,
+        })
+    }
 }
 
 impl File<'_> {
@@ -228,7 +273,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     }
 
     /// Reports `message` about the file as a whole, at no place in it: a diagnostic of oxlint without a label. Where a format
-    /// wants numbers it has line 0 and column 0, and there is no excerpt.
+    /// wants numbers it has line 0 and column 0, and there is no excerpt. With no config it's at the start of the file.
     #[inline]
     pub fn report_file(&self, message: Message) -> Report<'a> {
         let nowhere = Position {
@@ -381,6 +426,29 @@ impl<'a> Report<'a> {
     pub fn end_at(mut self, end: Position) -> Self {
         if let Some(details) = self.details() {
             details.end_position = Some(end);
+        }
+        self
+    }
+
+    /// For a rule with types that has a [pair](crate::rule_set::Pairs): the problem is in `node`. While this report is shown, what
+    /// the rule without types reports [about `node`](Report::unless_claimed) is not. Both name the same node. See
+    /// [`LintMessage::hide_claimed`](crate::linter::LintMessage::hide_claimed).
+    pub fn claims(self, node: impl Spanned) -> Self {
+        self.claim(true, node.span())
+    }
+
+    /// For a rule without types that has a [pair](crate::rule_set::Pairs): see [`Report::claims`].
+    pub fn unless_claimed(self, node: impl Spanned) -> Self {
+        self.claim(false, node.span())
+    }
+
+    fn claim(mut self, with_types: bool, node: Span) -> Self {
+        let rule = self.diagnostic.as_ref().map(|it| it.rule);
+        let claim = rule.and_then(|rule| self.file.sink.claim_of(rule, with_types, node));
+        if claim.is_some()
+            && let Some(details) = self.details()
+        {
+            details.claim = claim;
         }
         self
     }
@@ -693,6 +761,23 @@ impl<'a> Report<'a> {
     pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         // The text is there when the report is made.
         self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
+    }
+
+    /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
+    /// [`Report::fix_dangerously`]. `--fix` must not change a program's behavior or break type checking, whatever the
+    /// original tool's `--fix` does. `is_safe` is only called if the fix is read, so it can afford to look at scopes.
+    pub fn fix_where_safe<F: IntoFix>(
+        self,
+        is_safe: impl FnOnce() -> bool,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        if !self.reads_fixes() {
+            return self;
+        }
+        match is_safe() {
+            true => self.fix(fix),
+            false => self.fix_dangerously(fix),
+        }
     }
 
     /// oxlint's `diagnostic_with_dangerous_suggestion`.

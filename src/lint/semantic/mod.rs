@@ -302,6 +302,12 @@ impl PartialEq for Symbol<'_> {
     }
 }
 impl Eq for Symbol<'_> {}
+impl crate::types::Indexed for Symbol<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.index
+    }
+}
 impl std::hash::Hash for Symbol<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -961,6 +967,12 @@ impl PartialEq for Scope<'_> {
     }
 }
 impl Eq for Scope<'_> {}
+impl crate::types::Indexed for Scope<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id.0
+    }
+}
 impl std::hash::Hash for Scope<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -1159,6 +1171,20 @@ impl<'a> Scope<'a> {
     #[inline]
     pub fn variable_scope(self) -> Scope<'a> {
         Scope::new(self.file, ScopeId(self.data().variable_scope))
+    }
+
+    /// True if `scope.type === "module"`. Meant for rules that use this to check whether something is at the top level
+    /// of the file. Without an ESLint or oxlint config, the function scope around a CommonJS file counts too. The user
+    /// didn't choose `sourceType` then, and `import/no-commonjs` and `import/no-amd` are meant for exactly the files
+    /// that have no `import`.
+    pub fn is_top_level_of_module(self) -> bool {
+        match self.kind() {
+            ScopeKind::Module => true,
+            ScopeKind::Function => {
+                self.file.language().stands_alone && matches!(self.node(), Node::File(_))
+            }
+            _ => false,
+        }
     }
 
     /// Strict mode applies: a module, a class, or under a `"use strict"` directive.

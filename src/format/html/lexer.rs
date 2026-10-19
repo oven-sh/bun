@@ -137,7 +137,6 @@ enum End {
     TagStart,
     Quote(u32),
     Name,
-    /// `Name` for the highlighter: `a=b/c?d=e` is one value, as it is in a browser.
     UnquotedValue,
 }
 
@@ -196,6 +195,11 @@ fn is_quote(code: u32) -> bool {
 
 fn is_name_end(code: u32) -> bool {
     is_whitespace(code) || matches!(code, 62 | 60 | 47 | 39 | 34 | 61 | 0)
+}
+
+/// HTML's "attribute value (unquoted) state". `=`, `<` and quotes are errors there but, like `/`, part of the value.
+fn is_unquoted_value_end(code: u32) -> bool {
+    matches!(code, 9 | 10 | 12 | 13 | 32 | 62 | 0)
 }
 
 fn is_prefix_end(code: u32) -> bool {
@@ -503,12 +507,7 @@ impl<'a> Tokenizer<'a, '_> {
             End::TagStart => self.is_tag_start(),
             End::Quote(quote) => self.peek() == quote,
             End::Name => is_name_end(self.peek()),
-            End::UnquotedValue => {
-                let code = self.peek();
-                is_whitespace(code)
-                    || matches!(code, 62 | 0)
-                    || (code == 47 && self.peek_at(self.pos + 1) == 62)
-            }
+            End::UnquotedValue => is_unquoted_value_end(self.peek()),
         }
     }
 
@@ -1219,9 +1218,11 @@ impl<'a> Tokenizer<'a, '_> {
             value = Some(if quote == 39 || quote == 34 {
                 self.consume_quoted_value(quote)?
             } else {
-                let end = match self.options.is_tolerant {
-                    true => End::UnquotedValue,
-                    false => End::Name,
+                // This is a port of Angular's lexer, which ends the value where a name would end: `a=b=c` becomes
+                // `a="b" ="c"`. That's right for Angular templates. Prettier parses HTML and Vue that way too.
+                let end = match self.options.tokenize_angular_blocks && !self.options.is_tolerant {
+                    true => End::Name,
+                    false => End::UnquotedValue,
                 };
                 self.consume_with_interpolation(
                     TokenType::AttrValueText,

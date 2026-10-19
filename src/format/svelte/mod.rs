@@ -18,6 +18,7 @@ use crate::js::context::JsFormatContext;
 use crate::options::{
     EmbeddedLanguageFormatting, Flavor, FormatOptions, JavaScriptParser, ParseParts,
 };
+use crate::range::{Offsets, write_with_line_ending};
 use crate::stack::Stack;
 use crate::syntax_error::{BeforeNormalizing, Message, SyntaxError};
 
@@ -112,7 +113,11 @@ pub fn format(
         return Err(FormatError::SyntaxError);
     };
     let without_mark = original.strip_prefix(crate::text::BOM).unwrap_or(original);
-    if options.require_pragma && !print::has_pragma(without_mark) {
+    let first = original.len() - without_mark.len();
+    let range = Offsets::new(original, first, options);
+    if (range.start >= range.end && !without_mark.is_empty())
+        || (options.require_pragma && !print::has_pragma(without_mark))
+    {
         out.extend_from_slice(original);
         return Ok(());
     }
@@ -126,6 +131,15 @@ pub fn format(
     let refuse = |error: SyntaxError| FormatError::SyntaxErrorAt(in_file(error));
     let mut tree = (parsers.tree_of(text))
         .map_err(|error| error.map_or(FormatError::NestedTooDeeply, refuse))?;
+    // Prettier's `isSourceElement` accepts nothing in a component, as in HTML, so a range leaves the text unchanged.
+    // Prettier itself prints the text that the plugin parsed, where `<script ✂prettier:content✂="..">{}</script>`
+    // replaces each script.
+    if range.start > first || range.end < original.len() {
+        out.extend_from_slice(&original[..first]);
+        let line_ending = options.line_ending.resolve(original);
+        write_with_line_ending(&normalized, line_ending.as_bytes(), out);
+        return Ok(());
+    }
     let host = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
@@ -163,7 +177,8 @@ pub fn format(
         parse: parsers.program,
         unformatted: &unformatted,
     };
-    let mut context = JsFormatContext::without_file(text, host.clone(), &[]);
+    let mut context =
+        JsFormatContext::without_file(host.clone(), &crate::js::comments::NO_COMMENTS);
     context.parse_javascript = parse_javascript;
     let root = crate::ir::run::write_with(context, text, &mut scratch.document, |f| {
         let mut writer = Writer::new(f, Some(0), true);

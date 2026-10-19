@@ -1,6 +1,8 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
+use bun_lint::utils::visible::is_exported_from_namespace;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -120,7 +122,7 @@ struct Known<'a> {
     assignments: FxHashMap<(Expr<'a>, Scope<'a>), bool>,
     /// For a variable that is declared more than once: the identifier to report, and what writes
     /// to it if there is one.
-    redeclared: FxHashMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
+    redeclared: IdMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
     patterns: Patterns<'a>,
 }
 
@@ -345,7 +347,7 @@ impl PreferConst {
     /// ESLint's `groupByDestructuring`, for one variable.
     fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Known<'a>) {
         let is_redeclared = variable.declarations().len() > 1;
-        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(&variable) {
+        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(variable) {
             for &host in hosts {
                 groups.push(host, *identifier);
             }
@@ -442,7 +444,7 @@ impl PreferConst {
             let place = declared.unwrap_or_else(|| utils::estree_span(node));
             let report = cx.report(place, USE_CONST).data("name", name);
             if should_fix && let Some((statement, _)) = parent {
-                report.fix(|fixer| {
+                report.fix_where_safe(|| !is_exported_from_namespace(statement), |fixer| {
                     let range = statement.span_without_export();
                     let keyword = fixer.file().tokens_in(range).find(|token| token.is("let"))?;
                     // The whole declaration, so that no other fix changes it in the same pass.

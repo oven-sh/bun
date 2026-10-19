@@ -563,7 +563,7 @@ impl<'a> Transpiler<'a> {
 
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
-    /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
+    /// rather than `Clone`. Called after `init_transpiler` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
@@ -1025,8 +1025,8 @@ fn resolver_bundle_options_subset(
                 .zip(f.built_in_modules.values().iter())
             {
                 let rv = match v {
-                    B::Import(p) => R::Import(p.clone()),
-                    B::Code(c) => R::Code(c.clone()),
+                    B::Import(p) => R::Import(p.as_ref().into()),
+                    B::Code(c) => R::Code(c.as_ref().into()),
                 };
                 m.put(k, rv).expect("oom");
             }
@@ -1464,6 +1464,7 @@ impl<'a> Transpiler<'a> {
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
+                    keep_directives: false,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,

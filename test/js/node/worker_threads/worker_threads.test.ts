@@ -1852,6 +1852,42 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
+  it("array methods read a hole from a shared process.env in the prototype chain", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         const w = new Worker(
+           \`process.env[1] = "inherited";
+             const holey = Object.setPrototypeOf([0, , 2], process.env);
+             require("worker_threads").parentPort.postMessage({
+               index: holey[1],
+               join: Array.prototype.join.call(holey),
+               slice: Array.prototype.slice.call(holey),
+               concat: Array.prototype.concat.call([], holey),
+             });\`,
+           { eval: true, env: SHARE_ENV },
+         );
+         w.on("message", result => console.log(JSON.stringify(result)));
+         w.on("error", e => { console.error("worker error: " + (e && e.stack || e)); process.exit(1); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: {
+        index: "inherited",
+        join: "0,inherited,2",
+        slice: [0, "inherited", 2],
+        concat: [0, "inherited", 2],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
   // through it reaches the real environment a child process inherits; a snapshot
   // worker's store is private and never does. (child_process enumerates the JS

@@ -244,10 +244,13 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
         .and_then(|flag| {
             let before = &value[..value.len() - 1];
             let unflagged = bun_core::strings::trim_js_whitespace_end(before);
-            let is_match = unflagged.len() < before.len()
+            // Prettier turns `b\ c` into `"b\" c`. It turns `b\31 c`, which means `b1c`, into `"b\31" c`.
+            let is_escaped = ends_before_escaped_blank(unflagged);
+            let blank_of_escape = usize::from(is_escaped || ends_with_hex_escape(unflagged));
+            let is_match = unflagged.len() + blank_of_escape < before.len()
                 && !unflagged.is_empty()
                 && bun_core::strings::index_of_any(unflagged, b"\n\r").is_none();
-            is_match.then_some((unflagged.len(), flag))
+            is_match.then_some((unflagged.len() + usize::from(is_escaped), flag))
         });
     let unflagged = &value[..flag.map_or(value.len(), |(len, _)| len)];
     let has_quotes = bun_core::strings::index_of_any(unflagged, b"\"'").is_some();
@@ -298,6 +301,59 @@ pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
 /// Not so for a word of a value: `\@a` is `\` and `@a`.
 pub(crate) fn ends_before_escaped_blank(text: &[u8]) -> bool {
     text.ends_with(b"\\") && text.iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
+}
+
+/// True if `text` ends with `\` and one to six hex digits. One whitespace character after that is part of the escape:
+/// `\31 0` means `10`.
+pub(crate) fn ends_with_hex_escape(text: &[u8]) -> bool {
+    let digits = (text.iter().rev())
+        .take_while(|byte| byte.is_ascii_hexdigit())
+        .count();
+    (1..=6).contains(&digits) && ends_before_escaped_blank(&text[..text.len() - digits])
+}
+
+/// Returns the offset of the first SCSS or Less `//` comment in `text` at or after `at`. Skips strings, `/* */`
+/// comments and unquoted `url()`s.
+pub(crate) fn next_line_comment(text: &[u8], mut at: usize) -> Option<usize> {
+    while let Some(found) = strings::index_of_any(text.get(at..)?, b"/\"'(") {
+        at += found;
+        match text[at] {
+            quote @ (b'"' | b'\'') => {
+                at += 1;
+                while text.get(at).is_some_and(|it| *it != quote) {
+                    at += 1 + usize::from(text[at] == b'\\');
+                }
+            }
+            b'(' if at >= 3
+                && text[at - 3..at].eq_ignore_ascii_case(b"url")
+                && !matches!(
+                    strings::trim_js_whitespace_start(&text[at + 1..]).first(),
+                    Some(b'"' | b'\'')
+                ) =>
+            {
+                at += strings::index_of_char_usize(&text[at..], b')')?;
+            }
+            b'/' if text.get(at + 1) == Some(&b'*') => {
+                at += 3 + strings::index_of(text.get(at + 2..)?, b"*/")?;
+            }
+            b'/' if text.get(at + 1) == Some(&b'/') => return Some(at),
+            _ => {}
+        }
+        at += 1;
+    }
+    None
+}
+
+/// Returns the offset of the `//` comment that `text` ends with.
+pub(crate) fn line_comment_at_end(text: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    loop {
+        let start = next_line_comment(text, at)?;
+        match strings::index_of_any(&text[start..], b"\n\r") {
+            Some(len) => at = start + len,
+            None => return Some(start),
+        }
+    }
 }
 
 /// `lastLineHasInlineComment`

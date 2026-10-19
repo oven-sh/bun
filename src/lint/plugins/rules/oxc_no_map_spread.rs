@@ -2,7 +2,7 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, is_method_call};
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashMap;
+use bun_lint::types::IdMap;
 use smallvec::{SmallVec, smallvec};
 
 /// Disallow object or array spreads in `Array.prototype.map` and `Array.prototype.flatMap` to add properties or elements to array
@@ -24,7 +24,7 @@ const MAP_FN_NAMES: [&str; 2] = ["map", "flatMap"];
 #[derive(Default)]
 pub struct State<'a> {
     /// Where the last reference ends that reads a variable.
-    last_reads: FxHashMap<Symbol<'a>, u32>,
+    last_reads: IdMap<Symbol<'a>, u32>,
 }
 
 impl Rule for NoMapSpread {
@@ -53,7 +53,7 @@ impl Rule for NoMapSpread {
             return;
         }
         let mut finder =
-            SpreadFinder { callback, declarations: FxHashMap::default(), lists: Vec::new(), return_span: None };
+            SpreadFinder { callback, declarations: IdMap::new(), lists: Vec::new(), return_span: None };
         let mut spreads = finder.spreads_in_returns();
         if spreads.is_empty() {
             return;
@@ -115,7 +115,7 @@ impl NoMapSpread {
         // `ident` itself ends before the call does.
         let is_read = |it: &Reference| it.is_read() && !it.expr().is_some_and(Expr::is_in_type_query);
         let last_read = || symbol.references().rev().find(is_read).map_or(0, |it| it.span().end);
-        self.ignore_rereads && *cx.state.last_reads.entry(symbol).or_insert_with(last_read) > call_site.end
+        self.ignore_rereads && *cx.state.last_reads.get_or_insert_with(symbol, last_read) > call_site.end
     }
 }
 
@@ -228,7 +228,7 @@ fn label(labels: &mut Details, spread: Expr, return_span: Option<Span>) {
 /// of one that is. Here a declaration is looked at once.
 struct SpreadFinder<'a> {
     callback: Func<'a>,
-    declarations: FxHashMap<VarDecl<'a>, Visit<'a>>,
+    declarations: IdMap<VarDecl<'a>, Visit<'a>>,
     /// Each has two elements or more.
     lists: Vec<Vec<Found<'a>>>,
     /// What the last `return` returns.
@@ -306,7 +306,7 @@ impl<'a> SpreadFinder<'a> {
                             let Some(declarator) = self.declarator_in_callback(e) else {
                                 continue;
                             };
-                            match self.declarations.get(&declarator) {
+                            match self.declarations.get(declarator) {
                                 Some(Visit::Started) => {}
                                 Some(Visit::Done(found)) => group.found.extend(*found),
                                 None => {

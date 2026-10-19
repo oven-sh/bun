@@ -165,9 +165,6 @@ pub(super) struct Binder<'f, 's> {
     referenced: Vec<u64>,
     /// The start flow node of the functions without a body in which no outer narrowing holds.
     start_of_signatures: FlowId,
-    /// Number of flow nodes that were not created because that one node serves all of those
-    /// functions.
-    spared: u32,
     break_target: FlowId,
     continue_target: FlowId,
     return_target: FlowId,
@@ -274,9 +271,9 @@ impl<'f, 's> Binder<'f, 's> {
         let mut b = BoundBuilder {
             expr_kinds: filled(old.expr_kinds, 0, NOT_REACHED),
             expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
-            expr_parent: filled(old.expr_parent, f.exprs.len(), Parent::None),
+            expr_parent: filled(old.expr_parent, f.exprs.len(), PackedParent::default()),
             expr_flow: filled(old.expr_flow, f.exprs.len(), UNREACHABLE),
-            stmt_parent: filled(old.stmt_parent, f.stmts.len(), Parent::None),
+            stmt_parent: filled(old.stmt_parent, f.stmts.len(), PackedParent::default()),
             stmt_scope: filled(old.stmt_scope, f.stmts.len(), ScopeId::NONE),
             stmt_flow: filled(old.stmt_flow, f.stmts.len(), UNREACHABLE),
             case_fallthrough: filled(old.case_fallthrough, f.cases.len(), FlowId::NONE),
@@ -367,7 +364,6 @@ impl<'f, 's> Binder<'f, 's> {
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
-            spared: 0,
             break_target: FlowId::NONE,
             continue_target: FlowId::NONE,
             return_target: FlowId::NONE,
@@ -466,10 +462,10 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `newSymbol`
     fn new_symbol(&mut self, flags: SymFlags, name: Atom) -> SymbolId {
-        self.b.symbols.push(SymbolIn {
+        self.b.symbols.push(GrowingSymbol {
             name,
             flags,
-            decls: DeclsIn::None,
+            decls: GrowingDecls::None,
             value_declaration: u32::MAX,
             parent: SymbolId::NONE,
             exports: TableId::NONE,
@@ -509,7 +505,7 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `SetValueDeclaration(symbol, node)` for the declaration that was just added.
-    fn set_value_declaration(symbol: &mut SymbolIn<Growable>) {
+    fn set_value_declaration(symbol: &mut GrowingSymbol) {
         let last = symbol.decls.len() - 1;
         let value_declaration = symbol.decls.get(symbol.value_declaration as usize);
         if takes_over_as_value_declaration(value_declaration.copied(), symbol.decls[last]) {
@@ -1000,8 +996,6 @@ impl<'f, 's> Binder<'f, 's> {
                 outer: FlowId::NONE,
                 arrow: false,
             });
-        } else {
-            self.spared += 1;
         }
         self.start_of_signatures
     }
@@ -1225,7 +1219,7 @@ impl<'f, 's> Binder<'f, 's> {
             (self.f[expr].kind, sense),
             (ExprKind::True, false) | (ExprKind::False, true)
         ) && !is_parenthesized(self.f, expr)
-            && !matches!(self.b.expr_parent[expr.idx()], Parent::Expr(p)
+            && !matches!(self.b.parent_of_expr(expr), Parent::Expr(p)
                 if matches!(self.f[p].kind, ExprKind::Binary { op: BinOp::Nullish, .. })
                     || self.chain_of(p).is_some_and(|(inner, is_root)| is_root && inner == expr))
         {
@@ -1484,7 +1478,7 @@ impl<'f, 's> Binder<'f, 's> {
             });
             for i in 0..self.f.import_attributes.len() {
                 let (_, attributes) = self.f.import_attributes[i];
-                if matches!(self.b.expr_parent[attributes.idx()], Parent::None) {
+                if matches!(self.b.parent_of_expr(attributes), Parent::None) {
                     self.expr(attributes, Parent::File);
                 }
             }
@@ -1617,12 +1611,11 @@ impl<'f, 's> Binder<'f, 's> {
             }
             let (obj, name) = match self.f[e].kind {
                 ExprKind::Ident(name) => break self.lookup_name(name, scope)?,
-                ExprKind::Dot {
-                    obj,
-                    name,
-                    name_pos,
-                    ..
-                } if !is_private_name_at(self.f, name_pos) => (obj, name),
+                ExprKind::Dot { obj, name, .. }
+                    if !is_private_name_at(self.f, self.f.name_pos(e)) =>
+                {
+                    (obj, name)
+                }
                 ExprKind::Index { obj, index, .. }
                     if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
                 {
@@ -1737,16 +1730,16 @@ impl<'f, 's> Binder<'f, 's> {
     fn container_of_expando(&self, e: ExprId, scope: ScopeId) -> Option<ScopeId> {
         let (f, b) = (self.f, &self.b);
         let of_function = |func: FnId| func.is_some().then(|| b.fns[func.idx()].scope);
-        let mut parent = b.expr_parent[e.idx()];
+        let mut parent = b.parent_of_expr(e);
         loop {
             parent = match parent {
-                Parent::Expr(outer) if outer.is_some() => b.expr_parent[outer.idx()],
+                Parent::Expr(outer) if outer.is_some() => b.parent_of_expr(outer),
                 Parent::Prop(_) | Parent::PropKey(..) => return None,
                 Parent::MethodKey(p) => return of_function(f.function_of(f.node(p))),
-                Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+                Parent::ParamDecorator(p) => {
                     return of_function(b.param_fn[p.idx()]);
                 }
-                Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+                Parent::MemberKey(m) | Parent::MemberDecorator(m) => {
                     return match b.member_owner[m.idx()] {
                         _ if f[m].func.is_some() => of_function(f[m].func),
                         MemberOwner::Class(c) => Some(b.class_scope[c.idx()]),
@@ -1754,7 +1747,7 @@ impl<'f, 's> Binder<'f, 's> {
                         MemberOwner::TypeLiteral(_) | MemberOwner::None => None,
                     };
                 }
-                Parent::Decorator(c, DecoratorOwner::Class(_)) => {
+                Parent::ClassDecorator(c) => {
                     return Some(b.class_scope[c.idx()]);
                 }
                 _ => return Some(scope),
@@ -1780,12 +1773,11 @@ impl<'f, 's> Binder<'f, 's> {
                         continue;
                     }
                     match self.f[target].kind {
-                        ExprKind::Dot {
-                            obj,
-                            name,
-                            name_pos,
-                            ..
-                        } if !is_private_name_at(self.f, name_pos) => (obj, name, ExprId::NONE),
+                        ExprKind::Dot { obj, name, .. }
+                            if !is_private_name_at(self.f, self.f.name_pos(target)) =>
+                        {
+                            (obj, name, ExprId::NONE)
+                        }
                         ExprKind::Index { obj, index, .. } => {
                             (obj, self.literal_name(index), index)
                         }
@@ -1855,7 +1847,13 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 return Some(SymbolId::NONE);
             }
+            // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of its
+            // name, which is not in scope.
             if let Some(&symbol) = tables[s.locals.idx()].get(name)
+                && !(matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                    && b.symbols[symbol.idx()]
+                        .flags
+                        .contains(SymFlags::TYPE_PARAMETER))
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
@@ -2099,7 +2097,7 @@ impl<'f, 's> Binder<'f, 's> {
             };
             self.b.expr_symbol[expr.idx()] = symbol;
             // There are two for every `<div></div>`, and only the baseline writers resolve them.
-            if matches!(self.b.expr_parent[expr.idx()], Parent::Expr(x)
+            if matches!(self.b.parent_of_expr(expr), Parent::Expr(x)
                 if matches!(self.f[x].kind, ExprKind::Jsx(j) if self.f[j].tag == expr || self.f[j].close_tag == expr))
                 && self.is_intrinsic_jsx_identifier(expr)
             {
@@ -2174,15 +2172,8 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.large_tables.extend(places);
         self.b.nested_names = nested_names_of(&self.b.scopes, &self.b.tables, &self.b.entries);
         // Labels.
-        let (mut kept, mut not_cached) = (0, 0);
-        for label in &self.label_edges {
-            if label.node.is_some() {
-                kept += label.edges.len();
-            } else {
-                not_cached += 1;
-            }
-        }
-        self.b.flow_places = self.b.flow.len() as u32 + self.spared + not_cached;
+        let kept = self.label_edges.iter().filter(|it| it.node.is_some());
+        let kept = kept.map(|it| it.edges.len()).sum();
         self.b.flow_edges.reserve_exact(kept);
         for node in &mut self.b.flow {
             let (Flow::Label { start, len } | Flow::Loop { start, len }) = node else {
@@ -2192,6 +2183,10 @@ impl<'f, 's> Binder<'f, 's> {
             (*start, *len) = (self.b.flow_edges.len() as u32, edges.len() as u32);
             self.b.flow_edges.extend_from_slice(&edges[..]);
         }
+        (
+            self.b.flow_depth,
+            self.b.has_loop_types_that_depend_on_order,
+        ) = measure_flow(&self.b.flow, &self.b.flow_edges, &self.b.flow_shared);
         // `collectExternalModuleReferences`
         let uses = self.f.specifier_uses.iter();
         let dynamic = uses.filter(|u| u.kind.is_dynamic() && u.spec.is_some());
@@ -2269,7 +2264,7 @@ impl<'f, 's> Binder<'f, 's> {
         if self.is_out_of_stack() {
             return;
         }
-        self.b.stmt_parent[id.idx()] = parent;
+        self.b.stmt_parent[id.idx()] = parent.into();
         self.b.stmt_scope[id.idx()] = self.scope;
         self.b.stmt_flow[id.idx()] = self.flow;
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
@@ -2277,7 +2272,7 @@ impl<'f, 's> Binder<'f, 's> {
         let counted = self.yields.len();
         // `checkDecorators` never reaches the decorators of a statement that is not a class. Those
         // of a class are bound with it.
-        for modifier in self.f[id].modifiers.iter() {
+        for modifier in self.f.stmt_modifiers(id).iter() {
             if let ModifierKind::Decorator(decorator) = self.f[modifier].kind
                 && !matches!(self.f[id].kind, StmtKind::Class(_))
             {
@@ -2498,7 +2493,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.enter_loop(pre);
                 self.add_edge(post, self.flow);
-                self.b.stmt_parent[left.idx()] = me;
+                self.b.stmt_parent[left.idx()] = me.into();
                 self.b.stmt_scope[left.idx()] = self.scope;
                 match self.f[left].kind {
                     StmtKind::Var(decls) => {
@@ -2715,7 +2710,7 @@ impl<'f, 's> Binder<'f, 's> {
         if let Parent::Stmt(loop_stmt) = parent {
             let mut at = loop_stmt;
             let mut depth = self.labels.len();
-            while let Parent::Stmt(p) = self.b.stmt_parent[at.idx()]
+            while let Parent::Stmt(p) = self.b.parent_of_stmt(at)
                 && matches!(self.f[p].kind, StmtKind::Labeled { .. })
                 && depth > 0
             {
@@ -3128,7 +3123,10 @@ impl<'f, 's> Binder<'f, 's> {
             }
             // `HasSyntacticModifier(node, ModifierFlagsExport)`
             StmtKind::Import(_)
-                if (self.f.find_modifier(self.f[s].modifiers, Flags::EXPORT)).is_none() =>
+                if (self
+                    .f
+                    .find_modifier(self.f.stmt_modifiers(s), Flags::EXPORT))
+                .is_none() =>
             {
                 ModuleInstanceState::NonInstantiated
             }
@@ -3461,7 +3459,7 @@ impl<'f, 's> Binder<'f, 's> {
             };
             self.this_property = match (owner, f.kind) {
                 (FnOwner::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) => {
-                    match self.b.expr_parent[e.idx()] {
+                    match self.b.parent_of_expr(e) {
                         Parent::Prop(p) => p,
                         _ => PropId::NONE,
                     }
@@ -3501,7 +3499,7 @@ impl<'f, 's> Binder<'f, 's> {
         let (first_return, first_yield) = (self.returns.len(), self.yields.len());
         // `getImmediatelyInvokedFunctionExpression`
         let is_invoked = matches!(f.kind, FnKind::Expr | FnKind::Arrow)
-            && matches!(owner, FnOwner::Expr(e) if matches!(self.b.expr_parent[e.idx()], Parent::Expr(call)
+            && matches!(owner, FnOwner::Expr(e) if matches!(self.b.parent_of_expr(e), Parent::Expr(call)
                 if matches!(self.f[call].kind, ExprKind::Call(c) if self.f[c].callee == e)));
         // `isImmediatelyInvoked` of `bindContainer`: no new flow starts here, the enclosing control
         // flow continues through it.
@@ -3807,7 +3805,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.is_in_class_decorator = matches!(of, DecoratorOwner::Class(_));
         for modifier in modifiers.iter() {
             if let ModifierKind::Decorator(e) = self.f[modifier].kind {
-                self.expr(e, Parent::Decorator(class, of));
+                self.expr(e, of.into());
                 if !self.can_be_decorated(of, class, owner) {
                     self.b.refused_decorators.push(e);
                 }
@@ -4329,7 +4327,7 @@ impl<'f, 's> Binder<'f, 's> {
                 // `checkImportType` only reads `resolution-mode`.
                 // In JavaScript, two copies of a JSDoc type share one.
                 if let Some(attributes) = self.f.attributes_of_import_type(id)
-                    && matches!(self.b.expr_parent[attributes.idx()], Parent::None)
+                    && matches!(self.b.parent_of_expr(attributes), Parent::None)
                 {
                     let saved = (self.true_target, self.false_target);
                     (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
@@ -4552,18 +4550,18 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// The start of `expr`: the part that does not depend on flow or on the enclosing expression.
     fn enter_expr(&mut self, id: ExprId, parent: Parent) {
-        self.b.expr_parent[id.idx()] = parent;
+        self.b.expr_parent[id.idx()] = parent.into();
         if self.is_unchecked {
             self.b.unchecked_exprs.push(id);
         }
         match self.f[id].kind {
             // The source text of a declaration file is not available: there the names declared by
             // the enclosing classes decide.
-            ExprKind::Dot { name, name_pos, .. }
+            ExprKind::Dot { name, .. }
                 if self
                     .f
                     .text
-                    .get(name_pos as usize)
+                    .get(self.f.name_pos(id) as usize)
                     .is_none_or(|&c| c == b'#') =>
             {
                 self.private_name(id, name)
@@ -4669,9 +4667,9 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::TaggedTemplate(c) => {
                 let call = self.f[c];
                 self.expr(call.callee, me);
-                self.tys(call.type_args);
+                self.tys(self.f.list_at(call.type_args));
                 self.exprs(call.args, me);
-                self.b.expr_parent[call.template.idx()] = me;
+                self.b.expr_parent[self.f.template_of(c).idx()] = me.into();
             }
             ExprKind::Array(items) => {
                 self.in_assignment_pattern = in_pattern;
@@ -4715,7 +4713,7 @@ impl<'f, 's> Binder<'f, 's> {
                 // The control flow seen by an immediately invoked function includes the evaluation
                 // of the arguments.
                 if matches!(self.f[call.callee].kind, ExprKind::Fn(_)) {
-                    self.tys(call.type_args);
+                    self.tys(self.f.list_at(call.type_args));
                     self.exprs(call.args, me);
                     self.expr(call.callee, me);
                 } else {
@@ -4723,7 +4721,7 @@ impl<'f, 's> Binder<'f, 's> {
                     // `resolveCall` neither uses nor checks the type arguments of a `super` call.
                     let around = self.is_unchecked;
                     self.is_unchecked |= matches!(self.f[call.callee].kind, ExprKind::Super);
-                    self.tys(call.type_args);
+                    self.tys(self.f.list_at(call.type_args));
                     self.is_unchecked = around;
                     self.exprs(call.args, me);
                 }
@@ -4744,7 +4742,7 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::New(c) => {
                 let call = &self.f[c];
                 self.expr(call.callee, me);
-                self.tys(call.type_args);
+                self.tys(self.f.list_at(call.type_args));
                 self.exprs(call.args, me);
             }
             ExprKind::Unary { op, operand } => match op {
@@ -4861,7 +4859,8 @@ impl<'f, 's> Binder<'f, 's> {
                 }
             }
             // `bindConditionalExpressionFlow`
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.f.branches(branches);
                 let (on_true, on_false, post) = (
                     self.branch_label(),
                     self.branch_label(),
@@ -4922,6 +4921,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
             // Neither a reference nor an assignment target: nothing looks through it.
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = self.f.list_at(type_args);
                 self.expr(expr, me);
                 self.tys(type_args);
             }
@@ -5003,7 +5003,7 @@ impl<'f, 's> Binder<'f, 's> {
         if self.this_member.is_none() && self.this_property.is_none()
             || assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty
             || matches!(self.f[e].kind, ExprKind::Assign { target, .. }
-                if matches!(self.f[target].kind, ExprKind::Dot { name_pos, .. } if is_private_name_at(self.f, name_pos)))
+                if matches!(self.f[target].kind, ExprKind::Dot { .. } if is_private_name_at(self.f, self.f.name_pos(target))))
         {
             return;
         }
@@ -5064,7 +5064,7 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             ExprKind::Call(c) => (self.f[c].callee, self.f[c].chain),
             ExprKind::NonNull(x) => {
-                let Parent::Expr(parent) = self.b.expr_parent[e.idx()] else {
+                let Parent::Expr(parent) = self.b.parent_of_expr(e) else {
                     return None;
                 };
                 return (self.chain_of(parent) == Some((e, false))).then_some((x, false));
@@ -5076,12 +5076,12 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `isTopLevelLogicalExpression`. `enter_expr` records the parents.
     fn is_top_level_logical_expression(&self, mut node: ExprId) -> bool {
-        while let Parent::Expr(parent) = self.b.expr_parent[node.idx()]
+        while let Parent::Expr(parent) = self.b.parent_of_expr(node)
             && matches!(self.f[parent].kind, ExprKind::Unary { op: UnOp::Not, .. })
         {
             node = parent;
         }
-        match self.b.expr_parent[node.idx()] {
+        match self.b.parent_of_expr(node) {
             // `isStatementCondition`
             Parent::Stmt(statement) => !matches!(
                 self.f[statement].kind,
@@ -5155,7 +5155,7 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::Index { index, .. } => self.expr(index, me),
             ExprKind::Call(c) => {
                 let call = self.f[c];
-                self.tys(call.type_args);
+                self.tys(self.f.list_at(call.type_args));
                 self.exprs(call.args, me);
             }
             _ => {}
@@ -5205,7 +5205,7 @@ impl<'f, 's> Binder<'f, 's> {
             if op == BinOp::Comma {
                 self.maybe_call_flow(right);
             }
-            match self.b.expr_parent[node.idx()] {
+            match self.b.parent_of_expr(node) {
                 Parent::Expr(parent) if node != root => node = parent,
                 _ => break,
             }
@@ -5369,7 +5369,7 @@ impl<'f, 's> Binder<'f, 's> {
                         if names_a_function {
                             Parent::MethodKey(p)
                         } else {
-                            Parent::PropKey(owner, p)
+                            Parent::PropKey(p)
                         },
                     );
                 }

@@ -65,8 +65,9 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         }
         labels.push(keyword, "");
     };
+    let is_oxlint = cx.language().is_oxlint;
     let has_return_type = function_node.return_type().is_some();
-    let call_signatures = match has_return_type || any_type != AnyType::Safe {
+    let call_signatures = match has_return_type || any_type != AnyType::Safe || is_oxlint {
         true => get_call_signatures_of_type(function_type),
         false => Vec::new(),
     };
@@ -127,10 +128,15 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         return;
     }
 
-    let Some(signature) = function_type.get_call_signatures().first() else {
+    // tsgolint takes the first of the signatures collected from the constituents.
+    let (signature, sender_node) = match is_oxlint {
+        true => (call_signatures.first().copied(), Some(return_node)),
+        false => (function_type.get_call_signatures().first(), Some(return_node)),
+    };
+    let Some(signature) = signature else {
         return;
     };
-    let Some(result) = is_unsafe_assignment(return_node_type, signature.get_return_type(), return_node)
+    let Some(result) = is_unsafe_assignment(return_node_type, signature.get_return_type(), sender_node)
     else {
         return;
     };

@@ -10,118 +10,53 @@
 
 use super::assignment_like::is_short_argument;
 use super::conditional::{ConditionalLike, Operand, should_extra_indent};
-use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use super::typecast::{comments_of_expression, is_chain_expression_without_comments};
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::js::print::statements::parenthesis_before_needs_semicolon;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-/// The comments between the operands, by what they belong to. Prettier's
-/// `handleConditionalExpressionComments`.
-#[derive(Copy, Clone, Default)]
-struct OperandComments<'a> {
-    after_test: &'a [Comment],
-    before_consequent: &'a [Comment],
-    after_consequent: &'a [Comment],
-    /// On lines of their own before the `:`.
-    before_colon: &'a [Comment],
-    before_alternate: &'a [Comment],
-}
-
-impl<'a> OperandComments<'a> {
-    fn new(
-        test: Operand<'a>,
-        consequent: Operand<'a>,
-        alternate: Operand<'a>,
-        f: &Formatter<'a>,
-    ) -> Self {
-        if f.is_quiet() {
-            return Self::default();
-        }
-        let split = |before: Operand<'a>, after: Operand<'a>, operator: u8| {
-            let start = before.span().end;
-            let comments = f
-                .comments()
-                .comments_in(before.span().between(after.span()));
-            comments
-                .split_at_checked(trailing_count(comments, start, operator, f.source_text()))
-                .unwrap_or((comments, &[]))
+impl<'a> Operand<'a> {
+    /// Whether one of the comments attached to it is a block comment that spans several lines.
+    fn has_multiline_block_comment(self, f: &Formatter<'a>) -> bool {
+        let comments = match self {
+            Operand::Expr(e) if is_chain_expression_without_comments(e, f) => return false,
+            Operand::Expr(e) => comments_of_expression(e, f),
+            Operand::Type(ty) => f.comments().of_node(ty.as_ast_nodes()),
         };
-        let (after_test, before_consequent) = split(test, consequent, b'?');
-        let (after_consequent, rest) = split(consequent, alternate, b':');
-        // Anything but a block comment on one line. Not in a conditional type, and not before a
-        // `ChainExpression`, which TypeScript files have: Prettier compares the alternate with the
-        // node that follows the comment, and that is the member access or the call in it.
-        let count = match alternate {
-            Operand::Expr(e) if f.file().is_javascript() || !e.is_chain_root() => rest
-                .iter()
-                .take_while(|comment| comment.is_line() || comment.is_multiline_block())
-                .count(),
-            _ => 0,
-        };
-        let (before_colon, before_alternate) = rest.split_at_checked(count).unwrap_or((rest, &[]));
-        Self {
-            after_test,
-            before_consequent,
-            after_consequent,
-            before_colon,
-            before_alternate,
-        }
-    }
-
-    /// Prettier's `hasMultilineBlockComments`: of the comments of the operands.
-    fn has_multiline_block(&self) -> bool {
-        [
-            self.after_test,
-            self.before_consequent,
-            self.after_consequent,
-            self.before_alternate,
-        ]
-        .into_iter()
-        .flatten()
-        .any(|comment| comment.is_multiline_block())
+        (comments.leading.iter())
+            .chain(comments.trailing)
+            .chain(comments.dangling)
+            .any(|comment| comment.is_multiline_block())
     }
 }
 
-/// How many of `comments`, which are between an operand that ends at `start` and the next, trail the
-/// former: those on its line, if they are before `operator` or the last of them ends the line.
-fn trailing_count(
-    comments: &[Comment],
-    mut start: u32,
-    operator: u8,
-    source_text: SourceText<'_>,
-) -> usize {
-    let mut first_after_operator = None;
-    for (index, comment) in comments.iter().enumerate() {
-        if source_text.contains_newline(Span::before(start, comment.span)) {
-            return index;
-        }
-        if comment.is_line() || comment.followed_by_newline() {
-            return index + 1;
-        }
-        if first_after_operator.is_none()
-            && source_text.contains_byte(Span::before(start, comment.span), operator)
-        {
-            first_after_operator = Some(index);
-        }
-        start = comment.span.end;
+/// Prettier's `hasMultilineBlockComments`.
+fn has_multiline_block_comments<'a>(conditional: ConditionalLike<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() {
+        return false;
     }
-    first_after_operator.unwrap_or(comments.len())
-}
-
-/// An operand and the comments after it.
-struct FormatOperand<'a>(Operand<'a>, &'a [Comment]);
-
-impl<'a> Format<'a> for FormatOperand<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(
-            f,
-            [
-                FormatNodeWithoutTrailingComments(&self.0),
-                FormatTrailingComments::Comments(self.1)
-            ]
-        );
+    match conditional {
+        ConditionalLike::ConditionalExpression(e) => match e.kind() {
+            ExprKind::Cond { test, yes, no } => [test, yes, no]
+                .map(Operand::Expr)
+                .into_iter()
+                .any(|operand| operand.has_multiline_block_comment(f)),
+            _ => false,
+        },
+        ConditionalLike::TSConditionalType(ty) => match ty.kind() {
+            TypeKind::Cond {
+                check,
+                extends,
+                yes,
+                no,
+            } => [check, extends, yes, no]
+                .map(Operand::Type)
+                .into_iter()
+                .any(|operand| operand.has_multiline_block_comment(f)),
+            _ => false,
+        },
     }
 }
 
@@ -155,14 +90,12 @@ impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
 /// Whether `conditional`, an expression, breaks whatever its width: there is a conditional after
 /// its `?` or its `:`, or an operand has a block comment of several lines. Prettier's `shouldBreak`.
 pub(crate) fn should_break<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let ExprKind::Cond { test, yes, no } = conditional.kind() else {
+    let ExprKind::Cond { yes, no, .. } = conditional.kind() else {
         return false;
     };
-    let (test, consequent, alternate) =
-        (Operand::Expr(test), Operand::Expr(yes), Operand::Expr(no));
-    consequent.is_conditional()
-        || alternate.is_conditional()
-        || OperandComments::new(test, consequent, alternate, f).has_multiline_block()
+    Operand::Expr(yes).is_conditional()
+        || Operand::Expr(no).is_conditional()
+        || has_multiline_block_comments(ConditionalLike::ConditionalExpression(conditional), f)
 }
 
 pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Formatter<'a>) {
@@ -249,9 +182,9 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     };
 
     // A chain breaks as a whole.
-    let comments = OperandComments::new(test, consequent, alternate, f);
-    let should_break =
-        is_consequent_ternary || is_alternate_ternary || comments.has_multiline_block();
+    let should_break = is_consequent_ternary
+        || is_alternate_ternary
+        || has_multiline_block_comments(conditional, f);
 
     // So that a short consequent is not pushed to the next line:
     //
@@ -265,9 +198,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                 matches!(consequent.kind(), ExprKind::Null)
             }
             (Operand::Expr(test), Operand::Expr(consequent)) => {
-                comments.before_consequent.is_empty()
-                    && comments.after_consequent.is_empty()
-                    && is_short_argument(consequent, f.options().line_width.value() / 4, f)
+                is_short_argument(consequent, f.options().line_width.value() / 4, f)
                     && is_simple_expression_by_node_count(test, 3, f)
             }
             _ => false,
@@ -279,6 +210,18 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
             && matches!(test, Operand::Expr(test) if is_simple_expression_by_node_count(test, 1, f)))
         || try_to_parenthesize_alternate;
 
+    // Prettier's `alternateComments`: they are on lines of their own before the `:`. Prettier also writes the dangling
+    // comments of the test here, a second time: `f(/* comment */) ? a : b`.
+    let comments_before_colon = match (f.is_quiet(), conditional) {
+        (true, _) => CommentList::empty(),
+        (false, ConditionalLike::ConditionalExpression(e)) => {
+            f.comments().of_node(e.as_ast_nodes()).dangling
+        }
+        (false, ConditionalLike::TSConditionalType(ty)) => {
+            f.comments().of_node(ty.as_ast_nodes()).dangling
+        }
+    };
+
     let test_id = f.group_id("test");
     let test_and_consequent_id = f.group_id("test-and-consequent");
 
@@ -286,7 +229,6 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         let format_test = format_with(|f| match conditional {
             ConditionalLike::ConditionalExpression(e) => {
                 let is_conditional = test.is_conditional();
-                let test = FormatOperand(test, comments.after_test);
                 if parenthesis_before_needs_semicolon(e, f) {
                     write!(f, if_group_breaks(&";"));
                 }
@@ -303,10 +245,9 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                     return;
                 };
                 write!(f, [check, space(), "extends", space()]);
-                let format_extends = FormatOperand(test, comments.after_test);
                 match extends.kind() {
-                    TypeKind::Cond { .. } | TypeKind::Mapped(_) => write!(f, format_extends),
-                    _ => write!(f, group(&WrapInParens(&format_extends))),
+                    TypeKind::Cond { .. } | TypeKind::Mapped(_) => write!(f, extends),
+                    _ => write!(f, group(&WrapInParens(&extends))),
                 }
             }
         });
@@ -327,13 +268,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         } else {
             soft_line_break_or_space()
         };
-        write!(
-            f,
-            indent(&format_args!(
-                line,
-                FormatOperand(consequent, comments.after_consequent)
-            ))
-        );
+        write!(f, indent(&format_args!(line, consequent)));
     });
 
     let format_test_and_consequent = format_with(|f| {
@@ -362,7 +297,6 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     });
 
     let format_alternate = format_with(|f| {
-        let alternate = FormatNodeWithoutTrailingComments(&alternate);
         if !try_to_parenthesize_alternate {
             return write!(f, alternate);
         }
@@ -391,9 +325,9 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     let format_parts = format_with(|f| {
         write!(f, format_test_and_consequent);
 
-        if !comments.before_colon.is_empty() {
+        if !comments_before_colon.is_empty() {
             let comments = FormatDanglingComments::Comments {
-                comments: comments.before_colon,
+                comments: comments_before_colon,
                 indent: DanglingIndentMode::None,
             };
             write!(

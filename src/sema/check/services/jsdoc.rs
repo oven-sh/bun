@@ -232,13 +232,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let mut pos = skip_trivia_back(text, hir.start(node) as usize);
         // It takes the last `/*` for the start of a comment, which can be in the text of the comment.
         let comments = &hir.comments[..];
-        while let Some(&(start, end)) = comments
-            .partition_point(|comment| (comment.0 as usize) < pos)
+        while let Some(comment) = comments
+            .partition_point(|comment| (comment.pos as usize) < pos)
             .checked_sub(1)
             .and_then(|around| comments.get(around))
-            && pos < end as usize
+            && pos < comment.end as usize
         {
-            pos = skip_trivia_back(text, start as usize);
+            pos = skip_trivia_back(text, comment.pos as usize);
         }
         // `getJSDocCommentRanges`
         let mut ranges = match kind {

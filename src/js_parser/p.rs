@@ -5968,11 +5968,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
         if !self.fn_only_data_visit.is_this_nested {
             // In the REPL, top-level `this` must evaluate to the global object
-            // (matching Node's `> this` and `deno repl > this`). The REPL wraps
-            // user input in an arrow IIFE that has no `exports` binding, so the
-            // CommonJS substitution below would emit a reference to an
-            // undefined `exports`. Leaving `E::This` in place lets the arrow
-            // inherit `this` from the enclosing (global) scope at runtime.
+            // (matching Node's `> this` and `deno repl > this`). REPL input has
+            // no `exports` binding, so the CommonJS substitution below would
+            // emit a reference to an undefined `exports`. `E::This` stays in
+            // place: the input runs as a script, or in an arrow IIFE that
+            // inherits `this` from the enclosing (global) scope at runtime.
             if self.options.repl_mode {
                 return None;
             }

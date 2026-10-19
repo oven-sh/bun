@@ -778,6 +778,94 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // In sloppy code a function declared in a block is also a `var` of the script
+    // (ECMA-262 Annex B.3.3).
+    test("functions declared in blocks persist across evaluations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "if (1) { function inIf() {} }",
+        "try { function inTry() {} } catch {}",
+        "for (;;) { function inFor() {} break }",
+        "switch (1) { case 1: function inSwitch() {} }",
+        "labelled: { function inLabel() {} }",
+        "if (1) function inBareIf() {}",
+        "[typeof inIf, typeof inTry, typeof inFor, typeof inSwitch, typeof inLabel, typeof inBareIf].join()",
+        "if (1) { function sameInput() { return 1 } } sameInput()",
+        "if (0) { function neverRun() {} }",
+        "neverRun",
+        "Object.getOwnPropertyDescriptor(globalThis, 'inIf').configurable",
+        "await 1; if (1) { function besideAwait() { return 2 } }",
+        "besideAwait()",
+        '"use strict"; if (1) { function inStrict() {} }',
+        "typeof inStrict",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        "undefined",
+        '"function,function,function,function,function,function"',
+        "1",
+        "undefined",
+        "undefined",
+        "false",
+        "undefined",
+        "2",
+        "undefined",
+        '"undefined"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // A direct eval in sloppy code declares its `var`s and functions in the scope of its caller.
+    test("declarations of a direct eval persist across evaluations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        'eval("var fromEval = 1")',
+        "fromEval",
+        'eval("function evalFn() { return 2 }")',
+        "evalFn()",
+        "var stale = 1",
+        'eval("var stale = 2")',
+        "stale",
+        '"use strict"; eval("var inStrict = 1")',
+        "typeof inStrict",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", "1", "undefined", "2", "1", "undefined", "2", "undefined", '"undefined"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load and .copy keep a function declared in a block and the declarations of a direct eval", async () => {
+      using dir = tempDir("repl-load-sloppy", {
+        "polyfill.js": [
+          'if (typeof polyFn === "undefined") { function polyFn() { return 1 } }',
+          'eval("var polyEval = 2");',
+          "var polyFlag = true;",
+          "",
+        ].join("\n"),
+      });
+      const filePath = path.join(String(dir), "polyfill.js");
+      const { outputs, stderr, exitCode } = await runRepl([
+        `.load ${filePath}`,
+        "[polyFn(), polyEval, polyFlag].join()",
+        ".copy if (1) { function copied() { return 3 } } eval('var copiedToo = 4'); copied() + copiedToo",
+        "copied() + copiedToo",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        `Loading ${filePath}...\ntrue`,
+        '"1,2,true"',
+        "Copied 1 characters to clipboard",
+        "7",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {
@@ -867,6 +955,16 @@ describe.concurrent("Bun REPL", () => {
     test("-p prints the result and exits", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-p", "1 + 1"]);
       expect(stdout).toBe("2\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p sees a function declared in a block and the declarations of a direct eval", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-p",
+        'if (1) { function inBlock() { return 1 } } eval("var fromEval = 2"); inBlock() + fromEval',
+      ]);
+      expect(stdout).toBe("3\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -1693,6 +1791,19 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("__editorResult + 23\n");
       send("\x04"); // Ctrl+D to finish editor mode
       await waitFor("123");
+    });
+  });
+
+  test(".editor keeps a function declared in a block and the declarations of a direct eval", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      send("if (1) { function __editorFn() { return 400 } }\n");
+      send('eval("var __editorVar = 56")\n');
+      send("\x04"); // Ctrl+D to finish editor mode
+      await waitFor("undefined");
+      send("__editorFn() + __editorVar\n");
+      await waitFor("456");
     });
   });
 

@@ -2,46 +2,59 @@
 //!
 //! This module provides transformations for REPL mode:
 //! - Wraps the last expression in { value: expr } for result capture
-//! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
+//! - Wraps code with await or an import in an async IIFE, and strict code or code
+//!   with a top-level return in a sync one. Other code stays the statements of a script.
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::VecExt;
+use bun_collections::{HashMap, VecExt};
 
 use bun_ast as js_ast;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use bun_ast::symbol::Kind as SymbolKind;
+use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Scope, Stmt};
 
 use crate::p::P;
+
+/// The function that the statements of a REPL input run in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplWrapper {
+    /// No function: the statements are the script. The engine then gives a direct `eval` the
+    /// global scope to declare in, and a function in a block its `var` (Annex B.3.3).
+    None,
+    /// `(() => { ... })()`. A `return` needs a function. A strict input needs one to hold
+    /// its directive: the hoisted `var`s must stay sloppy code, because a strict script
+    /// that runs through an indirect `eval` keeps what it declares to itself.
+    Arrow,
+    /// `(async () => { ... })()`, for top-level await and imports.
+    AsyncArrow,
+}
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
-    /// - Wraps code with await in async IIFE with variable hoisting
+    /// - Hoists declarations out of the IIFE that wraps some inputs (see `ReplWrapper`)
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Skip transform if there's a top-level return (indicates module pattern)
-        if self.has_top_level_return {
-            return Ok(());
-        }
-
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
             total_stmts_count += part.stmts.len();
         }
 
+        let is_strict =
+            self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
+
         // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
         // node's repl still evaluates the directive as a string expression. Reinject it at the
         // front, like the CJS wrapper's preserve_strict_mode.
-        let reinject_strict = self.module_scope().strict_mode
-            == js_ast::StrictModeKind::ExplicitStrictMode
+        let reinject_strict = is_strict
             && !(!parts.is_empty()
                 && !parts[0].stmts.is_empty()
                 && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
@@ -79,18 +92,43 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // Apply transform with is_async based on presence of top-level await
-        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
+        let mut has_block_fn = false;
+        let mut statements = ReplStatements {
+            stack_check: self.stack_check,
+            each_list: &mut |list| {
+                has_block_fn =
+                    has_block_fn || list.slice().iter().any(|stmt| self.repl_is_block_fn(stmt));
+            },
+            has_return: false,
+        };
+        for stmt in all_stmts.iter() {
+            statements.stmt(*stmt);
+        }
+        let has_return = statements.has_return;
+
+        let wrapper = if has_top_level_await {
+            ReplWrapper::AsyncArrow
+        } else if is_strict || has_return {
+            ReplWrapper::Arrow
+        } else {
+            ReplWrapper::None
+        };
+
+        // Strict code has no Annex B: there a function in a block stays in its block.
+        let place_block_fns = has_block_fn && !is_strict;
+
+        self.repl_transform_with_hoisting(parts, all_stmts, bump, wrapper, place_block_fns)
     }
 
-    /// Transform code with hoisting and IIFE wrapper
-    /// `is_async`: true for async IIFE (when top-level await present), false for sync IIFE
+    /// Transform code with hoisting and the IIFE wrapper that `wrapper` names.
+    /// `place_block_fns`: the input has a function in a block that can be a `var` of the input.
     fn repl_transform_with_hoisting<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         all_stmts: &[Stmt],
         bump: &'bump Bump,
-        is_async: bool,
+        wrapper: ReplWrapper,
+        place_block_fns: bool,
     ) -> Result<(), bun_alloc::AllocError> {
         if all_stmts.is_empty() {
             return Ok(());
@@ -99,6 +137,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         // Lists for hoisted declarations and inner statements
         let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
         let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
+
+        let block_fn_vars = if place_block_fns {
+            self.repl_block_fn_vars()
+        } else {
+            HashMap::default()
+        };
 
         // Process each statement - hoist all declarations for REPL persistence
         for stmt in all_stmts.iter() {
@@ -147,66 +191,16 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     }
                 }
                 StmtData::SFunction(func) => {
-                    // For function declarations:
+                    // For function declarations in a wrapper:
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
-                    if let Some(name_loc) = func.func.name {
-                        let name_ref = name_loc.ref_;
-                        hoisted_stmts.push(self.s(
-                            S::Local {
-                                kind: S::Kind::KVar,
-                                decls: repl_one_decl(
-                                    bump,
-                                    Binding::alloc(
-                                        bump,
-                                        B::Identifier { r#ref: name_ref },
-                                        name_loc.loc,
-                                    ),
-                                ),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-
-                        // Add this.funcName = funcName assignment
-                        let this_expr = self.new_expr(E::This {}, stmt.loc);
-                        // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
-                        // detaches the borrow from `self.symbols` so the &mut self calls below
-                        // don't conflict.
-                        let name_str: &[u8] = self.symbols[name_ref.inner_index() as usize]
-                            .original_name
-                            .slice();
-                        let this_dot = self.new_expr(
-                            E::Dot {
-                                target: this_expr,
-                                name: name_str.into(),
-                                name_loc: name_loc.loc,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        );
-                        let func_id = self.new_expr(
-                            E::Identifier {
-                                ref_: name_ref,
-                                ..Default::default()
-                            },
-                            name_loc.loc,
-                        );
-                        let assign = self.new_expr(
-                            E::Binary {
-                                op: js_ast::OpCode::BinAssign,
-                                left: this_dot,
-                                right: func_id,
-                            },
-                            stmt.loc,
-                        );
-                        inner_stmts.push(self.s(
-                            S::SExpr {
-                                value: assign,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
+                    // With no wrapper the declaration is already one of the script.
+                    if wrapper != ReplWrapper::None
+                        && let Some(name) = func.func.name
+                    {
+                        let copy_out =
+                            self.repl_persist_fn_name(name, stmt.loc, &mut hoisted_stmts, bump);
+                        inner_stmts.push(copy_out);
                     }
                     // Add the function declaration itself
                     inner_stmts.push(*stmt);
@@ -480,50 +474,66 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     ));
                 }
                 _ => {
+                    if place_block_fns {
+                        ReplStatements {
+                            stack_check: self.stack_check,
+                            each_list: &mut |list| {
+                                self.repl_place_block_fns(
+                                    list,
+                                    wrapper,
+                                    &block_fn_vars,
+                                    &mut hoisted_stmts,
+                                    bump,
+                                )
+                            },
+                            has_return: false,
+                        }
+                        .stmt(*stmt);
+                    }
                     inner_stmts.push(*stmt);
                 }
             }
         }
 
-        // Wrap the last expression in return { value: expr }
-        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        // Make the last expression the value of the input: { value: expr }
+        self.repl_wrap_last_expression(&mut inner_stmts, wrapper, bump);
 
-        // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
-        let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
-        let arrow = self.new_expr(
-            E::Arrow {
-                body: G::FnBody {
-                    loc: bun_ast::Loc::EMPTY,
-                    stmts: bun_ast::StoreSlice::new_mut(inner_slice),
+        // Final output: hoisted declarations, then the statements or the IIFE call
+        let mut final_stmts = hoisted_stmts;
+        if wrapper == ReplWrapper::None {
+            final_stmts.extend_from_slice(&inner_stmts);
+        } else {
+            // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
+            let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
+            let arrow = self.new_expr(
+                E::Arrow {
+                    body: G::FnBody {
+                        loc: bun_ast::Loc::EMPTY,
+                        stmts: bun_ast::StoreSlice::new_mut(inner_slice),
+                    },
+                    is_async: wrapper == ReplWrapper::AsyncArrow,
+                    ..Default::default()
                 },
-                is_async,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
+                bun_ast::Loc::EMPTY,
+            );
 
-        let iife = self.new_expr(
-            E::Call {
-                target: arrow,
-                args: bun_alloc::AstAlloc::vec(),
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
+            let iife = self.new_expr(
+                E::Call {
+                    target: arrow,
+                    args: bun_alloc::AstAlloc::vec(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
 
-        // Final output: hoisted declarations + IIFE call
-        let final_stmts_count = hoisted_stmts.len() + 1;
-        let mut final_stmts = BumpVec::with_capacity_in(final_stmts_count, bump);
-        for stmt in hoisted_stmts.iter() {
-            final_stmts.push(*stmt);
+            final_stmts.push(self.s(
+                S::SExpr {
+                    value: iife,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
         }
-        final_stmts.push(self.s(
-            S::SExpr {
-                value: iife,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
         // Update parts. Input consisting solely of a consumed "use strict"
@@ -657,34 +667,322 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Wrap the last expression in return { value: expr }
-    fn repl_wrap_last_expression_with_return<'bump>(
+    /// Make the input evaluate to { value: expr } when its last statement is an expression:
+    /// `return { value: expr }` in a wrapper, `void 0, { value: expr }` without one.
+    fn repl_wrap_last_expression<'bump>(
         &mut self,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
+        wrapper: ReplWrapper,
         bump: &'bump Bump,
     ) {
-        if !inner_stmts.is_empty() {
-            let mut last_idx: usize = inner_stmts.len();
-            while last_idx > 0 {
-                last_idx -= 1;
-                let last_stmt = inner_stmts[last_idx];
-                match last_stmt.data {
-                    StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
-                    StmtData::SExpr(expr_data) => {
-                        // Wrap in return { value: expr }
-                        let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
-                        inner_stmts[last_idx] = self.s(
+        let mut last_idx: usize = inner_stmts.len();
+        while last_idx > 0 {
+            last_idx -= 1;
+            let last_stmt = inner_stmts[last_idx];
+            match last_stmt.data {
+                StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
+                StmtData::SExpr(expr_data) => {
+                    let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
+                    inner_stmts[last_idx] = if wrapper == ReplWrapper::None {
+                        // An object literal that starts a statement needs parentheses.
+                        // After `void 0,` it needs none.
+                        let value = self.repl_void_0(last_stmt.loc).join_with_comma(wrapped);
+                        self.s(
+                            S::SExpr {
+                                value,
+                                ..Default::default()
+                            },
+                            last_stmt.loc,
+                        )
+                    } else {
+                        self.s(
                             S::Return {
                                 value: Some(wrapped),
                             },
                             last_stmt.loc,
-                        );
-                        break;
-                    }
-                    _ => break,
+                        )
+                    };
+                    return;
                 }
+                _ => break,
             }
         }
+
+        if wrapper == ReplWrapper::None {
+            // A script evaluates to the value of its last statement that has one, which
+            // can be any earlier statement. Only { value: expr } may be the value of an input.
+            let value = self.repl_void_0(bun_ast::Loc::EMPTY);
+            inner_stmts.push(self.s(
+                S::SExpr {
+                    value,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
+        }
+    }
+
+    fn repl_void_0(&mut self, loc: bun_ast::Loc) -> Expr {
+        let zero = self.new_expr(E::Number::new(0.0), loc);
+        self.new_expr(
+            E::Unary {
+                op: js_ast::OpCode::UnVoid,
+                value: zero,
+                flags: E::UnaryFlags::default(),
+            },
+            loc,
+        )
+    }
+
+    /// A function declared inside the wrapper is a local of the wrapper. Declares
+    /// `var NAME;` outside of it and returns `this.NAME = NAME;`, which copies the function out.
+    fn repl_persist_fn_name<'bump>(
+        &mut self,
+        name: js_ast::LocRef,
+        loc: bun_ast::Loc,
+        hoisted_stmts: &mut BumpVec<'bump, Stmt>,
+        bump: &'bump Bump,
+    ) -> Stmt {
+        hoisted_stmts.push(self.s(
+            S::Local {
+                kind: S::Kind::KVar,
+                decls: repl_one_decl(
+                    bump,
+                    Binding::alloc(bump, B::Identifier { r#ref: name.ref_ }, name.loc),
+                ),
+                ..Default::default()
+            },
+            loc,
+        ));
+
+        let this_expr = self.new_expr(E::This {}, loc);
+        // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
+        // detaches the borrow from `self.symbols` so the &mut self calls below
+        // don't conflict.
+        let name_str: &[u8] = self.symbols[name.ref_.inner_index() as usize]
+            .original_name
+            .slice();
+        let this_dot = self.new_expr(
+            E::Dot {
+                target: this_expr,
+                name: name_str.into(),
+                name_loc: name.loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        let func_id = self.new_expr(
+            E::Identifier {
+                ref_: name.ref_,
+                ..Default::default()
+            },
+            name.loc,
+        );
+        let assign = self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinAssign,
+                left: this_dot,
+                right: func_id,
+            },
+            loc,
+        );
+        self.s(
+            S::SExpr {
+                value: assign,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// `visit_stmts` moves the plain functions of a block to its head: as one
+    /// `let NAME = function() {}`, or as the declarations if the block has a direct `eval`.
+    fn repl_is_block_fn(&self, stmt: &Stmt) -> bool {
+        let name = match stmt.data {
+            StmtData::SFunction(func) => func.func.name.map(|name| name.ref_),
+            StmtData::SLocal(local) if local.kind == S::Kind::KLet => {
+                match local.decls.slice().first().map(|decl| decl.binding.data) {
+                    Some(B::B::BIdentifier(ident)) => Some(ident.r#ref),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        name.is_some_and(|name| {
+            self.symbols[name.inner_index() as usize].kind == SymbolKind::HoistedFunction
+        })
+    }
+
+    /// Gives the functions that `visit_stmts` moved to the head of `list` their `var`, at the
+    /// place of each declaration: that is where Annex B.3.3 copies the function to it.
+    /// With no wrapper the declaration goes back there and the engine does the rest.
+    /// In a wrapper `this.NAME = NAME;` goes there.
+    fn repl_place_block_fns<'bump>(
+        &mut self,
+        list: &mut js_ast::StmtNodeList,
+        wrapper: ReplWrapper,
+        is_var: &HashMap<js_ast::Ref, bool>,
+        hoisted_stmts: &mut BumpVec<'bump, Stmt>,
+        bump: &'bump Bump,
+    ) {
+        let is_var = |fn_ref: js_ast::Ref| is_var.get(&fn_ref).copied().unwrap_or(false);
+
+        let stmts = list.slice();
+        if !stmts.iter().any(|stmt| self.repl_is_block_fn(stmt)) {
+            return;
+        }
+
+        // What stays at the head of the block, what goes to the place of a declaration
+        // (it has the `loc` of that declaration), and the other statements.
+        let mut head = BumpVec::<Stmt>::new_in(bump);
+        let mut placed = BumpVec::<Stmt>::new_in(bump);
+        let mut others = BumpVec::<Stmt>::with_capacity_in(stmts.len(), bump);
+
+        for stmt in stmts {
+            match stmt.data {
+                _ if !self.repl_is_block_fn(stmt) => others.push(*stmt),
+                StmtData::SFunction(_) if wrapper == ReplWrapper::None => placed.push(*stmt),
+                StmtData::SFunction(func) => {
+                    head.push(*stmt);
+                    if let Some(name) = func.func.name
+                        && is_var(name.ref_)
+                    {
+                        placed.push(self.repl_persist_fn_name(name, stmt.loc, hoisted_stmts, bump));
+                    }
+                }
+                StmtData::SLocal(local) => {
+                    let mut lets = BumpVec::<G::Decl>::new_in(bump);
+                    for decl in local.decls.slice() {
+                        let (B::B::BIdentifier(ident), Some(value)) =
+                            (decl.binding.data, decl.value)
+                        else {
+                            lets.push(*decl);
+                            continue;
+                        };
+                        let name = js_ast::LocRef {
+                            loc: decl.binding.loc,
+                            ref_: ident.r#ref,
+                        };
+                        if !is_var(name.ref_) {
+                            lets.push(*decl);
+                            continue;
+                        }
+                        match value.data {
+                            js_ast::ExprData::EFunction(mut function)
+                                if wrapper == ReplWrapper::None =>
+                            {
+                                // This `let` is dead after the rewrite, so move the function out.
+                                let mut func = core::mem::take(&mut function.func);
+                                func.name = Some(name);
+                                placed.push(self.s(S::Function { func }, value.loc));
+                            }
+                            _ => {
+                                lets.push(*decl);
+                                placed.push(self.repl_persist_fn_name(
+                                    name,
+                                    value.loc,
+                                    hoisted_stmts,
+                                    bump,
+                                ));
+                            }
+                        }
+                    }
+                    if lets.len() == local.decls.len() {
+                        head.push(*stmt);
+                    } else if !lets.is_empty() {
+                        head.push(self.s(
+                            S::Local {
+                                kind: S::Kind::KLet,
+                                decls: G::DeclList::from_bump_vec(lets),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
+                    }
+                }
+                _ => others.push(*stmt),
+            }
+        }
+
+        placed.sort_by_key(|stmt| stmt.loc.start);
+        let mut placed = placed.iter().peekable();
+        for stmt in others.iter() {
+            while let Some(before) = placed.next_if(|placed| placed.loc.start < stmt.loc.start) {
+                head.push(*before);
+            }
+            head.push(*stmt);
+        }
+        head.extend(placed.copied());
+
+        *list = js_ast::StoreSlice::from_bump(head);
+    }
+
+    /// Annex B.3.3: in sloppy code a plain function in a block is also a `var` of the
+    /// enclosing function or script, unless a lexical binding of its name is in the way.
+    /// `hoist_symbols` decides that only for code it takes as sloppy, and an `await` or an
+    /// `import` makes the input a module there. So this reads the scopes itself: it gives,
+    /// for each function in a block outside of every function, whether it is also a `var`.
+    fn repl_block_fn_vars(&self) -> HashMap<js_ast::Ref, bool> {
+        let mut is_var = HashMap::default();
+        self.repl_collect_block_fn_vars(self.module_scope_ref(), &mut is_var);
+        is_var
+    }
+
+    fn repl_collect_block_fn_vars(
+        &self,
+        scope: js_ast::StoreRef<Scope>,
+        is_var: &mut HashMap<js_ast::Ref, bool>,
+    ) {
+        if !self.stack_check.is_safe_to_recurse() {
+            return;
+        }
+        for child in scope.children.slice() {
+            if child.kind_stops_hoisting() {
+                continue;
+            }
+            // Children first: `hoist_symbols` can put a function into a scope above its
+            // block too, and the block that declares it must be the one that is read.
+            self.repl_collect_block_fn_vars(*child, is_var);
+            for (name, member) in child.members.iter() {
+                let fn_ref = member.ref_;
+                if self.symbols[fn_ref.inner_index() as usize].kind != SymbolKind::HoistedFunction
+                    || is_var.contains_key(&fn_ref)
+                {
+                    continue;
+                }
+                let applies = self.repl_block_fn_is_also_var(*child, name, fn_ref);
+                is_var.insert(fn_ref, applies);
+            }
+        }
+    }
+
+    /// Whether `var NAME` at the place of the function `fn_ref`, which `block` declares,
+    /// would be no early error.
+    fn repl_block_fn_is_also_var(
+        &self,
+        block: js_ast::StoreRef<Scope>,
+        name: &[u8],
+        fn_ref: js_ast::Ref,
+    ) -> bool {
+        let hash = Scope::get_member_hash(name);
+        let mut next = block.parent;
+        while let Some(scope) = next {
+            if let Some(member) = scope.get_member_with_hash(name, hash)
+                && member.ref_ != fn_ref
+            {
+                match self.symbols[member.ref_.inner_index() as usize].kind {
+                    // B.3.5: `catch (e) { var e }` is allowed.
+                    SymbolKind::CatchIdentifier => {}
+                    SymbolKind::Unbound | SymbolKind::Hoisted => return true,
+                    kind => return kind.is_function() && scope.kind_stops_hoisting(),
+                }
+            }
+            if scope.kind_stops_hoisting() {
+                break;
+            }
+            next = scope.parent;
+        }
+        true
     }
 
     /// Extract individual identifiers from a binding pattern for hoisting
@@ -895,4 +1193,61 @@ fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
         value: None,
     });
     G::DeclList::from_arena_slice(slice)
+}
+
+/// A walk over the statements that share the `var` scope of a REPL input. It enters no
+/// function, class or expression.
+struct ReplStatements<'f> {
+    stack_check: bun_core::StackCheck,
+    /// Called with each list of statements, outermost first. It can replace the list.
+    each_list: &'f mut dyn FnMut(&mut js_ast::StmtNodeList),
+    /// One of the statements is a `return`.
+    has_return: bool,
+}
+
+impl ReplStatements<'_> {
+    fn stmt(&mut self, stmt: Stmt) {
+        if !self.stack_check.is_safe_to_recurse() {
+            return;
+        }
+        match stmt.data {
+            StmtData::SReturn(_) => self.has_return = true,
+            StmtData::SBlock(mut block) => self.list(&mut block.stmts),
+            StmtData::SIf(if_) => {
+                self.stmt(if_.yes);
+                if let Some(no) = if_.no {
+                    self.stmt(no);
+                }
+            }
+            StmtData::SFor(for_) => self.stmt(for_.body),
+            StmtData::SForIn(for_in) => self.stmt(for_in.body),
+            StmtData::SForOf(for_of) => self.stmt(for_of.body),
+            StmtData::SWhile(while_) => self.stmt(while_.body),
+            StmtData::SDoWhile(do_while) => self.stmt(do_while.body),
+            StmtData::SWith(with) => self.stmt(with.body),
+            StmtData::SLabel(label) => self.stmt(label.stmt),
+            StmtData::STry(mut try_) => {
+                self.list(&mut try_.body);
+                if let Some(catch) = try_.catch.as_mut() {
+                    self.list(&mut catch.body);
+                }
+                if let Some(finally) = try_.finally.as_mut() {
+                    self.list(&mut finally.stmts);
+                }
+            }
+            StmtData::SSwitch(switch) => {
+                for case in switch.cases.slice_mut() {
+                    self.list(&mut case.body);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn list(&mut self, stmts: &mut js_ast::StmtNodeList) {
+        (self.each_list)(stmts);
+        for stmt in stmts.slice() {
+            self.stmt(*stmt);
+        }
+    }
 }

@@ -264,7 +264,7 @@ pub mod Runtime {
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
         /// - Wraps last expression in { value: expr } for result capture
-        /// - Assigns functions to context for persistence
+        /// - Assigns the functions of code that runs in an IIFE to the context for persistence
         pub repl_mode: bool,
 
         // Vestigial bool stub retained until its last reader (parseJSXElement.rs)

@@ -3055,8 +3055,12 @@ declare module "bun" {
      * Enable REPL mode transforms:
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
      * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
-     * - Wraps last expression in { __proto__: null, value: expr } for result capture
-     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     * - Makes the last expression the result of the code: { __proto__: null, value: expr }
+     * - Wraps code with a top-level await or an import in an async IIFE, and code with "use strict"
+     *   or a top-level return in a sync IIFE. The result is then what the IIFE returns.
+     * - Leaves other code as the statements of a script. The result is then its completion
+     *   value: `void 0, { __proto__: null, value: expr }`, or `void 0` with no last expression.
+     *   A function in a block and a direct eval declare in the context, as in any script.
      *
      * @default false
      */

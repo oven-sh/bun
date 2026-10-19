@@ -633,14 +633,29 @@ impl<A: Allocator + Clone> WindowedPlaces<A> {
     ) -> u32 {
         let window = (spread >> 32) as usize;
         let _held = self.locks[window % WINDOW_LOCKS].lock();
+        let slots = self.places.slots.get(window, Ordering::Relaxed);
         // Another thread may have inserted it first.
-        if let Some(found) = self.places.find(window, spread, Ordering::Relaxed, is_it) {
-            return found;
-        }
+        let free = match slots.is_empty() {
+            true => None,
+            false => {
+                let slot = |at: usize| slots[at].load(Ordering::Relaxed);
+                match search::<InWindow>(slots.len(), spread, slot, is_it) {
+                    Ok(found) => return found,
+                    Err(free) => Some(free),
+                }
+            }
+        };
         let index = make();
         let len = self.places.slots.series().count(window);
-        (self.places).add(window, len.load(Ordering::Relaxed) as usize, spread, index);
-        len.fetch_add(1, Ordering::Relaxed);
+        let before = len.load(Ordering::Relaxed);
+        match free {
+            Some(free) if !is_too_full(before as usize + 1, slots.len()) => {
+                slots[free].store(place_of(spread, index), Ordering::Release);
+            }
+            _ => self.places.add(window, before as usize, spread, index),
+        }
+        // Only the holder of the lock writes it.
+        len.store(before + 1, Ordering::Relaxed);
         index
     }
 }

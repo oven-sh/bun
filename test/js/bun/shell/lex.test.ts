@@ -530,7 +530,13 @@ describe("lex shell", () => {
         { Eof: {} },
       ]);
       expect(lex`echo ${[]} ${["a"]} ${[[], "b", []]} c`).toBe(lex`echo a b c`);
-      expect(lex`echo ${["a", []]}#c; ${[[], "b", [[], []]]}; echo \${[[], "c"]}`).toBe(lex`echo a #c;  b  ; echo \ c`);
+      expect(lex`echo ${["a", []]}#c`).toBe(lex`echo a #c`);
+      expect(lex`echo ${[[], "b", [[], []]]}; x`).toBe(lex`echo  b  ; x`);
+      // A backslash before the separator escapes the blank, as before.
+      expect(lex`echo ${{ raw: "\\" }}${[[], "c"]}`).toBe(lex`echo \ c`);
+      // Typed syntax next to a separator sees the blank, as before.
+      expect(lex`[[${[[], "-n"]} x ]]${[[], "y"]}`).toBe(lex`[[ -n x ]] y`);
+      expect(lex`if${[[], "true"]}; then echo a; fi`).toBe(lex`if true; then echo a; fi`);
       const buf = new Uint8Array(1);
       expect(JSON.parse(lex`echo > ${[buf, "a", []]}`)).toEqual([
         { Text: "echo" },

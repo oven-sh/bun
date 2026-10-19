@@ -1134,6 +1134,7 @@ describe("parse shell interpolated array", () => {
       "env A=@ cmd", "basename A=@", "echo @ > out", "if @; then echo y; fi", "if true; then @; fi",
       "echo {@,c}", "echo *.@", "echo ~@", "echo $V@", "echo a#@", "echo \\@", "export @", "export -p @", "[[ @ ]]", "[[ a @ ]]",
       "i@; then echo a; fi", "if true; the@; fi", "if true; then echo a; f@", "if false; then echo a; els@; fi",
+      "if@; then echo a; fi", "if true; then@; fi", "[[@ ]]", "[[ a == b ]]@",
     ];
     const arrays: [string, () => unknown[]][] = [
       ['["x","y"]', () => ["x", "y"]],
@@ -1148,6 +1149,8 @@ describe("parse shell interpolated array", () => {
       ['["i","y"]', () => ["i", "y"]],
       ['["-n","x","y"]', () => ["-n", "x", "y"]],
       ['["==","x","y"]', () => ["==", "x", "y"]],
+      ['[[],"x",[]]', () => [[], "x", []]],
+      ['[[],"-n","x"]', () => [[], "-n", "x"]],
     ];
     const run = (strings: string[], values: unknown[]) => {
       try {
@@ -1167,13 +1170,7 @@ describe("parse shell interpolated array", () => {
           differing.push(shape.replaceAll("@", "${" + name + "}"));
       }
     }
-    // A keyword that the first element completes is not a keyword.
-    expect(differing).toEqual([
-      'i${["f","y"]}; then echo a; fi',
-      'if true; the${["n","y"]}; fi',
-      'if true; then echo a; f${["i","y"]}',
-      'if false; then echo a; els${["e","y"]}; fi',
-    ]);
+    expect(differing).toEqual([]);
   });
 
   describe("as its own word, at the start, at the end and at every blank of a script", () => {

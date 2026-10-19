@@ -3535,9 +3535,12 @@ describe("interpolated arrays", () => {
     TestBuilder.command`V=val; basename ${["x", []]}suffix pre${[[], "a", "b"]} "${["c", [], "d"]}" $V${[[], "e"]}`
       .stdout("x\nsuffix\npre\na\nb\nc  d\nval\ne\n")
       .runAsTest("in arguments and inside quotes, as before");
-    TestBuilder.command`A=${[[], "a", [], "b", []]}; B=pre${[[], "c"]}; echo "[$A] [$B]"`
-      .stdout("[ a b] [pre c]\n")
-      .runAsTest("in an assignment the blank is a space in the value, or ends the value");
+    TestBuilder.command`A=${[[], "a", [], "b", []]}; export B=${[[], "c", "d"]}; C=pre${[[], "e"]}; echo "[$A] [$B] [$C]"`
+      .stdout("[a b] [c d] [pre e]\n")
+      .runAsTest("in an assignment it adds nothing at the start and at the end of the value");
+    TestBuilder.command`if${[[], "true"]}; then [[${[[], "-n"]} x ]] && echo yes; fi`
+      .stdout("yes\n")
+      .runAsTest("after typed syntax, as before");
   });
 
   describe("[[ ]] reads an array as typed words, as before", () => {

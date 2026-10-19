@@ -423,7 +423,7 @@ A redirect takes one file. An unquoted array with one element names that file. W
 
 For a command other than `export`, `NAME=${array}` is an argument and not an assignment. `env GREETING=${words} cmd` gives `env` the two arguments `GREETING=hello` and `world`.
 
-Nested arrays are flattened, and an empty array adds nothing. An array with a `{ raw: 'str' }` element is shell source: Bun Shell writes its elements with a space between them and does not join them.
+Nested arrays are flattened, and an empty array adds no argument. An array with a `{ raw: 'str' }` element is shell source: Bun Shell writes its elements with a space between them and does not join them.
 
 ---
 

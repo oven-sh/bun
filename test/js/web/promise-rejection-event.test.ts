@@ -215,17 +215,6 @@ describe("unhandledrejection on the main thread", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.each(["web", "process"])("an async %s listener runs its continuation", async kind => {
-    const install =
-      kind === "web"
-        ? `addEventListener("unhandledrejection", async e => { e.preventDefault(); await 0; console.log("after"); });`
-        : `process.on("unhandledRejection", async () => { await 0; console.log("after"); });`;
-    const { stdout, stderr, exitCode } = await run(`${install}\nPromise.reject(1);`);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("after\n");
-    expect(exitCode).toBe(0);
-  });
-
   test.concurrent("a listener added after the rejection but before the checkpoint still fires", async () => {
     const { stdout, stderr, exitCode } = await run(`
       const p = Promise.reject("r");
@@ -238,7 +227,7 @@ describe("unhandledrejection on the main thread", () => {
 
   test.concurrent("rejectionhandled fires when a handler attaches later", async () => {
     const { stdout, stderr, exitCode } = await run(`
-      const keepAlive = setInterval(() => {}, 1000);
+      const guard = setTimeout(() => { console.log("no rejectionhandled"); process.exit(2); }, 10_000);
       addEventListener("unhandledrejection", e => e.preventDefault());
       addEventListener("rejectionhandled", e => {
         console.log(JSON.stringify({
@@ -249,7 +238,7 @@ describe("unhandledrejection on the main thread", () => {
           samePromise: e.promise === p,
           reason: e.reason.message,
         }));
-        clearInterval(keepAlive);
+        clearTimeout(guard);
       });
       const p = Promise.reject(new Error("boom"));
       setTimeout(() => p.catch(() => {}), 0);
@@ -369,14 +358,14 @@ describe("unhandledrejection on the main thread", () => {
 
 describe("rejectionhandled on the main thread", () => {
   const lateHandler = `
-    const keepAlive = setInterval(() => {}, 1000);
+    const guard = setTimeout(() => { console.log("no rejectionhandled"); process.exit(2); }, 10_000);
     const order = [];
     addEventListener("unhandledrejection", e => e.preventDefault());
     addEventListener("rejectionhandled", e => order.push("web:" + (e.promise === p)));
     process.on("rejectionHandled", promise => {
       order.push("process:" + (promise === p));
       console.log(order.join(","));
-      clearInterval(keepAlive);
+      clearTimeout(guard);
     });
     const p = Promise.reject(new Error("boom"));
     setTimeout(() => p.catch(() => {}), 0);

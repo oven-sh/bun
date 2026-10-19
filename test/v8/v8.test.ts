@@ -513,6 +513,7 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   });
 
   describe("uv_queue_work", () => {
+    // TODO: on Windows libuv calls after_work_cb with no handle scope open, so creating a handle aborts.
     it.skipIf(isWindows)("runs on node::GetCurrentEventLoop and after_work_cb can use a v8::HandleScope", async () => {
       await checkSameOutput("test_uv_queue_work_on_current_event_loop");
     });

@@ -469,7 +469,8 @@ impl<'a> Parser<'a, '_> {
         // The flags of `bun test` are applied already, and they win over these keys.
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
-                if let Some(root) = test.get(b"root") {
+                // `root` is relative to the working directory, not to the directory of a file found above it.
+                if let Some(root) = test.get(b"root").filter(|_| !self.is_above_cwd) {
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 

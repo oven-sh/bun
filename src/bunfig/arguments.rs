@@ -168,13 +168,15 @@ fn lists_workspace(root: &[u8], dir: &[u8], buf: &mut PathBuffer) -> Option<bool
     })))
 }
 
-/// Whether `path` exists and, not following a link, has the owner of `cwd`, who could put the same file into `cwd`.
+/// Whether `path`, not following a link, and its directory `dir` belong to the owner of `cwd`; a hard link gives `path` alone that owner.
 #[cfg(unix)]
-fn has_owner_of(path: &ZStr, cwd: &[u8]) -> bool {
+fn has_owner_of(path: &ZStr, dir: &[u8], cwd: &[u8]) -> bool {
     let Ok(file) = bun_sys::lstat(path) else {
         return false;
     };
-    bun_sys::lstat(&bun_core::ZBox::from_bytes(cwd)).is_ok_and(|dir| dir.st_uid == file.st_uid)
+    [dir, cwd].into_iter().all(|it| {
+        bun_sys::lstat(&bun_core::ZBox::from_bytes(it)).is_ok_and(|it| it.st_uid == file.st_uid)
+    })
 }
 
 /// The owner of a file or directory.
@@ -223,20 +225,24 @@ impl Drop for Owner {
 }
 
 #[cfg(windows)]
-fn has_owner_of(path: &ZStr, cwd: &[u8]) -> bool {
+fn has_owner_of(path: &ZStr, dir: &[u8], cwd: &[u8]) -> bool {
+    use bun_sys::windows::advapi32::EqualSid;
+
     // `Owner::of` follows a link, and another user can make one to a file of the owner of `cwd`.
     if bun_sys::get_file_attributes(path).is_none_or(|it| it.is_reparse_point) {
         return false;
     }
-    let (Some(file), Some(dir)) = (Owner::of(path.as_bytes()), Owner::of(cwd)) else {
+    let (Some(file), Some(dir), Some(cwd)) =
+        (Owner::of(path.as_bytes()), Owner::of(dir), Owner::of(cwd))
+    else {
         return false;
     };
-    // SAFETY: both are valid SIDs in descriptors that `file` and `dir` keep alive.
-    unsafe { bun_sys::windows::advapi32::EqualSid(file.sid, dir.sid) != 0 }
+    // SAFETY: all are valid SIDs in descriptors that `file`, `dir` and `cwd` keep alive.
+    unsafe { EqualSid(file.sid, cwd.sid) != 0 && EqualSid(dir.sid, cwd.sid) != 0 }
 }
 
 #[cfg(not(any(unix, windows)))]
-fn has_owner_of(_: &ZStr, _: &[u8]) -> bool {
+fn has_owner_of(_: &ZStr, _: &[u8], _: &[u8]) -> bool {
     false
 }
 
@@ -251,7 +257,8 @@ fn find_config_above<'buf>(cwd: &[u8], buf: &'buf mut PathBuffer) -> Option<&'bu
     let mut config_dir = cwd;
     loop {
         config_dir = bun_core::dirname(config_dir)?;
-        if has_owner_of(join_config_path(config_dir, b"bunfig.toml", buf)?, cwd) {
+        let path = join_config_path(config_dir, b"bunfig.toml", buf)?;
+        if has_owner_of(path, config_dir, cwd) {
             break;
         }
     }

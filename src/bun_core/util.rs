@@ -4578,6 +4578,7 @@ pub fn keep_children_waitable() {
                 && current.sa_sigaction == libc::SIG_IGN
             {
                 current.sa_sigaction = libc::SIG_DFL;
+                current.sa_flags = 0;
                 libc::sigaction(libc::SIGCHLD, &raw const current, core::ptr::null_mut());
             }
         }

@@ -269,9 +269,12 @@ describe.concurrent("Given a working directory without a `bunfig.toml`", () => {
     expect(await run("index.ts", { args, cwd: join(String(dir), cwd) })).toEqual([out, "", 0]);
   });
 
-  it.skipIf(isWindows || process.getuid?.() !== 0)("the one of another user does not count", async () => {
+  it.skipIf(isWindows || process.getuid?.() !== 0).each([
+    { name: "the one of another user does not count", path: "bunfig.toml" },
+    { name: "one's own in a directory of another user does not count", path: "." },
+  ])("$name", async ({ path }) => {
     using dir = tempDir("bunfig-above", monorepo);
-    chownSync(join(String(dir), "bunfig.toml"), 65534, 65534);
+    chownSync(join(String(dir), path), 65534, 65534);
     expect(await run("index.ts", { cwd: join(String(dir), "packages/a") })).toEqual([none, "", 0]);
   });
 
@@ -298,6 +301,23 @@ describe.concurrent("Given a working directory without a `bunfig.toml`", () => {
     expect(out).toEndWith(fromRoot);
     expect(code).toBe(0);
   });
+
+  it.each([
+    { name: "`bun test` in a workspace", args: [], cwd: "packages/a" },
+    { name: "`bun run --filter a test`", args: ["run", "--filter", "a"], cwd: "." },
+  ])(
+    "$name runs the workspace's tests when the one of the workspace root sets `[test] root`",
+    async ({ args, cwd }) => {
+      using dir = tempDir("bunfig-above", {
+        ...monorepo,
+        "bunfig.toml": rootBunfig + `root = "./tests"\n`,
+        "packages/a/package.json": JSON.stringify({ name: "a", scripts: { test: `${bunExe()} test` } }),
+      });
+      const [out, , code] = await run("test", { args, cwd: join(String(dir), cwd) });
+      expect(out).toContain("number undefined");
+      expect(code).toBe(0);
+    },
+  );
 
   it("`bun build` in a workspace reads the one of the workspace root", async () => {
     using dir = tempDir("bunfig-above", monorepo);

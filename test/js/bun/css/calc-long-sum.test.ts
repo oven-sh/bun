@@ -112,8 +112,8 @@ test.concurrent("a value added to a sum of 3000 terms does not clone the sum", a
   using dir = tempDir("css-calc-long-sum", { "a.css": `.a{width:calc(${join(f, " + ", 3000)} + 1vw)}` });
   const result = await runCommandMaxRSS({ cmd: [bunExe(), "build", "a.css", "--outdir", "out"], cwd: String(dir) });
   expectSame(result, await outputOf(String(dir)), sheet(`width: calc(${join(F, " + ", 3000)} + 1vw)`));
-  // The clones took 980 MB in a release build.
-  expect(result.maxRSS).toBeLessThan((isDebug || isASAN ? 1024 : 256) * 1024 * 1024);
+  // The clones took 980 MB in a release build and 2,005 MB in a debug build with ASAN.
+  expect(result.maxRSS).toBeLessThan((isDebug || isASAN ? 640 : 256) * 1024 * 1024);
 });
 
 // Stack

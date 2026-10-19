@@ -23731,7 +23731,10 @@ export const far: I69 extends J69 ? 1 : 2 = 0;
       });
       const threads = [1, 1, 2, 2, 2, 8, 8, 8];
       for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
-        expect(stdout.split("\n")[0]).toBe("second.ts(2,7): error TS2322: Type 'I70' is not assignable to type 'J70'.");
+        // The lines under an error are indented.
+        expect(stdout.split("\n").filter(line => /^\S/.test(line))).toEqual([
+          "second.ts(2,7): error TS2322: Type 'I70' is not assignable to type 'J70'.",
+        ]);
         expect(exitCode).toBe(1);
       }
     });

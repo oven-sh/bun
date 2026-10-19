@@ -1237,33 +1237,37 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    // The addon prints through C stdio and main.js through console.log. Which of the two reaches the pipe first
+    // differs between platforms, so the line of main.js is compared apart from the lines of the addon.
+    function splitOutput(output: string) {
+      const lines = output.trim().split(/\r?\n/);
+      const fromMainJs = (line: string) => line.startsWith("synchronously threw");
+      return { addon: lines.filter(line => !fromMainJs(line)), mainJs: lines.filter(fromMainJs) };
+    }
     // The addon prints the status, then the napi_typeof of what napi_get_and_clear_last_exception handed it, then
     // its message if it is an object. main.js throws a truthy return value as an Error.
     it.each([
-      [
-        'throw new RangeError("boom")',
-        [
-          "typeof status=0 type=6 is_error=1",
-          "message=boom",
-          'synchronously threw Error: message "RangeError: boom", code undefined',
-        ],
-      ],
-      ["throw 42", ["typeof status=0 type=3 is_error=0", 'synchronously threw Error: message "42", code undefined']],
-      ["throw undefined", ["typeof status=0 type=0 is_error=0"]],
-      ["throw null", ["typeof status=0 type=1 is_error=0"]],
-    ])("hands what `%s` threw to napi_get_and_clear_last_exception", async (script, lines) => {
+      ['throw new RangeError("boom")', ["typeof status=0 type=6 is_error=1", "message=boom"], "RangeError: boom"],
+      ["throw 42", ["typeof status=0 type=3 is_error=0"], "42"],
+      ["throw undefined", ["typeof status=0 type=0 is_error=0"], undefined],
+      ["throw null", ["typeof status=0 type=1 is_error=0"], undefined],
+    ])("hands what `%s` threw to napi_get_and_clear_last_exception", async (script, lines, returned) => {
       const result = await checkSameOutput("test_napi_run_script_exception_value", [script]);
-      expect(result.split(/\r?\n/)).toEqual(["run status=9 pending=1", ...lines]);
+      expect(splitOutput(result)).toEqual({
+        addon: ["run status=9 pending=1", ...lines],
+        mainJs:
+          returned === undefined
+            ? []
+            : [`synchronously threw Error: message ${JSON.stringify(returned)}, code undefined`],
+      });
     });
     it("hands a syntax error to napi_get_and_clear_last_exception", async () => {
       // V8 and JSC word the SyntaxError message differently, so only bun's output is checked
       const result = await runOn(bunExe(), "test_napi_run_script_exception_value", ["1+"]);
-      expect(result.trim().split(/\r?\n/)).toEqual([
-        "run status=9 pending=1",
-        "typeof status=0 type=6 is_error=1",
-        "message=Unexpected end of script",
-        'synchronously threw Error: message "SyntaxError: Unexpected end of script", code undefined',
-      ]);
+      expect(splitOutput(result)).toEqual({
+        addon: ["run status=9 pending=1", "typeof status=0 type=6 is_error=1", "message=Unexpected end of script"],
+        mainJs: ['synchronously threw Error: message "SyntaxError: Unexpected end of script", code undefined'],
+      });
     });
     it("throws what it handed over when the addon passes it to napi_throw", async () => {
       const result = await checkSameOutput("test_napi_run_script_rethrow", ['throw new RangeError("boom")']);
@@ -1271,11 +1275,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     it("refuses napi_call_function while the exception is pending, then hands it over", async () => {
       const result = await checkSameOutput("test_napi_run_script_then_call", ['throw new RangeError("boom")']);
-      expect(result.split(/\r?\n/)).toEqual([
-        "call status=10",
-        "is_error=1",
-        'synchronously threw Error: message "RangeError: boom", code undefined',
-      ]);
+      expect(splitOutput(result)).toEqual({
+        addon: ["call status=10", "is_error=1"],
+        mainJs: ['synchronously threw Error: message "RangeError: boom", code undefined'],
+      });
     });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code

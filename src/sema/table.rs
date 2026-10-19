@@ -308,11 +308,13 @@ impl Packed for Option<Sym> {
 
 /// For each file, the start index of its nodes of one kind when the nodes of all files are
 /// concatenated. A final entry is the end index.
-pub struct Bases<A: Alloc = Global>(A::Shared);
+///
+/// The second list is empty, or has each file's node count. See `with_counts`.
+pub struct Bases<A: Alloc = Global>(A::Shared, A::Shared);
 
 impl<A: Alloc> Clone for Bases<A> {
     fn clone(&self) -> Self {
-        Bases(self.0.clone())
+        Bases(self.0.clone(), self.1.clone())
     }
 }
 
@@ -324,12 +326,27 @@ impl<A: Alloc> Bases<A> {
             total += len;
             bases.push(u32::try_from(total).expect("more nodes of a kind than fit 32 bits"));
         }
-        Bases(alloc.share(&bases))
+        Bases(alloc.share(&bases), alloc.share(&[]))
+    }
+
+    /// Records each file's real node count. It differs from the length passed to `new_in` for a file that gets no
+    /// range in the concatenation.
+    pub fn with_counts(self, counts: impl Iterator<Item = usize>, alloc: &A) -> Self {
+        let counts: Vec<u32> = counts.map(|count| count as u32).collect();
+        Bases(self.0, alloc.share(&counts))
     }
 
     /// No file has a node.
     pub(crate) fn none_in(alloc: &A) -> Self {
-        Bases(alloc.share(&[0]))
+        Bases(alloc.share(&[0]), alloc.share(&[]))
+    }
+
+    /// Returns the number of nodes in `file`.
+    fn count_in(&self, file: FileId) -> usize {
+        match self.1.get(file.idx()) {
+            Some(&count) => count as usize,
+            None => self.of_file(file).len(),
+        }
     }
 
     #[inline]
@@ -980,7 +997,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
     #[inline(never)]
     fn adopt(&self, task: &Task, buffer: &mut Buffer<'_>, file: u32) {
         let (slot, nodes) = (self.own_slot(), self.bases.of_file(FileId(file)));
-        buffer.cover(slot, file, &nodes);
+        buffer.cover(slot, file, &nodes, self.bases.count_in(FileId(file)));
         if !Self::has_a_whole_row(task, file) {
             return;
         }

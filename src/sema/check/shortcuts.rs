@@ -38,6 +38,11 @@ pub(super) struct TypeNumbers {
 }
 
 impl TypeNumbers {
+    /// Resets every number to 0 and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.dense.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> u32 {
         self.dense.get(ty)
@@ -58,6 +63,11 @@ impl<V> Default for TypeMap<V> {
 }
 
 impl<V: Packed<Cell = AtomicU32>> TypeMap<V> {
+    /// Removes every entry and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> Option<V> {
         match self.0.get(ty) {
@@ -106,6 +116,11 @@ pub(super) mod task_fact {
 pub(super) struct TaskFacts(TypeNumbers);
 
 impl TaskFacts {
+    /// Removes every fact and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        self.0.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> u32 {
         self.0.get(ty)
@@ -240,6 +255,13 @@ mod tests {
         assert_eq!(map.get(TYPES[2]), Some(TYPES[2]));
         assert_eq!(map.get(TypeId(1)), None);
         assert_eq!(map.get(TypeId(LOCAL | 499)), None);
+        map.clear();
+        for ty in TYPES {
+            assert_eq!(map.get(ty), None);
+        }
+        // A page that is added now starts empty.
+        map.insert(TYPES[1], TYPES[1]);
+        assert_eq!(map.get(TYPES[0]), None);
     }
 
     #[test]
@@ -255,5 +277,9 @@ mod tests {
             assert_eq!(facts.get(ty), 0b1011);
         }
         assert_eq!(facts.get(TypeId(129)), 0);
+        facts.clear();
+        for ty in TYPES {
+            assert_eq!(facts.get(ty), 0);
+        }
     }
 }

@@ -15,7 +15,7 @@ use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::Publish;
-use crate::types::{OwnStore, Sharing, TypeStore};
+use crate::types::{OwnStore, TypeStore};
 use crate::util::SharedSort;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::time::Duration;
@@ -430,32 +430,60 @@ impl<'s> Task<'s> {
         }
     }
 
+    /// Resets the task to what `new_in` returned and keeps its memory: a worker's next task reuses it. Every field is
+    /// listed, so a new one is a compile error.
     fn drop_everything(&mut self) {
-        (self.place, self.file) = (None, None);
-        self.files_in_doubt.clear();
-        self.diagnostics.clear();
-        self.closed_a_cycle = false;
-        self.order_dependent_variances.clear();
-        self.assignments_walked.get_mut().clear();
-        (self.view, self.is_believed) = (None, false);
-        self.is_lost.set(None);
-        self.can_recheck_early.set(false);
-        self.is_first_in_order.set(false);
-        self.is_first_in_component.set(false);
-        self.cycle_members.get_mut().clear();
-        self.cycle_since_rest.set(None);
-        self.logged_at_cycles.get_mut().clear();
-        self.logged_at_rest.set([0; 2]);
-        self.committed.set([0; 2]);
-        self.waits.set([Duration::ZERO; 3]);
-        (self.at_once_unless_stopped, self.at_once) = (0, Cell::new(0));
-        self.logged_before_the_stop.set(usize::MAX);
-        // A task that hasn't begun publishes nothing.
-        let sharing = self.own.sharing().min(Sharing::Finds);
-        self.own.clear();
-        self.own.set_sharing(sharing);
-        self.buffer.get_mut().clear();
-        self.file_local.get_mut().clear();
+        let Task {
+            place,
+            file,
+            files_in_doubt,
+            diagnostics,
+            closed_a_cycle,
+            order_dependent_variances,
+            assignments_walked,
+            held_back,
+            view,
+            is_lost,
+            is_believed,
+            can_recheck_early,
+            is_first_in_order,
+            is_first_in_component,
+            cycle_members,
+            cycle_since_rest,
+            logged_at_cycles,
+            logged_at_rest,
+            committed,
+            waits,
+            at_once,
+            at_once_unless_stopped,
+            logged_before_the_stop,
+            own,
+            buffer,
+            file_local,
+        } = self;
+        (*place, *file, *view) = (None, None, None);
+        files_in_doubt.clear();
+        diagnostics.clear();
+        (*closed_a_cycle, *is_believed) = (false, false);
+        order_dependent_variances.clear();
+        assignments_walked.get_mut().clear();
+        held_back.set(0);
+        is_lost.set(None);
+        can_recheck_early.set(false);
+        is_first_in_order.set(false);
+        is_first_in_component.set(false);
+        cycle_members.get_mut().clear();
+        cycle_since_rest.set(None);
+        logged_at_cycles.get_mut().clear();
+        logged_at_rest.set([0; 2]);
+        committed.set([0; 2]);
+        waits.set([Duration::ZERO; 3]);
+        at_once.set(0);
+        *at_once_unless_stopped = 0;
+        logged_before_the_stop.set(usize::MAX);
+        own.clear();
+        buffer.get_mut().clear();
+        file_local.get_mut().clear();
     }
 
     /// The task-local parts of the `Buffered` tables.

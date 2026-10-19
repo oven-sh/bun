@@ -2175,9 +2175,24 @@ impl<'s, V> Own<'s, V> {
     }
 
     fn clear(&mut self) {
-        self.records.clear();
-        self.found.clear();
-        self.bound.clear();
+        let Own {
+            records,
+            found,
+            bound,
+        } = self;
+        records.clear();
+        found.clear();
+        bound.clear();
+    }
+
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        let Own {
+            records,
+            found,
+            bound,
+        } = self;
+        records.len() == 0 && found.is_like_new() && bound.len() == 0
     }
 }
 
@@ -2288,22 +2303,82 @@ impl<'s> OwnStore<'s> {
     /// Resets the store to what `new_in` returned. The record tables keep their addresses and
     /// part of their memory.
     pub fn clear(&mut self) {
-        self.atoms.clear();
-        self.components.clear();
-        self.mappers.clear();
-        self.sigs.clear();
-        self.types.clear();
-        self.summaries.clear();
-        self.unimported_files.0.clear();
-        self.has_unresolved_names.set(false);
-        self.first_request.set(FirstRequest::NONE);
-        self.sharing = Sharing::Finds;
-        self.ids = Default::default();
-        self.published = Default::default();
-        self.visited_files.0.clear();
-        for records in &mut self.of_visited_files {
+        // Every field, so a new one is a compile error.
+        let OwnStore {
+            arena: _,
+            atoms,
+            components,
+            mappers,
+            sigs,
+            types,
+            unimported_files,
+            has_unresolved_names,
+            first_request,
+            sharing,
+            ids,
+            published,
+            visited_files,
+            of_visited_files,
+            summaries,
+        } = self;
+        atoms.clear();
+        components.clear();
+        mappers.clear();
+        sigs.clear();
+        types.clear();
+        summaries.clear();
+        unimported_files.0.clear();
+        has_unresolved_names.set(false);
+        first_request.set(FirstRequest::NONE);
+        *sharing = Sharing::Finds;
+        *ids = Default::default();
+        *published = Default::default();
+        visited_files.0.clear();
+        for records in of_visited_files {
             records.get_mut().0.clear();
         }
+    }
+
+    /// True if the store is in the state that `new_in` returns.
+    #[cfg(test)]
+    pub(crate) fn is_like_new(&self) -> bool {
+        let OwnStore {
+            arena: _,
+            atoms,
+            components,
+            mappers,
+            sigs,
+            types,
+            unimported_files,
+            has_unresolved_names,
+            first_request,
+            sharing,
+            ids,
+            published,
+            visited_files,
+            of_visited_files,
+            summaries,
+        } = self;
+        let has_no_ids = |ids: &Cell<Placeholders<'s>>| {
+            let taken = ids.take();
+            let is_empty = taken.is_empty();
+            ids.set(taken);
+            is_empty
+        };
+        atoms.is_like_new()
+            && components.is_like_new()
+            && mappers.is_like_new()
+            && sigs.is_like_new()
+            && types.is_like_new()
+            && summaries.len() == 0
+            && unimported_files.0.is_empty()
+            && !has_unresolved_names.get()
+            && first_request.get() == FirstRequest::NONE
+            && *sharing == Sharing::Finds
+            && ids.iter().all(has_no_ids)
+            && published.iter().all(|count| count.get() == 0)
+            && visited_files.0.is_empty()
+            && (of_visited_files.iter()).all(|records| records.borrow().0.is_empty())
     }
 
     /// Call this before the task visits `file`.

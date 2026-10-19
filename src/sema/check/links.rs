@@ -96,6 +96,18 @@ pub(super) struct ByType {
 }
 
 impl ByType {
+    /// Resets every number to 0 and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        let ByType {
+            own,
+            pages,
+            published,
+        } = self;
+        own.clear();
+        pages.clear();
+        published.clear();
+    }
+
     #[inline]
     pub(super) fn get(&self, ty: TypeId) -> u32 {
         match ty.local_number() {
@@ -169,6 +181,37 @@ pub(super) struct TypeLinks {
 }
 
 impl TypeLinks {
+    /// Makes it equal to `TypeLinks::default()` and keeps the memory. Every field is listed, so a new one is a compile
+    /// error.
+    pub(super) fn clear(&mut self) {
+        let TypeLinks {
+            rows,
+            parts,
+            infer_type_parameters,
+            fixed_mapper_rows,
+            with_fixed_mappers,
+            times_forgotten,
+            left_open,
+            has_found_circular_mapped_constraint,
+            aliases,
+        } = self;
+        let Aliases {
+            of,
+            kept,
+            type_arguments,
+        } = aliases.get_mut();
+        rows.clear();
+        parts.clear();
+        infer_type_parameters.clear();
+        fixed_mapper_rows.clear();
+        with_fixed_mappers.clear();
+        (*times_forgotten, *left_open) = (0, 0);
+        *has_found_circular_mapped_constraint = false;
+        of.clear();
+        kept.clear();
+        type_arguments.clear();
+    }
+
     /// Returns 0 if the part isn't cached.
     #[inline]
     fn cell(&self, ty: TypeId, kind: Kind, at: usize) -> u32 {
@@ -515,6 +558,40 @@ mod tests {
         }
         // Only pages with a number are allocated.
         assert_eq!(numbers.published.len(), 3);
+    }
+
+    #[test]
+    fn cleared_links_have_nothing_cached() {
+        let symbol = Sym {
+            file: FileId(1),
+            id: SymbolId(2),
+        };
+        let types = [TypeId(LOCAL | 3), TypeId(7), TypeId(5 * PAGE as u32)];
+        let mut links = TypeLinks::default();
+        for ty in types {
+            links.keep(ty, Kind::Mapped, 0, 40, Stored::new());
+            links.keep_with_fixed_mapper(FixedMapper::Permissive, ty, 50, Stored::new());
+            links.keep_alias_symbol(ty, Some(symbol));
+            links.keep_alias_type_arguments(ty, &types);
+        }
+        links.keep_infer_type_parameters(TypeId(8), &types);
+        links.forget_restrictive_instantiations();
+        links.note_left_open();
+        links.note_circular_mapped_constraint();
+        links.clear();
+        for ty in types {
+            assert_eq!(links.cell(ty, Kind::Mapped, 0), 0);
+            assert_eq!(links.with_fixed_mapper(FixedMapper::Permissive, ty), 0);
+            assert_eq!(links.alias_symbol(ty), None);
+            assert_eq!(links.alias_type_arguments(ty), None);
+        }
+        assert_eq!(links.infer_type_parameters(TypeId(8)), None);
+        assert_eq!((links.times_forgotten, links.left_open), (0, 0));
+        assert!(!links.has_found_circular_mapped_constraint);
+        // A row that is added now starts empty.
+        links.keep(types[0], Kind::Mapped, 1, 60, Stored::new());
+        assert_eq!(links.cell(types[0], Kind::Mapped, 0), 0);
+        assert_eq!(links.cell(types[0], Kind::Mapped, 1), 60);
     }
 
     #[test]

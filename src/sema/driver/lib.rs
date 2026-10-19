@@ -3999,8 +3999,8 @@ fn check_named_files(
     // these files come after the type-checked ones, or before them under `Options::emits_first`. If
     // there are no others, they go through the queue themselves.
     // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
-    let boxed_checker = || Box::new(program.checker());
-    let checker = boxed_checker();
+    let boxed_checker = |spare| Box::new(program.checker_reusing(spare));
+    let checker = boxed_checker(None);
     let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) =
         (to_check.into_iter()).partition(|&file| checker.reports_semantic_errors(file));
     drop(checker);
@@ -4120,8 +4120,8 @@ fn check_named_files(
         true => Requested::Types,
         false => Requested::All,
     };
-    let new_checker = |expected: Requested| {
-        let mut checker = boxed_checker();
+    let new_checker = |expected: Requested, spare| {
+        let mut checker = boxed_checker(spare);
         checker.set_requested(expected);
         checker.begin_stack_budget();
         checker
@@ -4144,7 +4144,7 @@ fn check_named_files(
     };
     // Checks files outside the queue. Whatever the checker stores is dropped with it.
     let check_chunk = |files: &[FileId], expected: Requested| {
-        let mut checker = new_checker(expected);
+        let mut checker = new_checker(expected, None);
         let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
         for &file in files {
             checked.push((file, checker.check_file(file)));
@@ -4385,11 +4385,20 @@ fn check_named_files(
         };
         let sums: Guarded<Sums> = Guarded::new(Sums::default());
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
+        // Each thread's last task leaves its memory here for that thread's next task. The memory comes from the thread's
+        // arena, so no other thread reuses it.
+        let spares = Guarded::new(Vec::new());
         // One task, which begins with the file `first` and goes on with what `next` returns. Returns the file that the
         // next task of the thread begins with.
         let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
             let began = Instant::now();
-            let mut checker = new_checker(expected);
+            let thread = std::thread::current().id();
+            let spare = {
+                let mut spares = spares.lock();
+                let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
+                own.map(|at| spares.swap_remove(at).1)
+            };
+            let mut checker = new_checker(expected, spare);
             // The index of a task is that of its first file, which no other task of the round has.
             let round = match visits.lock()[first].rechecks {
                 rechecks if rechecks != 0 && !is_last_round => AGAIN + rechecks,
@@ -4494,8 +4503,8 @@ fn check_named_files(
                 }
                 (sums.lost).extend(ended.lost_because_of.map(|why| (index, why)));
             }
-            // It holds references into the HIR of files.
-            drop(checker);
+            // The checker borrows the files' HIR, so it must be gone before their trees are freed.
+            spares.lock().push((thread, checker.into_spare()));
             free_trees(trees_to_free);
             let elapsed = began.elapsed();
             busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
@@ -4786,7 +4795,7 @@ fn check_named_files(
                 if is_left_out || is_checked[i] {
                     continue;
                 }
-                let mut checker = boxed_checker();
+                let mut checker = boxed_checker(None);
                 checker.begin_stack_budget();
                 after_file(&mut checker, file);
             }

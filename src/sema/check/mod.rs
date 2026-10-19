@@ -514,6 +514,20 @@ impl crate::types::Follow for decl::Predicate {
     }
 }
 
+/// A finished checker's task and largest caches, all empty. The next checker on the thread reuses their memory. It's
+/// about 20 KB, so it's boxed to keep stack frames small.
+pub struct Spare<'p, 's> {
+    task: Task<'s>,
+    task_facts: shortcuts::TaskFacts,
+    counterparts_of_literals: shortcuts::TypeMap<TypeId>,
+    simplified: [shortcuts::TypeMap<TypeId>; 2],
+    reduced_unions: shortcuts::TypeMap<TypeId>,
+    links: links::TypeLinks,
+    signature_links: signature_links::SignatureLinks<'p>,
+    widened_types: shortcuts::TypeMap<TypeId>,
+    apparent_types_of_intersections: shortcuts::TypeMap<TypeId>,
+}
+
 /// `Checker::rechecked_exprs` and `Checker::rechecked_members`.
 type Rechecked = (
     FxHashMap<(FileId, ExprId), TypeId>,
@@ -536,6 +550,7 @@ impl<'s> Program<'s> {
         let bases = |len: fn(&crate::program::Module) -> usize| {
             let count = |m: &crate::program::ModuleCell| if m.is_leaf { 0 } else { len(m) };
             Bases::new_in(files.modules.iter().map(count), &session)
+                .with_counts(files.modules.iter().map(|m| len(m)), &session)
         };
         let exprs = bases(|m| m.hir.exprs.len());
         let type_nodes = bases(|m| m.hir.types.len());
@@ -719,13 +734,34 @@ impl<'s> Program<'s> {
     }
 
     pub fn checker(&self) -> Checker<'_, 's> {
+        self.checker_reusing(None)
+    }
+
+    /// Returns a new task and empty caches, for a thread's first checker.
+    fn empty_spare<'p>(&'p self) -> Box<Spare<'p, 's>> {
+        Box::new(Spare {
+            task: Task::new_in(self.session.arena(), &self.types),
+            task_facts: Default::default(),
+            counterparts_of_literals: Default::default(),
+            simplified: Default::default(),
+            reduced_unions: Default::default(),
+            links: Default::default(),
+            signature_links: Default::default(),
+            widened_types: Default::default(),
+            apparent_types_of_intersections: Default::default(),
+        })
+    }
+
+    /// Returns a new checker. `spare` is what `Checker::into_spare` returned on this thread: the new checker reuses its
+    /// memory.
+    pub fn checker_reusing<'p>(&'p self, spare: Option<Box<Spare<'p, 's>>>) -> Checker<'p, 's> {
         let arena = self.session.arena();
-        let task = Task::new_in(arena, &self.types);
+        let spare = spare.unwrap_or_else(|| self.empty_spare());
 
         Checker {
             p: self,
             arena,
-            task,
+            task: spare.task,
             left_frame: None,
             files: self.files,
             variance_type_parameter: Atom::NONE,
@@ -840,8 +876,8 @@ impl<'s> Program<'s> {
             relations_cut_short: Default::default(),
             enum_relation: Default::default(),
             enum_literal_types: Default::default(),
-            task_facts: Default::default(),
-            counterparts_of_literals: Default::default(),
+            task_facts: spare.task_facts,
+            counterparts_of_literals: spare.counterparts_of_literals.into(),
             relation_sizes: [0; 6],
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
@@ -859,7 +895,7 @@ impl<'s> Program<'s> {
             order_dependent: Default::default(),
             order_dependent_filter: 0,
             order_dependent_uses: 0,
-            simplified: Default::default(),
+            simplified: spare.simplified,
             inherited_names: [0; 4],
             inherited_name_set: None,
             cond_distributive_memo: Default::default(),
@@ -872,7 +908,7 @@ impl<'s> Program<'s> {
             is_checking_in_flow_loop: false,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
-            reduced_unions: Default::default(),
+            reduced_unions: spare.reduced_unions,
             union_members: Default::default(),
             unlisted_intersections: Default::default(),
             reductions: Default::default(),
@@ -920,8 +956,8 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             checked_leaves: Default::default(),
-            links: Default::default(),
-            signature_links: Default::default(),
+            links: spare.links,
+            signature_links: spare.signature_links,
             has_compared_without_total_order: std::cell::Cell::new(false),
             parsed_again_for_await: None,
             flow_analysis_disabled: Vec::new(),
@@ -944,7 +980,7 @@ impl<'s> Program<'s> {
             tracked_names: Vec::new(),
             unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
-            widened_types: Default::default(),
+            widened_types: spare.widened_types,
             iteration_types_cache: Default::default(),
             reported_iteration_requests: Vec::new(),
             iife_resolving: Vec::new(),
@@ -958,7 +994,7 @@ impl<'s> Program<'s> {
             discriminated: Default::default(),
             conditional_roots: Default::default(),
             contextual_properties: Default::default(),
-            apparent_types_of_intersections: Default::default(),
+            apparent_types_of_intersections: spare.apparent_types_of_intersections,
             apparent_types_with_this_argument: Default::default(),
             deferred_nodes: Default::default(),
             deferred_type_parameters: Vec::new(),

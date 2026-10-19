@@ -78,7 +78,7 @@
 //! - Variances do not wait for a commit either. See `Claims`.
 
 use super::task::{Ended, Task, tables_of, tables_written_at_once};
-use super::{Checker, Program};
+use super::{Checker, Program, Spare};
 use crate::local::{Log, node_word};
 use crate::node::Node;
 use crate::program::{FileId, Sym};
@@ -816,5 +816,31 @@ impl<'s> Checker<'_, 's> {
     /// Ends a task that `see_commits` was called for, after its last `commit_after_file`, on its own thread.
     pub fn end_task_after_commits(&mut self) -> Ended {
         self.task.end(self.p)
+    }
+}
+
+impl<'p, 's> Checker<'p, 's> {
+    /// Drops the checker after `end_task_after_commits`. Returns what `Program::checker_reusing` can reuse.
+    pub fn into_spare(self: Box<Self>) -> Box<Spare<'p, 's>> {
+        let mut spare = Box::new(Spare {
+            task: self.task,
+            task_facts: self.task_facts,
+            counterparts_of_literals: self.counterparts_of_literals.into_inner(),
+            simplified: self.simplified,
+            reduced_unions: self.reduced_unions,
+            links: self.links,
+            signature_links: self.signature_links,
+            widened_types: self.widened_types,
+            apparent_types_of_intersections: self.apparent_types_of_intersections,
+        });
+        spare.task_facts.clear();
+        spare.counterparts_of_literals.clear();
+        spare.simplified.iter_mut().for_each(|map| map.clear());
+        spare.reduced_unions.clear();
+        spare.links.clear();
+        spare.signature_links.clear();
+        spare.widened_types.clear();
+        spare.apparent_types_of_intersections.clear();
+        spare
     }
 }

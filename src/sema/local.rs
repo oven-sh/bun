@@ -189,6 +189,12 @@ impl Found {
             *slots = Box::default();
         }
     }
+
+    /// True if nothing can be found. The number of free slots doesn't count.
+    #[cfg(test)]
+    pub(crate) fn is_like_new(&self) -> bool {
+        self.count.get() == 0 && self.slots.borrow().iter().all(|&slot| slot == 0)
+    }
 }
 
 /// A hash map that iterates in insertion order: the entries are in a vector, and the hash index
@@ -440,6 +446,8 @@ pub(crate) struct Half<'s> {
     file: u32,
     ordinal: u32,
     published_in_row: PublishedInRow,
+    /// A table keyed by node: the number of nodes in `file`.
+    nodes: u32,
     /// The directory of its cells in `Buffer::pages`. A table keyed by node: by the number of the
     /// node among those of all files. A table keyed by id: by the number of a published id.
     directory: Vec<u32>,
@@ -472,11 +480,17 @@ impl<T> Typed for T {
 pub(crate) trait Reused: Typed {
     /// Drops what it holds. It keeps some of its memory for the next task.
     fn clear(&mut self);
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool;
 }
 
 impl<T> Reused for LocalVec<T> {
     fn clear(&mut self) {
         LocalVec::clear(self);
+    }
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -484,6 +498,10 @@ impl<K, V> Reused for Hashed<K, V> {
     fn clear(&mut self) {
         self.found.clear();
         clear_cells(&mut self.entries);
+    }
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        self.entries.is_empty() && self.found.is_like_new()
     }
 }
 
@@ -590,6 +608,7 @@ impl<'s> Half<'s> {
             file: NO_FILE,
             ordinal: 0,
             published_in_row: PublishedInRow::Unknown,
+            nodes: 0,
             directory: Vec::new(),
             earlier: Vec::new(),
             sparse: Hashed::default(),
@@ -604,12 +623,61 @@ impl<'s> Half<'s> {
 
     /// Its pages stay in `Buffer::pages` until the task ends.
     pub(crate) fn clear_cells(&mut self) {
-        clear_cells(&mut self.dense);
-        (self.file, self.ordinal) = (NO_FILE, 0);
-        self.published_in_row = PublishedInRow::Unknown;
-        self.directory.clear();
-        self.earlier.clear();
-        self.sparse.clear();
+        // Every field, so a new one is a compile error.
+        let Half {
+            dense,
+            file,
+            ordinal,
+            published_in_row,
+            nodes,
+            directory,
+            earlier,
+            sparse,
+            typed: _,
+        } = self;
+        clear_cells(dense);
+        (*file, *ordinal, *nodes) = (NO_FILE, 0, 0);
+        *published_in_row = PublishedInRow::Unknown;
+        directory.clear();
+        earlier.clear();
+        sparse.clear();
+    }
+
+    /// True if no lookup can tell it from what `new` returns.
+    #[cfg(test)]
+    fn is_like_new(&self) -> bool {
+        let Half {
+            dense,
+            file,
+            ordinal,
+            published_in_row,
+            nodes,
+            directory,
+            earlier,
+            sparse,
+            typed,
+        } = self;
+        dense.is_empty()
+            && (*file, *ordinal, *nodes) == (NO_FILE, 0, 0)
+            && *published_in_row == PublishedInRow::Unknown
+            && directory.is_empty()
+            && earlier.is_empty()
+            && Reused::is_like_new(sparse)
+            && typed.as_ref().is_none_or(|typed| typed.is_like_new())
+    }
+
+    /// Returns the cell at `index` of the row `dense`. The first write allocates a cell for every node of the file, so
+    /// the row doesn't grow step by step.
+    #[inline]
+    fn cell_in_row(&mut self, index: u32) -> &mut u32 {
+        if index as usize >= self.dense.len() {
+            let cells = (self.nodes as usize).max(index as usize + 1);
+            match self.dense.is_empty() {
+                true => self.dense = vec![0; cells],
+                false => self.dense.resize(cells, 0),
+            }
+        }
+        &mut self.dense[index as usize]
     }
 
     /// Whether `earlier` has the row of `file`, whose ordinal is `ordinal`, or 0.
@@ -761,16 +829,48 @@ impl<'s> Buffer<'s> {
 
     /// Drops every entry.
     pub(crate) fn clear(&mut self) {
-        (self.file, self.ordinal, self.files) = (NO_FILE, 0, 0);
-        (self.is_imported, self.log) = (false, None);
-        clear_cells(&mut self.ordinals);
-        self.pages.clear();
-        for half in &mut self.halves {
+        // Every field, so a new one is a compile error.
+        let Buffer {
+            file,
+            ordinal,
+            is_imported,
+            log,
+            ordinals,
+            files,
+            pages,
+            halves,
+        } = self;
+        (*file, *ordinal, *files) = (NO_FILE, 0, 0);
+        (*is_imported, *log) = (false, None);
+        clear_cells(ordinals);
+        pages.clear();
+        for half in halves {
             half.clear_cells();
             if let Some(typed) = &mut half.typed {
                 typed.clear();
             }
         }
+    }
+
+    /// True if no lookup can tell it from what `new` returns.
+    #[cfg(test)]
+    pub(crate) fn is_like_new(&self) -> bool {
+        let Buffer {
+            file,
+            ordinal,
+            is_imported,
+            log,
+            ordinals,
+            files,
+            pages,
+            halves,
+        } = self;
+        (*file, *ordinal, *files) == (NO_FILE, 0, 0)
+            && !*is_imported
+            && log.is_none()
+            && ordinals.is_empty()
+            && pages.pool.is_empty()
+            && halves.iter().all(Half::is_like_new)
     }
 
     /// `None`: the table has no slot.
@@ -935,13 +1035,13 @@ impl<'s> Buffer<'s> {
     /// The cell of `dense`.
     #[inline]
     pub(crate) fn cell_in_row(&mut self, slot: u32, index: u32) -> &mut u32 {
-        cell_mut(&mut self.half_mut(slot).dense, index)
+        self.half_mut(slot).cell_in_row(index)
     }
 
     /// From now on `dense` is the row of `file`, which the task is visiting. The row of the previous
-    /// file is saved. `nodes`: those of `file` among those of all files.
+    /// file is saved. `nodes`: those of `file` among those of all files. `count`: how many nodes `file` has.
     #[cold]
-    pub(crate) fn cover(&mut self, slot: u32, file: u32, nodes: &Range<usize>) {
+    pub(crate) fn cover(&mut self, slot: u32, file: u32, nodes: &Range<usize>, count: usize) {
         debug_assert_eq!(file, self.file);
         let (half, ordinal) = (&mut self.halves[slot as usize], self.ordinal);
         if half.file == file {
@@ -952,7 +1052,7 @@ impl<'s> Buffer<'s> {
         if half.ordinal != 0 && !row.is_empty() {
             half.keep_row(half.file, half.ordinal, row);
         }
-        (half.file, half.ordinal) = (file, ordinal);
+        (half.file, half.ordinal, half.nodes) = (file, ordinal, count as u32);
         half.published_in_row = PublishedInRow::Unknown;
         if half.has_earlier_row(file, ordinal) {
             // The task has visited the file before.
@@ -1018,7 +1118,7 @@ impl<'s> Buffer<'s> {
         let ordinal = self.ordinal_of(file);
         let half = &mut self.halves[slot as usize];
         if half.file == file {
-            return cell_mut(&mut half.dense, index);
+            return half.cell_in_row(index);
         }
         if half.has_earlier_row(file, ordinal) {
             return cell_mut(&mut half.earlier[ordinal as usize - 1].1, index);
@@ -1098,6 +1198,17 @@ impl FileLocalTables {
     /// Drops every entry.
     pub(crate) fn clear(&mut self) {
         self.begin_file(NO_FILE);
+    }
+
+    /// True if no lookup can tell it from what `new` returns.
+    #[cfg(test)]
+    pub(crate) fn is_like_new(&self) -> bool {
+        let FileLocalTables { file, tables } = self;
+        let is_empty = |table: &FileLocalTable| {
+            let FileLocalTable { cells, sparse } = table;
+            cells.is_empty() && Reused::is_like_new(sparse)
+        };
+        *file == NO_FILE && tables.iter().all(is_empty)
     }
 
     #[inline]

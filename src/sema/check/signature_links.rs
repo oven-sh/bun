@@ -72,6 +72,24 @@ pub(super) struct SignatureLinks<'p> {
 }
 
 impl<'p> SignatureLinks<'p> {
+    /// Makes it equal to `SignatureLinks::default()` and keeps the memory.
+    pub(super) fn clear(&mut self) {
+        let SignatureLinks {
+            own,
+            pages,
+            published,
+            type_predicates,
+            parameters,
+            type_parameters,
+        } = self;
+        own.clear();
+        pages.clear();
+        published.clear();
+        type_predicates.clear();
+        parameters.clear();
+        type_parameters.clear();
+    }
+
     #[inline]
     fn cell(&self, sig: SigId, at: usize) -> u32 {
         match sig.local_number() {
@@ -358,5 +376,17 @@ mod tests {
         }
         // Only pages with a cached row are allocated.
         assert_eq!(links.published.len(), 3);
+        links.clear();
+        for sig in sigs {
+            assert_eq!(links.cell(sig, super::RETURN_TYPE), 0);
+            assert_eq!(links.type_predicate(sig), None);
+            assert!(!links.has(sig, fact::HAS_NO_THIS_PARAMETER));
+            assert_eq!(links.parameters(sig), None);
+            assert_eq!(links.type_parameters(sig), None);
+        }
+        // A row that is added now starts empty.
+        links.add_fact(sigs[0], fact::HAS_NO_TYPE_PARAMETERS);
+        assert!(!links.has(sigs[0], fact::HAS_NO_THIS_PARAMETER));
+        assert_eq!(links.cell(sigs[0], super::RETURN_TYPE), 0);
     }
 }

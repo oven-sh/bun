@@ -13,8 +13,8 @@ use crate::table::{
     Handle, Id as _, OfExpressions,
 };
 use crate::types::{
-    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, ShortList, TypeArguments,
-    TypeData, TypeId, TypeKey, TypeStore, Types, UnionOrigin,
+    ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, Sharing, ShortList,
+    TypeArguments, TypeData, TypeId, TypeKey, TypeStore, Types, UnionOrigin,
 };
 use crate::util::{ShardedMap, shard_among};
 use bun_sema_standalone as _;
@@ -669,6 +669,212 @@ fn a_commit_stores_every_kind_of_entry_and_the_task_keeps_its_own() {
         assert_eq!(tables.by_key.get(task, &(STRING, NUMBER)), Some(STRING));
     }
     assert_eq!(first.buffer().logged(), 0);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_task_that_begins_again_has_none_of_its_earlier_entries() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut task = begin_committing(&session, &tables, &commits, 0);
+    task.begin_file(A, true);
+    tables.by_node.insert(&task, (A, 1), STRING, stored());
+    tables.by_node.insert(&task, (B, 2), NUMBER, stored());
+    tables.set.insert(&task, (A, 3), (), stored());
+    tables.by_id.insert(&task, STRING, NUMBER, stored());
+    (tables.shapes).insert_ref(&task, STRING, Box::new([NUMBER]), stored());
+    (tables.kept_by_node).insert_ref(&task, (A, 4), Box::new([STRING]), stored());
+    (tables.by_key).insert(&task, (STRING, NUMBER), STRING, stored());
+    assert_ne!(task.buffer().logged(), 0);
+    // Nothing was committed, so a new task would find nothing.
+    task.begin(0, 1);
+    task.see_commits(commits.view(3), false, 0);
+    task.begin_file(A, true);
+    assert_eq!(task.buffer().logged(), 0);
+    assert_eq!(tables.by_node.get(&task, &(A, 1)), None);
+    assert_eq!(tables.by_node.get(&task, &(B, 2)), None);
+    assert_eq!(tables.set.get(&task, &(A, 3)), None);
+    assert_eq!(tables.by_id.get(&task, &STRING), None);
+    assert_eq!(tables.shapes.get_ref(&task, &STRING), None);
+    assert_eq!(tables.kept_by_node.get_ref(&task, &(A, 4)), None);
+    assert_eq!(tables.by_key.get(&task, &(STRING, NUMBER)), None);
+}
+
+/// True if `task` is in the state that `Task::new_in` returns. Every field is listed, so a new one is a compile error.
+fn is_like_new(task: &mut Task) -> bool {
+    let Task {
+        place,
+        file,
+        files_in_doubt,
+        diagnostics,
+        closed_a_cycle,
+        order_dependent_variances,
+        assignments_walked,
+        held_back,
+        view,
+        is_lost,
+        is_believed,
+        can_recheck_early,
+        is_first_in_order,
+        is_first_in_component,
+        cycle_members,
+        cycle_since_rest,
+        logged_at_cycles,
+        logged_at_rest,
+        committed,
+        waits,
+        at_once,
+        at_once_unless_stopped,
+        logged_before_the_stop,
+        own,
+        buffer,
+        file_local,
+    } = task;
+    place.is_none()
+        && file.is_none()
+        && files_in_doubt.is_empty()
+        && diagnostics.is_empty()
+        && !*closed_a_cycle
+        && order_dependent_variances.is_empty()
+        && assignments_walked.get_mut().is_empty()
+        && held_back.get() == 0
+        && view.is_none()
+        && is_lost.get().is_none()
+        && !*is_believed
+        && !can_recheck_early.get()
+        && !is_first_in_order.get()
+        && !is_first_in_component.get()
+        && cycle_members.get_mut().is_empty()
+        && cycle_since_rest.get().is_none()
+        && logged_at_cycles.borrow().is_empty()
+        && logged_at_rest.get() == [0; 2]
+        && committed.get() == [0; 2]
+        && waits.get() == [Duration::ZERO; 3]
+        && at_once.get() == 0
+        && *at_once_unless_stopped == 0
+        && logged_before_the_stop.get() == usize::MAX
+        && own.is_like_new()
+        && buffer.get_mut().is_like_new()
+        && file_local.get_mut().is_like_new()
+}
+
+/// Applies `change` to a new task, which must make it differ from a new one, and ends the task.
+fn ends_like_new<'s>(
+    tables: &Tables<'s>,
+    session: &'s Session,
+    change: impl FnOnce(&mut Task<'s>),
+) {
+    let mut task = Task::new_in(session.arena(), &tables.types);
+    assert!(is_like_new(&mut task));
+    change(&mut task);
+    assert!(!is_like_new(&mut task));
+    tables.types.take_back_ids(&task.own);
+    task.drop_everything();
+    assert!(is_like_new(&mut task));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_task_that_ended_is_like_a_new_task() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let check = |change: &dyn Fn(&mut Task<'_>)| ends_like_new(&tables, &session, change);
+    let sym = Sym {
+        file: A,
+        id: SymbolId(7),
+    };
+    check(&|task| task.place = Some((0, 1)));
+    check(&|task| task.file = Some(A));
+    check(&|task| task.files_in_doubt.push(A));
+    check(&|task| {
+        let reported = Reported::bare((A, 0, 0), 2322);
+        task.diagnostics.push((None, reported));
+    });
+    check(&|task| task.closed_a_cycle = true);
+    check(&|task| {
+        task.order_dependent_variances.push(OrderDependent {
+            sym,
+            variances: &[],
+            compared: 0,
+            failed: 0,
+            void_targets: 0,
+            inferred: 0,
+        });
+    });
+    check(&|task| {
+        let walked = (A, crate::node::Node::NONE, true);
+        task.assignments_walked.get_mut().push(walked);
+    });
+    check(&|task| task.hold_back());
+    ends_like_new(&tables, &session, |task| {
+        task.view = Some(commits.view(3));
+    });
+    check(&|task| task.is_lost.set(Some("a test")));
+    check(&|task| task.is_believed = true);
+    check(&|task| task.can_recheck_early.set(true));
+    check(&|task| task.set_first_in_order(true, false));
+    check(&|task| task.set_first_in_order(false, true));
+    check(&|task| task.cycle_members.get_mut().push(1));
+    check(&|task| task.cycle_since_rest.set(Some([0; 2])));
+    check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
+    check(&|task| task.logged_at_rest.set([0, 1]));
+    check(&|task| task.count_committed(0, 1));
+    check(&|task| task.count_waits([Duration::ZERO, Duration::ZERO, Duration::from_nanos(1)]));
+    check(&|task| task.at_once.set(1));
+    check(&|task| task.at_once_unless_stopped = 1);
+    check(&|task| task.logged_before_the_stop.set(0));
+    // The task's own records.
+    check(&|task| task.own.add_visited_file(A));
+    check(&|task| task.own.add_unimported_file(A));
+    check(&|task| task.own.set_sharing(Sharing::Publishes));
+    // The task-local parts of the tables.
+    check(&|task| task.buffer().begin_log());
+    check(&|task| task.buffer().begin_file(A.0, false));
+    check(&|task| task.file_local().begin_file(A.0));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn a_task_that_ended_has_none_of_its_records_and_entries() {
+    let session = Session::new();
+    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
+    let mut flags = ByNode::<Node, bool, FileLocal>::new_in(&Bases::none_in(&Global), Global);
+    flags.set_slot(numbered(0));
+    // A record that stays in the task.
+    ends_like_new(&tables, &session, |task| {
+        assert!(tables.keyof(task, STRING).is_local());
+    });
+    // A record that the task publishes, under one of the ids that it reserves.
+    ends_like_new(&tables, &session, |task| {
+        task.own.set_sharing(Sharing::Publishes);
+        assert!(!tables.keyof(task, NUMBER).is_local());
+    });
+    // A record that is bound to a file that nothing imports.
+    ends_like_new(&tables, &session, |task| {
+        task.own.set_sharing(Sharing::Publishes);
+        task.begin_file(C, false);
+        assert!(tables.this_of(task, C).is_local());
+    });
+    // An entry of every kind, one at a time: in a row, in a page, under an id, a kept value, under a key.
+    type Store<'a, 's> = &'a dyn Fn(&Task<'s>);
+    let stores: [Store; 8] = [
+        &|task| _ = tables.by_node.insert(task, (A, 1), STRING, stored()),
+        &|task| _ = tables.by_node.insert(task, (B, 2), NUMBER, stored()),
+        &|task| tables.set.insert(task, (A, 3), (), stored()),
+        &|task| _ = tables.by_id.insert(task, STRING, NUMBER, stored()),
+        &|task| _ = (tables.shapes).insert_ref(task, STRING, Box::new([NUMBER]), stored()),
+        &|task| _ = (tables.kept_by_node).insert_ref(task, (A, 4), Box::new([STRING]), stored()),
+        &|task| _ = (tables.by_key).insert(task, (STRING, NUMBER), STRING, stored()),
+        &|task| _ = flags.insert(task, (B, 5), true),
+    ];
+    for store in stores {
+        ends_like_new(&tables, &session, |task| {
+            task.begin(0, 0);
+            task.see_commits(commits.view(3), false, 0);
+            task.begin_file(A, true);
+            store(task);
+        });
+    }
 }
 
 #[test]

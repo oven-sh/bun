@@ -18,15 +18,83 @@ let aws: AwsClient | undefined;
 
 let logger = console.log;
 
+// Bun.inspect quotes and escapes a string: https://github.com/oven-sh/bun/issues/4826
+function formatValue(value: unknown): string {
+  return typeof value === "string" ? value : Bun.inspect(value);
+}
+
+function formatNumber(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+
+function formatSpecifier(specifier: string, value: any): string {
+  switch (specifier) {
+    case "%s":
+      if (typeof value === "number") {
+        return formatNumber(value);
+      }
+      // %s prints String(value) as Bun's console does. node:util inspects an object with a built-in toString.
+      return typeof value === "bigint" ? `${value}n` : String(value);
+    case "%d":
+      if (typeof value === "bigint") {
+        return `${value}n`;
+      }
+      return typeof value === "symbol" ? "NaN" : formatNumber(Number(value));
+    case "%i":
+      if (typeof value === "bigint") {
+        return `${value}n`;
+      }
+      return typeof value === "symbol" ? "NaN" : formatNumber(parseInt(value));
+    case "%f":
+      return typeof value === "symbol" ? "NaN" : formatNumber(parseFloat(value));
+    case "%j":
+      return String(JSON.stringify(value));
+    case "%c":
+      return "";
+    default:
+      return Bun.inspect(value);
+  }
+}
+
+// Not util.format: node:util prints a Request, a Response and Headers without their state,
+// and its load would land in the first invocation that logs a format string.
+function formatArgs(args: any[]): string {
+  const first = args[0];
+  if (args.length === 1 || typeof first !== "string" || !first.includes("%")) {
+    return args.map(formatValue).join(" ");
+  }
+  let next = 1;
+  let message = first.replace(/%[sdifjoOc%]/g, specifier => {
+    if (specifier === "%%") {
+      return "%";
+    }
+    if (next === args.length) {
+      return specifier;
+    }
+    const value = args[next++];
+    try {
+      return formatSpecifier(specifier, value);
+    } catch {
+      // A log call does not throw: a BigInt under %j or an object with no toString under %s prints as a value.
+      return Bun.inspect(value);
+    }
+  });
+  for (; next < args.length; next++) {
+    message += " " + formatValue(args[next]);
+  }
+  return message;
+}
+
 function log(level: string, ...args: any[]): void {
   if (!args.length) {
     return;
   }
-  const messages = args.map(arg => Bun.inspect(arg).replace(/\n/g, "\r"));
+  const message = formatArgs(args).replace(/\r?\n/g, "\r");
+  // Not one joined string: bun 1.1.22 and older write a lone string and its "\n" in two write(2) calls.
   if (requestId === undefined) {
-    logger(level, ...messages);
+    logger(level, message);
   } else {
-    logger(level, `RequestId: ${requestId}`, ...messages);
+    logger(level, `RequestId: ${requestId}`, message);
   }
 }
 
@@ -111,7 +179,7 @@ function formatError(error: unknown): LambdaError {
   }
   return {
     errorType: "Error",
-    errorMessage: Bun.inspect(error),
+    errorMessage: formatValue(error),
   };
 }
 

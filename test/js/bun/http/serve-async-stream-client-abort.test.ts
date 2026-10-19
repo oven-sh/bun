@@ -89,7 +89,6 @@ test.concurrent(
     });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   },
-  60_000,
 );
 
 // The listener ends the stream instead. The end does not reach the response
@@ -103,7 +102,6 @@ test.concurrent(
     expect(JSON.parse(stdout)).toEqual({ heard: ["end:0"], pendingRequests: 0 });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   },
-  60_000,
 );
 
 // The listener's flush(true) finds an earlier flush(true) that still waits and
@@ -128,5 +126,4 @@ test.concurrent.skipIf(isWindows)(
     });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   },
-  60_000,
 );

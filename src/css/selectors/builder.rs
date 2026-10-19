@@ -153,14 +153,14 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
             }
             return;
         }
-        let mut is = SelectorBuilder::<Impl>::init_in(self.alloc);
-        type_selector.for_each(|component| is.push_simple_selector(component));
-        let BuildResult {
-            specificity_and_flags,
-            components,
-        } = is.build(SelectorFlags::empty());
+        let mut components = Vec::with_capacity_in(2, self.alloc);
+        components.extend(type_selector);
+        let specificity = compute_specificity::<Impl>(&components);
         self.push_simple_selector(C::Is(Box::new([GenericSelector {
-            specificity_and_flags,
+            specificity_and_flags: SpecificityAndFlags {
+                specificity,
+                flags: SelectorFlags::empty(),
+            },
             components,
         }])));
     }

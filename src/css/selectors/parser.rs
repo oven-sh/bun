@@ -756,14 +756,11 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                 //
                 //     (Similar quotes for :where() / :not())
                 //
-                // The argument of `:local()` or `:global()` is parsed as a
-                // selector, which adds the default namespace itself.
                 let ignore_default_ns = state
                     .contains(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
                     || matches!(
                         result,
                         SimpleSelectorParseResult::SimpleSelector(GenericComponent::Host(_))
-                            | SimpleSelectorParseResult::ModuleScope(_)
                     );
                 if !ignore_default_ns {
                     builder.push_simple_selector(GenericComponent::DefaultNamespace(url));

@@ -1153,7 +1153,11 @@ fn file_names_from_specs(
     let key = |file: &[u8]| to_path(file, case_sensitive).into_owned();
     let supported = supported_extensions(options);
     let mut literal_files = OrderedFiles::default();
-    let mut wildcard_files = OrderedFiles::default();
+    // The files in the order in which they were added, `None` for one that was removed, and the index of each by its key.
+    // `ArrayHashMap::ordered_remove` moves every later entry, and a folder of demos that are each there as `.js` and
+    // `.tsx` removes one file in two.
+    let mut wildcard_files: Vec<Option<Vec<u8>>> = Vec::new();
+    let mut wildcard_places = crate::util::FxHashMap::<Vec<u8>, usize>::default();
     let mut wildcard_json_files = OrderedFiles::default();
     // The key is the entry as it is written. What is asked below is a path, so only an entry that
     // is one is found.
@@ -1198,7 +1202,7 @@ fn file_names_from_specs(
                     break;
                 }
                 let other = key(&change_extension(&file, extension));
-                if literal_files.contains_key(&other) || wildcard_files.contains_key(&other) {
+                if literal_files.contains_key(&other) || wildcard_places.contains_key(&other) {
                     // A declaration file has always been loaded alongside its JavaScript.
                     if extension == b".d.ts" && (file.ends_with(b".js") || file.ends_with(b".jsx"))
                     {
@@ -1216,17 +1220,22 @@ fn file_names_from_specs(
                 if file.ends_with(extension) {
                     break;
                 }
-                wildcard_files.ordered_remove(&key(&change_extension(&file, extension)));
+                let lower = key(&change_extension(&file, extension));
+                let listed = wildcard_places.remove(&lower);
+                if let Some(listed) = listed.and_then(|at| wildcard_files.get_mut(at)) {
+                    *listed = None;
+                }
             }
             let key = key(&file);
-            if !literal_files.contains_key(&key) && !wildcard_files.contains_key(&key) {
-                wildcard_files.insert(key, file);
+            if !literal_files.contains_key(&key) && !wildcard_places.contains_key(&key) {
+                wildcard_places.insert(key, wildcard_files.len());
+                wildcard_files.push(Some(file));
             }
         }
     }
-    [literal_files, wildcard_files, wildcard_json_files]
-        .into_iter()
-        .flat_map(|files| files.into_entries().1)
+    (literal_files.into_entries().1.into_iter())
+        .chain(wildcard_files.into_iter().flatten())
+        .chain(wildcard_json_files.into_entries().1)
         .collect()
 }
 

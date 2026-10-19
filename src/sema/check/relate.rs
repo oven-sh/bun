@@ -2799,7 +2799,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut has_claim = false;
         if self.task.commits() && !self.in_variance_computation {
             let wait_start = std::time::Instant::now();
-            let claim = self.p.claim_variances(sym, cuts == 0);
+            let claim = self.claim_variances_or_help(sym, cuts == 0);
             let none = std::time::Duration::ZERO;
             self.task.count_waits([none, none, wait_start.elapsed()]);
             match claim {
@@ -2808,6 +2808,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 VarianceClaim::Mine => has_claim = true,
                 VarianceClaim::Unclaimed => {}
+                VarianceClaim::Taken => return &[],
             }
         }
         let before = self.sharing_blockers();
@@ -4278,6 +4279,10 @@ impl<'p, 's> Checker<'p, 's> {
             r.overflow = true;
             return Ternary::FALSE;
         }
+        if self.count_comparison() {
+            r.overflow = true;
+            return Ternary::FALSE;
+        }
         if r.has_maybe_key(key) {
             return Ternary::MAYBE;
         }
@@ -4351,7 +4356,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
         // first place, as long as it isn't held back. If it were, the commit would publish it.
-        if r.relation_count < r.waits_for_commit_below && !key.is_of_visited_file(&self.task.own) {
+        // A help request's cache is discarded with the task too.
+        if r.relation_count < r.waits_for_commit_below
+            && !key.is_of_visited_file(&self.task.own)
+            && !self.uses_request_cache()
+        {
             self.task.hold_back();
         }
         let stored = self.end_scope(scope).ok();
@@ -4457,6 +4466,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.relations_of_this_file.entry(key).or_insert(entry);
             return;
         }
+        if self.uses_request_cache() && self.store_in_request_cache(key, entry, stored) {
+            return;
+        }
         self.p.relations.insert(&self.task, key, entry, stored);
     }
 
@@ -4464,7 +4476,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// computed from the latter is also only valid for this file.
     #[inline]
     fn known_relation(&mut self, key: &Key) -> Option<u8> {
-        let known = self.p.relations.get(&self.task, key);
+        let mut known = self.p.relations.get(&self.task, key);
+        if known.is_none() && self.uses_request_cache() {
+            known = self.find_in_request_cache(key);
+        }
         if known.is_some() || self.relations_of_this_file.is_empty() {
             return known;
         }
@@ -6326,6 +6341,34 @@ impl<'p, 's> Checker<'p, 's> {
         state: u8,
         both: &mut Option<(Members<'p>, Members<'p>)>,
     ) -> Ternary {
+        let is_outermost = !REPORT && self.begin_property_comparison(source, target, r);
+        let result = self.properties_related_to_worker::<REPORT>(
+            r,
+            source,
+            properties,
+            target,
+            excluded,
+            optionals_only,
+            state,
+            both,
+        );
+        if is_outermost {
+            self.end_property_comparison();
+        }
+        result
+    }
+
+    fn properties_related_to_worker<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        properties: Option<TypeId>,
+        target: TypeId,
+        excluded: &[Atom],
+        optionals_only: bool,
+        state: u8,
+        both: &mut Option<(Members<'p>, Members<'p>)>,
+    ) -> Ternary {
         if r.relation == Relation::Identity {
             return self.properties_identical_to(r, source, target, excluded);
         }
@@ -6592,7 +6635,22 @@ impl<'p, 's> Checker<'p, 's> {
             };
             in_order.shared_sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
         }
-        for (i, tp) in tm.shape().props.iter().enumerate() {
+        let props = &tm.shape().props;
+        // What a variance measurement records before a comparison fails depends on the order.
+        let (first, moves_down) = match REPORT || self.in_variance_computation {
+            true => (0, false),
+            false => self.property_order(props.len()),
+        };
+        for i in 0..props.len() {
+            let index = match moves_down {
+                true => first + props.len() - i,
+                false => first + i,
+            };
+            let tp = &props[if index < props.len() {
+                index
+            } else {
+                index - props.len()
+            }];
             let tp = if REPORT {
                 in_order.get(i).copied().unwrap_or(tp)
             } else {

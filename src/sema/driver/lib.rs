@@ -18,6 +18,7 @@ use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
+use bun_sema::check::help::{HelpBoard, HelpRequest};
 use bun_sema::check::{
     INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested, compute_ecma_line_starts,
 };
@@ -4407,24 +4408,16 @@ fn check_named_files(
             *cost_left = cost_left.saturating_sub(cost_of_run);
             from..to
         };
-        /// State that a worker with no files left waits on.
-        #[derive(Default)]
-        struct Activity {
-            /// Number of workers looking for a file or running a task.
-            active: usize,
-            /// Number of workers waiting.
-            waiting: usize,
-            /// Counts commits and discards.
-            changes: u64,
-        }
-        let activity = Guarded::new(Activity::default());
-        let activity_has_changed = bun_threading::Condvar::new();
+        let board = Arc::new(HelpBoard::default());
+        let (activity, activity_has_changed) = (&board.activity, &board.activity_has_changed);
+        // In a build with project references, an idle thread moves on to another project instead.
+        let has_helpers = workers > 1 && host.helpers_now().is_none();
         // Call after a commit or a discard. `is_busy`: the caller already has its next file. Otherwise it immediately
         // looks for a file to recheck itself.
         let note_change = |is_busy: bool| {
             let mut activity = activity.lock();
             activity.changes += 1;
-            if is_busy && activity.waiting != 0 {
+            if is_busy && activity.waiting != 0 && !lost.lock().is_empty() {
                 activity_has_changed.notify_one();
             }
         };
@@ -4477,17 +4470,17 @@ fn check_named_files(
         // Each thread's last task leaves its memory here for that thread's next task. The memory comes from the
         // thread's arena, so no other thread reuses it.
         let spares = Guarded::new(Vec::new());
+        let take_spare = |thread: ThreadId| {
+            let mut spares = spares.lock();
+            let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
+            own.map(|at| spares.swap_remove(at).1)
+        };
         // Runs one task, which begins with the file `first` and continues with what `next` returns. Returns the file
         // that the thread's next task begins with.
         let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
             let began = Instant::now();
             let thread = std::thread::current().id();
-            let spare = {
-                let mut spares = spares.lock();
-                let own = spares.iter().position(|it: &(ThreadId, _)| it.0 == thread);
-                own.map(|at| spares.swap_remove(at).1)
-            };
-            let mut checker = new_checker(expected, spare);
+            let mut checker = new_checker(expected, take_spare(thread));
             // A task's index is the index of its first file, which is unique within the round.
             let round = match visits.lock()[first].rechecks {
                 rechecks if rechecks != 0 && !is_last_round => FIRST_RECHECK_ROUND + rechecks,
@@ -4495,6 +4488,9 @@ fn check_named_files(
             };
             checker.begin_task(round as u32, first as u32);
             checker.see_commits(is_last_round);
+            if has_helpers {
+                checker.request_help_on(Arc::clone(&board));
+            }
             let mut trees_to_free = Vec::new();
             let (mut done, mut spent, mut index) = (0, 0, first);
             let upcoming = loop {
@@ -4601,6 +4597,13 @@ fn check_named_files(
             task_times.lock().push((elapsed, done, first));
             upcoming
         };
+        // See `bun_sema::check::help`.
+        let run_helper = |help_request: Arc<HelpRequest>, number: u32| {
+            let thread = std::thread::current().id();
+            let mut checker = new_checker(expected, take_spare(thread));
+            checker.run_as_helper(&board, help_request, number);
+            spares.lock().push((thread, checker.into_spare()));
+        };
         let first_files_worker = AtomicUsize::new(usize::MAX);
         let workers_started = AtomicUsize::new(0);
         // For each worker, the part of its run that it hasn't started. A worker can spend a long time on one file, or
@@ -4642,14 +4645,15 @@ fn check_named_files(
         let (runs, steal_run) = (&runs, &steal_run);
         let has_file_to_recheck = &has_file_to_recheck;
         let take_first_unchecked_file = &take_first_unchecked_file;
-        let (activity, activity_has_changed) = (&activity, &activity_has_changed);
+        let run_helper = &run_helper;
         // Returns a closure that runs one task per call on the current thread. The closure returns false once this
         // thread has nothing left to do in this round.
         //
-        // A worker that finds no file waits as long as a discarded file can still be rechecked in this round and
-        // another worker is active, because that worker's next commit can make the file recheckable. A worker that
-        // commits or discards a file and already has its next file wakes one waiting worker. So does a worker that
-        // takes a file to recheck and leaves another one behind.
+        // A worker that finds no file joins an open help request. Without one it waits as long as another worker is
+        // active, because that worker's next commit can make a discarded file recheckable, and its task can request
+        // help. A worker that commits or discards a file and already has its next file wakes one waiting worker if a
+        // file is discarded. So does a worker that takes a file to recheck and leaves another one behind. A task that
+        // requests help wakes them all.
         //
         // Every wait ends, because every active worker eventually finds no file. The last one to do so takes the first
         // unchecked file if that was discarded, and otherwise wakes all the others. A worker that wakes up to no change
@@ -4719,7 +4723,15 @@ fn check_named_files(
                     }
                     activity_has_changed.notify_all();
                 }
-                while activity.changes == seen && activity.active != 0 && has_file_to_recheck() {
+                if has_helpers && let Some((help_request, number)) = activity.join_request(&[]) {
+                    drop(activity);
+                    run_helper(help_request, number);
+                    return true;
+                }
+                while activity.changes == seen
+                    && activity.active != 0
+                    && (has_helpers || has_file_to_recheck())
+                {
                     activity.waiting += 1;
                     activity_has_changed.wait_guarded(&mut activity);
                     activity.waiting -= 1;

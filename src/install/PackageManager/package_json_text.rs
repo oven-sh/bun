@@ -880,15 +880,27 @@ impl<'a> Text<'a> {
         let mut pairs: Vec<Option<usize>> = vec![None; entries.len()];
         let mut taken = vec![false; old_len];
         let names = self.names(container);
+        // For a name that is there many times: how many of its members are taken, from its first one on.
+        let mut taken_first: Vec<usize> = Vec::new();
         for (index, pair) in pairs.iter_mut().enumerate() {
             let Some(name) = entries.name(index) else {
                 continue;
             };
             let hash = name.hash();
-            let mut at = names.partition_point(|&(other, _)| other < hash);
+            let first = names.partition_point(|&(other, _)| other < hash);
+            let mut skip = taken_first.get(first).copied().unwrap_or(0);
+            let mut at = first + skip;
             while at < names.len() && names[at].0 == hash {
                 let old = names[at].1;
-                if !taken[old] && self.is_named(container, old, name) {
+                if taken[old] {
+                    if at == first + skip {
+                        skip += 1;
+                        if taken_first.is_empty() {
+                            taken_first.resize(names.len(), 0);
+                        }
+                        taken_first[first] = skip;
+                    }
+                } else if self.is_named(container, old, name) {
                     taken[old] = true;
                     *pair = Some(old);
                     break;

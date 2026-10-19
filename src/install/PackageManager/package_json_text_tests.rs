@@ -425,6 +425,27 @@ fn an_array_in_an_array_is_read_once() {
     }
 }
 
+#[test]
+fn a_name_that_is_there_many_times_is_looked_up_once() {
+    // A look for the next one that starts at the first one is a walk over all that are taken.
+    let count = 100_000;
+    let old = format!("{{\n{}  \"a\": 0\n}}\n", "  \"a\": 0,\n".repeat(count - 1));
+    let now = format!("{{{} \"b\": 1}}", "\"a\": 0,".repeat(count));
+    assert_eq!(
+        saved(&old, &now),
+        old.replace("  \"a\": 0\n}", "  \"a\": 0,\n  \"b\": 1\n}")
+    );
+    let old = format!(
+        "{{\n  \"n\": [\n{}    0\n  ]\n}}\n",
+        "    0,\n".repeat(count - 1)
+    );
+    let now = format!("{{\"n\": [{} 1]}}", "0,".repeat(count));
+    assert_eq!(
+        saved(&old, &now),
+        old.replace("    0\n  ]", "    0,\n    1\n  ]")
+    );
+}
+
 // ───── a container on one line ─────
 
 #[test]

@@ -885,6 +885,251 @@ describe("a Blob reports its own type, never one another Blob put on the shared 
   });
 });
 
+// https://w3c.github.io/FileAPI/#constructorBlob: a part gives the new Blob its bytes. The type comes from options.type.
+describe("new Blob([blob]) and new File([blob], name) do not take the type of the part", () => {
+  const typedBlob = () => new Blob(["hi"], { type: "a/b" });
+
+  let buildOutput: Promise<Blob> | undefined;
+  const inMemoryBuildOutput = () =>
+    (buildOutput ??= (async () => {
+      using dir = tempDir("blob-part-build-output", { "entry.js": "export default 1;" });
+      const build = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")] });
+      return build.outputs[0];
+    })());
+
+  const parts: [kind: string, make: () => Blob | Promise<Blob>][] = [
+    ["a Blob with a type", typedBlob],
+    ["a Blob with a type from the MIME table", () => new Blob(["hi"], { type: "text/plain" })],
+    ["an empty Blob with a type", () => new Blob([], { type: "a/b" })],
+    ["a File", () => new File(["hi"], "a.txt", { type: "text/x" })],
+    ["a slice with a type", () => new Blob(["--hi--"], { type: "a/b" }).slice(2, 4, "e/f")],
+    ["a Blob made from a Blob", () => new Blob([typedBlob()], { type: "g/h" })],
+    ["a structured clone", () => structuredClone(typedBlob())],
+    [
+      "a FormData entry",
+      () => {
+        const form = new FormData();
+        form.append("entry", typedBlob());
+        return form.get("entry") as File;
+      },
+    ],
+    // These three share a store that held a second copy of the type.
+    ["the Blob of a Response", () => new Response("hi", { headers: { "content-type": "a/b" } }).blob()],
+    ["the Blob of a URLSearchParams body", () => new Response(new URLSearchParams("h=i")).blob()],
+    ["a Bun.build() output", inMemoryBuildOutput],
+  ];
+
+  describe.each([
+    ["new Blob([part], options)", (part: Blob, ...options: [BlobPropertyBag?]) => new Blob([part], ...options)],
+    [
+      "new File([part], name, options)",
+      (part: Blob, ...options: [BlobPropertyBag?]) => new File([part], "n", ...options),
+    ],
+  ] as const)("%s", (_, construct) => {
+    test.each(parts)("the part is %s", async (_, make) => {
+      const part = await make();
+      const typeOfPart = part.type;
+      expect(typeOfPart).not.toBe("");
+
+      expect({
+        "no options": construct(part).type,
+        "undefined": construct(part, undefined).type,
+        "null": construct(part, null!).type,
+        "{}": construct(part, {}).type,
+        "{ type: undefined }": construct(part, { type: undefined }).type,
+        "{ type: '' }": construct(part, { type: "" }).type,
+        "a type that is not valid": construct(part, { type: "x/\u00e9" }).type,
+        "{ type: 'C/D' }": construct(part, { type: "C/D" }).type,
+        "two parts": new Blob([part, part]).type,
+        "bytes": await construct(part).text(),
+        "the part afterwards": part.type,
+      }).toEqual({
+        "no options": "",
+        "undefined": "",
+        "null": "",
+        "{}": "",
+        "{ type: undefined }": "",
+        "{ type: '' }": "",
+        "a type that is not valid": "",
+        "{ type: 'C/D' }": "c/d",
+        "two parts": "",
+        "bytes": await part.text(),
+        "the part afterwards": typeOfPart,
+      });
+    });
+  });
+
+  // The name and the `File` brand of a part are not this change: #45401 moves those.
+  test("a File part keeps its name and its brand, and loses only its type", async () => {
+    const file = new File(["hi"], "a.txt", { type: "text/x", lastModified: 5 });
+    const wrapper = new Blob([file]) as Blob & { name?: string };
+    const form = new FormData();
+    form.append("entry", wrapper);
+
+    expect({
+      type: wrapper.type,
+      name: wrapper.name,
+      isFile: wrapper instanceof File,
+      lastModified: (wrapper as File).lastModified,
+      filename: (await new Response(form).text()).match(/filename="[^"]*"/)?.[0],
+      renamed: new File([file], "b.txt").name,
+    }).toEqual({
+      type: "",
+      name: "a.txt",
+      isFile: true,
+      lastModified: 5,
+      filename: 'filename="a.txt"',
+      renamed: "b.txt",
+    });
+  });
+
+  test("a subclass, a subclass of Array and Bun.readableStreamToBlob() reach the same two constructors", async () => {
+    class BlobSubclass extends Blob {}
+    class FileSubclass extends File {}
+    class Parts extends Array<Blob> {}
+    const part = typedBlob();
+    const streamOfOneBlob = new ReadableStream({
+      start(controller) {
+        controller.enqueue(part);
+        controller.close();
+      },
+    });
+    expect({
+      blobSubclass: new BlobSubclass([part]).type,
+      fileSubclass: new FileSubclass([part], "n").type,
+      subclassOfArray: new Blob(Parts.of(part)).type,
+      readableStreamToBlob: (await Bun.readableStreamToBlob(streamOfOneBlob)).type,
+    }).toEqual({
+      blobSubclass: "",
+      fileSubclass: "",
+      subclassOfArray: "",
+      readableStreamToBlob: "",
+    });
+  });
+
+  test("no reader of the new Blob sees the type of the part", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async request => Response.json({ type: request.headers.get("content-type"), body: await request.text() }),
+    });
+    const wrapper = new Blob([typedBlob()]);
+    const form = new FormData();
+    form.append("entry", wrapper);
+
+    expect({
+      response: new Response(wrapper).headers.get("content-type"),
+      request: new Request(server.url.href, { method: "POST", body: wrapper }).headers.get("content-type"),
+      fetch: await (await fetch(server.url, { method: "POST", body: wrapper })).json(),
+      formDataEntry: (form.get("entry") as File).type,
+      multipart: (await new Response(form).text()).match(/^Content-Type: .*$/m)?.[0],
+      structuredClone: structuredClone(wrapper).type,
+      slice: wrapper.slice(0, 1).type,
+    }).toEqual({
+      response: null,
+      request: null,
+      fetch: { type: null, body: "hi" },
+      formDataEntry: "",
+      multipart: "Content-Type: application/octet-stream",
+      structuredClone: "",
+      slice: "",
+    });
+  });
+
+  test("what Bun.serve sends for a Blob made from a typed part", async () => {
+    using dir = tempDir("blob-part-served", { "page.html": "<h1>hi</h1>" });
+    const html = "<h1>hi</h1>";
+    const ascii = new Blob([new Blob([html], { type: "text/html" })]);
+    const bytes = new Blob([new Blob([new TextEncoder().encode(html)], { type: "text/html" })]);
+    const file = new Blob([Bun.file(path.join(String(dir), "page.html"))]);
+
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/route": new Response(ascii) },
+      fetch(request) {
+        switch (new URL(request.url).pathname) {
+          case "/ascii":
+            return new Response(ascii);
+          case "/bytes":
+            return new Response(bytes);
+          case "/file":
+            return new Response(file);
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const seen: Record<string, string | null> = {};
+    for (const pathname of ["/ascii", "/bytes", "/file", "/route"]) {
+      seen[pathname] = (await fetch(server.url.origin + pathname)).headers.get("content-type");
+    }
+    // A handler gives a Blob with no type a type from its bytes. A route does not.
+    expect(seen).toEqual({
+      "/ascii": "text/plain;charset=utf-8",
+      "/bytes": "application/octet-stream",
+      "/file": "text/html;charset=utf-8",
+      "/route": null,
+    });
+  });
+
+  test("a Blob that is a body, and not a part, keeps its type", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: request => new Response(request.headers.get("content-type")),
+    });
+
+    expect({
+      response: new Response(typedBlob()).headers.get("content-type"),
+      request: new Request(server.url.href, { method: "POST", body: typedBlob() }).headers.get("content-type"),
+      fetch: await (await fetch(server.url, { method: "POST", body: typedBlob() })).text(),
+      // @ts-expect-error server.fetch() takes the same init as fetch(). The types declare one argument.
+      serverFetch: await (await server.fetch(server.url.href, { method: "POST", body: typedBlob() })).text(),
+    }).toEqual({
+      response: "a/b",
+      request: "a/b",
+      fetch: "a/b",
+      serverFetch: "a/b",
+    });
+  });
+
+  test("a part that is a file stays that file: Bun.file() keeps its type, name and bytes", async () => {
+    using dir = tempDir("blob-part-file", { "data.txt": "hello world" });
+    const dataPath = path.join(String(dir), "data.txt");
+    const file = Bun.file(dataPath);
+
+    expect({
+      blob: new Blob([file]).type,
+      file: new File([file], "n.bin").type,
+      typeOfBunFile: new Blob([Bun.file(dataPath, { type: "q/r" })]).type,
+      typeInOptions: new Blob([file], { type: "c/d" }).type,
+      typeNotValid: new Blob([file], { type: "x/\u00e9" }).type,
+      slice: new Blob([file.slice(0, 5)]).type,
+      missing: new Blob([Bun.file(path.join(String(dir), "missing.txt"))]).type,
+      // No network: an S3 file is a file too, and its type is on the Blob.
+      s3: new Blob([Bun.s3.file("k.json", { accessKeyId: "a", secretAccessKey: "b", bucket: "c", type: "q/r" })]).type,
+      s3AsFile: new File(
+        [Bun.s3.file("k.json", { accessKeyId: "a", secretAccessKey: "b", bucket: "c", type: "q/r" })],
+        "n",
+      ).type,
+      name: (new Blob([file]) as Blob & { name?: string }).name,
+      bytes: await new Blob([file]).text(),
+      bytesOfSlice: await new Blob([file.slice(0, 5)]).text(),
+    }).toEqual({
+      blob: "text/plain;charset=utf-8",
+      file: "text/plain;charset=utf-8",
+      typeOfBunFile: "q/r",
+      typeInOptions: "c/d",
+      typeNotValid: "text/plain;charset=utf-8",
+      slice: "text/plain;charset=utf-8",
+      missing: "text/plain;charset=utf-8",
+      s3: "q/r",
+      s3AsFile: "q/r",
+      name: dataPath,
+      bytes: "hello world",
+      bytesOfSlice: "hello",
+    });
+  });
+});
+
 // File-backed twin of "slice bounds are respected when streaming and serving"
 // above: the File arm of resolve_size()/resolved_size() must not widen a
 // sliced Bun.file() to the end of the file either.

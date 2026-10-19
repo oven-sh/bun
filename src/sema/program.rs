@@ -6507,6 +6507,18 @@ impl<'s> Files<'s> {
         // specifiers of statements come before those of `import()`, the call and the type.
         const AFTER_IMPORTS: (bool, u32) = (true, u32::MAX);
         let mut written: Vec<((bool, u32), (Atom, ResolutionMode, bool))> = Vec::new();
+        // Groups the uses by specifier, each group in the order of `specifier_uses`. A barrel file has thousands of
+        // specifiers, so a scan of all uses for each one is quadratic.
+        let uses = hir.specifier_uses.iter().enumerate();
+        let mut uses_by_specifier: Vec<(u32, u32)> =
+            uses.map(|(at, u)| (u.spec.0, at as u32)).collect();
+        uses_by_specifier.shared_sort_unstable();
+        let uses_of = |spec: Atom| {
+            let from = uses_by_specifier.partition_point(|it| it.0 < spec.0);
+            let group = uses_by_specifier[from..].iter();
+            let group = group.take_while(move |it| it.0 == spec.0);
+            group.map(|it| &hir.specifier_uses[it.1 as usize])
+        };
         // `collectModuleReferences`: of the imports in the body of a `declare module "m"` in a
         // script, only non-relative specifiers are resolved.
         let ambient = bound
@@ -6522,8 +6534,7 @@ impl<'s> Files<'s> {
             // where the first use in it is there.
             let mut modes = [(default_mode, AFTER_IMPORTS); 3];
             let mut count = 0;
-            let uses = hir.specifier_uses.iter();
-            for u in uses.filter(|u| u.spec == spec && is_import(u)) {
+            for u in uses_of(spec).filter(|u| is_import(u)) {
                 let mode = mode_for_usage_location(options, default_mode, u);
                 let place = (u.kind.is_dynamic(), u.pos);
                 match modes[..count].iter_mut().find(|known| known.0 == mode) {

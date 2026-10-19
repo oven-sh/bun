@@ -214,8 +214,9 @@ impl CssEql for Token {
             | (BadString(a), BadString(b))
             | (UnquotedUrl(a), UnquotedUrl(b))
             | (BadUrl(a), BadUrl(b))
-            | (Whitespace(a), Whitespace(b))
             | (Comment(a), Comment(b)) => strings::eql(a, b),
+            // The amount of whitespace is formatting, so two rules that differ by it can merge.
+            (Whitespace(_), Whitespace(_)) => true,
             (Delim(a), Delim(b)) => a == b,
             (Number(a), Number(b)) => a.eql(b),
             (Dimension(a), Dimension(b)) => a.eql(b),
@@ -258,8 +259,9 @@ impl CssHash for Token {
         hasher.update(&(self.kind() as u32).to_ne_bytes());
         match self {
             Ident(v) | Function(v) | AtKeyword(v) | UnrestrictedHash(v) | IdHash(v)
-            | QuotedString(v) | BadString(v) | UnquotedUrl(v) | BadUrl(v) | Whitespace(v)
-            | Comment(v) => hasher.update(v),
+            | QuotedString(v) | BadString(v) | UnquotedUrl(v) | BadUrl(v) | Comment(v) => {
+                hasher.update(v)
+            }
             Delim(d) => hasher.update(&d.to_ne_bytes()),
             Number(n) => n.hash(hasher),
             Dimension(d) => d.hash(hasher),

@@ -331,6 +331,21 @@ describe("css tests", () => {
           ".c {\n  --sel: .a .b;\n}\n\n.d {\n  --sel: .a.b;\n}\n",
           ".c{--sel:.a .b}.d{--sel:.a.b}",
         ],
+        // Two values that differ only in the amount of whitespace are one value. The rules
+        // merge, and the merged rule keeps the whitespace of the first.
+        [".c { --x: a  b } .d { --x: a b }", ".c, .d {\n  --x: a  b;\n}\n", ".c,.d{--x:a b}"],
+        [
+          ".c { margin: var(--m)\n    auto } .d { margin: var(--m) auto }",
+          ".c, .d {\n  margin: var(--m)\n    auto;\n}\n",
+          ".c,.d{margin:var(--m) auto}",
+        ],
+        // The same holds for the arguments of an unknown pseudo-class: a later rule with the
+        // same selector replaces the earlier one.
+        [
+          ".c:foo(a  b) { color: red } .k { color: green } .c:foo(a b) { color: blue }",
+          ".k {\n  color: green;\n}\n\n.c:foo(a b) {\n  color: #00f;\n}\n",
+          ".k{color:green}.c:foo(a b){color:#00f}",
+        ],
         // The lines of a value are the author's. A value that runs over more
         // than one line keeps the indentation of its source, not of the output.
         [

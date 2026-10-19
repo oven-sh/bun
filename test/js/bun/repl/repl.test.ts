@@ -857,12 +857,7 @@ describe.concurrent("Bun REPL", () => {
         "copied() + copiedToo",
         ".exit",
       ]);
-      expect(outputs).toEqual([
-        `Loading ${filePath}...\ntrue`,
-        '"1,2,true"',
-        "Copied 1 characters to clipboard",
-        "7",
-      ]);
+      expect(outputs).toEqual([`Loading ${filePath}...\ntrue`, '"1,2,true"', "Copied 1 characters to clipboard", "7"]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

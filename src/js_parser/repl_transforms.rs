@@ -8,7 +8,7 @@
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::{HashMap, VecExt};
+use bun_collections::VecExt;
 
 use bun_ast as js_ast;
 use bun_ast::flags;
@@ -17,6 +17,7 @@ use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Scope, Stmt};
 
 use crate::p::P;
+use crate::parser::RefMap;
 
 /// The function that the statements of a REPL input run in.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,7 +142,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let block_fn_vars = if place_block_fns {
             self.repl_block_fn_vars()
         } else {
-            HashMap::default()
+            RefMap::default()
         };
 
         // Process each statement - hoist all declarations for REPL persistence
@@ -821,33 +822,39 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         &mut self,
         list: &mut js_ast::StmtNodeList,
         wrapper: ReplWrapper,
-        is_var: &HashMap<js_ast::Ref, bool>,
+        vars: &RefMap,
         hoisted_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
     ) {
-        let is_var = |fn_ref: js_ast::Ref| is_var.get(&fn_ref).copied().unwrap_or(false);
-
         let stmts = list.slice();
         if !stmts.iter().any(|stmt| self.repl_is_block_fn(stmt)) {
             return;
         }
 
-        // What stays at the head of the block, what goes to the place of a declaration
-        // (it has the `loc` of that declaration), and the other statements.
-        let mut head = BumpVec::<Stmt>::new_in(bump);
+        // `placed` is what goes to the place of a declaration. Each statement in it has
+        // the `loc` of its declaration, and they are in the order of the source.
         let mut placed = BumpVec::<Stmt>::new_in(bump);
-        let mut others = BumpVec::<Stmt>::with_capacity_in(stmts.len(), bump);
+        let place = |placed: &mut BumpVec<'bump, Stmt>, stmt: Stmt| {
+            let after = placed
+                .iter()
+                .rposition(|before| before.loc.start <= stmt.loc.start);
+            placed.insert(after.map_or(0, |index| index + 1), stmt);
+        };
 
+        // The statements that stay at the head of the block come first.
+        let mut out = BumpVec::<Stmt>::with_capacity_in(stmts.len() + 1, bump);
         for stmt in stmts {
             match stmt.data {
-                _ if !self.repl_is_block_fn(stmt) => others.push(*stmt),
-                StmtData::SFunction(_) if wrapper == ReplWrapper::None => placed.push(*stmt),
+                _ if !self.repl_is_block_fn(stmt) => {}
+                StmtData::SFunction(_) if wrapper == ReplWrapper::None => place(&mut placed, *stmt),
                 StmtData::SFunction(func) => {
-                    head.push(*stmt);
+                    out.push(*stmt);
                     if let Some(name) = func.func.name
-                        && is_var(name.ref_)
+                        && vars.contains_key(&name.ref_)
                     {
-                        placed.push(self.repl_persist_fn_name(name, stmt.loc, hoisted_stmts, bump));
+                        let copy_out =
+                            self.repl_persist_fn_name(name, stmt.loc, hoisted_stmts, bump);
+                        place(&mut placed, copy_out);
                     }
                 }
                 StmtData::SLocal(local) => {
@@ -863,7 +870,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             loc: decl.binding.loc,
                             ref_: ident.r#ref,
                         };
-                        if !is_var(name.ref_) {
+                        if !vars.contains_key(&name.ref_) {
                             lets.push(*decl);
                             continue;
                         }
@@ -874,23 +881,20 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                 // This `let` is dead after the rewrite, so move the function out.
                                 let mut func = core::mem::take(&mut function.func);
                                 func.name = Some(name);
-                                placed.push(self.s(S::Function { func }, value.loc));
+                                place(&mut placed, self.s(S::Function { func }, value.loc));
                             }
                             _ => {
                                 lets.push(*decl);
-                                placed.push(self.repl_persist_fn_name(
-                                    name,
-                                    value.loc,
-                                    hoisted_stmts,
-                                    bump,
-                                ));
+                                let copy_out =
+                                    self.repl_persist_fn_name(name, value.loc, hoisted_stmts, bump);
+                                place(&mut placed, copy_out);
                             }
                         }
                     }
                     if lets.len() == local.decls.len() {
-                        head.push(*stmt);
+                        out.push(*stmt);
                     } else if !lets.is_empty() {
-                        head.push(self.s(
+                        out.push(self.s(
                             S::Local {
                                 kind: S::Kind::KLet,
                                 decls: G::DeclList::from_bump_vec(lets),
@@ -900,39 +904,38 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
                     }
                 }
-                _ => others.push(*stmt),
+                _ => {}
             }
         }
 
-        placed.sort_by_key(|stmt| stmt.loc.start);
+        // Then the other statements, each one after what was declared before it.
         let mut placed = placed.iter().peekable();
-        for stmt in others.iter() {
-            while let Some(before) = placed.next_if(|placed| placed.loc.start < stmt.loc.start) {
-                head.push(*before);
+        for stmt in stmts {
+            if self.repl_is_block_fn(stmt) {
+                continue;
             }
-            head.push(*stmt);
+            while let Some(before) = placed.next_if(|placed| placed.loc.start < stmt.loc.start) {
+                out.push(*before);
+            }
+            out.push(*stmt);
         }
-        head.extend(placed.copied());
+        out.extend(placed.copied());
 
-        *list = js_ast::StoreSlice::from_bump(head);
+        *list = js_ast::StoreSlice::from_bump(out);
     }
 
     /// Annex B.3.3: in sloppy code a plain function in a block is also a `var` of the
     /// enclosing function or script, unless a lexical binding of its name is in the way.
     /// `hoist_symbols` decides that only for code it takes as sloppy, and an `await` or an
-    /// `import` makes the input a module there. So this reads the scopes itself: it gives,
-    /// for each function in a block outside of every function, whether it is also a `var`.
-    fn repl_block_fn_vars(&self) -> HashMap<js_ast::Ref, bool> {
-        let mut is_var = HashMap::default();
-        self.repl_collect_block_fn_vars(self.module_scope_ref(), &mut is_var);
-        is_var
+    /// `import` makes the input a module there. So this reads the scopes itself: it gives
+    /// the functions in blocks, outside of every function, that are also a `var`.
+    fn repl_block_fn_vars(&self) -> RefMap {
+        let mut vars = RefMap::default();
+        self.repl_collect_block_fn_vars(self.module_scope_ref(), &mut vars);
+        vars
     }
 
-    fn repl_collect_block_fn_vars(
-        &self,
-        scope: js_ast::StoreRef<Scope>,
-        is_var: &mut HashMap<js_ast::Ref, bool>,
-    ) {
+    fn repl_collect_block_fn_vars(&self, scope: js_ast::StoreRef<Scope>, vars: &mut RefMap) {
         if !self.stack_check.is_safe_to_recurse() {
             return;
         }
@@ -940,24 +943,21 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             if child.kind_stops_hoisting() {
                 continue;
             }
-            // Children first: `hoist_symbols` can put a function into a scope above its
-            // block too, and the block that declares it must be the one that is read.
-            self.repl_collect_block_fn_vars(*child, is_var);
+            self.repl_collect_block_fn_vars(*child, vars);
             for (name, member) in child.members.iter() {
                 let fn_ref = member.ref_;
-                if self.symbols[fn_ref.inner_index() as usize].kind != SymbolKind::HoistedFunction
-                    || is_var.contains_key(&fn_ref)
+                if self.symbols[fn_ref.inner_index() as usize].kind == SymbolKind::HoistedFunction
+                    && self.repl_block_fn_is_also_var(*child, name, fn_ref)
                 {
-                    continue;
+                    vars.insert(fn_ref, ());
                 }
-                let applies = self.repl_block_fn_is_also_var(*child, name, fn_ref);
-                is_var.insert(fn_ref, applies);
             }
         }
     }
 
-    /// Whether `var NAME` at the place of the function `fn_ref`, which `block` declares,
-    /// would be no early error.
+    /// Whether `var NAME` at the place of the function `fn_ref` would be no early error.
+    /// `block` is the scope that declares the function, or a scope above it that
+    /// `hoist_symbols` put the function into: the answer is the same from there.
     fn repl_block_fn_is_also_var(
         &self,
         block: js_ast::StoreRef<Scope>,

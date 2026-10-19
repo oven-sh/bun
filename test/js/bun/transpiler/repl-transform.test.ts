@@ -378,6 +378,13 @@ describe("Bun.Transpiler replMode", () => {
           2,
         ],
         [
+          "declared twice around another function leaves that function at its place",
+          [
+            "var log = []; if (1) { function f() { return 1 } log.push(typeof globalThis.g); function g() {} log.push(typeof globalThis.g); function f() { return 2 } } log.push(f()); log.join()",
+          ],
+          "undefined,function,2",
+        ],
+        [
           "declared in two blocks is the one of the last block",
           ["if (1) { function f() { return 1 } } if (1) { function f() { return 2 } } f()"],
           2,
@@ -407,11 +414,7 @@ describe("Bun.Transpiler replMode", () => {
       test.each<[string, string[], unknown]>([
         ["under a `let` of the input", ["let f = 1; if (1) { function f() {} } typeof f"], "number"],
         ["under a `const` of the input", ["const f = 1; if (1) { function f() {} } f"], 1],
-        [
-          "under a `let` of an enclosing block",
-          ["if (1) { let f = 1; { function f() {} } } typeof f"],
-          "undefined",
-        ],
+        ["under a `let` of an enclosing block", ["if (1) { let f = 1; { function f() {} } } typeof f"], "undefined"],
         [
           "under a destructured catch parameter",
           ["try { throw {} } catch ({ f = 1 }) { { function f() {} } } typeof f"],
@@ -425,11 +428,7 @@ describe("Bun.Transpiler replMode", () => {
         ["when it is async", ["if (1) { async function f() {} }", "typeof f"], "undefined"],
         ["when it is a generator", ["if (1) { function* f() {} }", "typeof f"], "undefined"],
         ["in a strict input", ['"use strict"; if (1) { function f() {} }', "typeof f"], "undefined"],
-        [
-          "in a function",
-          ["function outer() { if (1) { function f() {} } }; outer(); typeof f"],
-          "undefined",
-        ],
+        ["in a function", ["function outer() { if (1) { function f() {} } }; outer(); typeof f"], "undefined"],
       ])("stays in its block %s", async (_, lines, expected) => {
         expect(await lastOf(lines)).toBe(expected);
       });
@@ -453,9 +452,21 @@ describe("Bun.Transpiler replMode", () => {
           ["function f() { return 1 }", "await 1; exit: { break exit; function f() { return 2 } }", "f()"],
           1,
         ],
-        ["is a function in the next input beside a direct eval", ["await 1; if (1) { function f() { return 7 } eval('') }", "f()"], 7],
-        ["stays in its block under a `let` of the input", ["await 1; let f = 1; if (1) { function f() {} }", "typeof f"], "number"],
-        ["stays in its block in a strict input", ['"use strict"; await 1; if (1) { function f() {} }', "typeof f"], "undefined"],
+        [
+          "is a function in the next input beside a direct eval",
+          ["await 1; if (1) { function f() { return 7 } eval('') }", "f()"],
+          7,
+        ],
+        [
+          "stays in its block under a `let` of the input",
+          ["await 1; let f = 1; if (1) { function f() {} }", "typeof f"],
+          "number",
+        ],
+        [
+          "stays in its block in a strict input",
+          ['"use strict"; await 1; if (1) { function f() {} }', "typeof f"],
+          "undefined",
+        ],
         ["stays in its block when it is async", ["await 1; if (1) { async function f() {} }", "typeof f"], "undefined"],
       ])("beside a top-level await %s", async (_, lines, expected) => {
         expect(await lastOf(lines)).toBe(expected);

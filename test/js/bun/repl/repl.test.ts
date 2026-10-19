@@ -1093,8 +1093,10 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         await waitFor("parked");
         proc.kill("SIGINT");
         await waitFor(/\u276f|> /);
-        send("1 + 1\n");
-        await waitFor("2");
+        // The VM is still usable. Neither the echo of this line nor an escape sequence of the
+        // prompt contains the answer.
+        send("40 + 2\n");
+        await waitFor("42");
       },
       { env: { BUN_GC_TIMER_DISABLE: "1" } },
     );

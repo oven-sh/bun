@@ -3609,8 +3609,9 @@ describe.concurrent("bundler", () => {
     `,
     "b.js": `export const b = await 0;`,
   };
-  // A debug build needs up to a second per build, and a local `bun bd test` gives a test 5 seconds.
-  const forbiddenRequireBuilds = isDebug ? 8 : 40;
+  // A debug build is slow to start, and a local `bun bd test` gives a test 5 seconds:
+  // only one round of four fits on a slow machine.
+  const forbiddenRequireBuilds = isDebug ? 4 : 40;
   test("default/TopLevelAwaitForbiddenRequireSourceMapCLI", async () => {
     using dir = tempDir("tla-forbidden-require-sourcemap", forbiddenRequireWithNamedImport);
     const build = async () => {

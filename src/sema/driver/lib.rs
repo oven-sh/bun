@@ -4812,9 +4812,11 @@ fn check_named_files(
             let suspects: Vec<FileId> = (0..program.files.modules.len())
                 .filter(|&i| {
                     let hir = &program.files.modules[i].hir;
+                    // A file that's nested too deeply is only reported when it's visited.
                     (hir.has_parse_diagnostics
                         || hir.has_parse_or_grammar_diagnostics()
-                        || hir.may_have_javascript_diagnostics())
+                        || hir.may_have_javascript_diagnostics()
+                        || hir.ran_out_of_stack)
                         && is_reached.as_ref().is_none_or(|reached| reached[i])
                 })
                 .map(|i| FileId(i as u32))

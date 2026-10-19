@@ -125,6 +125,17 @@ describe("S3Client endpoint option", () => {
     expect(presigned.split("?")[0]).toBe("https://s3.example.com/bucket/key.txt");
   });
 
+  // Neon Object Storage takes path-style requests only, signed for the region of
+  // the branch. Its host is not on amazonaws.com, so no bucket or region is
+  // guessed from it.
+  it("signs a Neon Object Storage endpoint path-style for the given region", () => {
+    const endpoint = "https://br-cool-darkness-a1b2c3d4.storage.c-1.us-east-2.aws.neon.tech";
+    const presigned = new URL(new S3Client({ ...options, region: "us-east-2", endpoint }).presign("key.txt"));
+    expect(presigned.origin).toBe(endpoint);
+    expect(presigned.pathname).toBe("/bucket/key.txt");
+    expect(presigned.searchParams.get("X-Amz-Credential")).toEndWith("/us-east-2/s3/aws4_request");
+  });
+
   it("applies the same parsing to S3_ENDPOINT", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log(new URL(Bun.s3.presign("key.txt")).host)`],

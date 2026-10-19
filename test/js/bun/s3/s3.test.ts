@@ -35,6 +35,20 @@ const allCredentials: S3Credentials[] = [
     bucket: getSecret("S3_R2_BUCKET"),
     service: "R2" as string,
   },
+  // Neon Object Storage is opt-in: getSecret() throws in CI for a missing
+  // secret, so only ask for these when S3_NEON_ENDPOINT is set.
+  ...(process.env.S3_NEON_ENDPOINT
+    ? [
+        {
+          accessKeyId: getSecret("S3_NEON_ACCESS_KEY"),
+          secretAccessKey: getSecret("S3_NEON_SECRET_KEY"),
+          endpoint: getSecret("S3_NEON_ENDPOINT"),
+          region: getSecret("S3_NEON_REGION"),
+          bucket: getSecret("S3_NEON_BUCKET"),
+          service: "Neon" as string,
+        },
+      ]
+    : []),
   localCredentials,
 ];
 const r2Credentials = allCredentials[0];

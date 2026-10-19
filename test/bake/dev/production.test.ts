@@ -656,7 +656,7 @@ export default function Counter() {
 
   // Server chunks are loaded from memory, so the bundler must not print a
   // require() of an ES module as a load of a sibling chunk file. One page per shape.
-  test("server code can require() an ES module", async () => {
+  test.concurrent("server code can require() an ES module", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-require-esm", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
 

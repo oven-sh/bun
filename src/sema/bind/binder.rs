@@ -2181,7 +2181,10 @@ impl<'f, 's> Binder<'f, 's> {
             self.b
                 .entries
                 .extend(table.iter().map(|(&name, &symbol)| (name, symbol)));
+            // A symbol is only ever inserted under its own name, so the keys are distinct, and the result doesn't depend
+            // on the order in which a hash map yields its entries.
             self.b.entries[start..].sort_unstable_by_key(|e| e.1);
+            debug_assert!(self.b.entries[start..].is_sorted_by(|a, b| a.1 < b.1));
             self.b.tables.push((start as u32, table.len() as u32));
         }
         let large_entries = large_table_entries(&self.b.tables, &self.b.entries);

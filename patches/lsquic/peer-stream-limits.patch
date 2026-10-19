@@ -1,0 +1,69 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -1328,6 +1328,30 @@
+         conn->ifc_pii = &ext_prio_iter_if;
+     else
+         conn->ifc_pii = &orig_prio_iter_if;
++    /* bun: limits for the streams the peer opens.  The window that sizes
++     * MAX_STREAMS credit and the limit that incoming streams are checked
++     * against must both be the value gen_trans_params() advertises.
++     * Upstream seeds them in each constructor.  Its client reads
++     * es_max_streams_in (the gQUIC MIDS setting) for both directions and
++     * never es_init_max_streams_{bidi,uni}, and both constructors shift in
++     * 32 bits, so a limit of 2^30 or more wraps.  An HTTP client keeps
++     * upstream's 3 unidirectional streams (control and the two QPACK
++     * streams), whatever es_init_max_streams_uni says.
++     */
++    {
++        const unsigned peer_is_server = !(flags & IFC_SERVER);
++        unsigned uni = enpub->enp_settings.es_init_max_streams_uni;
++        if ((flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP)
++            uni = 3;
++        conn->ifc_max_streams_in[SD_BIDI]
++                            = enpub->enp_settings.es_init_max_streams_bidi;
++        conn->ifc_max_streams_in[SD_UNI] = uni;
++        conn->ifc_max_allowed_stream_id[gen_sit(peer_is_server, SD_BIDI)]
++            = (lsquic_stream_id_t) conn->ifc_max_streams_in[SD_BIDI]
++                                                                << SIT_SHIFT;
++        conn->ifc_max_allowed_stream_id[gen_sit(peer_is_server, SD_UNI)]
++            = (lsquic_stream_id_t) uni << SIT_SHIFT;
++    }
+     return 0;
+ }
+ 
+@@ -1390,20 +1414,6 @@
+             goto err2;
+     }
+ 
+-    /* Do not infer anything about server limits before processing its
+-     * transport parameters.
+-     */
+-    conn->ifc_max_streams_in[SD_BIDI] = enpub->enp_settings.es_max_streams_in;
+-    conn->ifc_max_allowed_stream_id[SIT_BIDI_SERVER] =
+-        enpub->enp_settings.es_max_streams_in << SIT_SHIFT;
+-
+-    if (flags & IFC_HTTP)
+-        conn->ifc_max_streams_in[SD_UNI] = 3;
+-    else
+-        conn->ifc_max_streams_in[SD_UNI] = enpub->enp_settings.es_max_streams_in;
+-    conn->ifc_max_allowed_stream_id[SIT_UNI_SERVER]
+-                                = conn->ifc_max_streams_in[SD_UNI] << SIT_SHIFT;
+-
+     init_ver_neg(conn, versions, &ver);
+     assert(ver == conn->ifc_u.cli.ifcli_ver_neg.vn_ver);
+     if (conn->ifc_settings->es_handshake_to)
+@@ -1571,14 +1581,6 @@
+         conn->ifc_send_flags |= SF_SEND_PATH_CHAL_PATH_0;
+     }
+ 
+-    conn->ifc_max_streams_in[SD_BIDI]
+-        = enpub->enp_settings.es_init_max_streams_bidi;
+-    conn->ifc_max_allowed_stream_id[SIT_BIDI_CLIENT]
+-        = conn->ifc_max_streams_in[SD_BIDI] << SIT_SHIFT;
+-    conn->ifc_max_streams_in[SD_UNI]
+-        = enpub->enp_settings.es_init_max_streams_uni;
+-    conn->ifc_max_allowed_stream_id[SIT_UNI_CLIENT]
+-        = conn->ifc_max_streams_in[SD_UNI] << SIT_SHIFT;
+     conn->ifc_conn.cn_version     = mini_conn->cn_version;
+     conn->ifc_conn.cn_flags      |= LSCONN_VER_SET;
+     conn->ifc_conn.cn_pf          = mini_conn->cn_pf;

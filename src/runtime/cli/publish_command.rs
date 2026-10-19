@@ -62,7 +62,8 @@ impl PackageFiles<'_> {
     }
 }
 
-/// npm's `{README,README.*}` glob, case-insensitive; tar entry names are UTF-16 on Windows.
+/// Matches npm's `{README,README.*}` glob, case-insensitively. Tar entry names are UTF-16 on
+/// Windows.
 fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
     const README: &[u8] = b"README";
     name.len() >= README.len()
@@ -127,7 +128,8 @@ static WEB_LOGIN: bun_core::Mutex<WebLogin> = bun_core::Mutex::new(WebLogin {
     waits_for_enter: false,
 });
 
-/// What `bun publish` sends. The scripts are `None` for a tarball publish, which runs none.
+/// What `bun publish` sends. The scripts are `None` when publishing a tarball, which doesn't run
+/// any.
 pub(crate) struct Context {
     pub(crate) package_name: Box<[u8]>,
     pub(crate) package_version: Box<[u8]>,
@@ -336,7 +338,7 @@ impl Context {
         })
     }
 
-    /// `bun publish` without a tarball path: packs the package of `abs_package_json_path`.
+    /// For `bun publish` without a tarball path. Packs the package at `abs_package_json_path`.
     pub(crate) fn from_workspace(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
@@ -405,6 +407,26 @@ impl PublishCommand {
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
+        // `bun --filter='*' publish` means "run every workspace's `publish` script", not "publish
+        // every workspace".
+        let mut args_before_publish =
+            (bun_core::argv().into_iter().skip(1)).take_while(|arg| *arg != b"publish");
+        if let Some(flag) = args_before_publish.find(|arg| {
+            matches!(*arg, b"-r" | b"--recursive" | b"--filter")
+                || arg.starts_with(b"--filter=")
+                || arg.starts_with(b"-F")
+        }) {
+            Output::err_generic(
+                "refusing to publish: {} must come after \"publish\"",
+                (bun_fmt::escape_control_chars(flag),),
+            );
+            bun_core::note!(
+                "use <b>bun publish {}<r>, or <b>bun run --filter='*' publish<r> to run \"publish\" scripts",
+                bun_fmt::escape_control_chars(flag)
+            );
+            Global::crash();
+        }
+
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {
                 Ok(v) => v,
@@ -418,7 +440,6 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-        manager.refuse_unreadable_config(ctx, "publish");
 
         if cli.positionals.len() > 1 {
             if Self::is_workspace_publish(manager) {
@@ -477,7 +498,8 @@ impl PublishCommand {
         Global::crash();
     }
 
-    /// `-r` / `--filter`: packs every selected workspace, then publishes them, dependencies first.
+    /// For `-r` and `--filter`. Packs every selected workspace, then publishes them, dependencies
+    /// first.
     fn exec_workspaces(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
@@ -490,7 +512,8 @@ impl PublishCommand {
             workspace_manifests::selected_in_dependency_order(manager, original_cwd)
         {
             let abs_package_json_path = bun_core::ZBox::from_bytes(&abs_package_json_path);
-            // Copied out: the scripts `pack()` runs invalidate the cache this points into.
+            // Copied, because the scripts that `pack()` runs invalidate the cache that this points
+            // into.
             let root = pack::package_json_entry(manager, &abs_package_json_path).root;
             let string_field = |key: &[u8]| -> Box<[u8]> {
                 let value = root.get(key);
@@ -722,7 +745,8 @@ impl PublishCommand {
         }
     }
 
-    /// `false`: `--tolerate-republish`, and the registry already had this `name@version`, so nothing was sent.
+    /// Returns false if `--tolerate-republish` is set and the registry already had this
+    /// `name@version`, so nothing was sent.
     fn publish(manager: &PackageManager, ctx: &Context) -> Result<bool, AllocError> {
         let registry = manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
@@ -1071,7 +1095,8 @@ impl PublishCommand {
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
 
-        // `E::String` erases the lifetime of its bytes: `cli_dupe` keeps them alive through printing.
+        // `E::String` erases the lifetime of its bytes, so `cli_dupe` keeps them alive through
+        // printing.
         Expr::set_string(json, &bump, b"version", cli_dupe(version_without_build_tag))?;
 
         let integrity_fmt = cli_dupe(
@@ -1099,7 +1124,7 @@ impl PublishCommand {
         Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
         Expr::set_string(json, &bump, b"shasum", shasum_fmt)?;
 
-        // As `npm publish` does. A `readme` in package.json wins.
+        // Like `npm publish` does. A `readme` in package.json takes precedence.
         if let Some(r) = readme {
             if json.get(b"readme").is_none() {
                 Expr::set_string(json, &bump, b"readme", cli_dupe(&r.contents))?;
@@ -1251,7 +1276,7 @@ impl PublishCommand {
                         );
                     }
                 }
-                // Not empty either, so "directories" is not looked at.
+                // It isn't empty either, so "directories" isn't checked.
                 _ => return Ok(()),
             }
 
@@ -1308,7 +1333,7 @@ impl PublishCommand {
             }
         };
 
-        // The rule pack has for it: what is not in the tarball is not listed either.
+        // The same rule as in pack: a file that isn't in the tarball isn't listed either.
         let not_packed = match pack::bin_kind_without_following_symlinks(
             abs_workspace_path,
             normalized_bin_dir.as_bytes(),

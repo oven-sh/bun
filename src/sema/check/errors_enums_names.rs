@@ -139,12 +139,12 @@ impl Checker<'_, '_> {
             // The table has a placeholder for a symbol that `mergeSymbol` has refused
             // (`Files::redirect_name_to`).
             let is_local =
-                |part: &&Sym| part.file == file && bound.symbols[part.id.idx()].parent.is_none();
+                |part: &&Sym| part.file == file && bound.symbol(part.id).parent.is_none();
             let refused = files.refused_merges.iter();
             let refused = refused.filter(|it| it.target == files.global_this_symbol);
             let refused = refused.flat_map(|it| it.source_parts).find(is_local);
             let symbol = refused.map_or(symbol, |part| part.id);
-            for &decl in bound.symbols[symbol.idx()].decls.iter() {
+            for &decl in bound.symbol(symbol).decls.iter() {
                 report(self, decl, known::globalThis);
             }
         }
@@ -183,9 +183,7 @@ impl Checker<'_, '_> {
                 at = s.parent;
                 if s.symbol.is_none()
                     || matches!(s.kind, ScopeKind::File)
-                    || !bound.symbols[s.symbol.idx()]
-                        .flags
-                        .contains(SymFlags::MERGED)
+                    || !bound.symbol(s.symbol).flags.contains(SymFlags::MERGED)
                 {
                     continue;
                 }
@@ -209,7 +207,7 @@ impl Checker<'_, '_> {
                 let start = hir[e].pos;
                 if let ScopeKind::Enum(en) = s.kind
                     && !hir[en].flags.contains(Flags::AMBIENT)
-                    && files.decls(found).first().is_some_and(|d| d.0 != file)
+                    && files.decls_of(found).first().is_some_and(|d| d.0 != file)
                 {
                     let option = super::errors_modules::isolated_modules_like_flag_name(files);
                     let (of, member) = (self.atoms().bytes(hir[en].name), self.atoms().bytes(name));
@@ -519,7 +517,7 @@ fn umd_global(files: &Files, name: Atom) -> Option<Sym> {
     let symbol = *files.globals.get(name)?;
     (files.flags(symbol).contains(SymFlags::ALIAS)
         && files
-            .decls(symbol)
+            .decls_of(symbol)
             .iter()
             .all(|d| matches!(d.1, Decl::UmdGlobal(_))))
     .then_some(symbol)

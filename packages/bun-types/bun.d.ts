@@ -2141,21 +2141,21 @@ declare module "bun" {
    * If `destination` exists, it must be a regular file or symlink to a file. If `destination`'s directory does not exist, it is created by default.
    *
    * An existing file is overwritten in place and truncated to the new length. It keeps its inode, hard links, and
-   * permissions. A file descriptor destination (`Bun.file(fd)`) is written at its current position and is not
-   * truncated, except that an empty `input` truncates it to zero length. The write is not atomic: concurrent writers
-   * to one path can interleave. For an atomic replace, write to a temporary path and `rename()` it over the
-   * destination.
+   * permissions. A file descriptor destination (a number or `Bun.file(fd)`) is written at its current position and
+   * is not truncated, except that an empty `input` that is not a file or a stream truncates it to zero length. The
+   * write is not atomic: concurrent writers to one path can interleave. For an atomic replace, write to a temporary
+   * path and `rename()` it over the destination.
    *
    * @category File System
    *
-   * @param destination The file or file path to write to
+   * @param destination The file, file path, or file descriptor to write to
    * @param input The data to copy into `destination`
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
-    destination: BunFile | S3File | PathLike,
+    destination: BunFile | S3File | PathLike | number,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
@@ -2177,16 +2177,19 @@ declare module "bun" {
    * Persist a {@link Response} or {@link Request} body to disk. The body is
    * streamed into the file as it arrives.
    *
-   * @param destination The file to write to. If the file doesn't exist, it is
-   * created; if it does, it is overwritten. If `input` is smaller than
-   * `destination`, `destination` is truncated.
+   * @param destination The file or file descriptor to write to. A
+   * `Bun.file(path)` that doesn't exist is created. One that exists is
+   * overwritten, and truncated if `input` is smaller. A file descriptor (a
+   * number or `Bun.file(fd)`) is written at its current position and is not
+   * truncated, except that an empty body that is not a file truncates it to
+   * zero length.
    * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
-    destination: BunFile,
+    destination: BunFile | number,
     input: Response | Request,
     options?: {
       /**
@@ -2236,15 +2239,17 @@ declare module "bun" {
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
    * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/).
    *
-   * @param destination The file to write to. If the file doesn't exist, it is
-   * created; if it does, it is overwritten. If `input` is smaller than
-   * `destination`, `destination` is truncated.
+   * @param destination The file or file descriptor to write to. A
+   * `Bun.file(path)` that doesn't exist is created. One that exists is
+   * overwritten, and truncated if `input` is smaller. A file descriptor (a
+   * number or `Bun.file(fd)`) is written at its current position and is not
+   * truncated.
    * @param input The file to copy from
    * @returns A promise that resolves with the number of bytes written.
    */
 
   function write(
-    destination: BunFile,
+    destination: BunFile | number,
     input: BunFile,
     options?: {
       /**

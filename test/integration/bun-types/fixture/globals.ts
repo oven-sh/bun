@@ -44,6 +44,10 @@ expectType<Promise<number>>(Bun.write("test.json", "lol", { createPath: false, m
 expectType<Promise<number>>(Bun.file("test.json").write("lol", { createPath: false }));
 // @ts-expect-error BunFile.write() does not read highWaterMark
 Bun.file("test.json").write("lol", { highWaterMark: 1024 });
+// A number destination is a file descriptor.
+expectType<Promise<number>>(Bun.write(1, "lol"));
+expectType<Promise<number>>(Bun.write(1, new Response("lol")));
+expectType<Promise<number>>(Bun.write(1, Bun.file("test.json")));
 expectType<URL>(Bun.pathToFileURL("/foo/bar.txt"));
 expectType<string>(Bun.fileURLToPath(new URL("file:///foo/bar.txt")));
 

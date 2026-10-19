@@ -537,6 +537,320 @@ describe("bun", () => {
     });
   });
 
+  describe("a dependency cycle", () => {
+    // `bun finish.js <name> [<partner>...]` waits until the script of every partner runs too, then writes the marker
+    // of the package.
+    const finish = `
+      const [name, ...partners] = process.argv.slice(2);
+      await Bun.write("../" + name + ".running", "");
+      const deadline = Date.now() + 10_000;
+      for (const partner of partners) {
+        while (!(await Bun.file("../" + partner + ".running").exists())) {
+          if (Date.now() > deadline) {
+            console.log(name + " never ran with " + partner);
+            process.exit(1);
+          }
+          await Bun.sleep(5);
+        }
+        console.log(name + " ran with " + partner);
+      }
+      await Bun.write("built.txt", name + " is built\\n");
+    `;
+    // The steps of a script. `after` prints the marker of a package and fails if it isn't there yet. A script that
+    // starts too early finds no marker of a `slow` package, because `bun` takes longer to start than `cat`.
+    const after = (name: string) => `cat ../${name}/built.txt`;
+    const quick = (name: string) => `echo ${name} is built > built.txt`;
+    const slow = (name: string, ...partners: string[]) =>
+      `"${bunExe()}" ../../finish.js ${[name, ...partners].join(" ")}`;
+
+    type Member = {
+      dependencies?: string[];
+      devDependencies?: string[];
+      optionalDependencies?: string[];
+      /** Steps by script name. */
+      scripts: Record<string, string[]>;
+    };
+    function workspace(members: Record<string, Member>) {
+      const listed = (names: string[] = []) => Object.fromEntries(names.map(name => [name, "workspace:*"]));
+      const files: Record<string, string> = {
+        "package.json": JSON.stringify({ name: "cycle-root", workspaces: ["packages/*"] }),
+        "finish.js": finish,
+      };
+      for (const [name, member] of Object.entries(members)) {
+        files[`packages/${name}/package.json`] = JSON.stringify({
+          name,
+          version: "1.0.0",
+          dependencies: listed(member.dependencies),
+          devDependencies: listed(member.devDependencies),
+          optionalDependencies: listed(member.optionalDependencies),
+          scripts: Object.fromEntries(
+            Object.entries(member.scripts).map(([script, steps]) => [script, steps.join(" && ")]),
+          ),
+        });
+      }
+      return tempDir("filter-cycle", files);
+    }
+
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.split("\n").filter(Boolean).sort(), stderr, exitCode };
+    }
+
+    test.concurrent.each([
+      ["bun run --filter '*'", ["run", "--filter", "*", "script"]],
+      ["bun --filter '*'", ["--filter", "*", "script"]],
+      ["bun run --workspaces", ["run", "--workspaces", "script"]],
+      ["one --filter per package", ["run", "-F", "a", "-F", "b", "-F", "x", "-F", "y", "script"]],
+    ])("%s: packages outside the cycle keep their order", async (_, args) => {
+      using dir = workspace({
+        a: { scripts: { script: [slow("a")] } },
+        b: { dependencies: ["a"], scripts: { script: [after("a")] } },
+        x: { dependencies: ["y"], scripts: { script: [quick("x")] } },
+        y: { dependencies: ["x"], scripts: { script: [quick("y")] } },
+      });
+      expect(await run(String(dir), ...args)).toEqual({
+        lines: [
+          "a script: Exited with code 0",
+          "b script: Exited with code 0",
+          "b script: a is built",
+          "x script: Exited with code 0",
+          "y script: Exited with code 0",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a package that lists itself is not a cycle for the other packages", async () => {
+      using dir = workspace({
+        a: { scripts: { script: [slow("a")] } },
+        b: { dependencies: ["a"], scripts: { script: [after("a")] } },
+        self: { dependencies: ["self"], scripts: { script: [quick("self")] } },
+      });
+      expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+        lines: [
+          "a script: Exited with code 0",
+          "b script: Exited with code 0",
+          "b script: a is built",
+          "self script: Exited with code 0",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(["devDependencies", "optionalDependencies"] as const)(
+      "a cycle that only %s closes keeps the order of dependencies",
+      async field => {
+        // `plugin` depends on `core`, and `core` lists `plugin` in the other field. `app` lists `plugin` in that
+        // field too, but not in a cycle, so it waits.
+        using dir = workspace({
+          core: { [field]: ["plugin"], scripts: { script: [slow("core")] } },
+          plugin: { dependencies: ["core"], scripts: { script: [after("core"), quick("plugin")] } },
+          app: { [field]: ["plugin"], scripts: { script: [after("plugin")] } },
+        });
+        expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+          lines: [
+            "app script: Exited with code 0",
+            "app script: plugin is built",
+            "core script: Exited with code 0",
+            "plugin script: Exited with code 0",
+            "plugin script: core is built",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // `one` and `two` have the same name, so the second of them in the list waits for the first (#10386). `z`
+    // depends on that name, and `one` depends on `z`. In these two orders the cycle goes through that wait.
+    test.concurrent.each([
+      ["one", "two", "z"],
+      ["z", "one", "two"],
+    ])("every script runs when two packages next to a cycle have the same name (%s, %s, %s)", async (...order) => {
+      using dir = tempDir("filter-cycle-same-name", {
+        "package.json": JSON.stringify({ name: "cycle-root", workspaces: order.map(dir => `packages/${dir}`) }),
+        "packages/one/package.json": JSON.stringify({
+          name: "same",
+          dependencies: { z: "workspace:*" },
+          scripts: { script: "echo one" },
+        }),
+        "packages/two/package.json": JSON.stringify({ name: "same", scripts: { script: "echo two" } }),
+        "packages/z/package.json": JSON.stringify({
+          name: "z",
+          dependencies: { same: "workspace:*" },
+          scripts: { script: "echo z" },
+        }),
+      });
+      expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+        lines: [
+          "same script: Exited with code 0",
+          "same script: Exited with code 0",
+          "same script: one",
+          "same script: two",
+          "z script: Exited with code 0",
+          "z script: z",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent.each(["devDependencies", "optionalDependencies"] as const)(
+      "a name that dependencies lists counts as one of those when %s lists it too",
+      async field => {
+        // `core` lists `plugin` in the other field only, so `core` goes first.
+        using dir = workspace({
+          core: { [field]: ["plugin"], scripts: { script: [slow("core")] } },
+          plugin: { dependencies: ["core"], [field]: ["core"], scripts: { script: [after("core")] } },
+        });
+        expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+          lines: [
+            "core script: Exited with code 0",
+            "plugin script: Exited with code 0",
+            "plugin script: core is built",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.concurrent("packages that list each other in dependencies start together", async () => {
+      // `y` lists `x` in devDependencies too. That doesn't make `x` go first.
+      using dir = workspace({
+        x: { dependencies: ["y"], scripts: { script: [slow("x", "y")] } },
+        y: { dependencies: ["x"], devDependencies: ["x"], scripts: { script: [slow("y", "x")] } },
+      });
+      expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+        lines: [
+          "x script: Exited with code 0",
+          "x script: x ran with y",
+          "y script: Exited with code 0",
+          "y script: y ran with x",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // On POSIX, FORCE_COLOR=1 turns the terminal renderer on for a pipe. A frame says how many scripts each
+    // package that hasn't started waits for. The first frame is drawn before any script is done.
+    test.skipIf(isWindows).each([
+      {
+        // `d` lists both packages of the cycle and waits for each of them once.
+        title: "a package that lists two packages of a cycle",
+        packages: [
+          { dir: "x", name: "x", dependencies: ["y"] },
+          { dir: "y", name: "y", dependencies: ["x"] },
+          { dir: "d", name: "d", dependencies: ["x", "y"] },
+        ],
+        waits: [2],
+      },
+      {
+        // `one` waits for `two` as the next package of that name, and as a dependency of its cycle with `z`.
+        title: "a package next to one of the same name",
+        packages: [
+          { dir: "two", name: "same", dependencies: [] },
+          { dir: "one", name: "same", dependencies: ["z"] },
+          { dir: "z", name: "z", dependencies: ["same"] },
+        ],
+        waits: [1, 1],
+      },
+    ])("the terminal counts a wait once: $title", async ({ packages, waits }) => {
+      using dir = tempDir("filter-cycle-terminal", {
+        "package.json": JSON.stringify({
+          name: "cycle-root",
+          workspaces: packages.map(({ dir }) => `packages/${dir}`),
+        }),
+        ...Object.fromEntries(
+          packages.map(({ dir, name, dependencies }) => [
+            `packages/${dir}/package.json`,
+            JSON.stringify({
+              name,
+              dependencies: Object.fromEntries(dependencies.map(name => [name, "workspace:*"])),
+              scripts: { script: `echo ${dir}` },
+            }),
+          ]),
+        ),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "*", "script"],
+        cwd: String(dir),
+        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Each frame starts with the escape sequence that begins a synchronized update.
+      const firstFrame = stdout.split("\x1b[?2026h")[1] ?? "";
+      const counts = [...firstFrame.matchAll(/Waiting for (\d+) other script\(s\)/g)].map(match => Number(match[1]));
+      expect({ waits: counts, stderr, exitCode }).toEqual({ waits, stderr: "", exitCode: 0 });
+    });
+
+    // Each of the next two starts `bun` twice, one after the other, so they run alone.
+    test("the cycle waits for what it depends on, and what depends on it waits for all of it", async () => {
+      // d -> x <-> y -> a. `x` doesn't list `a`, and `d` doesn't list `y`.
+      using dir = workspace({
+        a: { scripts: { script: [slow("a")] } },
+        x: { dependencies: ["y"], scripts: { script: [after("a"), quick("x")] } },
+        y: { dependencies: ["x", "a"], scripts: { script: [after("a"), slow("y")] } },
+        d: { dependencies: ["x"], scripts: { script: [after("x"), after("y")] } },
+      });
+      expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+        lines: [
+          "a script: Exited with code 0",
+          "d script: Exited with code 0",
+          "d script: x is built",
+          "d script: y is built",
+          "x script: Exited with code 0",
+          "x script: a is built",
+          "y script: Exited with code 0",
+          "y script: a is built",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("pre and post scripts of a package on the cycle", async () => {
+      // `x` and `y` depend on each other, and their scripts wait until both run. `d` depends on `x`. Each script of
+      // `x` overwrites the marker of `x`, so the marker says which of them ran last.
+      using dir = workspace({
+        x: {
+          dependencies: ["y"],
+          scripts: {
+            prescript: [quick("x-pre")],
+            script: ["cat built.txt", slow("x", "y")],
+            postscript: ["cat built.txt", slow("x-post")],
+          },
+        },
+        y: { dependencies: ["x"], scripts: { script: [slow("y", "x")] } },
+        d: { dependencies: ["x"], scripts: { prescript: [after("x")], script: [after("y")] } },
+      });
+      expect(await run(String(dir), "run", "--filter", "*", "script")).toEqual({
+        lines: [
+          "d prescript: Exited with code 0",
+          "d prescript: x-post is built",
+          "d script: Exited with code 0",
+          "d script: y is built",
+          "x postscript: Exited with code 0",
+          "x postscript: x is built",
+          "x prescript: Exited with code 0",
+          "x script: Exited with code 0",
+          "x script: x ran with y",
+          "x script: x-pre is built",
+          "y script: Exited with code 0",
+          "y script: y ran with x",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   test("should error with missing script", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /error: Script "notpresent" not found in \d+ packages matching "\*"/);
     runInCwdFailure(cwd_root, "pkga", "notpresent", /error: Script "notpresent" not found in package "pkga"/);

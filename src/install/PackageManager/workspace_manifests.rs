@@ -17,7 +17,7 @@ use crate::{
 use super::PackageManager;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry, root_package_json_path};
 use super::workspace_package_json_cache::GetJSONOptions;
-use super::workspace_selection::WorkspaceGraph;
+use super::workspace_selection::{GivesWay, WorkspaceGraph, dependency_order};
 
 /// Root + member package.json files parsed the way `bun install` parses them, into a throw-away lockfile.
 /// Errors the parse only logs (an invalid catalog range, say) fail it, as in `bun install`.
@@ -482,12 +482,12 @@ impl WorkspaceManifests {
     }
 }
 
-/// Graph index i == `targets[i]`; the target whose `name_hash` is `None` is the root.
-pub(crate) fn relation_graph(
+/// Each `(from, to, gives_way)` says that `targets[from]` depends on `targets[to]`. The target whose `name_hash` is `None` is the root.
+fn relation_edges(
     manager: &mut PackageManager,
     targets: &[&WorkspaceTarget],
     pattern: &[u8],
-) -> WorkspaceGraph {
+) -> Vec<(u32, u32, GivesWay)> {
     let mut scratch = ScratchManifests::new();
     if let Err(err) = scratch.parse_root(manager, Features::main()) {
         crash_for_filter(&mut scratch.log, pattern, err);
@@ -519,7 +519,7 @@ pub(crate) fn relation_graph(
         }
     }
 
-    let mut edges: Vec<(u32, u32)> = Vec::new();
+    let mut edges: Vec<(u32, u32, GivesWay)> = Vec::new();
     for (from, pkg) in &parsed {
         for dep in pkg.dependencies.get(dbuf) {
             if dep.behavior == Behavior::WORKSPACE {
@@ -551,11 +551,24 @@ pub(crate) fn relation_graph(
             if to == *from {
                 continue;
             }
-            edges.push((*from, to));
+            edges.push((*from, to, GivesWay::of(dep.behavior)));
         }
     }
 
-    WorkspaceGraph::from_edges(targets.len(), edges)
+    edges
+}
+
+/// Graph index i == `targets[i]`.
+pub(crate) fn relation_graph(
+    manager: &mut PackageManager,
+    targets: &[&WorkspaceTarget],
+    pattern: &[u8],
+) -> WorkspaceGraph {
+    let edges = relation_edges(manager, targets, pattern);
+    WorkspaceGraph::from_edges(
+        targets.len(),
+        edges.into_iter().map(|(from, to, _)| (from, to)),
+    )
 }
 
 /// Returns the package.json paths that `--filter` selects (all of them without a filter). Each one
@@ -572,13 +585,12 @@ pub fn selected_in_dependency_order(
         }
     };
     let pattern = manager.options.filter_patterns.first().copied();
-    let graph = relation_graph(
+    let edges = relation_edges(
         manager,
         &targets.iter().collect::<Vec<_>>(),
         pattern.unwrap_or(b"*"),
     );
-    graph
-        .dependency_order()
+    dependency_order(targets.len(), &edges)
         .into_iter()
         .map(|i| targets[i as usize].package_json_path.clone())
         .collect()

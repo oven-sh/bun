@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use bstr::BStr;
-use bun_collections::{DynamicBitSet, HashMap, index_sort};
+use bun_collections::{DynamicBitSet, HashMap, index_sort, strongly_connected_components};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
 use bun_paths::path_buffer_pool;
@@ -389,7 +389,8 @@ impl WorkspaceGraph {
     }
 
     /// Candidate indices, each after those it depends on. A cycle is broken at one of its members.
-    pub(crate) fn dependency_order(&self) -> Vec<u32> {
+    /// Also returns how many candidates were in order when it first met a cycle.
+    fn order_or_stall(&self) -> (Vec<u32>, Option<usize>) {
         let n = self.dependencies.len();
         let mut remaining: Vec<usize> = self.dependencies.iter().map(Vec::len).collect();
         let mut order: Vec<u32> = Vec::with_capacity(n);
@@ -402,6 +403,7 @@ impl WorkspaceGraph {
             }
         }
 
+        let mut stalled_at = None;
         loop {
             while let Some(u) = queue.pop_front() {
                 order.push(u);
@@ -417,8 +419,9 @@ impl WorkspaceGraph {
                 }
             }
             if order.len() == n {
-                return order;
+                return (order, stalled_at);
             }
+            stalled_at.get_or_insert(order.len());
             // The sort is stuck on a cycle. Follow unmet dependencies until one repeats, which
             // means that candidate is on the cycle.
             let mut on_walk = bitset(n);
@@ -470,6 +473,70 @@ impl WorkspaceGraph {
         }
         graph
     }
+}
+
+/// Inside a dependency cycle, edges stop ordering its packages: the `First` ones, then the `Second` ones.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GivesWay {
+    /// `dependencies`
+    Never,
+    /// `peerDependencies`
+    Second,
+    /// `devDependencies` and `optionalDependencies`
+    First,
+}
+
+impl GivesWay {
+    pub fn of(behavior: Behavior) -> GivesWay {
+        if behavior.is_prod() {
+            GivesWay::Never
+        } else if behavior.is_peer() {
+            GivesWay::Second
+        } else {
+            GivesWay::First
+        }
+    }
+}
+
+/// Drops the edges that give way inside a dependency cycle. Returns what `strongly_connected_components` does for the rest.
+pub fn cycle_groups(waits_for: &mut [Vec<(u32, GivesWay)>]) -> (Vec<u32>, Vec<Vec<usize>>) {
+    let groups = |waits_for: &[Vec<(u32, GivesWay)>]| {
+        let targets = |list: &Vec<(u32, GivesWay)>| list.iter().map(|&(to, _)| to).collect();
+        strongly_connected_components(&waits_for.iter().map(targets).collect::<Vec<Vec<u32>>>())
+    };
+    for gives_way in [GivesWay::First, GivesWay::Second] {
+        let (group_of, _) = groups(waits_for);
+        for (from, list) in waits_for.iter_mut().enumerate() {
+            list.retain(|&(to, kind)| kind != gives_way || group_of[to as usize] != group_of[from]);
+        }
+    }
+    groups(waits_for)
+}
+
+/// Candidate indices, each after those it depends on. What `cycle_groups` leaves of a cycle stays together.
+pub(crate) fn dependency_order(candidate_count: usize, edges: &[(u32, u32, GivesWay)]) -> Vec<u32> {
+    let all = edges.iter().map(|&(from, to, _)| (from, to));
+    let (order, stalled_at) = WorkspaceGraph::from_edges(candidate_count, all).order_or_stall();
+    if stalled_at.is_none() {
+        return order;
+    }
+    let mut waits_for: Vec<Vec<(u32, GivesWay)>> = vec![Vec::new(); candidate_count];
+    for &(from, to, gives_way) in edges {
+        waits_for[from as usize].push((to, gives_way));
+    }
+    let (group_of, _) = cycle_groups(&mut waits_for);
+    let kept = waits_for
+        .iter()
+        .enumerate()
+        .flat_map(|(from, list)| list.iter().map(move |&(to, _)| (from as u32, to)));
+    let (mut order, stalled_at) =
+        WorkspaceGraph::from_edges(candidate_count, kept).order_or_stall();
+    if let Some(from) = stalled_at {
+        index_sort::sort_indices(&mut order[from..], &mut |a, b| {
+            group_of[a as usize].cmp(&group_of[b as usize])
+        });
+    }
+    order
 }
 
 pub fn select_lockfile_workspaces(

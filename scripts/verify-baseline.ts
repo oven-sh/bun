@@ -65,6 +65,11 @@ const isAarch64 = targetArch === "aarch64";
 // SDE outputs this when a chip-check violation occurs
 const SDE_VIOLATION_PATTERN = /SDE-ERROR:.*not valid for specified chip/i;
 
+// What Bun's crash handler prints: its banner, and the trace link that ends each report. A run that
+// prints one has failed whatever its exit code is: a crash inside ExitProcess leaves the exit code
+// of a run under Intel SDE at 0.
+const CRASH_REPORT_PATTERN = /^oh no: |https:\/\/bun\.report\//m;
+
 // Configure emulator based on platform
 const config = isWindows
   ? {
@@ -150,8 +155,9 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   const signalCode = proc.signalCode;
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
+  const crashReport = CRASH_REPORT_PATTERN.test(output);
 
-  if (exitCode === 0) {
+  if (exitCode === 0 && !crashReport) {
     if (!live && stdout.trim()) console.log(stdout.trim());
     console.log(`    PASS (${elapsed}s)`);
     passed++;
@@ -174,7 +180,8 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   } else {
     if (!live && output.trim()) console.log(output.trim());
     const how = exitCode === null ? `signal ${signalCode}` : `exit code ${exitCode}`;
-    console.log(`    FAIL: ${how} (${elapsed}s, not a CPU instruction issue)`);
+    const what = crashReport ? `Bun printed a crash report, ${how}` : how;
+    console.log(`    FAIL: ${what} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
     failedTests.push(label);
   }

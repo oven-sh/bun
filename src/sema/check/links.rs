@@ -99,6 +99,21 @@ pub(super) struct Repeated {
     reliability: u8,
 }
 
+/// The checker's counters at `Checker::begin_measuring`.
+struct BeforeDerivation {
+    instantiation_count: u32,
+    instantiations_computed: u64,
+    instantiation_depth: u32,
+    /// `Checker::deepest_instantiation`, which starts at the depth during the derivation.
+    deepest_instantiation: u32,
+    /// Bytes of native stack in use.
+    stack_in_use: usize,
+    /// `Checker::deepest_stack`, which is 0 during the derivation.
+    deepest_stack: usize,
+    /// `Checker::reliability`, which is 0 during the derivation.
+    reliability: u8,
+}
+
 /// A result that tsgo computes on every request, with what the first derivation did. tsgo has no cache of instantiations,
 /// so there every request does that much. `Checker::repeat` does it in place of the later derivations.
 pub(super) type OnEveryRequest<V> = (V, Repeated);
@@ -520,28 +535,43 @@ impl<'p, 's> Checker<'p, 's> {
         derive: impl FnOnce(&mut Self) -> V,
         is_settled: impl FnOnce(&Self, &V) -> bool,
     ) -> (V, Option<Stored>, Option<Repeated>) {
-        let (count, computed) = (self.instantiation_count, self.instantiations_computed);
-        let depth = self.instantiation_depth;
-        let outer_levels = std::mem::replace(&mut self.deepest_instantiation, depth);
-        let in_use = self.stack_base.saturating_sub(stack_pointer());
-        let outer_deepest = self.deepest_stack.replace(0);
-        let outer_reliability = std::mem::take(&mut self.reliability);
+        let before = self.begin_measuring();
         let (value, stored) = self.derive_settled(derive, is_settled);
-        let levels = self.deepest_instantiation.saturating_sub(depth);
-        self.deepest_instantiation = self.deepest_instantiation.max(outer_levels);
+        (value, stored, self.end_measuring(&before))
+    }
+
+    fn begin_measuring(&mut self) -> BeforeDerivation {
+        BeforeDerivation {
+            instantiation_count: self.instantiation_count,
+            instantiations_computed: self.instantiations_computed,
+            instantiation_depth: self.instantiation_depth,
+            deepest_instantiation: std::mem::replace(
+                &mut self.deepest_instantiation,
+                self.instantiation_depth,
+            ),
+            stack_in_use: self.stack_base.saturating_sub(stack_pointer()),
+            deepest_stack: self.deepest_stack.replace(0),
+            reliability: std::mem::take(&mut self.reliability),
+        }
+    }
+
+    /// Returns what was done since `begin_measuring`. See `derive_measured`.
+    fn end_measuring(&mut self, before: &BeforeDerivation) -> Option<Repeated> {
+        let levels = (self.deepest_instantiation).saturating_sub(before.instantiation_depth);
+        self.deepest_instantiation = (self.deepest_instantiation).max(before.deepest_instantiation);
         let deepest = self.deepest_stack.get();
-        self.deepest_stack.set(deepest.max(outer_deepest));
+        self.deepest_stack.set(deepest.max(before.deepest_stack));
         let reliability = self.reliability;
-        self.reliability |= outer_reliability;
-        let repeated =
-            (self.instantiation_count.checked_sub(count)).map(|instantiations| Repeated {
-                instantiations,
-                computed: (self.instantiations_computed - computed).min(u64::from(u32::MAX)) as u32,
-                levels,
-                stack: u32::try_from(deepest.saturating_sub(in_use)).unwrap_or(u32::MAX),
-                reliability,
-            });
-        (value, stored, repeated)
+        self.reliability |= before.reliability;
+        let computed = self.instantiations_computed - before.instantiations_computed;
+        let instantiations = (self.instantiation_count).checked_sub(before.instantiation_count)?;
+        Some(Repeated {
+            instantiations,
+            computed: computed.min(u64::from(u32::MAX)) as u32,
+            levels,
+            stack: u32::try_from(deepest.saturating_sub(before.stack_in_use)).unwrap_or(u32::MAX),
+            reliability,
+        })
     }
 
     /// Does what a derivation with these effects does. Returns false, and does nothing, if a limit of `instantiate` or an

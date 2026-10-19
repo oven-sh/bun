@@ -1548,6 +1548,12 @@ pub(crate) trait Publish<'s>: Sync {
     /// `key`: from the `Log` of the task. `number`: of the commit. Stores the entry that the task has under `key` in the
     /// shared part, unless it is bound or there is one. Returns whether it has. The task keeps its entry.
     fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool;
+
+    /// Returns a number that identifies the entry that `task` has logged under `key`, and that is the same in every task
+    /// that stores an entry for the same thing. A published id and a node are such numbers already.
+    fn identity_of_logged(&self, _task: &Task<'s>, key: u64) -> u64 {
+        key
+    }
 }
 
 /// The shared part of a table with one cell per key, as a commit uses it. A key of the shared part
@@ -1729,6 +1735,14 @@ where
         }
         let spread = spread_hash(key);
         self.published.add_if_absent(spread, key, *value)
+    }
+
+    /// `key` is a place in the task's own `Hashed`, which says nothing to another task. Only keys without task-local ids
+    /// are logged, so the hash is the same in every task.
+    fn identity_of_logged(&self, task: &Task<'s>, key: u64) -> u64 {
+        let own = task.buffer().typed(&self.slot);
+        own.and_then(|own| own.entry(key as u32))
+            .map_or(key, |(key, _)| spread_hash(key))
     }
 }
 

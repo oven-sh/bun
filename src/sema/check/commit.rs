@@ -124,8 +124,8 @@ struct Numbers {
 pub(super) struct Ring {
     number: u32,
     /// The keys of `Task::take_logged_at_cycles`, sorted: those of the queries in the cycles, and of what was stored in the
-    /// same statements.
-    of_records: Vec<[u32; 2]>,
+    /// same statements. Of a record: its table's slot and `Publish::identity_of_logged`.
+    of_records: Vec<(u32, u64)>,
     of_nodes: Vec<[u32; 3]>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
     members: Vec<u64>,
@@ -235,6 +235,24 @@ impl<'s> Commits<'s> {
         self.numbers.stored.store(number, Ordering::Release);
         stored
     }
+}
+
+/// Returns, for each key of a record that `task` has logged, the table's slot and `Publish::identity_of_logged`.
+/// `tables`: by slot.
+fn identities_of<'s>(
+    tables: &[&dyn Publish<'s>],
+    task: &Task<'s>,
+    logged: &[[u32; 2]],
+) -> Vec<(u32, u64)> {
+    let identity = |&[slot, key]: &[u32; 2]| {
+        let table = tables.get(slot as usize);
+        let key = u64::from(key);
+        (
+            slot,
+            table.map_or(key, |it| it.identity_of_logged(task, key)),
+        )
+    };
+    logged.iter().map(identity).collect()
 }
 
 /// Within a file, a task commits at its first idle moment after it has logged this many keys since its last commit. The
@@ -661,11 +679,24 @@ impl<'s> Checker<'_, 's> {
         if newest <= at_rest.min(compared) {
             return;
         }
-        let (of_records, of_nodes) = self.task.logged_since_rest();
         let (already, cycles_compared) =
             (self.task.compared_with_cycles(), view.cycles_compared.get());
         let rings = self.p.commits.rings.lock();
         let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
+        // The keys that some cycle commit has not been compared with.
+        let is_any_new = (rings.last()).is_some_and(|ring| ring.number > cycles_compared);
+        let left_out = match is_any_new {
+            true => [0; 2],
+            false => already,
+        };
+        // Copies: `identities_of` asks for the task's buffer again.
+        let (of_records, of_nodes) = self.task.logged_since_rest();
+        let of_records = of_records.get(left_out[0]..).unwrap_or(&[]).to_vec();
+        let of_nodes = of_nodes.get(left_out[1]..).unwrap_or(&[]).to_vec();
+        let of_records = match of_records.is_empty() {
+            true => Vec::new(),
+            false => identities_of(&tables_of(self.p), &self.task, &of_records),
+        };
         let is_of_later_file = |commit: u32| {
             let rank = self.p.commits.rank_of(commit);
             (self.task.file).is_some_and(|file| rank > Some(self.p.files.rank_of_file(file)))
@@ -673,7 +704,7 @@ impl<'s> Checker<'_, 's> {
         let has_missed = rings[from..].iter().any(|ring| {
             let skipped = match ring.number > cycles_compared {
                 true => [0; 2],
-                false => already,
+                false => [already[0] - left_out[0], already[1] - left_out[1]],
             };
             ring.number > compared
                 && ring.of_nodes.iter().any(|key| key[1] == view.pinned.get())
@@ -764,8 +795,10 @@ impl<'s> Checker<'_, 's> {
         let mut log = self.task.buffer().take_log();
         let ring = (!at_cycles.is_empty()).then(|| {
             let (mut of_records, mut of_nodes) = (Vec::new(), Vec::new());
+            let tables = tables_of(p);
             for [from, to] in &at_cycles {
-                of_records.extend_from_slice(log.of_records.get(from[0]..to[0]).unwrap_or(&[]));
+                let logged = log.of_records.get(from[0]..to[0]).unwrap_or(&[]);
+                of_records.extend(identities_of(&tables, &self.task, logged));
                 of_nodes.extend_from_slice(log.of_nodes.get(from[1]..to[1]).unwrap_or(&[]));
             }
             of_records.shared_sort_unstable();

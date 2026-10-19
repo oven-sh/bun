@@ -271,8 +271,6 @@ pub(super) struct FlowMemo {
     /// Counts what the walk in progress did that depends on where its reference is in the file, not only on what it
     /// refers to.
     reads_of_position: u32,
-    /// Counts the loop labels whose type was computed and not read from `flow_loop_cache`.
-    loops_computed: u64,
 }
 
 /// What two references have in common if every walk treats them alike, apart from `FlowMemo::reads_of_position`.
@@ -2555,12 +2553,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `container != f.flowContainer` at the start of a function. The part that depends on the
     /// variable is evaluated once per walk.
     fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
-        // In the function that declares the variable, the result is the same wherever the expression is.
-        if let Crossing::PastLastAssignment(symbol, e) = walk.crossing
-            && self.is_closed_over(walk.reference.file, symbol, e)
-        {
-            self.flow_memo.reads_of_position += 1;
-        }
         walk.crossing = self.settled_crossing(walk.reference.file, walk.crossing);
         match walk.crossing {
             Crossing::Times(times) if walk.crossed < times => {
@@ -6853,7 +6845,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Crossing::Yes => (1, 0),
                 Crossing::Times(times) => (2, times.saturating_sub(walk.crossed)),
                 // Until it's settled, the walk is in the function that the expression is in. So is the label, and for
-                // a given variable that determines the result.
+                // a given variable that determines the result: no assignment that counts is inside that function.
                 Crossing::UpToDeclaration(..) => (3, 0),
                 Crossing::PastLastAssignment(..) => (4, 0),
             },
@@ -6881,7 +6873,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let before = (
             self.flow_memo.reads_of_position,
-            self.flow_memo.loops_computed,
             self.flow_memo.times_labels_forgotten,
         );
         let (steps, flow_invocations) = (walk.steps, self.flow_invocation_count);
@@ -6889,7 +6880,6 @@ impl<'p, 's> Checker<'p, 's> {
             self.derive_measured(|c| c.type_at_branch_label(walk, antecedents), |_, _| true);
         let after = (
             self.flow_memo.reads_of_position,
-            self.flow_memo.loops_computed,
             self.flow_memo.times_labels_forgotten,
         );
         if let (Some(_), Some(repeated)) = (stored, repeated)
@@ -7175,7 +7165,6 @@ impl<'p, 's> Checker<'p, 's> {
                             break FlowType::new(so_far, true).ty;
                         }
                     }
-                    self.flow_memo.loops_computed += 1;
                     let entry = self.flow_type(walk, edges[0]);
                     // The result is incomplete only if the first antecedent is.
                     incomplete = entry.incomplete;

@@ -8444,16 +8444,18 @@ function shrinks(s: string | undefined, a: Item, r: Fixed, n: 0 | 1 | 2 | 3 | 4 
   if (!isA) { const q: never = r.q.kind; }
 }
 // What an assignment leaves depends on where the reference is: the object of a property access gets the constraint.
-declare function box<U>(u: U): { boxed: U };
+declare function same<V>(v: V): V;
 function generic<T extends string | number>(t: T, s: string | undefined) {
-  let first: T | boolean = t;
+  let first: string | number | boolean = same(t);
   if (s) { s.length; }
-  const whole: never = box(first);
+  const plain = first;
+  const declared: never = plain;
   first.toFixed;
-  let second: T | boolean = t;
+  let second: string | number | boolean = same(t);
   if (s) { s.length; }
   second.toFixed;
-  const again: never = box(second);
+  const copy = second;
+  const again: never = copy;
 }
 
 interface Frozen { readonly kind: Kind }
@@ -8570,17 +8572,19 @@ export {};
         a.ts(145,45): error TS2322: Type '23' is not assignable to type 'never'.
         a.ts(148,21): error TS2322: Type '"b" | "c" | "d" | "e" | "f" | "g" | "h"' is not assignable to type 'never'.
           Type '"b"' is not assignable to type 'never'.
-        a.ts(155,9): error TS2322: Type '{ boxed: T; }' is not assignable to type 'never'.
-        a.ts(156,9): error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+        a.ts(156,9): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(157,9): error TS2339: Property 'toFixed' does not exist on type 'string | number'.
           Property 'toFixed' does not exist on type 'string'.
-        a.ts(159,10): error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+        a.ts(160,10): error TS2339: Property 'toFixed' does not exist on type 'string | number'.
           Property 'toFixed' does not exist on type 'string'.
-        a.ts(160,9): error TS2322: Type '{ boxed: T; }' is not assignable to type 'never'.
-        a.ts(171,34): error TS2322: Type 'Kind' is not assignable to type 'never'.
+        a.ts(162,9): error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+          Type 'string' is not assignable to type 'never'.
+        a.ts(173,34): error TS2322: Type 'Kind' is not assignable to type 'never'.
           Type '"a"' is not assignable to type 'never'.
-        a.ts(171,70): error TS2322: Type '"a"' is not assignable to type 'never'.
-        a.ts(172,37): error TS2322: Type '"a"' is not assignable to type 'never'.
-        a.ts(172,73): error TS2322: Type 'Kind' is not assignable to type 'never'.
+        a.ts(173,70): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(174,37): error TS2322: Type '"a"' is not assignable to type 'never'.
+        a.ts(174,73): error TS2322: Type 'Kind' is not assignable to type 'never'.
           Type '"a"' is not assignable to type 'never'."
       `);
     });

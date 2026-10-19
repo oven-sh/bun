@@ -4333,22 +4333,6 @@ pub(crate) mod __gated_printer {
                                 if wrap {
                                     self.print(b")");
                                 }
-                            } else if import_record
-                                .flags
-                                .contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
-                                && import_record.path.is_disabled
-                            {
-                                self.add_source_mapping(expr.loc);
-
-                                if import_record.flags.contains(
-                                    ImportRecordFlags::HANDLES_IMPORT_ERRORS
-                                        | ImportRecordFlags::WAS_UNRESOLVED,
-                                ) {
-                                    self.print_require_error(import_record.path.text);
-                                } else {
-                                    self.print_disabled_import();
-                                }
-                                did_print = true;
                             }
                         }
 

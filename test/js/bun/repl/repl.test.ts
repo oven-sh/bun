@@ -1,6 +1,6 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, existsSync, lstatSync, statSync, symlinkSync } from "node:fs";
 import path from "path";
 
@@ -899,6 +899,97 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  // Input that is not typed on a terminal is text, line by line. No byte of it is a key.
+  describe("piped input", () => {
+    test("a TAB is part of the text", async () => {
+      // As a key, the TAB completes `proc` to `process`.
+      const { outputs, stderr, exitCode } = await runRepl("var proc\t= 5\nproc\n");
+      expect(outputs).toEqual(["5", "5"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("the last line is evaluated when the input ends without a line break", async () => {
+      const { outputs, stderr, exitCode } = await runRepl('console.log("first")\nconsole.log("last")');
+      expect(outputs).toEqual(["first\nundefined", "last\nundefined"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a last line without a line break can end a multi-line input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl("function seven() {\n  return 7\n}\nseven()");
+      expect(outputs).toEqual(["undefined", "7"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("CRLF and a lone CR each end one line", async () => {
+      const { outputs, stderr, exitCode } = await runRepl("1 + 1\r\n`a\r\nb`.length\r\n2 + 2\r3 + 3\r.exit\r\n");
+      expect(outputs).toEqual(["2", "3", "4", "6"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an escape sequence and a DEL byte are part of the text", async () => {
+      // As keys: Up recalls the previous line, and DEL removes a character.
+      const { outputs, stderr, exitCode } = await runRepl(["1 + 1", '"\x1b[A".length + "\x7f".length', ".exit"]);
+      expect(outputs).toEqual(["2", "4"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an editor block is evaluated at Ctrl+D or at the end of the input", async () => {
+      const byte = await runRepl(".editor\nlet first = 6\nfirst * 2\n\x04first + 1\n");
+      expect(byte.outputs.at(-1)).toBe("7");
+      expect(byte.stdout).toContain("12\n");
+
+      const end = await runRepl(".editor\nlet second = 5\nsecond * 2\n");
+      expect(end.stdout).toContain("10\n");
+      expect({ stderr: byte.stderr + end.stderr, exitCodes: [byte.exitCode, end.exitCode] }).toEqual({
+        stderr: "",
+        exitCodes: [0, 0],
+      });
+    });
+
+    // Another program can leave the stdin that it shares with the REPL in non-blocking mode.
+    // Here the REPL sets the flag on its own stdin, with fcntl(0, F_SETFL, flags | O_NONBLOCK).
+    test.skipIf(!isLinux)("waits for input on a stdin that is in non-blocking mode", async () => {
+      using dir = tempDir("repl-nonblocking-stdin", {});
+      const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
+      await withPipedRepl(String(dir), async ({ send, waitFor }) => {
+        send(
+          `var { fcntl } = require("bun:ffi").dlopen(${JSON.stringify(libc)}, { fcntl: { args: ["i32", "i32", "i32"], returns: "i32" } }).symbols; fcntl(0, 4, fcntl(0, 3, 0) | 0o4000) === 0 && (fcntl(0, 3, 0) & 0o4000) !== 0\n`,
+        );
+        // At its next prompt, the REPL reads a stdin that has nothing to return yet. That is not
+        // the end of the input.
+        await waitFor("true\n> ");
+        send("20 + 1\n");
+        await waitFor("21\n");
+      });
+    });
+
+    test("a line that starts with a dot and a digit is code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([".5 + 1", ".exit"]);
+      expect(outputs).toEqual(["1.5"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a continuation line that starts with a dot is code, unless it names a command", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "(1",
+        ".toFixed(2))",
+        "function abandoned() {",
+        ".break",
+        "typeof abandoned",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"1.00"', "", '"undefined"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("async evaluation", () => {
     test("awaits promises at the top level and in async functions", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
@@ -1440,6 +1531,109 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  describe("keys and pasted text", () => {
+    test.each([
+      ["F5", "\x1b[15~"],
+      ["F12", "\x1b[24~"],
+      ["Ctrl+F5", "\x1b[15;5~"],
+      ["a bracketed paste marker", "\x1b[200~"],
+      ["F1 of the Linux console", "\x1b[[A"],
+      ["Alt+Up with two ESCs", "\x1b\x1b[A"],
+    ])("%s leaves nothing in the line", async (_, sequence) => {
+      await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+        // What is left of a sequence that is not read to its end is typed text: F5 left `~`,
+        // and `~15` is -16.
+        send(sequence);
+        send("15\n");
+        send('"second" + "Input"\n');
+        await waitFor("secondInput");
+        expect(allOutput()).toMatch(/^15\r?$/m);
+      });
+    });
+
+    test("the Esc key alone does not take the next key", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("1");
+        await waitFor("1");
+        send("\x1b");
+        // Esc has no effect that a test can wait for. It is the Esc key, and not the start of
+        // a sequence, when nothing follows it for 500 ms, so this test has to let that time pass.
+        await Bun.sleep(700);
+        send("23\n");
+        await waitFor(/^123\r?$/m);
+      });
+    });
+
+    test("a TAB in pasted text is part of the text", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // One write, as a paste arrives. As the Tab key, the TAB completes `proc` to `process`.
+        send("var proc\t= 5; typeof process\n");
+        await waitFor('"object"');
+        // The TAB is in the entry, drawn as spaces up to the next tab stop.
+        send('"tab\tbed".length\n');
+        await waitFor(/^7\r?$/m);
+      });
+    });
+  });
+
+  test("a terminal that the REPL reads lines from keeps its mode across an await", async () => {
+    using dir = tempDir("repl-lines-on-terminal", {});
+    const outPath = path.join(String(dir), "out.txt");
+    let echoed = "";
+    const decoder = new TextDecoder();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_terminal, chunk) {
+        echoed += decoder.decode(chunk, { stream: true });
+      },
+    });
+    // stdin is the terminal and stdout is a file: the REPL draws nothing and reads lines, and
+    // the terminal itself echoes what is typed.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'exec "$BUN_UNDER_TEST" repl > "$REPL_OUT" 2>&1'],
+      terminal,
+      env: {
+        ...bunEnv,
+        NO_COLOR: "1",
+        BUN_UNDER_TEST: bunExe(),
+        REPL_OUT: outPath,
+        HOME: String(dir),
+        USERPROFILE: String(dir),
+      },
+    });
+    const printed = async (text: string) => {
+      const deadline = Date.now() + 10_000;
+      while (!(existsSync(outPath) && (await Bun.file(outPath).text()).includes(text))) {
+        if (Date.now() > deadline) throw new Error(`the REPL did not print ${JSON.stringify(text)}`);
+        await Bun.sleep(10);
+      }
+    };
+
+    await printed("> ");
+    // Waiting for a promise made the REPL set raw mode on stdin, which it had never set before.
+    terminal.write("await 41\n");
+    await printed("41\n> ");
+    terminal.write("2 + 2\n");
+    await printed("4\n> ");
+    terminal.write(".exit\n");
+    expect(await proc.exited).toBe(0);
+    // A terminal that is still in its line mode echoes the second line.
+    expect(echoed).toContain("2 + 2");
+  });
+
+  test("a terminal that hangs up does not enter the line being typed", async () => {
+    using dir = tempDir("repl-hangup", {});
+    const marker = path.join(String(dir), "entered");
+    await withTerminalRepl(async ({ terminal, proc, send, waitFor }) => {
+      send(`require("fs").writeFileSync(${JSON.stringify(marker)}, "")`);
+      await waitFor("writeFileSync");
+      terminal.close();
+      await proc.exited;
+    });
+    expect(existsSync(marker)).toBe(false);
+  });
+
   describe("inline suggestions", () => {
     // Ghost text is rendered as: ESC[2m<remainder>ESC[0m after the typed text.
     // The feature requires colors, so override bunEnv's NO_COLOR for these.
@@ -1496,7 +1690,10 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         async ({ send, waitFor }) => {
           send("JSON.str");
           await waitFor(`${DIM}ingify`, 10000);
-          send("\t"); // Tab accepts the ghost suggestion -> `JSON.stringify`
+          // Tab accepts the ghost suggestion -> `JSON.stringify`. A Tab is the key only when it
+          // ends what the REPL reads, so it is sent alone, and the rest after its redraw.
+          send("\t");
+          await waitFor("stringify");
           // Result "81" cannot occur in the echoed input, so it only matches
           // if Tab really completed to `stringify` and the call succeeded.
           send("(9*9)\n");
@@ -1650,7 +1847,11 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(async ({ send, waitFor }) => {
         // `JSON.pars` has exactly one completion, which Tab would otherwise splice
         // into the string; indenting adds two spaces, so the length is 9 + 2.
-        send('("JSON.pars\t").length\n');
+        send('("JSON.pars');
+        await waitFor("JSON.pars");
+        send("\t");
+        await waitFor("pars  ");
+        send('").length\n');
         await waitFor(/\b11\b/);
       });
     });
@@ -1676,7 +1877,11 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         await waitFor("...");
         // The backtick was opened on the previous line. Without that context
         // Tab would complete `JSON.pars` to `parse` inside the template.
-        send("JSON.pars\t`\n");
+        send("JSON.pars");
+        await waitFor("JSON.pars");
+        send("\t");
+        await waitFor("pars  ");
+        send("`\n");
         await waitFor(/\u276f|> /);
         // "\n" + "JSON.pars" + two spaces.
         send("__tpl.length\n");
@@ -1688,7 +1893,11 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await withTerminalRepl(async ({ send, waitFor }) => {
         send("function __cont() {\n");
         await waitFor("...");
-        send("return JSON.pars\t\n");
+        send("return JSON.pars");
+        await waitFor("JSON.pars");
+        send("\t");
+        await waitFor("JSON.parse");
+        send("\n");
         send("}\n");
         await waitFor(/\u276f|> /);
         send("__cont() === JSON.parse\n");
@@ -1727,7 +1936,9 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
           // prefix; the named properties must still complete afterwards.
           send("__big.byteLen");
           await waitFor(`${DIM}gth`);
-          send("\t\n");
+          send("\t");
+          await waitFor("byteLength");
+          send("\n");
           await waitFor("67108864");
         },
         { env: colorEnv },
@@ -1743,8 +1954,10 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         send("globalThis.__tcObj = { uniqueLongName: 'tcMAR' + 'KER' }; 0\n");
         await waitFor(/\b0\b/);
         send("__tcObj.uni");
+        await waitFor("__tcObj.uni");
         send("\t");
         // After tab, the full property should be in the input; evaluate it.
+        await waitFor("uniqueLongName");
         send("\n");
         await waitFor("tcMARKER");
       });
@@ -1766,15 +1979,15 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
 
     test("tab inserts the only name that can follow a dot", async () => {
-      await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
         send('globalThis.__one = { "un-dashed": 1, unique: "oneMAR" + "KER" }; 0\n');
         await waitFor(/\b0\b/);
         send("__one.un");
         await waitFor("__one.un");
-        send("\t\n");
-        send('"second" + "Input"\n');
-        await waitFor("secondInput");
-        expect(allOutput()).toContain("oneMARKER");
+        send("\t");
+        await waitFor("__one.unique");
+        send("\n");
+        await waitFor("oneMARKER");
       });
     });
 

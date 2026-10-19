@@ -246,6 +246,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             // Interactive: run the REPL loop
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
+                vm.exit_handler.exit_code = 1;
             }
         }
 

@@ -19,7 +19,6 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::strings;
-#[cfg(unix)]
 use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -73,6 +72,9 @@ const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
 const HISTORY_STORED_NEWLINE: u8 = b'\r';
 /// Tab lists its candidates up to this many, and above it prints only their count.
 const MAX_LISTED_COMPLETIONS: usize = 50;
+/// An ESC that nothing follows for this long is the Esc key, and not the start of a sequence.
+/// It is the keyseq-timeout of GNU readline, which node uses too.
+const LONE_ESCAPE_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
@@ -135,7 +137,7 @@ enum Key {
     AltLeft,
     AltRight,
 
-    // Regular printable ASCII character
+    // Regular printable ASCII character, or a TAB that is text and not the key
     Char(u8),
 
     // A full multi-byte UTF-8 sequence (len bytes of the array are valid)
@@ -1168,6 +1170,10 @@ pub(super) struct Repl<'a> {
     stdin_buf: [u8; 256],
     stdin_buf_start: usize,
     stdin_buf_end: usize,
+    /// The last read filled `stdin_buf`, so more input can follow at once.
+    stdin_buf_was_full: bool,
+    /// The read of stdin failed with an error that is not the end of input.
+    stdin_error: Option<sys::Error>,
 
     // JavaScript VM (JSC_BORROW per LIFETIMES.tsv)
     pub(super) vm: Option<&'a VirtualMachine>,
@@ -1204,6 +1210,8 @@ impl<'a> Repl<'a> {
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
             stdin_buf_end: 0,
+            stdin_buf_was_full: false,
+            stdin_error: None,
             vm: None,
             global: None,
             // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
@@ -1288,10 +1296,13 @@ impl<'a> Repl<'a> {
 
         #[cfg(unix)]
         {
-            // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
+            // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT. A session
+            // that reads lines never left that mode.
+            if self.drawing.is_some() {
+                let _ = self
+                    .tty_state
+                    .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
+            }
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -1331,9 +1342,11 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            if self.drawing.is_some() {
+                let _ = self
+                    .tty_state
+                    .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+            }
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
@@ -1366,105 +1379,110 @@ impl<'a> Repl<'a> {
         }
     }
 
-    fn read_byte(&mut self) -> Option<u8> {
-        if self.stdin_buf_start < self.stdin_buf_end {
-            let b = self.stdin_buf[self.stdin_buf_start];
-            self.stdin_buf_start += 1;
-            return Some(b);
-        }
-        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
-        // re-create on every call).
-        let stdin = sys::File::stdin();
-        let n = match stdin.read(&mut self.stdin_buf) {
-            sys::Result::Ok(n) => n,
-            sys::Result::Err(_) => return None,
+    /// Fills the buffer with one read of stdin. `Ok(false)` at the end of input.
+    fn refill(&mut self) -> Result<bool, sys::Error> {
+        let read = match sys::read_stdin_waiting(Fd::stdin(), &mut self.stdin_buf) {
+            Ok(read) => read,
+            // A descriptor that is closed has no input. A terminal that hung up fails with EIO.
+            Err(err) if matches!(err.get_errno(), sys::E::EBADF | sys::E::EIO) => 0,
+            Err(err) => return Err(err),
         };
-        if n == 0 {
-            return None;
-        }
-        self.stdin_buf_start = 1;
-        self.stdin_buf_end = n;
-        Some(self.stdin_buf[0])
+        self.stdin_buf_start = 0;
+        self.stdin_buf_end = read;
+        self.stdin_buf_was_full = read == self.stdin_buf.len();
+        Ok(read > 0)
     }
 
+    /// `None` at the end of input, and after a read that failed (`stdin_error` holds why).
+    fn read_byte(&mut self) -> Option<u8> {
+        if !self.more_pending() {
+            match self.refill() {
+                Ok(true) => {}
+                Ok(false) => return None,
+                Err(err) => {
+                    self.stdin_error = Some(err);
+                    return None;
+                }
+            }
+        }
+        let b = self.stdin_buf[self.stdin_buf_start];
+        self.stdin_buf_start += 1;
+        Some(b)
+    }
+
+    /// The last read returned bytes that are not consumed yet.
+    fn more_pending(&self) -> bool {
+        self.stdin_buf_start < self.stdin_buf_end
+    }
+
+    /// The next key of a terminal in raw mode.
     fn read_key(&mut self) -> Option<Key> {
         let byte = self.read_byte()?;
 
         // Handle escape sequences
         if byte == 27 {
-            // ESC
-            let Some(second) = self.read_byte() else {
-                return Some(Key::Escape);
+            // A terminal sends a key that starts with ESC in one write. An ESC that a read ends
+            // with is the Esc key itself, unless the rest of a sequence follows soon.
+            let second = loop {
+                if !self.more_pending() {
+                    let waited_from = std::time::Instant::now();
+                    match self.refill() {
+                        Ok(true) => {}
+                        Ok(false) => return Some(Key::Escape),
+                        Err(err) => {
+                            self.stdin_error = Some(err);
+                            return Some(Key::Escape);
+                        }
+                    }
+                    if waited_from.elapsed() >= LONE_ESCAPE_WAIT {
+                        // What arrived is the next key. It stays in the buffer.
+                        return Some(Key::Escape);
+                    }
+                }
+                let Some(second) = self.read_byte() else {
+                    return Some(Key::Escape);
+                };
+                // Two ESCs in front of a sequence mean the same as one.
+                if second != 27 {
+                    break second;
+                }
             };
 
-            if second == b'[' {
-                // CSI
-                let Some(third) = self.read_byte() else {
-                    return Some(Key::Escape);
-                };
-
-                return Some(match third {
-                    b'A' => Key::ArrowUp,
-                    b'B' => Key::ArrowDown,
-                    b'C' => Key::ArrowRight,
-                    b'D' => Key::ArrowLeft,
-                    b'H' => Key::Home,
-                    b'F' => Key::End,
-                    b'1'..=b'6' => 'blk: {
-                        let Some(fourth) = self.read_byte() else {
-                            break 'blk Key::Unknown;
-                        };
-                        if fourth == b'~' {
-                            break 'blk match third {
-                                b'1' => Key::Home,
-                                b'2' => Key::Unknown, // insert
-                                b'3' => Key::Delete,
-                                b'4' => Key::End,
-                                b'5' => Key::PageUp,
-                                b'6' => Key::PageDown,
-                                _ => Key::Unknown,
-                            };
-                        } else if fourth == b';' {
-                            let Some(modifier) = self.read_byte() else {
-                                break 'blk Key::Unknown;
-                            };
-                            let Some(dir) = self.read_byte() else {
-                                break 'blk Key::Unknown;
-                            };
-                            if modifier == b'5' || modifier == b'3' {
-                                break 'blk match dir {
-                                    b'C' => Key::AltRight,
-                                    b'D' => Key::AltLeft,
-                                    _ => Key::Unknown,
-                                };
-                            }
-                            break 'blk Key::Unknown;
-                        }
+            return Some(match second {
+                b'[' => match tty::ControlSequence::read(|| self.read_byte()) {
+                    Ok(sequence) => key_of_control_sequence(&sequence),
+                    Err(Some(_)) => {
+                        // The byte that broke the sequence starts the next key.
+                        self.stdin_buf_start -= 1;
                         Key::Unknown
                     }
-                    _ => Key::Unknown,
-                });
-            } else if second == b'O' {
-                // SS3
-                let Some(third) = self.read_byte() else {
-                    return Some(Key::Escape);
-                };
-                return Some(match third {
-                    b'H' => Key::Home,
-                    b'F' => Key::End,
-                    _ => Key::Unknown,
-                });
-            } else if second == b'b' {
-                return Some(Key::AltB);
-            } else if second == b'd' {
-                return Some(Key::AltD);
-            } else if second == b'f' {
-                return Some(Key::AltF);
-            } else if second == 127 {
-                return Some(Key::AltBackspace);
-            }
+                    Err(None) => Key::Unknown,
+                },
+                b'O' => {
+                    // SS3: one byte, which some terminals put a modifier digit in front of.
+                    let mut third = self.read_byte();
+                    if third.is_some_and(|digit| digit.is_ascii_digit()) {
+                        third = self.read_byte();
+                    }
+                    match third {
+                        Some(b'H') => Key::Home,
+                        Some(b'F') => Key::End,
+                        Some(_) => Key::Unknown,
+                        None => Key::Escape,
+                    }
+                }
+                b'b' => Key::AltB,
+                b'd' => Key::AltD,
+                b'f' => Key::AltF,
+                127 => Key::AltBackspace,
+                _ => Key::Escape,
+            });
+        }
 
-            return Some(Key::Escape);
+        // A TAB that was typed ends what a read returns. One with more input behind it is text
+        // that was pasted: completing there would change what the text says.
+        if byte == b'\t' && (self.more_pending() || self.stdin_buf_was_full) {
+            return Some(Key::Char(b'\t'));
         }
 
         // Multi-byte UTF-8: assemble the whole sequence so it is inserted as
@@ -1724,7 +1742,7 @@ impl<'a> Repl<'a> {
         if self.line_editor.cursor != line.len() {
             return;
         }
-        if line.is_empty() || line[0] == b'.' {
+        if line.is_empty() || is_dot_command(&line) {
             return; // skip REPL dot-commands
         }
 
@@ -2576,9 +2594,115 @@ impl<'a> Repl<'a> {
         self.running = true;
         self.refresh_line();
 
+        // A terminal in raw mode sends keys. Anything else sends text, line by line.
+        if self.drawing.is_some() {
+            self.run_keys()?;
+        } else {
+            self.run_lines()?;
+        }
+
+        self.restore_terminal();
+        match self.stdin_error.take() {
+            Some(err) => Err(err.into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Reads lines of text until the end of input. No byte is a key here: a TAB or an escape
+    /// sequence in a file that is piped in is part of its text.
+    fn run_lines(&mut self) -> Result<(), crate::Error> {
+        let mut line: Vec<u8> = Vec::new();
+        // A CR ends a line, and the LF of a CRLF pair that comes behind it does not end another.
+        let mut after_cr = false;
+        while self.running {
+            match self.refill() {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(err) => {
+                    self.stdin_error = Some(err);
+                    break;
+                }
+            }
+            while self.running && self.more_pending() {
+                let rest = &self.stdin_buf[self.stdin_buf_start..self.stdin_buf_end];
+                if core::mem::take(&mut after_cr) && rest[0] == b'\n' {
+                    self.stdin_buf_start += 1;
+                    continue;
+                }
+                let Some(end) = strings::index_of_any(rest, b"\r\n") else {
+                    line.extend_from_slice(rest);
+                    self.stdin_buf_start = self.stdin_buf_end;
+                    break;
+                };
+                line.extend_from_slice(&rest[..end]);
+                after_cr = rest[end] == b'\r';
+                self.stdin_buf_start += end + 1;
+                self.submit_line(&mut line)?;
+            }
+        }
+
+        if self.running && self.stdin_error.is_none() {
+            // The last line of the input has no line break behind it.
+            if !line.is_empty() {
+                self.submit_line(&mut line)?;
+            }
+            if self.running && self.input_mode == InputMode::Editor {
+                self.finish_editor();
+            }
+        }
+        if self.running {
+            self.leave_input(b"");
+        }
+        Ok(())
+    }
+
+    /// One line of text, as if it was typed and Enter was pressed.
+    fn submit_line(&mut self, line: &mut Vec<u8>) -> Result<(), crate::Error> {
+        // Ctrl+D at the start of a line is the one key that text can hold: it ends an editor
+        // block or the session, as it does on a terminal.
+        let mut text = line.as_slice();
+        while let [0x04, rest @ ..] = text {
+            text = rest;
+            match self.input_mode {
+                InputMode::Editor => self.finish_editor(),
+                InputMode::Normal => {
+                    self.print(format_args!("\n"));
+                    self.running = false;
+                    line.clear();
+                    return Ok(());
+                }
+                InputMode::Multiline => {}
+            }
+        }
+        // Bytes that are not UTF-8 are dropped, as they are when they are typed.
+        if strings::is_valid_utf8(text) {
+            let _ = self.line_editor.set(text);
+        } else {
+            let _ = self.line_editor.set(&without_ill_formed_utf8(text));
+        }
+        line.clear();
+        self.handle_enter()
+    }
+
+    /// Ctrl+D in editor mode: evaluates the block.
+    fn finish_editor(&mut self) {
+        self.leave_input(b"");
+        // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
+        if !self.editor_buffer.is_empty() {
+            let code = core::mem::take(&mut self.editor_buffer);
+            self.evaluate_and_print(&code);
+            self.editor_buffer = code;
+        }
+        self.input_mode = InputMode::Normal;
+        self.editor_buffer.clear();
+        self.refresh_line();
+    }
+
+    /// Reads keys from a terminal in raw mode until the session ends.
+    fn run_keys(&mut self) -> Result<(), crate::Error> {
         while self.running {
             let Some(key) = self.read_key() else {
-                // EOF
+                // The terminal hung up, or the read failed. What is in the line was not entered.
                 self.leave_input(b"");
                 break;
             };
@@ -2592,19 +2716,7 @@ impl<'a> Repl<'a> {
                 Key::Enter => self.handle_enter()?,
                 Key::CtrlC => self.handle_ctrl_c(),
                 Key::CtrlD => match self.input_mode {
-                    InputMode::Editor => {
-                        // Finish editor mode
-                        self.leave_input(b"");
-                        // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
-                        if !self.editor_buffer.is_empty() {
-                            let code = core::mem::take(&mut self.editor_buffer);
-                            self.evaluate_and_print(&code);
-                            self.editor_buffer = code;
-                        }
-                        self.input_mode = InputMode::Normal;
-                        self.editor_buffer.clear();
-                        self.refresh_line();
-                    }
+                    InputMode::Editor => self.finish_editor(),
                     InputMode::Normal if self.line_editor.buffer.is_empty() => {
                         self.print(format_args!("\n"));
                         self.running = false;
@@ -2738,8 +2850,6 @@ impl<'a> Repl<'a> {
                 _ => {}
             }
         }
-
-        self.restore_terminal();
         Ok(())
     }
 
@@ -2762,7 +2872,7 @@ impl<'a> Repl<'a> {
         }
 
         // Check for REPL commands
-        if !line.is_empty() && line[0] == b'.' {
+        if is_dot_command(&line) {
             let space_idx = strings::index_of_char(&line, b' ');
             let cmd_name = if let Some(idx) = space_idx {
                 &line[..idx as usize]
@@ -2789,7 +2899,7 @@ impl<'a> Repl<'a> {
                         return Ok(());
                     }
                 }
-            } else {
+            } else if self.input_mode != InputMode::Multiline {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
                 self.print(format_args!(
                     "Type {}.help{} for available commands\n",
@@ -2800,6 +2910,7 @@ impl<'a> Repl<'a> {
                 self.refresh_line();
                 return Ok(());
             }
+            // On a continuation line, a name that is no command is code: `.then(..)` of a chain.
         }
 
         // Handle empty line
@@ -2905,7 +3016,7 @@ impl<'a> Repl<'a> {
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
         // Complete REPL commands
-        if !line.is_empty() && line[0] == b'.' {
+        if is_dot_command(&line) {
             let mut matches: Vec<&'static [u8]> = Vec::new();
 
             for cmd in &ReplCommand::ALL {
@@ -3243,6 +3354,49 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
         prefix,
         prefix_start,
     })
+}
+
+/// A line that names a REPL command: a `.`, and then nothing or a letter. `.5 + 1` is code.
+fn is_dot_command(line: &[u8]) -> bool {
+    matches!(line, [b'.'] | [b'.', b'a'..=b'z' | b'A'..=b'Z', ..])
+}
+
+/// The key of a control sequence. A sequence that nothing is bound to is `Key::Unknown`.
+fn key_of_control_sequence(sequence: &tty::ControlSequence) -> Key {
+    match (sequence.final_byte, sequence.params()) {
+        (b'A', b"") => Key::ArrowUp,
+        (b'B', b"") => Key::ArrowDown,
+        (b'C', b"") => Key::ArrowRight,
+        (b'D', b"") => Key::ArrowLeft,
+        (b'H', b"") => Key::Home,
+        (b'F', b"") => Key::End,
+        // `ESC [ 1 ; 5 C`: the modifier 5 is Ctrl, and 3 is Alt.
+        (b'C', [_, b';', b'3' | b'5']) => Key::AltRight,
+        (b'D', [_, b';', b'3' | b'5']) => Key::AltLeft,
+        (b'~', b"1") => Key::Home,
+        (b'~', b"3") => Key::Delete,
+        (b'~', b"4") => Key::End,
+        (b'~', b"5") => Key::PageUp,
+        (b'~', b"6") => Key::PageDown,
+        _ => Key::Unknown,
+    }
+}
+
+/// `text` without the bytes that are not part of a well-formed UTF-8 sequence.
+fn without_ill_formed_utf8(text: &[u8]) -> Vec<u8> {
+    let mut kept = Vec::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(&lead) = rest.first() {
+        let len = (strings::utf8_byte_sequence_length(lead) as usize).max(1);
+        match rest.get(..len) {
+            Some(sequence) if strings::is_valid_utf8(sequence) => {
+                kept.extend_from_slice(sequence);
+                rest = &rest[len..];
+            }
+            _ => rest = &rest[1..],
+        }
+    }
+    kept
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {

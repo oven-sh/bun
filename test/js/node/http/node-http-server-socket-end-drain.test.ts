@@ -265,24 +265,24 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       },
     );
 
-    // The reply goes out on the raw socket, and the response never ends.
+    // The reply goes out on the raw socket, and the response never ends. Two writes: a transport that takes one
+    // write whole can still refuse the next one.
     test.concurrent.each(["req.socket.end(data)", "req.socket.write(data), then req.socket.end()"])(
       "the FIN follows the bytes of %s",
       async form => {
-        const reply = Buffer.concat([
-          Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`),
-          Buffer.alloc(SIZE, "r"),
-        ]);
+        const head = Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`);
+        const half = Buffer.alloc(SIZE / 2, "r");
         const { promise: ended, resolve: onEnd } = Promise.withResolvers<number>();
         const serverSocket = watchServerSocket();
         await using server = createServer((req, res) => {
           serverSocket.watch(req.socket);
           capSendBuffer(req.socket);
+          req.socket.write(Buffer.concat([head, half]));
           if (form === "req.socket.end(data)") {
-            req.socket.end(reply);
+            req.socket.end(half);
             setImmediate(() => onEnd(res.writableLength));
           } else {
-            req.socket.write(reply);
+            req.socket.write(half);
             endLater(res, () => req.socket.end()).then(onEnd);
           }
         });

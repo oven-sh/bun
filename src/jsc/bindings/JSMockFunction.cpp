@@ -269,6 +269,7 @@ public:
     JSC::Weak<JSObject> spyTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
+    bool spyInstalledDuringPreload = false;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
 
@@ -647,6 +648,43 @@ static void restoreAllMocks(Zig::GlobalObject* globalObject)
         }
     }
     globalObject->mockModule.activeSpies.clear();
+}
+
+extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
+
+// Per-test-file teardown: restore every non-preload spy.
+extern "C" void JSMock__restoreTransientSpies(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->mockModule.activeSpies) {
+        return;
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    // Called from Rust with no enclosing throw scope; clearSpy() can throw.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    ActiveSpySet* spies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
+    ActiveSpySet* mocks = globalObject->mockModule.activeMocks
+        ? uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get())
+        : nullptr;
+
+    MarkedArgumentBuffer active;
+    spies->takeSnapshot(active);
+    size_t size = active.size();
+
+    for (size_t i = 0; i < size; ++i) {
+        JSValue entry = active.at(i);
+        if (!entry.isObject())
+            continue;
+        JSMockFunction* spy = uncheckedDowncast<JSMockFunction>(entry);
+        if (spy->spyInstalledDuringPreload)
+            continue;
+        spy->clearSpy();
+        scope.clearExceptionExceptTermination();
+        spies->remove(spy);
+        if (mocks)
+            mocks->remove(spy);
+    }
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
@@ -1554,6 +1592,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
+        mock->spyInstalledDuringPreload = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
         unsigned attributes = 0;
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {

@@ -551,6 +551,7 @@ impl Dialect {
             flow: false,
             oxc: false,
             oxc_names: false,
+            module_or_script: false,
         }
     }
 }
@@ -644,6 +645,7 @@ impl ParseOptions {
             module_detection: ModuleDetection::Auto,
             jsx_imports_its_factory: false,
             keeps_the_text_of_libraries: false,
+            keeps_comments: false,
             bind: crate::bind::BindOptions::new(),
         }
     }
@@ -900,6 +902,7 @@ impl Options {
             skip_default_lib_check: false,
             no_check: false,
             drops_unreferenced: false,
+            keeps_comments: false,
             captures_suggestions: false,
             emits_first: false,
             current_directory: Vec::new(),
@@ -2740,7 +2743,7 @@ impl<'h> Resolver<'h> {
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
         // The directories of the files so far: thousands of files are in hundreds of directories.
-        let mut asked: FxHashSet<&[u8]> = FxHashSet::default();
+        let mut asked: FxHashSet<&[u8]> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         for path in emitted {
             let of_file = dirname::<Posix>(path);
             if !asked.insert(of_file) {

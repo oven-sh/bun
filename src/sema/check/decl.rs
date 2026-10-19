@@ -4400,7 +4400,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `sig_type_params` for a signature that was not queried recently.
     fn sig_type_params_not_recent(&mut self, sig: SigId) -> List<'p, TypeId> {
         if (self.signature_links).has(sig, signature_links::fact::HAS_NO_TYPE_PARAMETERS) {
-            return List::default();
+            return List::new();
         }
         if let Some(kept) = self.signature_links.type_parameters(sig) {
             return List::Kept(kept);

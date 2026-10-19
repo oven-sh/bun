@@ -391,7 +391,7 @@ impl Options {
             config_precedence: Precedence::CliOverride,
             ignore_path: None,
             ignore_paths_of_bunfig: 0,
-            pipes: fs::NamedPipes::default(),
+            pipes: fs::NamedPipes::new(),
             ignore_pattern: Vec::new(),
             ignore_patterns_of_bunfig: 0,
             bunfig: b"bunfig.toml".to_vec(),

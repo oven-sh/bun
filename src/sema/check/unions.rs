@@ -126,7 +126,6 @@ struct KeptUnionCall {
 ///
 /// A direct-mapped cache, like `instantiate::Recent`: it belongs to one checker, and a new call
 /// overwrites whatever had its place.
-#[derive(Default)]
 pub(super) struct UnionCalls {
     /// Initially empty, then a power of two of them.
     places: Vec<KeptUnionCall>,
@@ -136,6 +135,18 @@ pub(super) struct UnionCalls {
     added: usize,
     /// The types of the calls in `places`, and of calls that were overwritten.
     types: Vec<TypeId>,
+}
+
+impl UnionCalls {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            places: Vec::new(),
+            shift: 0,
+            added: 0,
+            types: Vec::new(),
+        }
+    }
 }
 
 impl UnionCalls {
@@ -3327,7 +3338,7 @@ mod tests {
             types: &types,
             alias: Some((alias(1), &types[..1])),
         };
-        let mut calls = UnionCalls::default();
+        let mut calls = UnionCalls::new();
         assert_eq!(get(&calls, &call), None);
         calls.put(call.hash(), &call, answer);
         assert_eq!(get(&calls, &call), Some(answer));
@@ -3385,7 +3396,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn kept_calls_are_overwritten_and_dropped_but_never_mixed_up() {
-        let mut calls = UnionCalls::default();
+        let mut calls = UnionCalls::new();
         let types_of = |at: u32, len: usize| -> Vec<TypeId> {
             (0..len as u32).map(|i| TypeId(at * 7 + i)).collect()
         };
@@ -3441,7 +3452,7 @@ mod tests {
             other[len as usize / 2] = TypeId(1000);
             // Only a list of more than 32 has a middle that its hash leaves out.
             assert_eq!(call(&types).hash() == call(&other).hash(), len > 32);
-            let mut calls = UnionCalls::default();
+            let mut calls = UnionCalls::new();
             calls.put(call(&types).hash(), &call(&types), TypeId(1));
             assert_eq!(get(&calls, &call(&types)), Some(TypeId(1)));
             assert_eq!(get(&calls, &call(&other)), None);

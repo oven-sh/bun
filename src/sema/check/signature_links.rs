@@ -58,7 +58,6 @@ type Row = [u32; 4];
 const PAGE: usize = 64;
 
 /// See the module docs.
-#[derive(Default)]
 pub(super) struct SignatureLinks<'p> {
     /// Rows of task-local signatures, indexed by `local_number`.
     own: Vec<Row>,
@@ -69,6 +68,20 @@ pub(super) struct SignatureLinks<'p> {
     type_predicates: Vec<Predicate>,
     parameters: Vec<&'p [SigParam]>,
     type_parameters: Vec<&'p [TypeId]>,
+}
+
+impl<'p> SignatureLinks<'p> {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            own: Vec::new(),
+            pages: Vec::new(),
+            published: Vec::new(),
+            type_predicates: Vec::new(),
+            parameters: Vec::new(),
+            type_parameters: Vec::new(),
+        }
+    }
 }
 
 impl<'p> SignatureLinks<'p> {
@@ -314,7 +327,7 @@ mod tests {
             declaration: None,
         }];
         let type_parameters = [TypeId(2)];
-        let mut links = SignatureLinks::default();
+        let mut links = SignatureLinks::new();
         let predicate = |at: usize| Predicate {
             param: Some(at),
             name: known::value,

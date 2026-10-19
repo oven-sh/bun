@@ -369,7 +369,7 @@ impl ByName {
                 .map(|it| &it.kind)
             {
                 Some(&hir::ExprKind::Dot { name, .. }) => {
-                    classes.of_member(name, hir.name_pos(callee.unwrap_or_default()))
+                    classes.of_member(name, hir.name_pos(callee.unwrap_or(hir::ExprId::NONE)))
                 }
                 Some(&hir::ExprKind::Ident(name)) => {
                     (ByName::FUNCTIONS + classes.of(name) as usize % (NAME_CLASSES / 2)) as u8

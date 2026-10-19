@@ -127,13 +127,6 @@ impl<T: BlankItem, const N: usize, L> ShortList<T, N, L> {
     }
 }
 
-impl<T: BlankItem, const N: usize, L> Default for ShortList<T, N, L> {
-    #[inline]
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-
 impl<T, const N: usize, L: std::ops::Deref<Target = [T]>> std::ops::Deref for ShortList<T, N, L> {
     type Target = [T];
     #[inline]
@@ -2273,8 +2266,8 @@ impl<'s> OwnStore<'s> {
             has_unresolved_names: Cell::new(false),
             first_request: Cell::new(FirstRequest::NONE),
             sharing: Sharing::Finds,
-            ids: Default::default(),
-            published: Default::default(),
+            ids: core::array::from_fn(|_| core::cell::Cell::new(Placeholders::new())),
+            published: core::array::from_fn(|_| core::cell::Cell::new(0)),
             visited_files: Bits(Vec::new()),
             of_visited_files: std::array::from_fn(|_| RefCell::new(Bits(Vec::new()))),
         }
@@ -2311,8 +2304,8 @@ impl<'s> OwnStore<'s> {
         self.has_unresolved_names.set(false);
         self.first_request.set(FirstRequest::NONE);
         self.sharing = Sharing::Finds;
-        self.ids = Default::default();
-        self.published = Default::default();
+        self.ids = core::array::from_fn(|_| core::cell::Cell::new(Placeholders::new()));
+        self.published = core::array::from_fn(|_| core::cell::Cell::new(0));
         self.visited_files.0.clear();
         for records in &mut self.of_visited_files {
             records.get_mut().0.clear();
@@ -2651,7 +2644,7 @@ impl<'s> TypeStore<'s> {
             string_literals: [ById::new_in(session), ById::new_in(session)],
             has_unresolved_names: AtomicBool::new(false),
             texts,
-            spare_ids: Guarded::default(),
+            spare_ids: Guarded::init(core::array::from_fn(|_| Vec::new())),
         };
         // First: the flags of a type are those of its mapper too.
         let no_pairs = (Mapping::empty(), ObjectFlags::empty());
@@ -2746,7 +2739,7 @@ impl<'s> TypeStore<'s> {
 
     /// See `Program::release`.
     pub fn release(&mut self) {
-        *self.spare_ids.get_mut() = Default::default();
+        *self.spare_ids.get_mut() = core::array::from_fn(|_| Vec::new());
     }
 
     /// Returns the id for the next `kind` record that `own`'s task publishes. `class` is `class_of_type` for a type and
@@ -2754,7 +2747,7 @@ impl<'s> TypeStore<'s> {
     #[inline]
     fn next_id(&self, kind: Kind, class: usize, own: &OwnStore<'s>) -> Placeholder<'s> {
         let pool = kind as usize + class;
-        let mut ids = own.ids[pool].take();
+        let mut ids = own.ids[pool].replace(Placeholders::new());
         if ids.is_empty() {
             ids = self.reserve_ids(kind, pool);
         }
@@ -2774,7 +2767,7 @@ impl<'s> TypeStore<'s> {
             return ids;
         }
         let next = match kind {
-            Kind::Atom => return Placeholders::default(),
+            Kind::Atom => return Placeholders::new(),
             Kind::Components => self.components.items.len(),
             Kind::Mapper => self.mappers.items.len(),
             Kind::Sig => self.sigs.items.len(),
@@ -2785,7 +2778,7 @@ impl<'s> TypeStore<'s> {
         let count = IDS_RESERVED_AT_A_TIME[kind as usize];
         let count = count - next % count;
         match kind {
-            Kind::Atom => Placeholders::default(),
+            Kind::Atom => Placeholders::new(),
             Kind::Components => self.components.reserve(count),
             Kind::Mapper => self.mappers.reserve(count),
             Kind::Sig => self.sigs.reserve(count),
@@ -2807,7 +2800,7 @@ impl<'s> TypeStore<'s> {
         }
         let mut spare = self.spare_ids.lock();
         for (ids, spare) in own.ids.iter().zip(spare.iter_mut()) {
-            let left = ids.take();
+            let left = ids.replace(Placeholders::new());
             if !left.is_empty() {
                 spare.push(left);
             }
@@ -5083,7 +5076,7 @@ mod tests {
     fn a_short_list_holds_up_to_its_limit_itself() {
         let session = Session::new();
         let arena = session.arena();
-        assert!(Fat::empty().is_empty() && Thin::default().is_empty());
+        assert!(Fat::empty().is_empty() && Thin::empty().is_empty());
         for len in [0, 1, 2, 3, 4, 7, 8, 300] {
             let items = ids(len);
             let (fat, thin) = (

@@ -1561,7 +1561,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
                 ignored_long_flags: if foreign_flags.is_empty() {
-                    Default::default()
+                    bun_clap::IgnoredLongFlags::new()
                 } else {
                     IGNORED_FOREIGN_FLAGS
                 },

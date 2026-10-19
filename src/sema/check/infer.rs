@@ -168,7 +168,7 @@ impl Inference {
         (inference.candidates).extend(params.iter().map(|_| Candidate {
             priority: PRIORITY_MAX as u32,
             top_level: true,
-            ..Default::default()
+            ..Candidate::new()
         }));
         inference
     }
@@ -763,7 +763,7 @@ impl<'p, 's> Checker<'p, 's> {
         targets: &mut Unmatched<'_>,
         matches: impl Fn(&mut Self, TypeId, TypeId) -> bool,
     ) {
-        let mut matched = Matched::default();
+        let mut matched = Matched::new();
         for (j, &t) in targets.iter().enumerate() {
             for (i, &s) in sources.iter().enumerate() {
                 if matches(self, s, t) {
@@ -788,7 +788,7 @@ impl<'p, 's> Checker<'p, 's> {
             (symbol.flatten(), c.alias_symbol_of_type(ty))
         };
         let mut of_sources: SmallVec<[_; 8]> = SmallVec::new();
-        let mut matched = Matched::default();
+        let mut matched = Matched::new();
         for (j, &t) in targets.iter().enumerate() {
             let (symbol, alias) = symbols_of(self, t);
             if symbol.is_none() && alias.is_none() {
@@ -3274,10 +3274,19 @@ struct ReturnTypePair {
 }
 
 /// Which members of two lists `inferFromMatchingTypes` has matched. Empty until one is.
-#[derive(Default)]
 struct Matched {
     sources: SmallVec<[bool; 8]>,
     targets: SmallVec<[bool; 8]>,
+}
+
+impl Matched {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            sources: SmallVec::new(),
+            targets: SmallVec::new(),
+        }
+    }
 }
 
 impl Matched {

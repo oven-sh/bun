@@ -249,6 +249,7 @@ impl OfGit {
             excludes: None,
             stops_at_roots: false,
             is_for_oxc: false,
+            reads_like_prettier: false,
         }
     }
 }
@@ -276,7 +277,7 @@ impl OfGit {
         Self {
             stops_at_roots,
             is_for_oxc,
-            ..Self::default()
+            ..Self::new()
         }
         .with_all_above_and_in(directory, None)
     }
@@ -288,7 +289,7 @@ impl OfGit {
         Self {
             stops_at_roots: true,
             reads_like_prettier: true,
-            ..Self::default()
+            ..Self::new()
         }
         .with_all_above_and_in(directory, Some(cwd))
     }

@@ -659,13 +659,7 @@ pub fn install_with_manager(
         && reresolve_links_to_dropped_workspaces(manager)
         && (manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0)
     {
-        resolve_pending_tasks(
-            manager,
-            &root,
-            log_level,
-            &mut NamedUpdates::new(),
-            None,
-        )?;
+        resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::new(), None)?;
     }
 
     // With `--depth 0`, a transitive dependency that shared the old package with a moved dependency

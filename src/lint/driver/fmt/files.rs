@@ -420,8 +420,14 @@ fn collation_key(path: &[u8]) -> Vec<u8> {
 
 /// The arguments that start with `!`, read the way Prettier reads them: files they match are excluded from the files
 /// the other arguments select. `bun lint` reads them the same way.
-#[derive(Default)]
 pub(crate) struct Negative(Vec<bun_glob::Pattern>);
+
+impl Negative {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl Negative {
     /// `pattern` is an argument without its `!`.
@@ -533,9 +539,13 @@ impl Ignored {
         }
         Ok(Ignored {
             directories,
-            negative: Negative::default(),
+            negative: Negative::new(),
             files,
-            of_git: follows_git.then(Guarded::default),
+            of_git: follows_git.then(|| {
+                Guarded::init(bun_sema::util::FxHashMap::with_hasher(
+                    bun_sema::util::FxBuild,
+                ))
+            }),
             cwd: cwd.to_vec(),
             has_left_out: AtomicBool::new(false),
         })
@@ -625,7 +635,7 @@ fn search(
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
     let reads_gitignore = git.is_some();
-    let git = git.unwrap_or_default();
+    let git = git.unwrap_or_else(OfGit::new);
     let above = configs.for_directory(base)?;
     let mut level = vec![Directory {
         path: base.to_vec(),

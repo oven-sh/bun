@@ -335,7 +335,7 @@ fn run(args: &[String]) {
             }
             let provided = bun_sema_driver::host::Provided {
                 ends_the_process: true,
-                ..Default::default()
+                ..bun_sema_driver::host::Provided::new()
             };
             bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());

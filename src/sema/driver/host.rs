@@ -336,6 +336,7 @@ impl Provided {
             before_read: None,
             scripts_of_page: None,
             keeps_byte_order_marks: false,
+            ends_the_process: false,
         }
     }
 }

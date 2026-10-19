@@ -1152,7 +1152,7 @@ impl Report {
             files_parsed_for_all: 0,
             files_checked: 0,
             files_not_checked: 0,
-            steps: Vec::new(),
+            rounds: Vec::new(),
             projects_checked: 0,
             follows_references: false,
             declaration_files: Vec::new(),
@@ -1160,6 +1160,8 @@ impl Report {
             check_time: core::time::Duration::ZERO,
             load_phases: [core::time::Duration::ZERO; Phase::ALL.len()],
             deepest_stack: 0,
+            inference_walks: [0; INFERENCE_WALK_COUNTS.len()],
+            members: [0; MEMBER_COUNTS.len()],
         }
     }
 }
@@ -3012,7 +3014,7 @@ struct Dropped<'a> {
 impl Drop for Dropped<'_> {
     fn drop(&mut self) {
         if let Some(host) = self.before_the_process_ends.get() {
-            let session = std::mem::take(&mut self.session);
+            let session = std::mem::replace(&mut self.session, Session::new());
             session.drop_before_the_process_ends(&|count, work| host.parallel(count, work));
         }
     }
@@ -3627,7 +3629,7 @@ fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
 fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
     // The path decides first. So the diagnostics of each file are sorted by themselves, and the files by their paths: of
     // tens of thousands of diagnostics most comparisons would be of two long paths that begin alike.
-    let mut files: FxHashMap<&[u8], usize> = FxHashMap::default();
+    let mut files: FxHashMap<&[u8], usize> = FxHashMap::with_hasher(bun_sema::util::FxBuild);
     let file_of = diagnostics.iter().map(|d| {
         let next = files.len();
         *files.entry(typescript_path(&d.path)).or_insert(next)
@@ -4339,7 +4341,7 @@ fn check_named_files(
     // How many files are checked for good.
     let files_done = AtomicUsize::new(0);
     /// What the driver remembers about the last time a file was checked.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct Visit {
         /// `Checker::take_unresolved_cycle`
         unresolved_cycle: Vec<u64>,
@@ -4354,7 +4356,21 @@ fn check_named_files(
         /// How many times the file was rechecked before the last round.
         rechecks: usize,
     }
-    let visits = Guarded::new(vec![Visit::default(); to_check.len()]);
+
+    impl Visit {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                unresolved_cycle: Vec::new(),
+                commits_compared: 0,
+                files_done: 0,
+                can_recheck_early: false,
+                was_retried_as_first: false,
+                rechecks: 0,
+            }
+        }
+    }
+    let visits = Guarded::new(vec![Visit::new(); to_check.len()]);
     let index_of_file: FxHashMap<FileId, usize> = (to_check
         .iter()
         .enumerate()
@@ -4363,13 +4379,25 @@ fn check_named_files(
     // A task that starts with a rechecked file gets a round number of its own, starting here, so task numbers stay unique.
     const AGAIN: usize = 2;
     /// What the tasks of a round add up to.
-    #[derive(Default)]
     struct Sums {
         tasks: usize,
         logged: u64,
         stored: u64,
         waits: [Duration; 3],
         lost: Vec<(usize, &'static str)>,
+    }
+
+    impl Sums {
+        #[inline]
+        fn new() -> Self {
+            Self {
+                tasks: 0,
+                logged: 0,
+                stored: 0,
+                waits: [core::time::Duration::ZERO; 3],
+                lost: Vec::new(),
+            }
+        }
     }
     // Every thread takes files from one queue until none is left. `files`: in program order.
     // `is_last_round`: one thread checks them all in that order, in one task, which is believed.
@@ -4455,17 +4483,26 @@ fn check_named_files(
         let is_read_afterwards = request.retains_everything
             || request.after_file.is_some()
                 && !request.plan_options.after_file_is_for_checked_files;
-        let sums: Guarded<Sums> = Guarded::new(Sums::default());
+        let sums: Guarded<Sums> = Guarded::new(Sums::new());
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
         /// What a worker that has run out of files waits for.
-        #[derive(Default)]
         struct Activity {
             /// How many workers are looking for a file or running a task.
             active: usize,
             /// Counts commits and discards. Each one can make a discarded file recheckable.
             changes: u64,
         }
-        let activity = Guarded::new(Activity::default());
+
+        impl Activity {
+            #[inline]
+            fn new() -> Self {
+                Self {
+                    active: 0,
+                    changes: 0,
+                }
+            }
+        }
+        let activity = Guarded::new(Activity::new());
         let activity_has_changed = bun_threading::Condvar::new();
         let note_change = || {
             activity.lock().changes += 1;
@@ -4661,7 +4698,7 @@ fn check_named_files(
             _ => host.parallel(workers, &|_| work()),
         }
         let elapsed = started.elapsed();
-        let sums = std::mem::take(&mut *sums.lock());
+        let sums = std::mem::replace(&mut *sums.lock(), Sums::new());
         let mut slowest = std::mem::take(&mut *task_times.lock());
         slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
         slowest.truncate(5);

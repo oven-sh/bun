@@ -129,12 +129,21 @@ pub(super) struct Ring {
     members: Vec<u64>,
 }
 
-#[derive(Default)]
 struct Committing {
     /// Of the last commit.
     number: u32,
     /// `Task::assignments_walked` of the commits so far, each with the number of its commit, in their order.
     walked: Vec<(u32, FileId, Node)>,
+}
+
+impl Committing {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            number: 0,
+            walked: Vec::new(),
+        }
+    }
 }
 
 impl Drop for Commits<'_> {
@@ -146,7 +155,7 @@ impl Drop for Commits<'_> {
 impl<'s> Commits<'s> {
     pub(super) fn new_in(arena: &'s Arena) -> Commits<'s> {
         Commits {
-            committing: Guarded::default(),
+            committing: Guarded::init(Committing::new()),
             numbers: arena.alloc(Numbers {
                 begun: AtomicU32::new(0),
                 stored: AtomicU32::new(0),
@@ -154,10 +163,12 @@ impl<'s> Commits<'s> {
                 ranks: Guarded::new(vec![0]),
             }),
             claims: Claims {
-                table: Guarded::default(),
+                table: Guarded::init(rustc_hash::FxHashMap::with_hasher(
+                    rustc_hash::FxBuildHasher,
+                )),
                 has_changed: Condvar::new(),
             },
-            rings: Guarded::default(),
+            rings: Guarded::init(Vec::new()),
             ranks_of_files: &[],
             with_errors: &[],
             at_once: tables_written_at_once(),
@@ -166,8 +177,8 @@ impl<'s> Commits<'s> {
 
     /// See `Program::release`.
     pub(super) fn release(&mut self) {
-        *self.committing.get_mut() = Committing::default();
-        *self.claims.table.get_mut() = FxHashMap::default();
+        *self.committing.get_mut() = Committing::new();
+        *self.claims.table.get_mut() = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         *self.rings.get_mut() = Vec::new();
         *self.numbers.ranks.lock() = Vec::new();
     }
@@ -192,12 +203,12 @@ impl<'s> Commits<'s> {
             with_errors: self.with_errors,
             rank: Cell::new(0),
             of_files: vec![Cell::new(0); files].into_boxed_slice(),
-            touched: RefCell::default(),
+            touched: core::cell::RefCell::new(Vec::new()),
             pinned: Cell::new(NO_FILE),
             at_rest: Cell::new(self.numbers.stored.load(Ordering::Acquire)),
             compared_with_pinned: Cell::new(0),
             oldest_pin: Cell::new(u32::MAX),
-            own: RefCell::default(),
+            own: core::cell::RefCell::new(Vec::new()),
             times_unsettled: Cell::new(0),
         }
     }
@@ -409,13 +420,23 @@ struct Claims {
 }
 
 /// A symbol that has no entry is not claimed, and no claim of it has ended without a result.
-#[derive(Default)]
 struct Claim {
     is_taken: bool,
     /// How many claims have ended without a result.
     failures: u8,
     /// Nobody claims it again, and nobody waits: every thread measures for itself.
     is_given_up: bool,
+}
+
+impl Claim {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            is_taken: false,
+            failures: 0,
+            is_given_up: false,
+        }
+    }
 }
 
 /// What `Program::claim_variances` has found.
@@ -455,7 +476,7 @@ impl<'s> Program<'s> {
                 Some(claim) if claim.is_taken => {}
                 _ if !may_claim => return VarianceClaim::Unclaimed,
                 _ => {
-                    table.entry(sym).or_default().is_taken = true;
+                    table.entry(sym).or_insert_with(Claim::new).is_taken = true;
                     return VarianceClaim::Mine;
                 }
             }
@@ -501,7 +522,7 @@ impl<'s> Program<'s> {
                 table.remove(&sym);
             }
             Some((sym, Some(reason))) => {
-                let claim = table.entry(sym).or_default();
+                let claim = table.entry(sym).or_insert_with(Claim::new);
                 claim.is_taken = false;
                 claim.failures = claim.failures.saturating_add(1);
                 // Another thread may do better, once.

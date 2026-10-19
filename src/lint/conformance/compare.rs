@@ -215,6 +215,7 @@ impl Counts {
             lacking_help: core::sync::atomic::AtomicUsize::new(0),
             in_another_order: core::sync::atomic::AtomicUsize::new(0),
             fails_on_order: false,
+            holding_back_a_fix: core::sync::atomic::AtomicUsize::new(0),
         }
     }
 }

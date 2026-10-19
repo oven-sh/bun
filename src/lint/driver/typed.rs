@@ -760,6 +760,7 @@ impl Fixing {
             fixes: 0,
             is_over: false,
             last_pass: None,
+            tolerated_before: 0,
         }
     }
 }
@@ -778,7 +779,10 @@ pub(crate) fn lint(
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
-    let mut staged = (context.only).map_or_else(AlreadyRead::default, |it| it.already_read(true));
+    let mut staged = (context.only).map_or_else(
+        || AlreadyRead::with_hasher(bun_sema::util::FxBuild),
+        |it| it.already_read(true),
+    );
     // Also add each staged text under the path the file is linted as, which may contain a symlink.
     staged.extend(files.iter().filter_map(|file| {
         let text = context.only?.staged_text(file.path)?.to_vec();

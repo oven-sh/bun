@@ -125,7 +125,7 @@ impl<'s> Task<'s> {
             can_recheck_early: Cell::new(false),
             is_first_in_order: Cell::new(false),
             is_first_in_component: Cell::new(false),
-            cycle_members: RefCell::default(),
+            cycle_members: core::cell::RefCell::new(Vec::new()),
             has_closed_a_ring: Cell::new(None),
             logged_at_rest: Cell::new([0; 2]),
             committed: Cell::new([0; 2]),

@@ -191,14 +191,14 @@ impl Bound<'_> {
     #[inline]
     pub(crate) fn parent_of_expr(&self, e: hir::ExprId) -> bind::Parent {
         let parent = self.expr_parent.get(e.idx()).copied();
-        parent.unwrap_or_default().get()
+        parent.unwrap_or(bind::PackedParent::NONE).get()
     }
 
     /// Returns `Parent::None` if `s` isn't a statement in this file.
     #[inline]
     pub(crate) fn parent_of_stmt(&self, s: hir::StmtId) -> bind::Parent {
         let parent = self.stmt_parent.get(s.idx()).copied();
-        parent.unwrap_or_default().get()
+        parent.unwrap_or(bind::PackedParent::NONE).get()
     }
 }
 

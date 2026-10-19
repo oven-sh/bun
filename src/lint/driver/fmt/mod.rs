@@ -1815,7 +1815,7 @@ impl Run<'_> {
         // A file with several hard links is overwritten in place. A thread reading it through another link at the same
         // time could see partial text and write that back. So each link is locked from its read to its write. The lock
         // is picked by inode modulo 32, so unrelated files occasionally wait for each other.
-        let turns: [Guarded<()>; 32] = Default::default();
+        let turns: [Guarded<()>; 32] = core::array::from_fn(|_| Guarded::new(()));
         let turn_of = |target: &Target| {
             let linked = target.linked.filter(|_| !only_looks);
             linked.map(|(_, inode)| turns[inode as usize % turns.len()].lock())

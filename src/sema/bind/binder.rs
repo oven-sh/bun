@@ -296,9 +296,9 @@ impl<'f, 's> Binder<'f, 's> {
         let mut b = BoundBuilder {
             expr_kinds: filled(old.expr_kinds, 0, NOT_REACHED),
             expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
-            expr_parent: filled(old.expr_parent, f.exprs.len(), PackedParent::default()),
+            expr_parent: filled(old.expr_parent, f.exprs.len(), PackedParent::NONE),
             expr_flow: filled(old.expr_flow, f.exprs.len(), UNREACHABLE),
-            stmt_parent: filled(old.stmt_parent, f.stmts.len(), PackedParent::default()),
+            stmt_parent: filled(old.stmt_parent, f.stmts.len(), PackedParent::NONE),
             stmt_scope: filled(old.stmt_scope, f.stmts.len(), ScopeId::NONE),
             stmt_flow: filled(old.stmt_flow, f.stmts.len(), UNREACHABLE),
             case_fallthrough: filled(old.case_fallthrough, f.cases.len(), FlowId::NONE),

@@ -108,8 +108,15 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
 
 /// A bit set of positions in a list. Methods that combine two sets expect both to be for lists of the same length. Sets
 /// of up to 128 positions are stored inline.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct PositionSet(SmallVec<[u64; 2]>);
+
+impl PositionSet {
+    #[inline]
+    pub(crate) fn init() -> Self {
+        Self(SmallVec::new())
+    }
+}
 
 /// Iterates over the positions of the set bits in a word, lowest first.
 struct BitsOfWord(u64);
@@ -474,9 +481,9 @@ pub(crate) struct GrowingPlaces<A: Allocator + Clone = Global, const N: usize = 
     lens: [Guarded<usize>; N],
 }
 
-impl<A: Allocator + Clone + Default, const N: usize> Default for GrowingPlaces<A, N> {
-    fn default() -> Self {
-        Self::new_in(A::default())
+impl<A: Allocator + Stateless, const N: usize> GrowingPlaces<A, N> {
+    pub(crate) fn new() -> Self {
+        Self::new_in(A::INSTANCE)
     }
 }
 
@@ -554,9 +561,9 @@ pub struct ShardedMap<K, V, A: Allocator + Clone = Global, const N: usize = MAP_
     entries: Box<[AppendVec<(K, V), A>; LISTS], A>,
 }
 
-impl<K, V, A: Allocator + Clone + Default, const N: usize> Default for ShardedMap<K, V, A, N> {
-    fn default() -> Self {
-        Self::new_in(A::default())
+impl<K, V, A: Allocator + Stateless, const N: usize> ShardedMap<K, V, A, N> {
+    pub fn new() -> Self {
+        Self::new_in(A::INSTANCE)
     }
 }
 

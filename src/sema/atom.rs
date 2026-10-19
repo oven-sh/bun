@@ -179,9 +179,9 @@ struct Tables {
 impl Tables {
     fn new(is_in_common: bool) -> Tables {
         Tables {
-            places: Box::default(),
+            places: Box::new(GrowingPlaces::new()),
             texts: AppendVec::new(),
-            classes: Cells::default(),
+            classes: Cells::new(),
             is_in_common,
         }
     }

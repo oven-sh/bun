@@ -189,12 +189,21 @@ impl<'p> Unlisted<'p> {
     }
 }
 
-#[derive(Default)]
 pub(in super::super) struct UnlistedIntersections<'p> {
     by_type: FxHashMap<TypeId, Unlisted<'p>>,
     /// The last intersection of many constituents that was tested for `never`, if they share the names of more than half
     /// of their properties: see `add_shared`. Its properties are asked for next.
     shares_most_names: Option<TypeId>,
+}
+
+impl<'p> UnlistedIntersections<'p> {
+    #[inline]
+    pub(in super::super) fn new() -> Self {
+        Self {
+            by_type: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            shares_most_names: None,
+        }
+    }
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -207,7 +216,7 @@ impl<'p, 's> Checker<'p, 's> {
         let props = &members.shape().props;
         let computes_nothing = members.mapper == MapperId::IDENTITY || take_any_mapper(props);
         let instantiations: Box<[PropInstantiation]> = if computes_nothing {
-            Box::default()
+            Box::new([])
         } else {
             (props.iter())
                 .map(|prop| self.instantiation_of_prop(prop, members.mapper))
@@ -217,7 +226,7 @@ impl<'p, 's> Checker<'p, 's> {
             asked,
             members,
             instantiations,
-            shared: PositionSet::default(),
+            shared: PositionSet::init(),
         }
     }
 
@@ -259,7 +268,7 @@ impl<'p, 's> Checker<'p, 's> {
             constituents,
             combined,
             stored,
-            found: FxHashMap::default(),
+            found: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             lookups: 0,
         };
         self.unlisted_intersections.by_type.insert(ty, unlisted);

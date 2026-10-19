@@ -270,7 +270,8 @@ impl<'e> Files<'e> {
         }
         // Each entry is `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
         let mut parts = strings::split(&finished.stdout, b"\0");
-        let (mut is_no_file, mut wanted) = (FxHashSet::default(), Vec::new());
+        let (mut is_no_file, mut wanted) =
+            (FxHashSet::with_hasher(bun_sema::util::FxBuild), Vec::new());
         while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
             let mut fields = strings::split(entry, b" ");
             let (Some(mode), Some(mode_on_disk), Some(id), Some(name)) =

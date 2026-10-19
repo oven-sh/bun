@@ -39,11 +39,20 @@ pub(in super::super) enum MemberCount {
     ListedAfterBeingAsked,
 }
 
-#[derive(Default)]
 pub(in super::super) struct Reductions {
     /// Mapped types whose members are being resolved. See `has_base_type_in_progress`.
     pub(super) mapped_types_in_progress: SmallVec<[TypeId; 4]>,
     counts: [u64; MEMBER_COUNTS.len()],
+}
+
+impl Reductions {
+    #[inline]
+    pub(in super::super) fn new() -> Self {
+        Self {
+            mapped_types_in_progress: SmallVec::new(),
+            counts: [0; MEMBER_COUNTS.len()],
+        }
+    }
 }
 
 impl Checker<'_, '_> {

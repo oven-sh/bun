@@ -84,7 +84,6 @@ const STACK_OF_KEPT_PART: usize = 64 << 10;
 const PAGE: usize = 128;
 
 /// Maps each type to a number, which is 0 until it's set.
-#[derive(Default)]
 pub(super) struct ByType {
     /// Numbers of the task's own types, indexed by `TypeId::local_number`.
     own: Vec<u32>,
@@ -93,6 +92,17 @@ pub(super) struct ByType {
     /// published types.
     pages: Vec<u32>,
     published: Vec<[u32; PAGE]>,
+}
+
+impl ByType {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            own: Vec::new(),
+            pages: Vec::new(),
+            published: Vec::new(),
+        }
+    }
 }
 
 impl ByType {
@@ -134,7 +144,6 @@ struct KeptAlias {
     len: u32,
 }
 
-#[derive(Default)]
 struct Aliases {
     /// 0 if the alias hasn't been requested, 1 if the type has no alias, otherwise 2 + the index in `kept`.
     of: ByType,
@@ -142,8 +151,18 @@ struct Aliases {
     type_arguments: Vec<TypeId>,
 }
 
+impl Aliases {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            of: ByType::new(),
+            kept: Vec::new(),
+            type_arguments: Vec::new(),
+        }
+    }
+}
+
 /// See the module docs.
-#[derive(Default)]
 pub(super) struct TypeLinks {
     /// 0 if nothing is cached for the type. Otherwise (1 + the index of its row in `parts`) * 2 + its `Kind`.
     rows: ByType,
@@ -166,6 +185,23 @@ pub(super) struct TypeLinks {
     has_found_circular_mapped_constraint: bool,
     /// In a `RefCell` because aliases are looked up through `&Checker`.
     aliases: RefCell<Aliases>,
+}
+
+impl TypeLinks {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            rows: ByType::new(),
+            parts: Vec::new(),
+            infer_type_parameters: Vec::new(),
+            fixed_mapper_rows: ByType::new(),
+            with_fixed_mappers: Vec::new(),
+            times_forgotten: 0,
+            left_open: 0,
+            has_found_circular_mapped_constraint: false,
+            aliases: core::cell::RefCell::new(Aliases::new()),
+        }
+    }
 }
 
 impl TypeLinks {
@@ -491,7 +527,7 @@ mod tests {
             LOCAL | 1,
             LOCAL | 1000,
         ];
-        let mut numbers = ByType::default();
+        let mut numbers = ByType::new();
         for ty in types {
             assert_eq!(numbers.get(TypeId(ty)), 0);
         }
@@ -520,7 +556,7 @@ mod tests {
     #[test]
     fn a_row_is_read_as_the_kind_that_it_was_kept_as() {
         let (conditional, mapped) = (TypeId(LOCAL | 3), TypeId(7));
-        let mut links = TypeLinks::default();
+        let mut links = TypeLinks::new();
         links.keep(conditional, Kind::Conditional, 2, 40, Stored::new());
         let last = MappedPart::ApparentType as usize;
         assert_eq!(last + 1, PARTS);
@@ -537,7 +573,7 @@ mod tests {
     #[test]
     fn only_the_restrictive_instantiations_are_forgotten() {
         let (a, b) = (TypeId(LOCAL | 3), TypeId(7));
-        let mut links = TypeLinks::default();
+        let mut links = TypeLinks::new();
         links.keep_with_fixed_mapper(FixedMapper::Restrictive, a, 40, Stored::new());
         links.keep_with_fixed_mapper(FixedMapper::Permissive, a, 50, Stored::new());
         links.keep_with_fixed_mapper(FixedMapper::UniqueLiteral, b, 60, Stored::new());
@@ -562,7 +598,7 @@ mod tests {
     fn infer_type_parameters() {
         let types = [1, 2, LOCAL, LOCAL | 1, LOCAL | 2].map(TypeId);
         let [none, one, five, too_many, not_asked] = types;
-        let mut links = TypeLinks::default();
+        let mut links = TypeLinks::new();
         links.keep_infer_type_parameters(five, &types);
         links.keep_infer_type_parameters(none, &[]);
         links.keep_infer_type_parameters(one, &[five]);
@@ -587,7 +623,7 @@ mod tests {
         };
         let types = [1, 2, LOCAL, LOCAL | 1, LOCAL | 2].map(TypeId);
         let [without, none, one, five, not_asked] = types;
-        let links = TypeLinks::default();
+        let links = TypeLinks::new();
         assert_eq!(links.alias_symbol(without), None);
         links.keep_alias_symbol(without, None);
         for (at, ty) in [none, one, five, not_asked].into_iter().enumerate() {

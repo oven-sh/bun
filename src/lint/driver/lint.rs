@@ -148,6 +148,7 @@ impl<'h> How<'h> {
             is_later_script: false,
             in_language: None,
             rules: Which::All,
+            is_fixed: false,
         }
     }
 }
@@ -331,7 +332,7 @@ impl Context<'_, '_> {
     ) -> LintResult {
         let how = How {
             is_fixed,
-            ..How::default()
+            ..How::new()
         };
         self.verify_as(path, text, config, &how)
     }

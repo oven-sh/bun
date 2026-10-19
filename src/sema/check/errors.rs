@@ -150,13 +150,23 @@ impl PartialEq for Container {
 }
 
 /// See `Checker::forget_nodes_of_leaf`.
-#[derive(Default)]
 pub(super) struct CheckedLeaves {
     /// Checked leaf files whose nodes are still in the memos, indexed by `FileId`.
     files: PositionSet,
     is_any: bool,
     /// Number of entries left in the memos after the last sweep.
     entries_kept: usize,
+}
+
+impl CheckedLeaves {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            files: PositionSet::init(),
+            is_any: false,
+            entries_kept: 0,
+        }
+    }
 }
 
 impl Checker<'_, '_> {
@@ -178,7 +188,7 @@ impl Checker<'_, '_> {
         if self.entries_by_node() < 2 * self.checked_leaves.entries_kept + 1024 {
             return;
         }
-        let leaves = std::mem::take(&mut self.checked_leaves.files);
+        let leaves = std::mem::replace(&mut self.checked_leaves.files, PositionSet::init());
         let stays = |file: FileId| !leaves.contains(file.idx());
         self.literals_checked_under.retain(|key, _| stays(key.0));
         self.discriminated.retain(|key, _| stays(key.0));
@@ -2225,7 +2235,10 @@ fn similar_in_scope_and_where(
 ) -> Option<(SpellingSuggestion, bool)> {
     let files = c.files();
     let name = (name, c.atoms().bytes(name));
-    let among_globals = std::mem::take(&mut c.suggestions_among_globals);
+    let among_globals = std::mem::replace(
+        &mut c.suggestions_among_globals,
+        core::cell::RefCell::new(KnownSuggestions::new()),
+    );
     // `try_resolve_alias` finds nothing for an alias in progress.
     let is_function_of_candidate = c.alias_targets_in_progress.is_empty();
     let suggested = files.suggested_symbol_for_nonexistent_symbol(
@@ -2285,12 +2298,21 @@ impl SuggestionLookup for Checker<'_, '_> {
 
 /// What `getSuggestionForSymbolNameLookup` finds. A program without the types of its test framework asks for the same
 /// few names thousands of times, from everywhere in a file.
-#[derive(Default)]
 pub(crate) struct KnownSuggestions {
     /// In `globals`, by `meaning` and by the text of the name.
     among_globals: FxHashMap<u32, FxHashMap<Vec<u8>, Option<SpellingSuggestion>>>,
     /// In the locals of a scope, by the scope, `meaning` and the name.
     among_locals: FxHashMap<(FileId, ScopeId, u32, Atom), Option<SpellingSuggestion>>,
+}
+
+impl KnownSuggestions {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            among_globals: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            among_locals: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+        }
+    }
 }
 
 pub(crate) type SuggestionsAmongGlobals = std::cell::RefCell<KnownSuggestions>;

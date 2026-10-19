@@ -56,7 +56,7 @@ impl<'s> Names<ArenaBox<'s, [u32]>> {
     /// The flag: `add_all`. `true` for a list that has no index.
     fn of(props: &[Prop<'s>], arena: &'s Arena) -> (Self, bool) {
         if props.len() <= FEW {
-            return (Names::default(), true);
+            return (Names::new(ArenaBox::empty()), true);
         }
         let places = std::iter::repeat_n(0, (props.len() * 2).next_power_of_two());
         let mut names = Self {
@@ -424,7 +424,7 @@ struct SharedNames {
 impl SharedNames {
     fn of(all: &[Members]) -> SharedNames {
         const SECOND_IN_ITS_MEMBER: u32 = u32::MAX;
-        let mut places = FxHashMap::<Atom, u32>::default();
+        let mut places = FxHashMap::<Atom, u32>::with_hasher(rustc_hash::FxBuildHasher);
         // The place of the name of each property.
         let mut found: Vec<u32> = Vec::new();
         // For each name: the last member that has it, and how many have it.
@@ -712,7 +712,7 @@ impl<'s> IntersectionBuilder<'s> {
         IntersectionBuilder {
             b: Builder::new_in(arena),
             lists: Vec::new(),
-            in_long_lists: Default::default(),
+            in_long_lists: rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -7593,7 +7593,8 @@ impl<'p, 's> Checker<'p, 's> {
             if has_union {
                 let apparent: SmallVec<[TypeId; 4]> =
                     members.iter().map(|&it| self.apparent_type(it)).collect();
-                let mut checked = crate::util::FxHashSet::<Atom>::default();
+                let mut checked =
+                    crate::util::FxHashSet::<Atom>::with_hasher(rustc_hash::FxBuildHasher);
                 for &current in &apparent {
                     let listed = match self.is_union(current) {
                         true => self.union_as_object(current),
@@ -7838,7 +7839,8 @@ impl<'p, 's> Checker<'p, 's> {
         // What `build_intersection_shape` leaves out where it asks whether the property is optional.
         let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
         // `prop_set` from `LONG_PROP_LIST` entries on: those, and the ones that come after.
-        let mut long_prop_set = crate::util::FxHashSet::<PropOfConstituent<'_>>::with_hasher(rustc_hash::FxBuildHasher);
+        let mut long_prop_set =
+            crate::util::FxHashSet::<PropOfConstituent<'_>>::with_hasher(rustc_hash::FxBuildHasher);
         // `prop`: the first property of a name, which `member` has. `holders`: the later members that have the name, and
         // the property of each.
         type Holder<'p> = (Members<'p>, &'p Prop<'p>);
@@ -7962,9 +7964,9 @@ impl<'p, 's> Checker<'p, 's> {
                 examine(self, holder(of_name[0]), &holders);
             }
         } else {
-            let mut seen = crate::util::FxHashSet::<Atom>::default();
+            let mut seen = crate::util::FxHashSet::<Atom>::with_hasher(rustc_hash::FxBuildHasher);
             // The positions of the properties of a member that are looked at.
-            let mut shared = PositionSet::default();
+            let mut shared = PositionSet::init();
             for (at, &member) in all.iter().enumerate() {
                 let rest = &all[at + 1..];
                 let props = &member.shape().props;

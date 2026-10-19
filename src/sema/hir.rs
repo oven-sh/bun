@@ -348,7 +348,7 @@ pub trait Storage {
     /// A list of nodes of a `FileIn`.
     type Nodes<T: 'static>: DerefMut<Target = [T]>;
     /// A `BoundIn` list of ids that is only read by index.
-    type Ids<T: Id>: Ids<T> + Default;
+    type Ids<T: Id>: Ids<T>;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
     type Map<K, V>;
@@ -413,6 +413,12 @@ enum FixedIn<'s, T> {
     Arena(ArenaBox<'s, [T]>),
     Lent(&'s mut [T]),
     Shared(&'s [T]),
+}
+
+impl<T> Fixed<'_, T> {
+    pub fn new() -> Self {
+        Fixed(FixedIn::Lent(&mut []))
+    }
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
@@ -496,15 +502,6 @@ pub struct Narrow<'s, T> {
     long: Fixed<'s, T>,
 }
 
-impl<T> Default for Narrow<'_, T> {
-    fn default() -> Self {
-        Narrow {
-            short: Fixed::default(),
-            long: Fixed::default(),
-        }
-    }
-}
-
 impl<T: Id> Ids<T> for Narrow<'_, T> {
     #[inline]
     fn id_at(&self, index: usize) -> Option<T> {
@@ -522,7 +519,7 @@ impl<'s, T: Id> Narrow<'s, T> {
             |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
         if !list.iter().fold(true, fits) {
             return Narrow {
-                short: Fixed::default(),
+                short: Fixed::new(),
                 long: copy_to_arena(list, arena),
             };
         }
@@ -531,7 +528,7 @@ impl<'s, T: Id> Narrow<'s, T> {
         list.clear();
         Narrow {
             short,
-            long: Fixed::default(),
+            long: Fixed::new(),
         }
     }
 
@@ -2527,6 +2524,7 @@ impl FileBuilder {
             body_starts: Vec::new(),
             after_skipped: Vec::new(),
             modifiers_of_params: Vec::new(),
+            modifiers_of_stmts: Vec::new(),
             modifiers_of_props: Vec::new(),
             unclosed_literals: Vec::new(),
             stray_decorators: Vec::new(),
@@ -2538,6 +2536,8 @@ impl FileBuilder {
             exports_from_expressions: Vec::new(),
             parens: Vec::new(),
             non_null_ends: Vec::new(),
+            far_names: Vec::new(),
+            tagged_templates: Vec::new(),
             jsx_expressions: Vec::new(),
             jsx_pragmas: JsxPragmas::new(),
             jsdoc_comments: Vec::new(),

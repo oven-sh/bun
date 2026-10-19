@@ -474,7 +474,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         // `QuietDiagnosticReporter`
         let diagnostics: &[Diagnostic] = if report.is_quiet { &[] } else { diagnostics };
         // Caches the previous diagnostic's file and its `relative_path`.
-        let mut last: (&[u8], BString) = Default::default();
+        let mut last: (&[u8], BString) = (&[], bstr::BString::new(Vec::new()));
         if is_grouped {
             write_grouped(out, report, style);
         } else {

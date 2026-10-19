@@ -388,9 +388,7 @@ pub struct GrowingSymbol {
 }
 
 /// A symbol's declarations. Almost every symbol has exactly one, so that case is stored inline.
-#[derive(Default)]
 pub enum GrowingDecls {
-    #[default]
     None,
     One(Decl),
     Many(Vec<Decl>),
@@ -794,7 +792,7 @@ macro_rules! packed {
         }
 
         $(#[$packed_doc])*
-        #[derive(Copy, Clone, PartialEq, Eq, Default)]
+        #[derive(Copy, Clone, PartialEq, Eq)]
         pub struct $packed(u32);
 
         const _: () = {
@@ -815,6 +813,9 @@ macro_rules! packed {
             }
 
             impl $packed {
+                /// `$none`, packed.
+                pub const NONE: $packed = $packed(Tag::$none as u32);
+
                 #[inline]
                 pub fn get(self) -> $name {
                     let tag = self.0 & ((1 << TAG_BITS) - 1);
@@ -1672,7 +1673,7 @@ impl BoundBuilder {
             stmt_scope: Vec::new(),
             type_scope: Vec::new(),
             type_by_alias: Vec::new(),
-            this_in_type_literal: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            this_in_type_literal: rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             pat_parent: Vec::new(),
             pat_symbol: Vec::new(),
             prop_owner: Vec::new(),
@@ -1798,20 +1799,20 @@ impl<S: Storage> BoundIn<S> {
     #[inline]
     pub fn parent_of_expr(&self, e: ExprId) -> Parent {
         let parent = self.expr_parent.get(e.idx()).copied();
-        parent.unwrap_or_default().get()
+        parent.unwrap_or(PackedParent::NONE).get()
     }
 
     /// Returns the parent of `s`, or `Parent::None` if `s` isn't a statement of this file.
     #[inline]
     pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
         let parent = self.stmt_parent.get(s.idx()).copied();
-        parent.unwrap_or_default().get()
+        parent.unwrap_or(PackedParent::NONE).get()
     }
 
     /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
     #[inline]
     pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
-        self.expr_symbol.id_at(e.idx()).unwrap_or_default()
+        self.expr_symbol.id_at(e.idx()).unwrap_or(SymbolId::NONE)
     }
 
     /// Returns `expr_flow` for `e`, or `UNREACHABLE` if `e` isn't an expression of this file.
@@ -1829,7 +1830,7 @@ impl<S: Storage> BoundIn<S> {
     /// Returns the scope that encloses `s`, or `NONE` if `s` isn't a statement of this file.
     #[inline]
     pub fn scope_of_stmt(&self, s: StmtId) -> ScopeId {
-        self.stmt_scope.id_at(s.idx()).unwrap_or_default()
+        self.stmt_scope.id_at(s.idx()).unwrap_or(ScopeId::NONE)
     }
 
     /// Returns the class at whose position a decorator with this `parent` is evaluated.

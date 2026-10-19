@@ -542,7 +542,7 @@ pub(crate) fn list_as_eslint_8(
 /// and oxlint ignores them. If every argument is an exclusion, oxfmt searches the working directory, so a run with an
 /// oxlint config does too.
 fn split_negative<'p>(loader: &Loader, patterns: &'p [Vec<u8>]) -> (Cow<'p, [Vec<u8>]>, Negative) {
-    let mut negative = Negative::default();
+    let mut negative = Negative::new();
     if !patterns.iter().any(|it| it.starts_with(b"!")) {
         return (Cow::Borrowed(patterns), negative);
     }

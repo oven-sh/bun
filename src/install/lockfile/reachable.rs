@@ -90,6 +90,13 @@ pub(crate) struct Linked {
 }
 
 impl Linked {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self { packages: None }
+    }
+}
+
+impl Linked {
     /// An optional peer of `parent_pkg_id` whose package only an omitted group asked for.
     pub(crate) fn omits_optional_peer(
         &mut self,

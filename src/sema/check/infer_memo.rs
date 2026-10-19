@@ -96,7 +96,7 @@ pub(super) const LONG_WALK: u32 = 16;
 type Words = SmallVec<[u32; 48]>;
 
 /// A recorded walk.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Entry {
     /// The `key_of_walk` output, then the `push_state` output after the walk, which is omitted if the walk didn't
     /// change the state. The key includes the state before the walk, so restoring the state after it has the same
@@ -116,6 +116,22 @@ struct Entry {
     stack: u32,
     /// `InferenceMemo::generation` when the walk ran.
     generation: u64,
+}
+
+impl Entry {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            words: Box::new([]),
+            key_len: 0,
+            calls: 0,
+            instantiations: 0,
+            reliability: 0,
+            is_confirmed: false,
+            stack: 0,
+            generation: 0,
+        }
+    }
 }
 
 impl Entry {
@@ -190,7 +206,6 @@ impl Readings {
     }
 }
 
-#[derive(Default)]
 pub(in super::super) struct InferenceMemo {
     /// Bit set of long-walk targets, indexed by a hash of the target. Two targets can share a bit. Empty until the
     /// first long walk.
@@ -207,6 +222,21 @@ pub(in super::super) struct InferenceMemo {
     /// `Checker::inference_disturbances` at the start of this generation.
     disturbances: [u64; DISTURBANCES.len()],
     counts: [u64; INFERENCE_WALK_COUNTS.len()],
+}
+
+impl InferenceMemo {
+    #[inline]
+    pub(in super::super) fn new() -> Self {
+        Self {
+            long_targets: Vec::new(),
+            entries: Vec::new(),
+            shift: 0,
+            stored: 0,
+            generation: 0,
+            disturbances: [0; DISTURBANCES.len()],
+            counts: [0; INFERENCE_WALK_COUNTS.len()],
+        }
+    }
 }
 
 impl InferenceMemo {
@@ -282,7 +312,7 @@ impl InferenceMemo {
     #[cold]
     fn grow(&mut self) {
         let len = (self.entries.len() * 4).max(64);
-        let empty = std::iter::repeat_with(Entry::default).take(len).collect();
+        let empty = std::iter::repeat_with(Entry::new).take(len).collect();
         self.shift = 64 - len.trailing_zeros();
         self.stored = 0;
         for entry in std::mem::replace(&mut self.entries, empty) {
@@ -576,7 +606,7 @@ mod tests {
             calls: LONG_WALK,
             instantiations,
             generation: memo.generation,
-            ..Entry::default()
+            ..Entry::new()
         }
     }
 
@@ -593,7 +623,7 @@ mod tests {
 
     #[test]
     fn the_first_long_walk_marks_its_target() {
-        let mut memo = InferenceMemo::default();
+        let mut memo = InferenceMemo::new();
         assert!(!memo.has_long_walk_to(TypeId(7)));
         memo.note_long_walk_to(TypeId(7));
         assert!(memo.has_long_walk_to(TypeId(7)));
@@ -602,7 +632,7 @@ mod tests {
 
     #[test]
     fn a_walk_that_instantiates_is_left_out_after_two_that_did_the_same() {
-        let mut memo = InferenceMemo::default();
+        let mut memo = InferenceMemo::new();
         let key = [1, 2, 3];
         store(&mut memo, &key, &[7], 0);
         assert!(is_left_out(&memo, &key));
@@ -619,7 +649,7 @@ mod tests {
 
     #[test]
     fn an_entry_lasts_until_something_is_disturbed() {
-        let mut memo = InferenceMemo::default();
+        let mut memo = InferenceMemo::new();
         let key = [1, 2, 3];
         memo.begin_generation_if_disturbed(&[1; DISTURBANCES.len()]);
         store(&mut memo, &key, &[], 0);
@@ -672,7 +702,7 @@ mod tests {
 
     #[test]
     fn the_table_grows_up_to_its_bound() {
-        let mut memo = InferenceMemo::default();
+        let mut memo = InferenceMemo::new();
         for i in 0..5000 {
             store(&mut memo, &[i, 0, 0], &[], 0);
             assert!(is_left_out(&memo, &[i, 0, 0]));

@@ -525,7 +525,7 @@ fn build_store(
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
 
-    let peer_range_cache = lockfile::bun_lock::PeerRangeCache::default();
+    let peer_range_cache = lockfile::bun_lock::PeerRangeCache::new();
     let peer_ranges = lockfile::bun_lock::PeerRanges {
         cache: &peer_range_cache,
         lockfile,

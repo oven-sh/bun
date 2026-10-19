@@ -206,6 +206,7 @@ impl LintResult {
             thrown: None,
             line_starts: None,
             run_keys: Vec::new(),
+            tolerated_errors: 0,
         }
     }
 }

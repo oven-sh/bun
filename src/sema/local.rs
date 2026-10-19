@@ -18,6 +18,7 @@
 //! runs the task frees it when the task ends.
 
 use crate::util::{LocalVec, Placement, free_slot, is_too_full, place_of, search, slots_for};
+use bun_core::Integer;
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -93,12 +94,21 @@ impl Placement for OfTask {
 
 /// Finds indices by the hash of the values they represent. It is added to through a shared
 /// reference, by the one thread that has it.
-#[derive(Default)]
 pub struct Found {
     /// None, or a power of two of them: see `place_of`. No other thread reads them, so their address
     /// and their number are here, and a table that a bigger one replaces is freed at once.
     slots: RefCell<Box<[u64]>>,
     count: Cell<usize>,
+}
+
+impl Found {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            slots: core::cell::RefCell::new(Box::new([])),
+            count: core::cell::Cell::new(0),
+        }
+    }
 }
 
 /// Where a search of a `Found` for a hash has ended without a result.
@@ -186,7 +196,7 @@ impl Found {
         if count != 0 && slots.len() <= 4 * slots_for::<OfTask>(count, 0) {
             slots.fill(0);
         } else if count != 0 {
-            *slots = Box::default();
+            *slots = Box::new([]);
         }
     }
 }
@@ -291,7 +301,7 @@ fn cell_at<C: Integer>(cells: &mut Vec<C>, index: usize) -> &mut C {
 }
 
 #[inline]
-fn cell_mut<C: Copy + Default>(cells: &mut Vec<C>, index: u32) -> &mut C {
+fn cell_mut<C: Integer>(cells: &mut Vec<C>, index: u32) -> &mut C {
     cell_at(cells, index as usize)
 }
 
@@ -328,10 +338,16 @@ const PAGE: usize = 64;
 /// `directory[at / PAGE / PAGE]` is the number of a list, the entry `at / PAGE % PAGE` of the list is
 /// the number of a page, and the entry `at % PAGE` of the page is the cell. A number is 0 where
 /// nothing was written, which ends the search.
-#[derive(Default)]
 struct Pages {
     /// The lists and the pages. The first is neither: nothing has the number 0.
     pool: Vec<[u32; PAGE]>,
+}
+
+impl Pages {
+    #[inline]
+    fn new() -> Self {
+        Self { pool: Vec::new() }
+    }
 }
 
 impl Pages {
@@ -633,12 +649,21 @@ impl<'s> Half<'s> {
 
 /// Under which keys a task has stored since its last commit, in that order. The values are where the lookups of the task
 /// find them: a commit stores what a key has by then. See `crate::check::commit`.
-#[derive(Default)]
 pub(crate) struct Log {
     /// A slot, and the number of a published id or the place of an entry in a `Hashed`.
     pub(crate) of_records: Vec<[u32; 2]>,
     /// A slot, a file, and the number of a node in the file.
     pub(crate) of_nodes: Vec<[u32; 3]>,
+}
+
+impl Log {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self {
+            of_records: Vec::new(),
+            of_nodes: Vec::new(),
+        }
+    }
 }
 
 impl Log {
@@ -680,14 +705,14 @@ impl<'s> Buffer<'s> {
             log: None,
             ordinals: Vec::new(),
             files: 0,
-            pages: Pages::default(),
+            pages: Pages::new(),
             halves: std::array::from_fn(|_| Half::new()),
         }
     }
 
     /// From now on the keys of the new entries are logged.
     pub(crate) fn begin_log(&mut self) {
-        self.log = Some(Log::default());
+        self.log = Some(Log::new());
     }
 
     /// How many keys are logged.
@@ -714,7 +739,10 @@ impl<'s> Buffer<'s> {
 
     /// None are logged afterwards.
     pub(crate) fn take_log(&mut self) -> Log {
-        self.log.as_mut().map(std::mem::take).unwrap_or_default()
+        match self.log.as_mut() {
+            Some(log) => std::mem::replace(log, Log::new()),
+            None => Log::new(),
+        }
     }
 
     /// What `take_log` has returned, for its memory.

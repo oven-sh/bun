@@ -589,7 +589,7 @@ enum OwnerCopy {
 impl PeerProbes {
     #[inline]
     pub(crate) fn new() -> Self {
-        Self(Vec::new(), None)
+        Self(Vec::new(), None, None)
     }
 }
 

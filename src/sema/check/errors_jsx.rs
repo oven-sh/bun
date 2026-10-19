@@ -96,7 +96,7 @@ impl Checker<'_, '_> {
                 kind: SpecifierKind::Import,
                 mode: self.files().module(file).default_mode,
             };
-            let (site, location) = (SpecifierSite::default(), (file, hir[first].pos, end));
+            let (site, location) = (SpecifierSite::new(), (file, hir[first].pos, end));
             let since = self.reported.len();
             self.resolve_external_module_at(file, specifier, site, location, Some(2875));
             for diagnostic in &mut self.reported[since..] {

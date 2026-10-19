@@ -1808,7 +1808,7 @@ fn run_one(
             progress: None,
             only: None,
             order: 1,
-            plan_options: bun_sema_driver::PlanOptions::default(),
+            plan_options: bun_sema_driver::PlanOptions::new(),
             retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],

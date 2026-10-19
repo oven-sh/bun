@@ -32,9 +32,17 @@ pub(super) struct Traces {
 
 /// Maps each type to a `u32`, which is 0 until set. It belongs to one checker and stores the same entries as a
 /// `FxHashMap<TypeId, u32>` field would. Only the lookup is different.
-#[derive(Default)]
 pub(super) struct TypeNumbers {
     dense: links::ByType,
+}
+
+impl TypeNumbers {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            dense: links::ByType::new(),
+        }
+    }
 }
 
 impl TypeNumbers {
@@ -51,9 +59,9 @@ impl TypeNumbers {
 /// Works like `FxHashMap<TypeId, V>`, backed by `TypeNumbers`.
 pub(super) struct TypeMap<V>(TypeNumbers, std::marker::PhantomData<V>);
 
-impl<V> Default for TypeMap<V> {
-    fn default() -> Self {
-        TypeMap(TypeNumbers::default(), std::marker::PhantomData)
+impl<V> TypeMap<V> {
+    pub(super) fn new() -> Self {
+        TypeMap(TypeNumbers::new(), std::marker::PhantomData)
     }
 }
 
@@ -102,8 +110,14 @@ pub(super) mod task_fact {
 }
 
 /// A set of `task_fact` bits for each type.
-#[derive(Default)]
 pub(super) struct TaskFacts(TypeNumbers);
+
+impl TaskFacts {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self(TypeNumbers::new())
+    }
+}
 
 impl TaskFacts {
     #[inline]
@@ -222,7 +236,7 @@ mod tests {
 
     #[test]
     fn a_value_for_each_type() {
-        let mut map: TypeMap<TypeId> = TypeMap::default();
+        let mut map: TypeMap<TypeId> = TypeMap::new();
         for ty in TYPES {
             assert_eq!(map.get(ty), None);
             map.remove(ty);
@@ -244,7 +258,7 @@ mod tests {
 
     #[test]
     fn bits_for_each_type() {
-        let mut facts = TaskFacts::default();
+        let mut facts = TaskFacts::new();
         for ty in TYPES {
             assert_eq!(facts.get(ty), 0);
             assert!(facts.add(ty, 0b0101));

@@ -401,7 +401,7 @@ pub struct ParseOptions<'a> {
 
 /// Long flags, written without the dashes, that are skipped instead of failing the parse when
 /// `unknown_long_flags_are_errors` is set.
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct IgnoredLongFlags {
     /// Skips `--name`, `--no-name`, `--name=value`, `--name true` and `--name false`.
     pub flags: &'static [&'static [u8]],
@@ -410,6 +410,17 @@ pub struct IgnoredLongFlags {
     pub options: &'static [&'static [u8]],
     /// Skips every `--name` and `--name=value` whose name starts with one of these.
     pub prefixes: &'static [&'static [u8]],
+}
+
+impl IgnoredLongFlags {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            flags: &[],
+            options: &[],
+            prefixes: &[],
+        }
+    }
 }
 
 impl<'a> ParseOptions<'a> {
@@ -421,6 +432,7 @@ impl<'a> ParseOptions<'a> {
             short_aliases: &[],
             unknown_long_flags_are_positional: false,
             unknown_long_flags_are_errors: false,
+            ignored_long_flags: IgnoredLongFlags::new(),
         }
     }
 }

@@ -2274,9 +2274,11 @@ impl<'a> Checks<'a, '_> {
         // outermost label, which is part of the key.
         let mut from_outside: Vec<usize> = (0..labeled.len()).collect();
         from_outside.sort_unstable_by_key(|&index| labeled[index].0.span().start);
-        let mut label_around: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::default();
-        let mut outermost_of: FxHashMap<u32, u32> = FxHashMap::default();
-        let mut open: FxHashMap<_, SmallVec<[usize; 1]>> = FxHashMap::default();
+        let mut label_around: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::new();
+        let mut outermost_of: FxHashMap<u32, u32> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
+        let mut open: FxHashMap<_, SmallVec<[usize; 1]>> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut first_of: Vec<Option<Stmt<'a>>> = vec![None; labeled.len()];
         for index in from_outside {
             let (it, label) = labeled[index];

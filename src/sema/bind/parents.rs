@@ -91,8 +91,8 @@ pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut Bound
         refilled(&mut b.expr_kind_counts, 2 * ExprTag::COUNT, 0);
         refilled(&mut b.kind_counts, kind_counts::LEN, 0);
     }
-    refilled(&mut b.expr_parent, f.exprs.len(), PackedParent::default());
-    refilled(&mut b.stmt_parent, f.stmts.len(), PackedParent::default());
+    refilled(&mut b.expr_parent, f.exprs.len(), PackedParent::NONE);
+    refilled(&mut b.stmt_parent, f.stmts.len(), PackedParent::NONE);
     refilled(&mut b.pat_parent, f.pats.len(), PatParent::None);
     refilled(&mut b.prop_owner, f.props.len(), ExprId::NONE);
     refilled(&mut b.member_owner, f.members.len(), MemberOwner::None);
@@ -751,7 +751,7 @@ fn is_all_part_of_something(
 ) -> bool {
     // Nearly always there is none, so a list is not left at the first: that way several entries are compared at once.
     let has_orphan = |list: &[PackedParent]| {
-        let is_orphan = |found, it: &PackedParent| found | (*it == PackedParent::default());
+        let is_orphan = |found, it: &PackedParent| found | (*it == PackedParent::NONE);
         list.iter().fold(false, is_orphan)
     };
     let has_unreached =

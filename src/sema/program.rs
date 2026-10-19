@@ -1091,7 +1091,7 @@ struct Ahead<'s, 'r> {
 impl<'s, 'r> Ahead<'s, 'r> {
     /// Each seed is (path, is a lib).
     fn new(seeds: Vec<(&'r [u8], bool)>) -> Ahead<'s, 'r> {
-        let mut seen: FxHashMap<&'r [u8], u32> = FxHashMap::default();
+        let mut seen: FxHashMap<&'r [u8], u32> = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for seed in &seeds {
             let next = seen.len() as u32;
             seen.entry(seed.0).or_insert(next);
@@ -1108,8 +1108,8 @@ impl<'s, 'r> Ahead<'s, 'r> {
                     .collect(),
                 ready: Vec::new(),
                 in_progress: 0,
-                done: FxHashMap::default(),
-                by_package_id: FxHashMap::default(),
+                done: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+                by_package_id: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
                 slots: Vec::new(),
             }),
             has_changed: bun_threading::Condvar::new(),
@@ -2701,6 +2701,8 @@ impl<'s> Resolved<'s> {
         Self {
             alias_links: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             symbol_flags: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            alias_links_in_order: Vec::new(),
+            symbol_flags_in_order: Vec::new(),
             module_links: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             decls: Vec::new(),
             failed_lookups: Vec::new(),
@@ -5630,7 +5632,8 @@ impl<'s> Files<'s> {
             .map(|mut noted| noted.get_mut().take().unwrap())
             .collect();
         // For each declaration file that's read instead of a source: a name of that source.
-        let mut redirected_from: FxHashMap<FileId, Atom> = FxHashMap::default();
+        let mut redirected_from: FxHashMap<FileId, Atom> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         for (&start, &root) in starts[libs_end..roots_end].iter().zip(&root_of_start) {
             let root = &roots[root as usize];
             if options.parse_file_redirect(root).is_some() {
@@ -6204,7 +6207,7 @@ impl<'s> Files<'s> {
     ) -> (hir::File<'s>, Bound<'s>) {
         let mut hir = host.parse(arena, path, &text, atoms, options);
         if !options.keeps_comments {
-            hir.comments = Default::default();
+            hir.comments = Fixed::new();
         }
         if !is_lib || options.keeps_the_text_of_libraries {
             hir.text = text;
@@ -6300,7 +6303,8 @@ impl<'s> Files<'s> {
         notes: &[Noted<'s>],
     ) -> OfPackages<'s> {
         let arena = session.arena();
-        let mut package_jsons: FxHashMap<&'s [u8], Arc<Json>> = FxHashMap::default();
+        let mut package_jsons: FxHashMap<&'s [u8], Arc<Json>> =
+            FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
         let mut previous_scope = Atom::NONE;
         for noted in notes {
             let path: &'s [u8] = noted.file_name;
@@ -9102,7 +9106,7 @@ impl<'s> Files<'s> {
         nested: &mut Vec<Sym>,
     ) -> Option<Resolved<'s>> {
         let is_own = |sym: Sym| plan.component_of(sym.file) == own;
-        let mut rest = Resolved::default();
+        let mut rest = Resolved::new();
         for (sym, links) in resolved.alias_links_in_order {
             if is_own(sym) {
                 self.alias_symbol_links.insert_ref(sym, links);

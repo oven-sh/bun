@@ -3087,10 +3087,16 @@ pub(crate) fn resolve_peer_dep_version_based(
 /// For each package name: the packages that have no provider for a peer dependency on that name, and
 /// the required peer dependencies on it that have no provider in at least one place, one per
 /// distinct range. Filled on demand.
-#[derive(Default)]
 pub(crate) struct PeerRangeCache(
     core::cell::RefCell<HashMap<PackageNameHash, (DynamicBitSet, Box<[DependencyID]>)>>,
 );
+
+impl PeerRangeCache {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(core::cell::RefCell::new(HashMap::new()))
+    }
+}
 
 /// Finds the version that packages with a peer dependency on the same name can share.
 #[derive(Clone, Copy)]

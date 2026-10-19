@@ -284,7 +284,7 @@ fn a_permission_tells_whether_the_task_has_held_back_since_its_computation_began
 #[should_panic]
 #[cfg_attr(miri, ignore)]
 fn a_table_that_knows_its_slot_takes_no_other() {
-    let mut table = ById::<TypeId, TypeId, Buffered<At<3>>>::default();
+    let mut table = ById::<TypeId, TypeId, Buffered<At<3>>>::new();
     table.set_slot(numbered(4));
 }
 
@@ -479,7 +479,7 @@ fn hashed_lists_its_entries_in_insertion_order() {
 fn a_vacancy_is_filled_only_while_it_is_one() {
     let is = |number: u32| move |found: u32| found == number;
     // Of a table without slots.
-    let found = Found::default();
+    let found = Found::new();
     assert_eq!(found.find(7, |_| true), None);
     let Err(vacancy) = found.find_or_vacancy(7, |_| true) else {
         unreachable!()
@@ -514,7 +514,7 @@ fn a_vacancy_is_filled_only_while_it_is_one() {
 fn what_is_found_stays_found_when_the_table_is_replaced() {
     // The first table has 256 slots.
     for count in [1, 191, 192, 193, 384, 385] {
-        let mut found = Found::default();
+        let mut found = Found::new();
         for number in 0..count {
             found.add(spread_word(u64::from(number)), number);
             for earlier in [0, number / 2, number] {

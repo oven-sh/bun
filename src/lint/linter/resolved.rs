@@ -329,6 +329,7 @@ impl ResolvedConfig {
             formatting_rules: Vec::new(),
             plugins_without_rules: Vec::new(),
             js_settings: None,
+            js_settings_without_module_syntax: None,
             js_plugins: Vec::new(),
             foreign_plugins: Vec::new(),
             printed_plugins: Vec::new(),

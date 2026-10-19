@@ -260,6 +260,7 @@ impl FlowMemo {
             tests: Vec::new(),
             tests_of: None,
             other_tests: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            types_with_facts: instantiate::Recent::new(),
             assignment_reduced_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             narrowed_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             equal_types: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),

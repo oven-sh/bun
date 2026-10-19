@@ -685,7 +685,7 @@ impl Options {
             silent: false,
             ignore_path: None,
             ignore_file_name_of_bunfig: None,
-            pipes: fs::NamedPipes::default(),
+            pipes: fs::NamedPipes::new(),
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,

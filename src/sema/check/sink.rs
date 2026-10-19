@@ -236,7 +236,9 @@ impl<'s> Sink<'s> {
     pub(super) fn new_in(files: usize, arena: &'s Arena) -> Sink<'s> {
         Sink {
             by_file: vec_from_iter_in((0..files).map(|_| Guarded::init(Vec::new())), arena),
-            owners: Guarded::default(),
+            owners: Guarded::init(rustc_hash::FxHashMap::with_hasher(
+                rustc_hash::FxBuildHasher,
+            )),
         }
     }
 
@@ -245,7 +247,7 @@ impl<'s> Sink<'s> {
         for reported in &mut self.by_file {
             *reported.get_mut() = Vec::new();
         }
-        *self.owners.get_mut() = FxHashMap::default();
+        *self.owners.get_mut() = FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
     }
 }
 

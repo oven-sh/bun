@@ -149,8 +149,15 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
 
 /// Contents of the named pipes passed to flags, keyed by path. A pipe can only be read once, but a run reads some of
 /// these files more than once.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct NamedPipes(Vec<(Vec<u8>, Vec<u8>)>);
+
+impl NamedPipes {
+    #[inline]
+    pub(crate) fn new() -> Self {
+        Self(Vec::new())
+    }
+}
 
 impl NamedPipes {
     /// Reads and caches every path in `named` that is a pipe. The paths are as the user typed them, relative to `cwd`.

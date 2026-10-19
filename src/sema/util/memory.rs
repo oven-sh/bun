@@ -408,13 +408,13 @@ impl<T, L: Length, A: Allocator + Clone> Segmented<'_, T, L, A> {
             true => 0,
             false => OWN as usize >> SEGMENT_BITS,
         };
-        let limits: [L; 4] = Default::default();
+        let limits: [L; 4] = [L::ZERO; 4];
         limits[1].add(OWN);
         Segmented {
             directory: UnsafeCell::new(Self::new_directory(segments, &[], &alloc)),
             directories: [const { Cell::new(std::ptr::null()) }; 4],
             limits,
-            len: L::default(),
+            len: L::ZERO,
             alloc,
             below: PhantomData,
             owns: PhantomData,
@@ -590,8 +590,8 @@ pub(crate) struct Placeholder<'a> {
 }
 
 /// An empty run.
-impl Default for Placeholders<'_> {
-    fn default() -> Self {
+impl Placeholders<'_> {
+    pub(crate) fn new() -> Self {
         Placeholders {
             of: 0,
             next: 0,
@@ -984,9 +984,9 @@ pub struct Newest<C, A: Allocator + Clone = Global, const N: usize = 1> {
     owns: Owns<C>,
 }
 
-impl<C: Zeroed, A: Allocator + Clone + Default, const N: usize> Default for Newest<C, A, N> {
-    fn default() -> Self {
-        Self::new_in(A::default())
+impl<C: Zeroed, const N: usize> Newest<C, Global, N> {
+    pub fn new() -> Self {
+        Self::new_in(Global)
     }
 }
 
@@ -1598,7 +1598,7 @@ mod tests {
                 _ => assert_eq!(*store.get(index) as u32, index),
             }
         }
-        assert!(Placeholders::default().take_first().is_none());
+        assert!(Placeholders::new().take_first().is_none());
     }
 
     #[test]

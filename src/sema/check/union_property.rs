@@ -104,7 +104,6 @@ struct UnionSummary {
 }
 
 /// Type ids can be task-local, so none of this is shared between tasks.
-#[derive(Default)]
 pub(super) struct UnionMembers<'p> {
     facts: Vec<MemberFacts<'p>>,
     /// Maps a member to 1 + the index of its facts in `facts`, or to 0 if it doesn't have facts.
@@ -118,6 +117,20 @@ pub(super) struct UnionMembers<'p> {
     summaries: FxHashMap<TypeId, UnionSummary>,
     /// True while a caller looks up every name that a union's members have. See `property_holder_of_member`.
     is_listing: bool,
+}
+
+impl<'p> UnionMembers<'p> {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self {
+            facts: Vec::new(),
+            facts_of: TypeNumbers::new(),
+            recent: Vec::new(),
+            holders: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            summaries: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
+            is_listing: false,
+        }
+    }
 }
 
 impl<'p> UnionMembers<'p> {
@@ -204,9 +217,9 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
     fn new(containing_type: TypeId) -> UnionPropertyBuilder<'p, 's> {
         UnionPropertyBuilder {
             prop_set: SmallVec::new(),
-            prop_hashes: FxHashSet::default(),
+            prop_hashes: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             symbols: SmallVec::new(),
-            more_symbols: FxHashSet::default(),
+            more_symbols: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             index_types: SmallVec::new(),
             merged_instantiations: false,
             flags: PropFlags::empty(),

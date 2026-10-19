@@ -46,9 +46,9 @@ impl Checker<'_, '_> {
         let mut order = CheckOrder {
             file,
             follows_later_files,
-            deferred_nodes: Default::default(),
-            is_deferred: Default::default(),
-            is_resolved: Default::default(),
+            deferred_nodes: std::collections::VecDeque::new(),
+            is_deferred: rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
+            is_resolved: rustc_hash::FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             current_node: Node::NONE,
         };
         let mut statements = hir.ids(hir.body);

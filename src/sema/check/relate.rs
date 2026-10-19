@@ -1025,7 +1025,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn note_inherited_names(&mut self) {
         let before = self.non_cacheable_mark();
         let mut names = [0; 4];
-        let mut name_set = FxHashSet::default();
+        let mut name_set = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
         let mut are_members_stored = true;
         for global in [
             known::Object,
@@ -4921,7 +4921,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
         // types, so we only need to check the properties of the first type without index signature".
         let mut props: ArenaVec<Prop> = ArenaVec::new_in(self.arena);
-        let mut names_of_props = FxHashSet::<Atom>::default();
+        let mut names_of_props = FxHashSet::<Atom>::with_hasher(rustc_hash::FxBuildHasher);
         let was_listing = self.union_members.set_listing(true);
         for &current in members {
             let Some(of_current) = self.members(current) else {

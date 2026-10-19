@@ -17,6 +17,7 @@ use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
@@ -59,6 +60,77 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
     let registry = strings::without_trailing_slash(registry);
     strings::has_prefix(url, registry)
         && (url.len() == registry.len() || url[registry.len()] == b'/')
+}
+
+/// Decides when the writer replaces an npm tarball URL with `""`.
+struct NpmUrlWriter<'a> {
+    options: &'a PackageManagerOptions,
+    registry: Vec<u8>,
+    scratch: Vec<u8>,
+}
+
+impl<'a> NpmUrlWriter<'a> {
+    fn new(options: &'a PackageManagerOptions) -> Self {
+        Self {
+            options,
+            registry: crate::yarn_berry::registry_without_auth(options.scope.url.href()),
+            scratch: Vec::new(),
+        }
+    }
+
+    /// `true` when the writer serializes `url` as `""`.
+    fn writes_empty(
+        &mut self,
+        url: &[u8],
+        name: &[u8],
+        version: Semver::Version,
+        has_integrity: bool,
+        buf: &[u8],
+    ) -> bool {
+        if self
+            .options
+            .named_scope_for_package_name(name)
+            .is_some_and(|scope| scope.url_hash != self.options.scope.url_hash)
+        {
+            return false;
+        }
+        if url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
+            return true;
+        }
+        if !has_integrity {
+            return false;
+        }
+        if url_is_under_registry(url, &self.registry) {
+            return self.is_canonical(url, name, version, buf);
+        }
+        // `Scope::set_url` normalizes the registry href; `dist.tarball` is verbatim.
+        let normalized = bun_url::whatwg::href_from_string(&bun_core::String::borrow_utf8(url));
+        if normalized.tag() == bun_core::string::Tag::Dead {
+            return false;
+        }
+        let normalized = normalized.to_utf8();
+        url_is_under_registry(&normalized, &self.registry)
+            && self.is_canonical(&normalized, name, version, buf)
+    }
+
+    /// `url` is exactly `ExtractTarball::build_url` for the top-level registry.
+    fn is_canonical(
+        &mut self,
+        url: &[u8],
+        name: &[u8],
+        version: Semver::Version,
+        buf: &[u8],
+    ) -> bool {
+        self.scratch.clear();
+        let printed = ExtractTarball::build_url_with_printer(
+            &self.registry,
+            &strings::StringOrTinyString::init(name),
+            version,
+            buf,
+            |args| std::io::Write::write_fmt(&mut self.scratch, args),
+        );
+        printed.is_ok() && self.scratch == url
+    }
 }
 
 // A single `lockfile.string_buf()` held for the whole parser would lock out
@@ -269,9 +341,11 @@ impl Stringifier {
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
+        options: &PackageManagerOptions,
         config_version: ConfigVersion,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
+        let mut npm_url = NpmUrlWriter::new(options);
         let buf = lockfile.buffers.string_bytes.as_slice();
         let extern_strings = lockfile.buffers.extern_strings.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
@@ -718,7 +792,7 @@ impl Stringifier {
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, hasInstallScript, bin, binDir }
 
                     // first index is resolution for each type of package
-                    // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+                    // npm         -> [ "name@version", registry ("" when it is the configured one), INFO, integrity]
                     // symlink     -> [ "name@link:path", INFO ]
                     // folder      -> [ "name@file:path", INFO ]
                     // workspace   -> [ "name@workspace:path" ] // workspace is only path
@@ -825,16 +899,20 @@ impl Stringifier {
                                 res.npm().version.fmt(buf),
                             )?;
 
-                            // only write the registry if it's not the default. empty string means default registry
-                            let url = res.npm().url;
+                            // Empty string means the registry the reader has configured.
+                            let npm = res.npm();
+                            let url = npm.url;
                             let url_slice = url.slice(buf);
                             write!(
                                 writer,
                                 "\"{}\", ",
                                 bun_core::fmt::format_json_string_utf8(
-                                    if url_is_under_registry(
+                                    if npm_url.writes_empty(
                                         url_slice,
-                                        Npm::Registry::DEFAULT_URL.as_bytes(),
+                                        pkg_name.slice(buf),
+                                        npm.version,
+                                        pkg_meta.integrity.tag.is_supported(),
+                                        buf,
                                     ) {
                                         b"" as &[u8]
                                     } else {

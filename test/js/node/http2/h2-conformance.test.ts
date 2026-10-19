@@ -1298,12 +1298,9 @@ const GC_STRAGGLERS = 3;
 
 /**
  * Collects until no more than GC_STRAGGLERS of `refs` are left, giving up after 50 passes, or after
- * 10 that collected nothing at all (the leak itself), and resolves to how many survived.
- *
- * A count that holds steady above GC_STRAGGLERS is no reason to stop. A concurrent JIT compile roots
- * the arguments of the call that started it (a stream, as `this`) until the main thread installs the
- * result, which it only does at its next tier-up check. On a debug build, where a compile takes
- * seconds, 4 to 9 streams stay rooted that way for a dozen passes before they go.
+ * 10 that collected nothing at all (the leak itself), and resolves to how many survived. A pending
+ * JIT compile roots the `this` of the call that started it for about a dozen passes on a debug
+ * build (#42357), so a count that holds above GC_STRAGGLERS for a while is no reason to stop.
  */
 async function liveCount(refs: WeakRef<object>[]): Promise<number> {
   const live = () => refs.filter(ref => ref.deref() !== undefined).length;
@@ -2613,22 +2610,22 @@ describe("an answered server stream whose request nobody read", () => {
   // Through the compat API the END_STREAM of a response is a frame of its own. While the socket
   // is full that frame waits in the stream's queue after the writable has finished, and a reset
   // drops what is queued.
-  test.each([
-    ["no body byte, request open", open(1), ["DATA+END_STREAM", RST]],
+  test.each<[string, (sid: number) => Buffer, string[]]>([
+    ["no body byte, request open", open, ["DATA+END_STREAM", RST]],
     [
       "unread body bytes, request open",
-      Buffer.concat([open(1), data(1, Buffer.alloc(1000, "b"))]),
+      sid => Buffer.concat([open(sid), data(sid, Buffer.alloc(1000, "b"))]),
       ["DATA+END_STREAM", RST],
     ],
-    ["a complete GET", get(1), ["DATA", "DATA+END_STREAM"]],
+    ["a complete GET", get, ["DATA", "DATA+END_STREAM"]],
     [
       "a complete POST with unread body bytes",
-      Buffer.concat([open(1), data(1, Buffer.alloc(1000, "b"), true)]),
+      sid => Buffer.concat([open(sid), data(sid, Buffer.alloc(1000, "b"), true)]),
       ["DATA", "DATA+END_STREAM"],
     ],
   ])("gets its whole response when the socket held the response back (%s)", async (_, request, end) => {
     const body = Buffer.alloc(8 * 1024 * 1024, "a");
-    const queuedAfterEnd = Promise.withResolvers<number>();
+    let queuedAfterEnd = Promise.withResolvers<number>();
     const server = http2.createServer((req, res) => {
       const session = req.stream.session!;
       res.writeHead(200);
@@ -2637,25 +2634,29 @@ describe("an answered server stream whose request nobody read", () => {
       setImmediate(() => queuedAfterEnd.resolve(session.state.outboundQueueSize!));
     });
     await withClient(server, async c => {
-      // Flow control allows the whole response, so only the socket can hold it back.
+      // Flow control allows every response, so only the socket can hold one back.
       const initialWindowSize = Buffer.from([0x00, 0x04, 0x7f, 0xff, 0xff, 0xff]);
       c.sendFrame(FrameType.SETTINGS, 0, 0, initialWindowSize);
       c.send(windowUpdate(0, 0x7fff0000));
       c.socket.pause();
-      c.send(request);
-      const queued = await queuedAfterEnd.promise;
+      // The buffers of the host decide how much the socket takes: ask until it holds a response back.
+      let sid = -1;
+      do {
+        sid += 2;
+        queuedAfterEnd = Promise.withResolvers<number>();
+        c.send(request(sid));
+      } while ((await queuedAfterEnd.promise) === 0);
       c.socket.resume();
       // The response ends with END_STREAM, or with the reset that cut it.
       const last = (f: Frame) =>
-        f.streamId === 1 && (f.type === FrameType.RST_STREAM || (f.type === FrameType.DATA && (f.flags & 0x1) !== 0));
+        f.streamId === sid && (f.type === FrameType.RST_STREAM || (f.type === FrameType.DATA && (f.flags & 0x1) !== 0));
       await c.waitFor(last, WAIT);
       await settle(c);
-      const sent = c.frames.filter(f => f.streamId === 1 && f.type === FrameType.DATA);
-      expect({
-        heldBack: queued > 0,
-        bytes: sent.reduce((sum, f) => sum + f.length, 0),
-        end: framesOf(c, 1).slice(-2),
-      }).toEqual({ heldBack: true, bytes: body.length, end });
+      const sent = c.frames.filter(f => f.streamId === sid && f.type === FrameType.DATA);
+      expect({ bytes: sent.reduce((sum, f) => sum + f.length, 0), end: framesOf(c, sid).slice(-2) }).toEqual({
+        bytes: body.length,
+        end,
+      });
     });
   });
 

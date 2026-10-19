@@ -1044,19 +1044,16 @@ test.concurrent("add/remove --filter updates bun.lock for a workspace outside th
   const root = join(String(dir), "root");
   const x = () => file(join(String(dir), "x", "package.json")).json();
   const lockedX = async () => (await lockfileJson(root)).workspaces["../x"];
-  async function runOk(args: string[], note = "") {
+  async function runOk(args: string[]) {
     const { stderr, exitCode } = await run(args, String(dir), { cwd: root, linker: "hoisted" });
-    expect(stderr).toBe(note + "Saved lockfile\n");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
   }
 
   await runOk(["install"]);
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
 
-  await runOk(
-    ["add", "--filter", "x", "y@workspace:*"],
-    'note: skipped the dependencies and scripts of 1 workspace outside the project: "../x"\n',
-  );
+  await runOk(["add", "--filter", "x", "y@workspace:*"]);
   expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
 
@@ -1339,7 +1336,8 @@ test.concurrent("remove --filter re-links only the selected workspace", async ()
 
   const { stdout, stderr, exitCode } = await run(["remove", "no-deps", "--filter", "api"], dir, { linker: "hoisted" });
   expect(stderr).toBe("Saved lockfile\n");
-  // As with an unfiltered remove, the summary is the install count once something had to be linked: here api alone.
+  // Like with an unfiltered remove, the summary is the install count once something had to be linked, which here is
+  // only api.
   expect(stdoutLines(stdout)).toStrictEqual([HEADER("remove"), "", "1 package installed"]);
   expect(exitCode).toBe(0);
 
@@ -2016,30 +2014,30 @@ test.concurrent.each(
     const fresh = await run(["install", omit], dir, { linker });
     expect(fresh.stderr).not.toContain("error:");
     const { packages, bins } = await topLevel();
-    // `add` takes out the folders of the packages it names. What they depend on is in a place that the run leaves out,
-    // and no install removes that: `bun prune` does.
+    // `add` removes the folders of the packages that it's given. Their dependencies are in a slot that this install
+    // skips, and no install removes that. `bun prune` does.
     expect(after).toStrictEqual({ packages: linker === "hoisted" ? [...packages, "no-deps"].sort() : packages, bins });
     expect(after.packages).not.toContain("one-fixed-dep");
     expect(fresh.exitCode).toBe(0);
   },
 );
 
-// --production freezes the lockfile, which records the group of every entry.
-test.concurrent("add --dev --production of an entry it would move fails and writes nothing", async () => {
-  const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "what-bin": "1.0.0" } } }, "hoisted");
-  await installOk(dir, "hoisted");
-  const before = [await allPackageJsonTexts(dir), await file(join(dir, "bun.lock")).text()];
+// --production implies --frozen-lockfile, which passes here because the same packages are installed.
+test.concurrent(
+  "add --dev --production moves an existing dependency in package.json and doesn't touch bun.lock",
+  async () => {
+    const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "what-bin": "1.0.0" } } }, "hoisted");
+    await installOk(dir, "hoisted");
+    const lock = await file(join(dir, "bun.lock")).text();
 
-  const { stderr, exitCode } = await run(["add", "what-bin@1.0.0", "--dev", "--production"], dir);
+    const { stderr, exitCode } = await run(["add", "what-bin@1.0.0", "--dev", "--production"], dir);
 
-  expect(stderr).toBe(
-    "error: lockfile had changes, but lockfile is frozen\n" +
-      "note: dependencies in package.json changed since bun.lock was saved\n" +
-      "note: try re-running without --frozen-lockfile and commit the updated lockfile\n",
-  );
-  expect([await allPackageJsonTexts(dir), await file(join(dir, "bun.lock")).text()]).toStrictEqual(before);
-  expect(exitCode).toBe(1);
-});
+    expect(stderr).toBe("");
+    expect(await pkg(dir, "root")).toStrictEqual({ ...ROOT, devDependencies: { "what-bin": "1.0.0" } });
+    expect(await file(join(dir, "bun.lock")).text()).toBe(lock);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("a local path that does not exist relative to the cwd fails and writes nothing", async () => {
   const dir = await makeMonorepo();
@@ -2049,7 +2047,7 @@ test.concurrent("a local path that does not exist relative to the cwd fails and 
   // Relative to packages/api this would exist; paths are relative to the cwd (the root) instead.
   const { stderr, exitCode } = await run(["add", "../../vendor/foo", "--filter", "api"], dir);
   expect(stderr).toStartWith(
-    'error: Could not find package.json for "file:../../vendor/foo" dependency "../../../../vendor/foo"\n',
+    'error: package.json not found for "file:../../vendor/foo" dependency "../../../../vendor/foo"\n',
   );
   expect(exitCode).toBe(1);
 
@@ -2236,9 +2234,7 @@ test.concurrent("a link: path that does not exist fails with the per-target spel
   const before = await allPackageJsonTexts(dir);
 
   const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir);
-  expect(stderr).toContain(
-    'error: Could not find directory "./vendor/foo" for linked dependency "link:../../vendor/foo"',
-  );
+  expect(stderr).toContain('error: directory "./vendor/foo" not found for linked dependency "link:../../vendor/foo"');
   expect(exitCode).toBe(1);
 
   expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
@@ -2820,7 +2816,7 @@ test.concurrent("a catalog: range that resolves to nothing names the missing cat
 
   {
     const { stderr, exitCode } = await run(["add", "a-dep@catalog:", "--filter", "api"], dir);
-    expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n  bun add --catalog a-dep\n");
+    expect(stderr).toBe("error: a-dep@catalog: not in catalog\n  bun add --catalog a-dep\n");
     expect(exitCode).toBe(1);
   }
 
@@ -2830,6 +2826,6 @@ test.concurrent("a catalog: range that resolves to nothing names the missing cat
   // The same package.json state reached by hand fails the same way under bun install.
   await write(pkgPath(dir, "api"), JSON.stringify({ name: "api", dependencies: { "a-dep": "catalog:" } }));
   const { stderr, exitCode } = await run(["install"], dir);
-  expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n  bun add --catalog a-dep\n");
+  expect(stderr).toBe("error: a-dep@catalog: not in catalog\n  bun add --catalog a-dep\n");
   expect(exitCode).toBe(1);
 });

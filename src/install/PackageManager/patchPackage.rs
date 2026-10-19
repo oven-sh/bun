@@ -35,7 +35,7 @@ fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
 }
 
-/// The version half of a `name@version` patch key, into `label` (cleared first).
+/// Writes the version half of a `name@version` patch key into `label`, clearing it first.
 fn print_resolution_label<'a>(
     label: &'a mut Vec<u8>,
     resolution: &Resolution,
@@ -47,7 +47,7 @@ fn print_resolution_label<'a>(
     label
 }
 
-/// The `name@version` that `patchedDependencies` records the package under.
+/// Returns the `name@version` key that `patchedDependencies` uses for the package.
 fn patch_key_of(lockfile: &Lockfile, pkg: &Package) -> Vec<u8> {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let mut key = Vec::new();
@@ -94,21 +94,23 @@ impl PatchCommitResult {
         let lockfile = &manager.lockfile;
         let real = resolve_links(&self.patchfile_path).ok();
         let own_key = string_hash(&self.patch_key);
-        let is_shared = (lockfile.patched_dependencies.iter()).any(|(key, other)| {
-            *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
-        });
-        let outcome = if is_shared {
-            "another package uses"
+        let is_shared = real.is_some()
+            && (lockfile.patched_dependencies.iter()).any(|(key, other)| {
+                *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
+            });
+        let (outcome, why) = if is_shared {
+            ("kept", ", used by another package")
         } else if is_file_of_the_project(&path) && sys::unlink(&path).is_ok() {
-            "deleted"
+            ("deleted", "")
         } else {
-            "did not delete"
+            ("did not delete", "")
         };
         bun_core::pretty!(
-            "\nRemoved the patch for <b>{}<r> ({} {})\n",
+            "\nRemoved the patch for <b>{}<r> ({} {}{})\n",
             bun_fmt::for_terminal(bstr::BStr::new(&self.patch_key)),
             outcome,
             bun_fmt::escape_control_chars(&self.patchfile_path),
+            why,
         );
     }
 }
@@ -187,8 +189,9 @@ pub(crate) fn remove_stale_folder(manager: &mut PackageManager) {
     }
 }
 
-/// Whether `path`, which comes from the repository's lockfile, is a regular file in the project.
-/// A path that leaves the project through `..`, an absolute path or a symlink does not qualify.
+/// Returns true if `path`, which comes from the repository's lockfile, is a regular file in the
+/// project. A path that leaves the project through `..`, an absolute path or a symlink doesn't
+/// qualify.
 fn is_file_of_the_project(path: &ZStr) -> bool {
     use resolve_path::{ParentEqual, is_parent_or_equal};
     if bin::bin_target_escapes_package_dir(path.as_bytes()) {
@@ -204,12 +207,13 @@ fn is_file_of_the_project(path: &ZStr) -> bool {
     sys::S::ISREG(stat.st_mode as _) && is_parent_or_equal(&project, &real) == ParentEqual::Parent
 }
 
-/// What the argument of `bun patch` and of `bun patch --commit` selects.
+/// The package that the argument of `bun patch` or `bun patch --commit` refers to.
 struct Target {
     pkg: Package,
-    /// As the user names it: relative to the project root unless absolute, links not resolved.
+    /// The folder as the user wrote it: relative to the project root unless it's absolute, with
+    /// symlinks unresolved.
     folder: Vec<u8>,
-    /// The package's other folders in the isolated store: it has one for each peer resolution.
+    /// The package's other folders in the isolated store. It has one per set of resolved peers.
     other_folders: Vec<Vec<u8>>,
     not_in_workspace_root: bool,
 }
@@ -223,7 +227,7 @@ fn resolve_target(
     let workspace_name_hash = manager.workspace_name_hash;
     let workspace_package_id = manager.root_package_id.get(lockfile, workspace_name_hash);
 
-    // Everything but what only ships inside another package's tarball.
+    // Every package except the ones that only ship inside another package's tarball.
     let installed = reachable::packages(
         lockfile,
         lockfile.buffers.resolutions.as_slice(),
@@ -263,15 +267,15 @@ fn resolve_target(
 
     if !pkg.resolution.tag.can_enqueue_install_task() {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: it is {}, and bun install never applies a patch to one",
-            bstr::BStr::new(lockfile.str(&pkg.name)),
+            "<r><red>error<r>: refusing to patch {} <b>\"{}\"<r>",
             match pkg.resolution.tag {
-                ResolutionTag::Folder => "a file: folder",
-                ResolutionTag::Symlink => "a link: dependency",
-                _ => "a workspace package",
+                ResolutionTag::Folder => "file: folder",
+                ResolutionTag::Symlink => "link: dependency",
+                _ => "workspace package",
             },
+            bstr::BStr::new(lockfile.str(&pkg.name)),
         );
-        bun_core::note!("edit the folder itself instead");
+        bun_core::note!("edit the folder directly");
         Global::crash();
     }
 
@@ -292,7 +296,7 @@ fn resolve_target(
 
 fn crash_bundled(name: &[u8]) -> ! {
     bun_core::pretty_errorln!(
-        "<r><red>error<r>: cannot patch <b>{}<r>: bun does not install it, it ships inside the tarball of a package that bundles it",
+        "<r><red>error<r>: refusing to patch bundled dependency <b>\"{}\"<r>",
         bstr::BStr::new(name),
     );
     bun_core::note!(
@@ -301,7 +305,8 @@ fn crash_bundled(name: &[u8]) -> ! {
     Global::crash();
 }
 
-/// The user typed a relative path where the command ran; the process is in the project root.
+/// A relative path from the user is relative to where the command was run, but the process has
+/// since changed to the project root.
 fn path_argument_from_root(
     lockfile: &Lockfile,
     workspace_package_id: PackageID,
@@ -377,11 +382,12 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
 #[derive(Clone, Copy)]
 pub(crate) enum FolderLookupError {
     NotInLockfile,
-    /// The name has git, tarball or folder packages, whose labels are not versions.
+    /// The name matches git, tarball or folder packages, whose labels aren't versions.
     NeedsLabel,
 }
 
-/// Only an npm label is a version: a non-npm package matches only as the one of that name.
+/// Only an npm package's label is a version. A non-npm package only matches if it's the only
+/// package with that name.
 pub(crate) fn package_for_folder(
     lockfile: &Lockfile,
     name_hash: u64,
@@ -423,7 +429,7 @@ fn folder_lookup_error(
     match err {
         FolderLookupError::NotInLockfile => {
             bun_core::pretty_errorln!(
-                "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> is not in the lockfile",
+                "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> not in lockfile",
                 bstr::BStr::new(folder),
                 bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
                 bun_fmt::EscapeControlChars(bstr::BStr::new(version)),
@@ -435,7 +441,7 @@ fn folder_lookup_error(
             );
         }
         FolderLookupError::NeedsLabel => bun_core::pretty_errorln!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: no npm package <b>{}@{}<r> is in the lockfile, and the other packages named <b>{}<r> have a git, tarball or folder label. Run <b>{} \\<dependency\\>@\\<label\\><r> with the dependency name and the label from the lockfile instead.",
+            "<r><red>error<r>: cannot patch <b>{}<r>: no npm package <b>{}@{}<r> in lockfile. Other packages named <b>{}<r> have a git, tarball or folder label: run <b>{} \\<dependency\\>@\\<label\\><r>",
             bstr::BStr::new(folder),
             bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
             bun_fmt::EscapeControlChars(bstr::BStr::new(version)),
@@ -557,7 +563,8 @@ pub fn do_patch_commit(
             bstr::BStr::new(&old_folder),
             bstr::BStr::new(&target.folder)
         );
-        // `bun patch` in another directory prepares the folder that the workspace there loads.
+        // Running `bun patch` from another directory prepares the folder that the workspace there
+        // loads.
         if !target.other_folders.is_empty() {
             bun_core::pretty!(
                 "\n<b>{}<r> has more than one folder. To commit another one, run:\n\n",
@@ -586,7 +593,7 @@ pub fn do_patch_commit(
         .peekable();
     if binary_files.peek().is_some() {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: a patch cannot hold a change to a binary file, and git found these in <b>{}<r>:",
+            "<r><red>error<r>: patches cannot contain binary file changes. found in <b>{}<r>:",
             bstr::BStr::new(&target.folder),
         );
         for line in binary_files {
@@ -612,7 +619,7 @@ pub fn do_patch_commit(
         &bun_ast::Source::init_path_string(&patch_filename[..], &patchfile_contents[..]),
     ) {
         bun_core::note!(
-            "nothing was written: <b>{}<r>, package.json and the lockfile are as they were",
+            "no changes made to <b>{}<r>, package.json or the lockfile",
             bstr::BStr::new(&target.folder),
         );
         Global::crash();
@@ -714,7 +721,7 @@ fn patch_applies(
     let scratch = TempTree(temp_sibling(folder));
     if let Err(e) = copy_cache_entry(cache_dir, cache_dir_subpath, &scratch.0) {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: failed to copy the package to try the patch on: {}",
+            "<r><red>error<r>: failed to copy package to test the patch: {}",
             e.name(),
         );
         return false;
@@ -730,7 +737,8 @@ fn patch_applies(
     true
 }
 
-/// `None` after a printed error: `Global::crash()` in here would skip `HiddenFromDiff`'s drop.
+/// Returns `None` after printing an error. Calling `Global::crash()` in here would skip
+/// `HiddenFromDiff`'s drop.
 fn diff_against_cache(
     manager: &mut PackageManager,
     old_folder: &[u8],
@@ -817,7 +825,8 @@ const ITERATE: sys::OpenDirOptions = sys::OpenDirOptions {
     no_follow: false,
 };
 
-/// `git diff --no-index` takes no pathspec: what is not the package waits next to it until drop.
+/// `git diff --no-index` doesn't accept a pathspec, so everything in the folder that isn't part of
+/// the package is moved next to it until this is dropped.
 struct HiddenFromDiff {
     folder: Dir,
     stash: Dir,
@@ -886,7 +895,7 @@ impl Drop for HiddenFromDiff {
                 let _ = Fd::cwd().delete_tree(&self.stash_path);
             }
             Err(e) => bun_core::warn!(
-                "failed to move the contents of {} back into the package folder: {}",
+                "failed to move {} back into package folder: {}",
                 bstr::BStr::new(&self.stash_path),
                 e
             ),
@@ -894,12 +903,13 @@ impl Drop for HiddenFromDiff {
     }
 }
 
-/// `@scope` and `.bin` hold what belongs to several packages, so they merge one level down.
+/// `@scope` and `.bin` contain entries from several packages, so they're merged one level down.
 fn is_package_group(name: &[u8]) -> bool {
     strings::starts_with_char(name, b'@') || name == b".bin"
 }
 
-/// Moves the entries of `from` that `reference` lacks into `to`. `None` moves all.
+/// Moves the entries of `from` that aren't in `reference` into `to`. With `None`, moves all of
+/// them.
 fn move_entries_absent_from(
     from: &Dir,
     reference: Option<&Dir>,
@@ -932,7 +942,8 @@ fn move_entries_absent_from(
     Ok(())
 }
 
-/// `:?*"<>|` are NTFS-reserved: escaped on every OS, so that patches/ checks out on Windows.
+/// The characters `:?*"<>|` are reserved on NTFS. They're escaped on every OS, so that `patches/`
+/// can be checked out on Windows.
 fn escape_patch_filename(name: &[u8]) -> Vec<u8> {
     let mut escaped = Vec::with_capacity(name.len());
     for c in name {
@@ -1057,13 +1068,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     );
     if !is_loaded {
         bun_core::pretty!(
-            "\nThe packages that depend on <b>{}<r> load it from the global store. They see your changes after <cyan>bun patch --commit<r>.\n",
+            "\nDependents of <b>{}<r> load it from the global store and will not see changes until <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
     if has_trusted_scripts(manager, &pkg, &pkg_name, &folder) {
         bun_core::pretty!(
-            "\nThe install scripts of <b>{}<r> have not run on this copy. They run again at <cyan>bun patch --commit<r>.\n",
+            "\nInstall scripts of <b>{}<r> have not run on this copy. They run on <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
@@ -1071,8 +1082,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// Whether an install runs lifecycle scripts for this package. The files they created are lost when
-/// `bun patch` replaces the folder with a copy from the cache.
+/// Returns true if an install runs lifecycle scripts for this package. The files they created are
+/// lost when `bun patch` replaces the folder with a copy from the cache.
 fn has_trusted_scripts(
     manager: &PackageManager,
     pkg: &Package,
@@ -1124,7 +1135,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
             .log_mut()
             .print(std::ptr::from_mut(Output::error_writer()));
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b>{}<r> is not in the cache, and getting it again failed",
+            "<r><red>error<r>: <b>{}<r> not in cache, re-download failed",
             bstr::BStr::new(&name),
         );
         Global::crash();
@@ -1210,7 +1221,8 @@ fn cache_dir_path(cache_dir: Fd) -> Vec<u8> {
     }
 }
 
-/// `path` with every link in it resolved. What does not exist yet is appended as it is.
+/// Returns `path` with every symlink resolved. The part that doesn't exist yet is appended
+/// unchanged.
 fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
     let path = strings::without_trailing_slash(path);
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -1239,7 +1251,9 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
     }
 }
 
-/// `folder`, links resolved; when that is in the shared store, `bun patch` replaces the last link.
+/// Returns `folder` with symlinks resolved. If that's inside the shared global store and
+/// `replaces_folder` is set, returns the last symlink on the way instead, which `bun patch`
+/// replaces with a copy.
 fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u8> {
     let resolve = |path: &[u8]| match resolve_links(path) {
         Ok(real) => real,
@@ -1269,7 +1283,7 @@ fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u
     }
 
     bun_core::pretty_errorln!(
-        "<r><red>error<r>: <b>{}<r> resolves into the global store, which other projects share; refusing to patch through it",
+        "<r><red>error<r>: refusing to patch <b>{}<r>: resolves into the shared global store",
         bstr::BStr::new(folder),
     );
     if replaces_folder {
@@ -1277,7 +1291,7 @@ fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u
             "set <b>globalStore = false<r> under <b>[install]<r> in bunfig.toml, run <cyan>bun install<r> and patch the package again"
         );
     } else {
-        bun_core::note!("run <cyan>bun patch<r> on the package first, it makes the copy to edit");
+        bun_core::note!("run <cyan>bun patch<r> on the package first to create an editable copy");
     }
     Global::crash();
 }
@@ -1287,7 +1301,8 @@ fn is_link(path: &[u8]) -> bool {
     sys::readlink(&ZBox::from_bytes(path), &mut buf[..]).is_ok()
 }
 
-/// `folder`, links resolved, is an entry of a project `node_modules` outside `node_modules/.bun`.
+/// Returns true if `folder`, with symlinks resolved, is an entry of a project's `node_modules`
+/// outside `node_modules/.bun`.
 fn is_link_position(folder: &[u8]) -> bool {
     use resolve_path::{ParentEqual, dirname, is_parent_or_equal};
     let Ok(store) = resolve_links(b"node_modules/.bun") else {
@@ -1303,7 +1318,8 @@ fn is_link_position(folder: &[u8]) -> bool {
         && is_parent_or_equal(&store, folder) == ParentEqual::Unrelated
 }
 
-/// Named like an install's staging folder, so that `bun prune` collects one a crash left behind.
+/// Uses the same naming as an install's staging folder, so that `bun prune` removes it if a crash
+/// leaves it behind.
 fn temp_sibling(folder: &[u8]) -> Vec<u8> {
     let mut path = resolve_path::dirname::<platform::Auto>(folder).to_vec();
     write!(
@@ -1334,7 +1350,7 @@ impl Drop for TempTree {
     }
 }
 
-/// `folder` is never partial: the copy is made next to it and renamed in.
+/// `folder` is never left half-written: the copy is created next to it and then renamed into place.
 fn replace_with_cache_copy(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
@@ -1361,7 +1377,7 @@ fn replace_with_cache_copy(
     if let Err(e) = rename_staging_into_place(cwd, &staging_z, &folder_z) {
         if has_old && let Err(restore_err) = move_aside(&old_z, &folder_z) {
             bun_core::warn!(
-                "failed to move the previous package folder back, it is at {}: {}",
+                "failed to restore previous package folder (now at {}): {}",
                 bstr::BStr::new(&old.keep()),
                 restore_err
             );
@@ -1375,7 +1391,7 @@ fn replace_with_cache_copy(
         if is_link(&old.0) {
             if let Err(e) = link_store_siblings(&old.0, folder) {
                 bun_core::warn!(
-                    "failed to link the dependencies of the package into {}: {}",
+                    "failed to link package dependencies into {}: {}",
                     bstr::BStr::new(folder),
                     e
                 );
@@ -1383,7 +1399,7 @@ fn replace_with_cache_copy(
             let _ = crate::isolated_install::installer::remove_link(&old_z);
         } else if let Err(e) = keep_nested_packages(&old.0, folder) {
             bun_core::warn!(
-                "failed to keep the packages installed under {}, run bun install to get them back: {}",
+                "failed to keep packages under {}, run bun install to restore them: {}",
                 bstr::BStr::new(folder),
                 e
             );
@@ -1413,7 +1429,7 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     };
     move_all(folder, aside).inspect_err(|_| match move_all(aside, folder) {
         Err(e) if e.get_errno() != sys::E::ENOENT => bun_core::warn!(
-            "failed to move everything back into the package folder, the rest is at {}: {}",
+            "failed to restore package folder (rest is at {}): {}",
             bstr::BStr::new(aside.as_bytes()),
             e
         ),
@@ -1596,7 +1612,8 @@ fn installed_module_folder(
     }
 }
 
-/// A package has one store entry for each peer resolution: the ones that the workspace loads first.
+/// Returns the package's store entries. It has one per set of resolved peers. The ones that the
+/// current workspace loads come first.
 pub(crate) fn isolated_store_folders(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -1623,7 +1640,7 @@ pub(crate) fn isolated_store_folders(
             store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
         )
         .expect("formatting into a Vec is infallible");
-        // A link into the global store: the project has no folder of the package.
+        // It's a link into the global store, so the project has no folder for the package.
         if is_link(&folder) {
             return None;
         }
@@ -1632,12 +1649,13 @@ pub(crate) fn isolated_store_folders(
         sys::exists(&folder).then_some(folder)
     };
 
-    // Breadth first from the current package, then the entries that it does not load.
+    // Walk breadth-first from the current package, then add the entries that it doesn't load.
     let mut seen = vec![false; entry_pkgs.len()];
     let mut queue: Vec<usize> = Vec::with_capacity(entry_pkgs.len());
     let mut enqueue = |entry: usize, queue: &mut Vec<usize>| {
         let pkg = entry_pkgs[entry];
-        // Only one entry of a workspace has its dependencies: a `workspace:` range links another.
+        // Only one of a workspace's entries has its dependencies. A `workspace:` range links to a
+        // different one.
         let same_package = matches!(
             resolutions[pkg as usize].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
@@ -1681,7 +1699,8 @@ type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::Nod
 
 type IdPair = (DependencyID, PackageID);
 
-/// The package that `name` or `name@version` selects, and its folder in a hoisted node_modules.
+/// Returns the package that `name` or `name@version` refers to, and its folder in a hoisted
+/// node_modules.
 fn pkg_info_for_name_and_version(
     lockfile: &Lockfile,
     installed: &DynamicBitSet,
@@ -1750,7 +1769,8 @@ fn pkg_info_for_name_and_version(
         Global::crash();
     }
 
-    // Several dependents of one package are fine. Several packages need a version.
+    // Several dependents of the same package are fine. If they resolve to different packages, the
+    // user has to give a version.
     if version.is_none() && pairs.iter().any(|pair| pair.1 != pairs[0].1) {
         bun_core::pretty_errorln!(
             "\n<r><red>error<r>: Found multiple versions of <b>{}<r>, please specify a precise version from the following list:<r>",

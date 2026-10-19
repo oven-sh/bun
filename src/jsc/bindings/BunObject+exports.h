@@ -4,28 +4,12 @@
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
     macro(Archive) \
-    macro(CSRF) \
-    macro(CryptoHasher) \
     macro(FFI) \
     macro(FetchSession) \
     macro(FileSystemRouter) \
-    macro(Glob) \
     macro(Image) \
-    macro(JSON5) \
-    macro(JSONC) \
-    macro(MD4) \
     macro(markdown) \
-    macro(MD5) \
     macro(S3Client) \
-    macro(SHA1) \
-    macro(SHA224) \
-    macro(SHA256) \
-    macro(SHA384) \
-    macro(SHA512) \
-    macro(SHA512_256) \
-    macro(TOML) \
-    macro(XML) \
-    macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
@@ -34,50 +18,29 @@
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
-    macro(hash) \
     macro(inspect) \
     macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
-    macro(semver) \
-    macro(unsafe) \
     macro(valkey) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
-    macro(allocUnsafe) \
     macro(build) \
     macro(color) \
     macro(connect) \
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
-    macro(deflateSync) \
     macro(file) \
-    macro(gunzipSync) \
-    macro(gzipSync) \
-    macro(indexOfLine) \
-    macro(inflateSync) \
     macro(jest) \
     macro(listen) \
-    macro(mmap) \
-    macro(openInEditor) \
-    macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
-    macro(sha) \
-    macro(shellEscape) \
-    macro(shrink) \
-    macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
     macro(udpSocket) \
-    macro(which) \
     macro(write) \
-    macro(zstdCompressSync) \
-    macro(zstdDecompressSync) \
-    macro(zstdCompress) \
-    macro(zstdDecompress) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
@@ -89,13 +52,7 @@ FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
 // The getters above whose value goes through Bun::namespaceObjectOf().
-static constexpr bool isNamespaceObjectGetter(std::string_view name) {
-    for (std::string_view namespaceObject : { "CSRF", "JSON5", "JSONC", "markdown", "TOML", "XML", "YAML", "semver", "unsafe" }) {
-        if (name == namespaceObject)
-            return true;
-    }
-    return false;
-}
+static constexpr bool isNamespaceObjectGetter(std::string_view name) { return name == "markdown"; }
 
 // definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \

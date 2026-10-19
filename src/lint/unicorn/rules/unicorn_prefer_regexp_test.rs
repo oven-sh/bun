@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::get_member_expr;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::{VisibleRegExp, is_visibly_string, visible_regexp};
 
 /// Prefers `RegExp#test()` over `String#match()` and `String#exec()`.
 pub struct PreferRegexpTest;
@@ -69,7 +70,14 @@ impl Rule for PreferRegexpTest {
         if is_other_literal(obj) || is_match && is_other_literal(argument) || !is_in_boolean_position(e) {
             return;
         }
-        cx.report(name, PREFER_REGEXP_TEST).fix(|fixer| {
+        // oxlint assumes every `.exec` is `RegExp#exec` and every `.match` is `String#match`. But `database.exec(sql)`
+        // is a different method, and `text.match("a")` passes a string, which has no `test`.
+        let is_safe = || match is_match {
+            // With the `g` flag, `test` resumes from `lastIndex` but `match` always starts at 0.
+            true => visible_regexp(argument) == Some(VisibleRegExp::NotGlobal) && is_visibly_string(obj),
+            false => visible_regexp(obj).is_some(),
+        };
+        cx.report(name, PREFER_REGEXP_TEST).fix_where_safe(is_safe, |fixer| {
             let mut fixes = vec![fixer.replace(name, "test")];
             if is_match {
                 let (file, string, regexp) = (fixer.file(), obj.outer_span(), argument.outer_span());

@@ -3072,7 +3072,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures dep-missing-resolved 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/tap/node_modules/completely-broken-witaf"
+"warn: skipping 1 unused package-lock.json entry: "node_modules/tap/node_modules/completely-broken-witaf"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3571,7 +3571,7 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--changed 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
-bun install --frozen-lockfile exit code: 1
+bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
@@ -3663,7 +3663,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--removed 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/semver"
+"warn: skipping 1 unused package-lock.json entry: "node_modules/semver"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -3763,7 +3763,7 @@ bun install --frozen-lockfile exit code: 1
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures external-link-dep 1`] = `
-"warn: skipped "app@file:./app" from package-lock.json: no entry for this dependency of "../cli-750"
+"warn: skipping "app@file:./app" from package-lock.json: no entry for this dependency of "../cli-750"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3795,9 +3795,9 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures external-link--root 1`] = `
-"warn: skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project
-warn: skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project
-warn: skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"
+"warn: skipping "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project
+warn: skipping "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project
+warn: skipping 3 unused package-lock.json entries: "../a", "../i", "../m"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3908,7 +3908,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures minimist-git-metadep 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/@isaacs/no-thing-here"
+"warn: skipping 1 unused package-lock.json entry: "node_modules/@isaacs/no-thing-here"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3934,7 +3934,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures old-package-lock 1`] = `
-"error: package-lock.json is lockfileVersion 1, which bun cannot migrate
+"error: cannot migrate package-lock.json: unsupported lockfileVersion 1
 note: npm install --package-lock-only --lockfile-version=3
 bun pm migrate exit code: 1"
 `;
@@ -4113,7 +4113,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures pnpm 1`] = `
-"warn: skipped 4 package-lock.json entries not depended on by any package: "node_modules/.pnpm/registry.npmjs.org/@scope/x/1.0.0", "node_modules/.pnpm/registry.npmjs.org/a/1.0.0", "node_modules/.pnpm/registry.npmjs.org/b/1.0.0", "node_modules/.pnpm/registry.npmjs.org/c/1.0.0"
+"warn: skipping 4 unused package-lock.json entries: "node_modules/.pnpm/registry.npmjs.org/@scope/x/1.0.0", "node_modules/.pnpm/registry.npmjs.org/a/1.0.0", "node_modules/.pnpm/registry.npmjs.org/b/1.0.0", "node_modules/.pnpm/registry.npmjs.org/c/1.0.0"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -4511,7 +4511,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures two-bundled-deps 1`] = `
-"warn: skipped 415 package-lock.json entries not depended on by any package: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
+"warn: skipping 415 unused package-lock.json entries: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -4661,7 +4661,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures workspaces-need-update 1`] = `
-"warn: skipped 4 package-lock.json entries not depended on by any package: "a", "b", "node_modules/once", "node_modules/wrappy"
+"warn: skipping 4 unused package-lock.json entries: "a", "b", "node_modules/once", "node_modules/wrappy"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0

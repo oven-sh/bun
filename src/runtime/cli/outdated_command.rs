@@ -20,7 +20,8 @@ struct GroupedOutdatedInfo {
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
-/// Between the two names of an aliased dependency: `"my-alias": "npm:dep@1.0.0"` is listed as `my-alias@npm:dep`.
+/// Printed between the two names of an aliased dependency: `"my-alias": "npm:dep@1.0.0"` is listed
+/// as `my-alias@npm:dep`.
 const ALIAS_SEPARATOR: &str = "@npm:";
 
 /// A name as a cell prints it. Widths are taken from this text, not from the raw name.
@@ -246,7 +247,7 @@ impl OutdatedCommand {
             match arg {
                 b"" => {}
                 b"*" | b"**" => package_patterns.push(FilterType::All),
-                // As a glob, `*` stops at the `/` of a scoped name.
+                // As a glob, `*` would stop at the `/` of a scoped name.
                 b"!*" | b"!**" => return None,
                 _ => package_patterns.push(FilterType::Name(arg)),
             }

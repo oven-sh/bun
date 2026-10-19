@@ -129,6 +129,9 @@ private:
     /* WebSocketContexts are of differing type, but we as owners and creators must delete them correctly */
     std::vector<MoveOnlyFunction<void()>> webSocketContextDeleters;
     std::vector<us_socket_group_t *> webSocketGroups;
+    /* Contexts can't be freed before the app because an in-flight upgrade holds a raw pointer to one, so ws() calls
+     * with the same key reuse a context. wsPackage contexts have a null key; wsPackageContext() matches them by options. */
+    std::vector<std::pair<const void *, void *>> webSocketContexts;
 
 public:
 
@@ -343,6 +346,10 @@ public:
         bool sendPingsAutomatically = true;
         /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
         unsigned short maxLifetime = 0;
+        /* See WebSocketContextData */
+        bool wsPackage = false;
+        bool autoPong = true;
+        bool skipUTF8Validation = false;
         MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, OpCode)> message = nullptr;
@@ -358,6 +365,16 @@ public:
          * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all(httpContext->getSocketGroup());
         for (us_socket_group_t *g : webSocketGroups) {
+            /* Snapshot the list first: end() runs the close handler, which can close other sockets in the group */
+            std::vector<us_socket_t *> sockets;
+            for (us_socket_t *s = g->head_sockets; s; s = s->next) {
+                sockets.push_back(s);
+            }
+            for (us_socket_t *s : sockets) {
+                if (!us_socket_is_closed(s)) {
+                    ((WebSocket<SSL, true, int> *) s)->end(1001, "Server closed");
+                }
+            }
             us_socket_group_close_all(g);
         }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
@@ -417,30 +434,13 @@ public:
         return closed;
     }
 
+private:
+    /* Moves the handlers out of behavior. Settings are applied by applyWebSocketSettings(). */
     template <typename UserData>
-    TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
+    WebSocketContext<SSL, true, UserData> *createWebSocketContext(const void *key, WebSocketBehavior<UserData> &behavior) {
         /* Don't compile if alignment rules cannot be satisfied */
         static_assert(alignof(UserData) <= LIBUS_EXT_ALIGNMENT,
         "µWebSockets cannot satisfy UserData alignment requirements. You need to recompile µSockets with LIBUS_EXT_ALIGNMENT adjusted accordingly.");
-
-        if (!httpContext) {
-            return std::move(*this);
-        }
-
-        /* Terminate on misleading idleTimeout values */
-        if (behavior.idleTimeout && behavior.idleTimeout < 8) {
-            std::terminate();
-        }
-
-        /* Maximum idleTimeout is 16 minutes */
-        if (behavior.idleTimeout > 240 * 4) {
-            std::terminate();
-        }
-
-        /* Maximum maxLifetime is 4 hours */
-        if (behavior.maxLifetime > 240) {
-            std::terminate();
-        }
 
         /* If we don't have a TopicTree yet, create one now */
         if (!topicTree) {
@@ -498,8 +498,8 @@ public:
             });
         }
 
-        /* Every route has its own websocket context with its own behavior and user data type */
         auto *webSocketContext = WebSocketContext<SSL, true, UserData>::create(Loop::get(), topicTree);
+        webSocketContexts.emplace_back(key, webSocketContext);
 
         /* We need to clear this later on */
         webSocketContextDeleters.push_back([webSocketContext]() {
@@ -508,18 +508,6 @@ public:
 
         /* We also keep this list for easy closing */
         webSocketGroups.push_back(webSocketContext->getSocketGroup());
-
-        /* If we are the first one to use compression, initialize it */
-        if (behavior.compression) {
-            LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(webSocketContext->getSocketGroup()));
-
-            /* Initialize loop's deflate inflate streams */
-            if (!loopData->zlibContext) {
-                loopData->zlibContext = new ZlibContext;
-                loopData->inflationStream = new InflationStream(CompressOptions::DEDICATED_DECOMPRESSOR);
-                loopData->deflationStream = new DeflationStream(CompressOptions::DEDICATED_COMPRESSOR);
-            }
-        }
 
         /* Copy all handlers */
         webSocketContext->getExt()->openHandler = std::move(behavior.open);
@@ -536,7 +524,23 @@ public:
         webSocketContext->getExt()->pingHandler = std::move(behavior.ping);
         webSocketContext->getExt()->pongHandler = std::move(behavior.pong);
 
-        /* Copy settings */
+        return webSocketContext;
+    }
+
+    template <typename UserData>
+    void applyWebSocketSettings(WebSocketContext<SSL, true, UserData> *webSocketContext, const WebSocketBehavior<UserData> &behavior) {
+        /* If we are the first one to use compression, initialize it */
+        if (behavior.compression) {
+            LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(webSocketContext->getSocketGroup()));
+
+            /* Initialize loop's deflate inflate streams */
+            if (!loopData->zlibContext) {
+                loopData->zlibContext = new ZlibContext;
+                loopData->inflationStream = new InflationStream(CompressOptions::DEDICATED_DECOMPRESSOR);
+                loopData->deflationStream = new DeflationStream(CompressOptions(CompressOptions::DEDICATED_COMPRESSOR | CompressOptions::COMPRESSOR_NO_CONTEXT_TAKEOVER));
+            }
+        }
+
         webSocketContext->getExt()->maxPayloadLength = behavior.maxPayloadLength;
         webSocketContext->getExt()->maxBackpressure = behavior.maxBackpressure;
         webSocketContext->getExt()->closeOnBackpressureLimit = behavior.closeOnBackpressureLimit;
@@ -544,9 +548,77 @@ public:
         webSocketContext->getExt()->sendPingsAutomatically = behavior.sendPingsAutomatically;
         webSocketContext->getExt()->maxLifetime = behavior.maxLifetime;
         webSocketContext->getExt()->compression = behavior.compression;
+        webSocketContext->getExt()->wsPackage = behavior.wsPackage;
+        webSocketContext->getExt()->autoPong = behavior.autoPong;
+        webSocketContext->getExt()->skipUTF8Validation = behavior.skipUTF8Validation;
 
         /* Calculate idleTimeoutComponents */
         webSocketContext->getExt()->calculateIdleTimeoutComponents(behavior.idleTimeout);
+    }
+
+public:
+    /* Returns the `ws` package's context for these options (maxPayloadLength, compression, autoPong, skipUTF8Validation),
+     * creating it on first use. It isn't bound to a route; pass it to HttpResponse::upgradeRaw().
+     * Every call must pass the same handlers. */
+    template <typename UserData>
+    WebSocketContext<SSL, true, UserData> *wsPackageContext(WebSocketBehavior<UserData> &&behavior) {
+        for (auto &[key, context] : webSocketContexts) {
+            auto *webSocketContext = (WebSocketContext<SSL, true, UserData> *) context;
+            auto *data = webSocketContext->getExt();
+            if (data->wsPackage && data->maxPayloadLength == behavior.maxPayloadLength && data->compression == behavior.compression
+                && data->autoPong == behavior.autoPong && data->skipUTF8Validation == behavior.skipUTF8Validation) {
+                return webSocketContext;
+            }
+        }
+
+        /* Node has no equivalent of these, and ws.ts runs its own close timer */
+        behavior.wsPackage = true;
+        behavior.idleTimeout = 0;
+        behavior.sendPingsAutomatically = false;
+        behavior.resetIdleTimeoutOnSend = false;
+        behavior.maxBackpressure = 0;
+        behavior.closeOnBackpressureLimit = false;
+        behavior.maxLifetime = 0;
+
+        auto *webSocketContext = createWebSocketContext<UserData>(nullptr, behavior);
+        applyWebSocketSettings<UserData>(webSocketContext, behavior);
+        return webSocketContext;
+    }
+
+    /* Calls with the same key share one context, so they must use the same UserData type and the same handlers
+     * (except upgrade). The context keeps the first call's handlers and the last call's settings. */
+    template <typename UserData>
+    TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior, const void *key) {
+        if (!httpContext) {
+            return std::move(*this);
+        }
+
+        /* Terminate on misleading idleTimeout values */
+        if (behavior.idleTimeout && behavior.idleTimeout < 8) {
+            std::terminate();
+        }
+
+        /* Maximum idleTimeout is 16 minutes */
+        if (behavior.idleTimeout > 240 * 4) {
+            std::terminate();
+        }
+
+        /* Maximum maxLifetime is 4 hours */
+        if (behavior.maxLifetime > 240) {
+            std::terminate();
+        }
+
+        WebSocketContext<SSL, true, UserData> *webSocketContext = nullptr;
+        for (auto &[contextKey, context] : webSocketContexts) {
+            if (contextKey == key) {
+                webSocketContext = (WebSocketContext<SSL, true, UserData> *) context;
+                break;
+            }
+        }
+        if (!webSocketContext) {
+            webSocketContext = createWebSocketContext<UserData>(key, behavior);
+        }
+        applyWebSocketSettings<UserData>(webSocketContext, behavior);
 
         httpContext->onHttp("GET", pattern, [webSocketContext, behavior = std::move(behavior)](auto *res, auto *req) mutable {
 

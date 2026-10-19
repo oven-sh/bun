@@ -85,7 +85,7 @@ impl Rule for NoArrayDelete {
         let ExprKind::Unary { op: UnOp::Delete, operand: argument } = node.kind() else {
             return;
         };
-        let is_oxlint = cx.language().is_oxlint;
+        let (argument, is_oxlint) = (argument.with_jsdoc_cast(), cx.language().is_oxlint);
         let (object, key, is_sequence) = match argument.kind() {
             // tsgolint looks at `a[b]` only.
             ExprKind::Dot { .. } if is_oxlint => return,

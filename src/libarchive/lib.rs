@@ -157,7 +157,7 @@ pub mod lib {
         pub result: Result,
     }
 
-    /// One per extraction: once `pwrite` fails, later entries do not try it again.
+    /// One per extraction. Once `pwrite` fails, later entries don't try it again.
     pub struct WriteStrategy {
         pub pwrite: bool,
     }
@@ -168,7 +168,8 @@ pub mod lib {
         }
     }
 
-    /// Sizes no write or allocation from the entry header or sparse map: nothing proves them.
+    /// Never sizes a write or an allocation from the entry header or the sparse map, because
+    /// nothing verifies them.
     pub struct EntryWriter {
         fd: Fd,
         /// One past the last byte written.
@@ -201,7 +202,8 @@ pub mod lib {
             #[cfg(windows)]
             if !self.marked_sparse {
                 self.marked_sparse = true;
-                // A volume without sparse files refuses the mark; the hole then takes disk.
+                // A volume without sparse file support refuses the mark. The hole then takes up
+                // disk space.
                 let _ = bun_sys::set_sparse(self.fd);
             }
         }
@@ -250,7 +252,8 @@ pub mod lib {
             Ok(())
         }
 
-        /// `end` is the offset libarchive returned with `ARCHIVE_EOF`: the length of the file.
+        /// `end` is the offset that libarchive returned with `ARCHIVE_EOF`, which is the length of
+        /// the file.
         pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
             if end > self.end {
                 self.before_hole();
@@ -312,7 +315,8 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// Reads in steps so an untrusted `size` doesn't drive allocation. `Ok(false)`: read error.
+        /// Reads in steps, so that an untrusted `size` doesn't drive the allocation. Returns
+        /// `Ok(false)` on a read error.
         pub fn read_data_to_vec(
             &self,
             size: usize,
@@ -339,7 +343,8 @@ pub mod lib {
             Ok(true)
         }
 
-        /// `archive_read_data_block` — returns `None` on EOF; `*offset` is then the entry's length.
+        /// Calls `archive_read_data_block`. Returns `None` on EOF, and `*offset` is then the
+        /// entry's length.
         pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
             let mut buff: *const c_void = core::ptr::null();
             let mut size: usize = 0;
@@ -409,7 +414,8 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
         }
-        /// Padding unit for the last output block; the default pads it to 10 KiB, 1 disables padding.
+        /// Sets the padding unit for the last output block. The default pads it to 10 KiB, and 1
+        /// disables padding.
         pub fn write_set_bytes_in_last_block(&self, bytes: c_int) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_set_bytes_in_last_block(self.as_mut_ptr(), bytes) }
@@ -1251,7 +1257,8 @@ struct OutputFile {
 impl Drop for OutputFile {
     fn drop(&mut self) {
         if self.close {
-            // Slow under Windows AV; async closing gains nothing, can fail NtSetInformationFile.
+            // Closing is slow under Windows antivirus, but closing asynchronously gains nothing and
+            // can make NtSetInformationFile fail.
             self.fd.close();
         }
     }
@@ -1332,7 +1339,8 @@ impl Archiver {
         root: &[u8],
         ctx: &mut Context,
         appender: &mut A,
-        // Asked about every entry's path below `root`; such an entry is listed whatever its size.
+        // Called with the path of every entry below `root`. If it returns true, the entry is listed
+        // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
         let mut entry: *mut lib::Entry = ptr::null_mut();

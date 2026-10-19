@@ -156,9 +156,8 @@ pub(crate) fn parse_patch_source<'a>(
     };
     for section in &patchfile.skipped {
         let subject = match section.path.map(bun_core::fmt::escape_control_chars) {
-            Some(path) if section.is_binary => format!("the content of {path}"),
-            Some(path) => format!("the section for {path}"),
-            None => "text that is not a patch".to_owned(),
+            Some(path) => path.to_string(),
+            None => "non-patch text".to_owned(),
         };
         log.add_range_warning_fmt_with_notes(
             Some(source),
@@ -166,15 +165,15 @@ pub(crate) fn parse_patch_source<'a>(
             Box::new([bun_ast::range_data(
                 None,
                 Range::NONE,
-                "make the patch again with bun patch, or delete these lines",
+                "recreate the patch with bun patch, or delete these lines",
             )]),
             format_args!(
-                "{} was left out: {}",
+                "skipping {}: {}",
                 subject,
                 if section.is_binary {
-                    "the file is binary, and the patch does not have it"
+                    "binary file, content not in patch"
                 } else {
-                    "it has no change that bun can apply"
+                    "no applicable changes"
                 },
             ),
         );
@@ -207,7 +206,7 @@ fn crash_on_missing_patch(
     }
     if log_level != LogLevel::Silent {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: Couldn't find patch file: '{}'",
+            "<r><red>error<r>: patch file not found: '{}'",
             bun_core::fmt::escape_control_chars(&patch.patchfile_path),
         );
         let keys = crate::update_transitive::patched_dependency_keys(manager);
@@ -215,14 +214,14 @@ fn crash_on_missing_patch(
             bun_semver::string::Builder::string_hash(key) == patch.name_and_version_hash
         }) {
             bun_core::pretty_errorln!(
-                "\nTo write it again from the patched package in node_modules, run:\n\n  <cyan>bun patch --commit {}<r>\n\nTo install the package without a patch, remove \"{}\" from \"patchedDependencies\" in package.json",
+                "\nTo recreate it from the patched package in node_modules, run:\n\n  <cyan>bun patch --commit {}<r>\n\nTo install without the patch, remove \"{}\" from \"patchedDependencies\" in package.json",
                 bun_core::fmt::escape_control_chars(key),
                 bun_core::fmt::escape_control_chars(key),
             );
         }
         if let Some(committed) = committed {
             bun_core::note!(
-                "{} was written, and the install did not run",
+                "wrote {}, install did not run",
                 bun_core::fmt::escape_control_chars(committed.as_bytes()),
             );
         }
@@ -606,7 +605,8 @@ impl PatchTask {
             }
         }
 
-        // 6. rename to cache dir; the name holds the hash of the patch, and a folder there is a hit
+        // 6. Rename it into the cache directory. The name includes the hash of the patch, so a
+        //    folder that's already there is a cache hit.
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
         if let Err(mut e) = staging.publish(patch.cache_dir, cache_dir_subpath_z, &|_| true) {
             e.err = e.err.with_path(cache_dir_subpath_z.as_bytes());

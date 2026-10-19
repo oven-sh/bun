@@ -56,6 +56,10 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing           Print load and check times"),
     clap::param!("--cwd <path>       Set the working directory"),
+    // `script_or_command` reads it.
+    clap::param!(
+        "--no-script        Run the type checker even if the project has a <b>check<r> script"
+    ),
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
     clap::param!("--no-emit"),
@@ -106,7 +110,8 @@ fn parse(args: &[&ZStr]) -> Options {
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
         // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
-        let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+        let directory = super::script_or_command::directory_of_cwd(cwd);
+        let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory));
         if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,
@@ -348,8 +353,6 @@ fn request<'a>(
         progress,
         only: None,
         order: 1,
-        digests: false,
-        task_clock: None,
         plan_options: bun_sema_driver::PlanOptions::default(),
         retains_everything: false,
         stops_like_tsc: true,
@@ -454,7 +457,11 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            Provided::default(),
+            // Only set here, because this function never returns.
+            Provided {
+                ends_the_process: true,
+                ..Default::default()
+            },
             // The process exits without freeing what was loaded. Under leak detection, everything
             // is freed first.
             |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
@@ -484,7 +491,6 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             )
         },
     );
-    let _ = Output::writer().write_all(&out);
     let mut summary = Vec::new();
     format::write_summary(
         &mut summary,
@@ -519,9 +525,8 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             );
         }
     }
-    let _ = Output::error_writer().write_all(&summary);
-    Output::flush();
-    Global::exit(u32::from(!report.is_ok()));
+    let exit_code = super::lint_command::print(&out, &summary, u8::from(!report.is_ok()));
+    Global::exit(u32::from(exit_code));
 }
 
 /// What is run.
@@ -835,9 +840,13 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
-/// its scripts is run.
-pub(crate) fn check_project_before() -> bool {
-    check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default())
+/// its scripts, or the app of `bun bake`, is run. `before_read`: see `watching`.
+pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
+    let provided = Provided {
+        before_read,
+        ..Default::default()
+    };
+    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.

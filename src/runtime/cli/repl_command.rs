@@ -236,7 +236,9 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 vm.on_before_exit();
             }
         } else {
-            // Interactive: run the REPL loop
+            // Interactive: run the REPL loop. An uncaught error is printed and the next line is
+            // read, so it is not fatal here.
+            vm.suppress_fatal_uncaught = true;
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }

@@ -346,6 +346,12 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
+    /// How many errors [`uncaught_exception`](Self::uncaught_exception) reported that no listener
+    /// took. The rejection pass stops once one is reported.
+    pub(crate) fatal_uncaught_count: u32,
+    /// An uncaught error does not end this host, so it is not counted above. Set by the
+    /// interactive `bun repl`, which prints the error and reads the next line.
+    pub suppress_fatal_uncaught: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -2188,6 +2194,9 @@ impl VirtualMachine {
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
+            if !self.suppress_fatal_uncaught {
+                self.fatal_uncaught_count = self.fatal_uncaught_count.wrapping_add(1);
+            }
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
@@ -4227,6 +4236,12 @@ impl VirtualMachine {
         this.unhandled_rejections_mode() != UnhandledRejections::Bun
     }
 
+    /// [`Self::fatal_uncaught_count`], for the rejection pass (`GlobalObject::handleRejectedPromises`).
+    #[unsafe(export_name = "Bun__VM__fatalUncaughtCount")]
+    pub(crate) extern "C" fn fatal_uncaught_count_for_rejection_pass(this: &VirtualMachine) -> u32 {
+        this.fatal_uncaught_count
+    }
+
     /// The configured `--unhandled-rejections` mode (defaults to Bun's behavior).
     pub(crate) fn unhandled_rejections_mode(
         &self,
@@ -4523,6 +4538,11 @@ impl VirtualMachine {
                 // errors (the VM is dead; don't bump the counter or invoke the
                 // handler).
                 if self.event_loop_mut().drain_microtasks().is_err() {
+                    return;
+                }
+                // `uncaught_exception` reported the reason itself. Only a reason that had to be
+                // wrapped is still to print: the wrapper does not show it.
+                if wrapped == reason {
                     return;
                 }
             }

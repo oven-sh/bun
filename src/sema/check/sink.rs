@@ -911,7 +911,12 @@ impl Checker<'_, '_> {
     /// Takes the diagnostics that a commit publishes. What belongs to a query goes with the entry of the query, which the commit stores.
     /// What belongs to the task goes when the file is checked to the end (`is_between_files`): if the task is lost before,
     /// whoever checks the file again reports it.
-    /// `None`: not now. A callback among them has not been called, which `check_file` does at the end of the file.
+    /// `None`: not now.
+    /// - A callback among them has not been called, which `check_file` does at the end of the file.
+    /// - Or one of them belongs to a query about the file that is being checked, so it waits for the end of the file. If
+    ///   the query reported it because it re-entered itself, a commit now would publish what the query computed on the
+    ///   way. If the task is discarded later, the task that rechecks the file finds those results, doesn't re-enter the
+    ///   query, and doesn't report the error.
     ///
     /// The first list: what belongs to a query about a shared record and was logged while the task wrote at once. The entry
     /// of such a query is there for all already, so this is reported also if the commit fails or the task is lost:
@@ -922,15 +927,18 @@ impl Checker<'_, '_> {
     ) -> Option<[Logged; 2]> {
         let while_writing_at_once = self.task.logged_while_writing_at_once();
         let logged = &mut self.task.diagnostics;
-        if !is_between_files && logged.iter().any(|it| it.1.deferred.is_some()) {
-            return None;
-        }
-        let mut taken: Vec<(usize, (Option<Query>, Reported))> = Vec::new();
         // See `withhold_until_the_file_ends`.
         let in_doubt = &self.task.files_in_doubt;
         let is_withheld = |q: Query| {
             !matches!(q, Query::Cond(..)) && q.syntax().is_some_and(|file| in_doubt.contains(&file))
         };
+        let waits = |it: &(Option<Query>, Reported)| {
+            it.1.deferred.is_some() || it.0.is_some_and(is_withheld)
+        };
+        if !is_between_files && logged.iter().any(waits) {
+            return None;
+        }
+        let mut taken: Vec<(usize, (Option<Query>, Reported))> = Vec::new();
         for (at, it) in logged.iter_mut().enumerate() {
             if is_between_files
                 || it

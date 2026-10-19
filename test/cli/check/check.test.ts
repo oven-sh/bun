@@ -1175,6 +1175,30 @@ type Settled<T> = T extends never ? T : OneOf<T>;
     },
   );
 
+  // `late.ts` is checked while `first.ts` is, so its task is discarded at the cycle through `C2`, and the file is
+  // rechecked. If the task has already shared what it computed inside the cycle through `C1`, the recheck finds those
+  // results and never runs into that cycle.
+  test("reports a class that is its own base type in a file that is rechecked for a later cycle", async () => {
+    const lines = (n: number, line: (i: number) => string) => Array.from({ length: n }, (_, i) => line(i)).join("");
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["first.ts", "late.ts"] }),
+      "first.ts": lines(400, i => `function pad${i}() { return [${i}, "${i}"].map(it => typeof it).join(""); }\n`),
+      "late.ts": `type Cond<T> = T extends string | number ? { y: 1 } : { z: 1 };
+class Base<T> { b!: T }
+declare const early: C1;
+early.x;
+class C1 extends Base<Cond<C1>> { x = 1 }
+${lines(800, i => `const u${i}: number = ${i};\n`)}let late: Cond<C2>;
+class C2 extends Base<Cond<C2>> { x = 1 }
+`,
+    });
+    const threads = [1, 2, 2, 2, 3, 3, 3, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe("late.ts(5,7): error TS2310: Type 'C1' recursively references itself as a base type.");
+      expect(exitCode).toBe(1);
+    }
+  });
+
   test("--threads 1 produces the same output", async () => {
     using dir = project({
       "a.ts": `import { b } from "./b";\nexport const a: number = b;\n`,

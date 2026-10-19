@@ -461,6 +461,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !data.default_name.ref_.is_symbol() {
                     data.default_name = p.create_default_name(expr.loc);
                 }
+                debug_assert!(
+                    p.module_scope()
+                        .generated
+                        .slice()
+                        .contains(&data.default_name.ref_),
+                    "the default name of an expression must be a generated module-scope symbol"
+                );
 
                 let should_emit_temp_var = p.options.features.react_fast_refresh
                     && match expr.data {

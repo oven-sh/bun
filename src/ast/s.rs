@@ -84,7 +84,13 @@ pub struct ExportFrom {
 }
 
 pub struct ExportDefault {
-    pub default_name: LocRef, // value may be a SFunction or SClass
+    /// The module-scope binding that holds the default export.
+    ///
+    /// For a function or class declaration with a name: the symbol of that name.
+    /// Otherwise: a generated symbol. It is never the name of a function or class
+    /// expression, because the expression binds that name in its own scope.
+    pub default_name: LocRef,
+    /// A function or class declaration, or an expression.
     pub value: StmtOrExpr,
 }
 

@@ -65,7 +65,9 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-const EXPECTED_VERSION: u32 = 35;
+/// Version 36: `export default (function f() {})` and `export default (class f {})` have their
+/// own default symbol. With `minify_identifiers`, older entries give the name `f` to a local.
+const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

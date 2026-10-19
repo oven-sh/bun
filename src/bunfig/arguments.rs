@@ -76,7 +76,7 @@ fn unreadable_config(
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum ConfigFile {
+pub(crate) enum ConfigFile {
     /// `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
     User,
     /// `./bunfig.toml`
@@ -138,17 +138,7 @@ fn load_bunfig(
         log: log_ptr,
         level: original_level,
     };
-    let is_above_cwd = file == ConfigFile::ProjectAbove;
-    let is_project_file = is_above_cwd || file == ConfigFile::Project;
-    Bunfig::parse(
-        cmd,
-        &source,
-        is_project_file,
-        is_above_cwd,
-        ctx,
-        tool,
-        counts,
-    )
+    Bunfig::parse(cmd, &source, file, ctx, tool, counts)
 }
 
 /// Whether the package.json in `root` lists `dir`, which is below `root`, as a workspace. `None` if it has no `workspaces`.

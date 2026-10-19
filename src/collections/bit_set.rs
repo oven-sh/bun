@@ -146,48 +146,10 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         (self.mask & Self::mask_bit(index)) != 0
     }
 
-    /// Returns the total number of set bits in this bit set.
-    pub const fn count(self) -> usize {
-        self.mask.count_ones() as usize
-    }
-
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
         self.mask |= Self::mask_bit(index);
-    }
-
-    /// Changes the value of all bits in the specified range to
-    /// match the passed boolean.
-    pub fn set_range_value(&mut self, range: Range, value: bool) {
-        debug_assert!(range.end <= Self::BIT_LENGTH);
-        debug_assert!(range.start <= range.end);
-        if range.start == range.end {
-            return;
-        }
-        if SIZE == 0 {
-            return;
-        }
-
-        let start_bit = u32::try_from(range.start).expect("int cast");
-
-        let mut mask = bool_mask_usize(true) << start_bit;
-        if range.end != Self::BIT_LENGTH {
-            let end_bit = u32::try_from(range.end).expect("int cast");
-            // `~0 >> (usize::BITS - end_bit)` yields the low `end_bit` bits.
-            mask &= bool_mask_usize(true) >> (usize::BITS - end_bit);
-        }
-        // also clear bits above SIZE since the backing `usize` may be wider than SIZE bits
-        mask &= Self::FULL_MASK;
-        self.mask &= !mask;
-
-        let mut mask = bool_mask_usize(value) << start_bit;
-        if range.end != Self::BIT_LENGTH {
-            let end_bit = u32::try_from(range.end).expect("int cast");
-            mask &= bool_mask_usize(value) >> (usize::BITS - end_bit);
-        }
-        mask &= Self::FULL_MASK;
-        self.mask |= mask;
     }
 
     /// Removes a specific bit from the bit set
@@ -210,62 +172,12 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         Some(mask.trailing_zeros() as usize)
     }
 
-    /// Iterates through the items in the set, according to the options.
-    /// The default options (.{}) will iterate indices of set bits in
-    /// ascending order.  Modifications to the underlying bit set may
-    /// or may not be observed by the iterator.
-    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
-        self,
-    ) -> SingleWordIterator<SIZE, DIR_FWD> {
-        SingleWordIterator {
-            bits_remain: if KIND_SET {
-                self.mask
-            } else {
-                !self.mask & Self::FULL_MASK
-            },
-        }
-    }
-
-    /// Iterate indices of set bits in ascending order.
-    /// Convenience wrapper for `iterator::<true, true>()`.
-    #[inline]
-    pub fn iter_set(self) -> SingleWordIterator<SIZE, true> {
-        self.iterator::<true, true>()
-    }
-
     #[inline(always)]
     fn mask_bit(index: usize) -> usize {
         if SIZE == 0 {
             return 0;
         }
         1usize << index
-    }
-}
-
-/// Iterator over a single-word `IntegerBitSet`.
-pub struct SingleWordIterator<const SIZE: usize, const DIR_FWD: bool> {
-    // all bits which have not yet been iterated over
-    bits_remain: usize,
-}
-
-impl<const SIZE: usize, const DIR_FWD: bool> SingleWordIterator<SIZE, DIR_FWD> {
-    /// Returns the index of the next unvisited set bit
-    /// in the bit set, in ascending order.
-    pub fn next(&mut self) -> Option<usize> {
-        if self.bits_remain == 0 {
-            return None;
-        }
-
-        if DIR_FWD {
-            let next_index = self.bits_remain.trailing_zeros() as usize;
-            self.bits_remain &= self.bits_remain - 1;
-            Some(next_index)
-        } else {
-            let leading_zeroes = self.bits_remain.leading_zeros();
-            let top_bit = (usize::BITS - 1 - leading_zeroes) as usize;
-            self.bits_remain &= (1usize << top_bit) - 1;
-            Some(top_bit)
-        }
     }
 }
 

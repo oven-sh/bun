@@ -8,6 +8,7 @@
 
 #![allow(clippy::collapsible_if)]
 
+use crate::arguments::ConfigFile;
 use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
@@ -1245,8 +1246,7 @@ impl Bunfig {
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
-        is_project_file: bool,
-        is_above_cwd: bool,
+        file: ConfigFile,
         ctx: &mut ContextData,
         tool: Option<&mut crate::ToolReader<'_>>,
         counts: Counts,
@@ -1321,8 +1321,8 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
-            is_project_file,
-            is_above_cwd,
+            is_project_file: matches!(file, ConfigFile::Project | ConfigFile::ProjectAbove),
+            is_above_cwd: file == ConfigFile::ProjectAbove,
             tool,
             counts,
         };
@@ -1353,15 +1353,8 @@ impl Bunfig {
             ..Default::default()
         };
         let cmd = CommandTag::InstallCommand;
-        Self::parse(
-            cmd,
-            source,
-            true,
-            false,
-            &mut ctx,
-            None,
-            Counts::OnlyInstall,
-        )?;
+        let file = ConfigFile::Project;
+        Self::parse(cmd, source, file, &mut ctx, None, Counts::OnlyInstall)?;
         Ok(ctx.install)
     }
 }

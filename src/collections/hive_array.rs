@@ -113,15 +113,13 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         None
     }
 
-    /// Forward iterator over set bits. Mirrors `IntegerBitSet::iter_set`.
+    /// Forward iterator over set bits.
     #[inline]
     pub fn iter_set(&self) -> HiveBitSetIter<CAPACITY> {
         self.iterator::<true, true>()
     }
 
-    /// Signature mirrors `IntegerBitSet::iterator` so existing
-    /// `hive.used.iterator::<true, true>()` callers compile unchanged. Only
-    /// the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
+    /// Only the `<KIND_SET=true, DIR_FWD=true>` combination is implemented (the
     /// only one used in-tree); other params assert.
     #[inline]
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(&self) -> HiveBitSetIter<CAPACITY> {

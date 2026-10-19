@@ -2583,8 +2583,8 @@ impl Lockfile {
 
     /// What `entry` disagrees on with the package that an earlier entry of its name and resolution
     /// appended. `Resolution::eql` leaves out the npm tarball URL and, beside a commit, the git
-    /// ref. `kept_integrity` takes the hash of `entry` when it has none or a weaker algorithm's.
-    /// Entries with one hash are one tarball, whatever URL each of them names.
+    /// ref. Entries with one hash are one tarball, whatever URL each of them names. When nothing
+    /// conflicts, `kept_integrity` takes the hash of `entry` if it has none or a weaker algorithm's.
     pub(crate) fn pin_conflict(
         kept: &Resolution,
         kept_integrity: &mut crate::Integrity,
@@ -2592,18 +2592,16 @@ impl Lockfile {
         entry_integrity: &crate::Integrity,
         buf: &[u8],
     ) -> Option<PinConflict> {
-        if entry_integrity.tag.is_supported() {
+        let has_integrity = entry_integrity.tag.is_supported();
+        if has_integrity {
             if kept_integrity == entry_integrity {
                 return None;
             }
             if kept_integrity.tag == entry_integrity.tag {
                 return Some(PinConflict::Integrity);
             }
-            if !kept_integrity.tag.is_supported() || entry_integrity.tag.0 > kept_integrity.tag.0 {
-                *kept_integrity = *entry_integrity;
-            }
         }
-        match entry.tag {
+        let conflict = match entry.tag {
             ResolutionTag::Npm => {
                 (!entry.npm().url.eql(kept.npm().url, buf, buf)).then_some(PinConflict::TarballUrl)
             }
@@ -2616,7 +2614,14 @@ impl Lockfile {
                 (!same_ref).then_some(PinConflict::GitRef)
             }
             _ => None,
+        };
+        if conflict.is_none()
+            && has_integrity
+            && (!kept_integrity.tag.is_supported() || entry_integrity.tag.0 > kept_integrity.tag.0)
+        {
+            *kept_integrity = *entry_integrity;
         }
+        conflict
     }
 
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`. An entry of a package

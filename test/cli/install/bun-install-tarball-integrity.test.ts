@@ -1648,7 +1648,7 @@ describe.concurrent("entries of one package in bun.lock", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const installed = file(join(String(dir), "node_modules", Object.keys(dependencies)[0], "package.json"));
     return {
       // The excerpts of bun.lock have the ports of this run in them.
@@ -1821,6 +1821,28 @@ describe.concurrent("entries of one package in bun.lock", () => {
     });
   });
 
+  // The two hosts have different bytes here, so the integrity of the second entry does not fit the
+  // tarball of the first.
+  it("a lockfileVersion 1 file with a warning is installed from its first entry, unchanged", async () => {
+    const result = await run(
+      1,
+      aliases,
+      ({ registry, elsewhere }) => ({
+        a: ["pkg@1.0.0", `${elsewhere}pkg/-/pkg-1.0.0.tgz`, {}, sri(otherTgz, "sha1")],
+        b: ["pkg@1.0.0", `${registry}pkg/-/pkg-1.0.0.tgz`, {}, integrity],
+      }),
+      ...frozen,
+    );
+    expect(result.stderr).toContain(`warn: "a" and "b" lock pkg@1.0.0 with a different tarball URL\n`);
+    expect(result.stderr).not.toContain("error:");
+    expect(result).toMatchObject({
+      exitCode: 0,
+      requests: ["elsewhere/pkg/-/pkg-1.0.0.tgz"],
+      says: "other",
+      lockfile: "unchanged",
+    });
+  });
+
   // From lockfileVersion 2 on, a git entry without a commit is refused by itself.
   it("two git entries of one ref, one without a commit, are a warning in a lockfileVersion 1 file", async () => {
     const dependency = "git+https://127.0.0.1:1/repo.git#main";
@@ -1883,7 +1905,7 @@ describe.concurrent("entries of one package in bun.lock", () => {
     });
     const bun = async (...args: string[]) => {
       await using proc = spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stderr, exitCode };
     };
     await Bun.write(

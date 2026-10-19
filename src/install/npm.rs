@@ -1301,6 +1301,8 @@ pub mod package_manifest {
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
             #[cfg(windows)]
+            #[allow(clippy::disallowed_methods)]
+            // stages the manifest, and the caller has opened it
             let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
             let path_to_use_for_opening_file =

@@ -57,8 +57,17 @@ impl PackageManager {
     }
 
     #[inline]
+    #[allow(clippy::disallowed_methods)] // the method spelling of the same accessor
     pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
+    }
+
+    /// Opens the cache directory and its staging directory on this thread, before the tasks that
+    /// read them start. The cache may hold everything already, so a staging directory that cannot
+    /// be had is not an error here: the task that has to stage an entry asks again, and reports it.
+    pub(crate) fn open_cache_directories(&mut self) {
+        let _ = get_cache_directory(self);
+        let _ = try_get_temporary_directory(self);
     }
 
     /// Prints `why` and exits. Auto-install only logs `why`, and the import that needed the
@@ -174,6 +183,9 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
     )
 }
 
+/// The directory that an entry is staged in before it is renamed into the cache. Exits when there
+/// is none, which is every time on a cache that cannot be written. Only for a caller that stages
+/// an entry: clippy.toml disallows it, and the others call `try_get_temporary_directory`.
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
     try_get_temporary_directory(this).unwrap_or_else(|why| {

@@ -918,6 +918,7 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
 pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary, Error> {
     let mut r = Reader::open(pack_path)?;
     let cache_dir = pm.get_cache_directory();
+    #[allow(clippy::disallowed_methods)] // stages the entries of the pack
     let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
     let mut summary = UnpackSummary::default();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();

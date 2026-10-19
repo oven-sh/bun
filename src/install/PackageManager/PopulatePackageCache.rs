@@ -68,8 +68,7 @@ pub(crate) fn download_pinned_packages(
         manager.options.libc,
     );
 
-    let _ = manager.get_cache_directory();
-    let _ = manager.get_temporary_directory();
+    manager.open_cache_directories();
 
     // Enqueueing is keyed by dependency. Prefer a required one, so that failures are errors.
     let dep_ids: Vec<DependencyID> = {

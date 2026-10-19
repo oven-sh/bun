@@ -716,6 +716,9 @@ impl PatchTask {
         // log formatting), so no trailing NUL is needed.
 
         let result = (manager.pending_patch_commit).patch_hash(name_and_version_hash);
+        // The hash needs no staging directory, but the patched package that it names usually
+        // does, and this is the last exit before packages are linked.
+        #[allow(clippy::disallowed_methods)]
         let tempdir = manager.get_temporary_directory().handle.fd();
         Box::new(PatchTask {
             tempdir,
@@ -789,6 +792,7 @@ impl PatchTask {
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
 
+        #[allow(clippy::disallowed_methods)] // stages the patched package
         let tempdir = pkg_manager.get_temporary_directory().handle.fd();
         Box::new(PatchTask {
             tempdir,

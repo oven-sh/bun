@@ -538,8 +538,7 @@ pub fn install_with_manager(
                     // Workspaces come first. A `catalog:` dependency that gets re-resolved below can
                     // only link to a workspace that the root's own dependency on it has resolved.
                     if has_new_rows {
-                        let _ = manager.get_cache_directory();
-                        let _ = manager.get_temporary_directory();
+                        manager.open_cache_directories();
                         for row in unmapped(manager, true) {
                             enqueue_row(manager, row);
                         }
@@ -2204,8 +2203,7 @@ fn create_new_lockfile_and_enqueue(
     root = manager.lockfile.append_package(&root)?;
 
     if root.dependencies.len > 0 {
-        let _ = manager.get_cache_directory();
-        let _ = manager.get_temporary_directory();
+        manager.open_cache_directories();
     }
     {
         let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
@@ -2228,8 +2226,7 @@ fn resolve_pending_tasks(
     moved_direct: Option<&DirectDependencies>,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
-        let _ = manager.get_cache_directory();
-        let _ = manager.get_temporary_directory();
+        manager.open_cache_directories();
     }
 
     if log_level.show_progress() {

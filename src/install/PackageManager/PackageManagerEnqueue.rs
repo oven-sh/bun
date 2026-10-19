@@ -2903,6 +2903,7 @@ fn enqueue_local_tarball(
                     name: stored_string(name),
                     resolution: *resolution,
                     cache_dir: get_cache_directory(this),
+                    #[allow(clippy::disallowed_methods)] // stages the extracted tarball
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
                     integrity: locked_integrity.copied().unwrap_or_default(),

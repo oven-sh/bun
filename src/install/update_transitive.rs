@@ -325,8 +325,7 @@ impl TransitiveUpdate {
             return Ok(DynamicBitSet::default());
         }
         let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
-        let _ = manager.get_cache_directory();
-        let _ = manager.get_temporary_directory();
+        manager.open_cache_directories();
         for pin in &self.pins {
             if manager.lockfile.buffers.resolutions[pin.dep_id as usize] != pin.from {
                 continue;

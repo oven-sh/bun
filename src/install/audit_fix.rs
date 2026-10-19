@@ -1331,8 +1331,7 @@ pub fn prepare_install(manager: &mut PackageManager, plan: &FixPlan) -> crate::R
 
 pub fn enqueue_planned_fixes(manager: &mut PackageManager) -> crate::Result<()> {
     let pins = core::mem::take(&mut manager.audit_fix_pins);
-    let _ = manager.get_cache_directory();
-    let _ = manager.get_temporary_directory();
+    manager.open_cache_directories();
     manager
         .options
         .enable

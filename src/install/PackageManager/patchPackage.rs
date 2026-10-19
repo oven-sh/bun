@@ -161,6 +161,7 @@ pub(crate) fn write_pending_patch(
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name =
         bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    #[allow(clippy::disallowed_methods)] // stages the patch file, which is renamed into the project
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patch.contents) {
         Output::err(e, "failed to write patch to temp file", ());

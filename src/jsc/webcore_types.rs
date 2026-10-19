@@ -335,12 +335,13 @@ impl Blob {
         if !name.is_dead() {
             return Some(std::borrow::Cow::Borrowed(name));
         }
+        // A copy: a borrowed UTF-8 slice does not compare equal to a Latin-1 `name` of the same text.
         self.store_path()
-            .map(|path| std::borrow::Cow::Owned(bun_core::String::from_bytes(path)))
+            .map(|path| std::borrow::Cow::Owned(bun_core::String::clone_utf8(path)))
     }
 
     /// `true` when the two blobs are known to differ. A blob on disk or in S3 is never read.
-    pub fn contents_differ(&self, other: &Blob, as_form_data_entry: bool) -> bool {
+    pub fn contents_differ(&self, other: &Blob, compare_name: bool, compare_bytes: bool) -> bool {
         let in_memory = |blob: &Blob| match blob.store().map(|store| &store.data) {
             None | Some(store::Data::Bytes(_)) => true,
             Some(store::Data::File(_) | store::Data::S3(_)) => false,
@@ -359,15 +360,14 @@ impl Blob {
         {
             return true;
         }
-        // A FormData entry has a file name of its own, which the caller compares.
-        if !as_form_data_entry {
+        if compare_name {
             if let (Some(name), Some(other_name)) = (self.name_for_js(), other.name_for_js()) {
                 if !name.eql(&other_name) {
                     return true;
                 }
             }
         }
-        !core::ptr::eq(a.as_ptr(), b.as_ptr()) && a != b
+        compare_bytes && !core::ptr::eq(a.as_ptr(), b.as_ptr()) && a != b
     }
 
     /// Release the store ref without

@@ -5666,9 +5666,10 @@ pub(crate) extern "C" fn Blob__sharedView(
 pub(crate) extern "C" fn Bun__Blob__contentsDiffer(
     a: &Blob,
     b: &Blob,
-    as_form_data_entry: bool,
+    compare_name: bool,
+    compare_bytes: bool,
 ) -> bool {
-    a.contents_differ(b, as_form_data_entry)
+    a.contents_differ(b, compare_name, compare_bytes)
 }
 
 /// # Safety

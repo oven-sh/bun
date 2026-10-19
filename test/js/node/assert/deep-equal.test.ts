@@ -953,9 +953,9 @@ const cases: Case[] = [
   },
 
   // Web objects that keep their state off the JS object (Node.js v26.3.0). Node sees no own
-  // property on a FormData, so any two are equal. It sees a Blob's size and type as own symbol
-  // properties, which only strict mode compares. assert.deepEqual is Bun.deepEquals here, and
-  // that compares the contents.
+  // property on a FormData, so any two are equal. It sees the size and the type of a Blob and
+  // the name of a File as own symbol properties, which only strict mode compares. It never
+  // compares the bytes. assert.deepEqual is Bun.deepEquals here, and that compares the contents.
   {
     name: "two FormData with the same entries",
     a: () => formData("a", "1"),
@@ -972,13 +972,50 @@ const cases: Case[] = [
     looseBug: "reports not equal",
   },
   {
+    name: "two Blobs with the same bytes",
+    a: () => new Blob(["abc"]),
+    b: () => new Blob(["abc"]),
+    strict: true,
+    loose: true,
+  },
+  {
     name: "two Blobs of different sizes",
     a: () => new Blob(["abc"]),
     b: () => new Blob(["xyz-and-longer"]),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
     looseBug: "reports not equal",
+  },
+  {
+    name: "two Blobs of one size with different bytes",
+    a: () => new Blob(["abc"]),
+    b: () => new Blob(["abd"]),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "two Blobs with different types",
+    a: () => new Blob(["abc"], { type: "text/plain" }),
+    b: () => new Blob(["abc"], { type: "text/html" }),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "two Files with different names",
+    a: () => new File(["abc"], "a.txt", { lastModified: 1 }),
+    b: () => new File(["abc"], "b.txt", { lastModified: 1 }),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "two Files with the same name",
+    a: () => new File(["abc"], "a.txt", { lastModified: 1 }),
+    b: () => new File(["abc"], "a.txt", { lastModified: 1 }),
+    strict: true,
+    loose: true,
   },
 ];
 

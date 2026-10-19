@@ -1,5 +1,4 @@
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -391,61 +390,6 @@ describe("FormData, Blob, File, Bun.Cookie and Bun.CookieMap compare by their co
     expect(deepEquals(form(["a", "1"]), form(["a", "2"]), true, true)).toBe(false);
     expect(deepEquals(form(["a", "1"]), form(["a", "1"]), true, true)).toBe(true);
   });
-
-  // `bun build --compile` keeps an embedded file in memory, so it compares like any other Blob.
-  // A debug build takes longer than the default timeout to write the executable.
-  it("compares the embedded files of a compiled executable", async () => {
-    using dir = tempDir("deep-equals-compile", {
-      "entry.ts": `
-        import a from "./a.bin" with { type: "file" };
-        import b from "./b.bin" with { type: "file" };
-        import c from "./c.bin" with { type: "file" };
-        const form = (blob: Blob) => {
-          const data = new FormData();
-          data.append("file", blob, "name");
-          return data;
-        };
-        console.log(JSON.stringify({
-          sameFile: Bun.deepEquals(Bun.file(a), Bun.file(a)),
-          otherBytes: Bun.deepEquals(Bun.file(a), Bun.file(b)),
-          sameBytesOtherName: Bun.deepEquals(Bun.file(a), Bun.file(c)),
-          blobSameBytes: Bun.deepEquals(Bun.file(a), new Blob(["abc"])),
-          blobOtherBytes: Bun.deepEquals(Bun.file(a), new Blob(["abd"])),
-          entrySameBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(c))),
-          entryOtherBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(b))),
-        }));
-      `,
-      "a.bin": "abc",
-      "b.bin": "abd",
-      "c.bin": "abc",
-    });
-    const exe = join(String(dir), isWindows ? "app.exe" : "app");
-
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", join(String(dir), "entry.ts"), "--outfile", exe],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
-    expect(buildStderr).not.toContain("error:");
-    expect(buildExitCode).toBe(0);
-
-    await using app = Bun.spawn({ cmd: [exe], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      sameFile: true,
-      otherBytes: false,
-      sameBytesOtherName: false,
-      blobSameBytes: true,
-      blobOtherBytes: false,
-      entrySameBytes: true,
-      entryOtherBytes: false,
-    });
-    expect(exitCode).toBe(0);
-  }, 60_000);
 });
 
 // The object fast path used to recurse into nested values while walking the

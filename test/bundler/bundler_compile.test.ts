@@ -779,6 +779,59 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "1 1\n1 1\n1 1", setCwd: true },
   });
+  // An embedded file is in memory, so Bun.deepEquals compares it like any other Blob.
+  itBundled("compile/DeepEqualsEmbeddedFiles", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a.bin" with { type: "file" };
+        import b from "./b.bin" with { type: "file" };
+        import c from "./c.bin" with { type: "file" };
+        import accented from "./é.bin" with { type: "file" };
+        const form = (blob: Blob) => {
+          const data = new FormData();
+          data.append("file", blob, "name");
+          return data;
+        };
+        // A clone has no name of its own. Its name is the UTF-8 name of its store.
+        const storeName = structuredClone(Bun.file(accented)).name;
+        const latin1Name = Buffer.from(storeName, "latin1").toString("latin1");
+        console.log(JSON.stringify({
+          sameFile: Bun.deepEquals(Bun.file(a), Bun.file(a)),
+          otherBytes: Bun.deepEquals(Bun.file(a), Bun.file(b)),
+          sameBytesOtherName: Bun.deepEquals(Bun.file(a), Bun.file(c)),
+          blobSameBytes: Bun.deepEquals(Bun.file(a), new Blob(["abc"])),
+          blobOtherBytes: Bun.deepEquals(Bun.file(a), new Blob(["abd"])),
+          entrySameBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(c))),
+          entryOtherBytes: Bun.deepEquals(form(Bun.file(a)), form(Bun.file(b))),
+          storeNameIsLatin1: latin1Name === storeName,
+          storeNameAgainstLatin1Name: Bun.deepEquals(
+            structuredClone(Bun.file(accented)),
+            Object.assign(new Blob(["abc"]), { name: latin1Name }),
+          ),
+        }));
+      `,
+      "/a.bin": "abc",
+      "/b.bin": "abd",
+      "/c.bin": "abc",
+      "/é.bin": "abc",
+    },
+    run: {
+      validate({ stdout }) {
+        expect(JSON.parse(stdout)).toEqual({
+          sameFile: true,
+          otherBytes: false,
+          sameBytesOtherName: false,
+          blobSameBytes: true,
+          blobOtherBytes: false,
+          entrySameBytes: true,
+          entryOtherBytes: false,
+          storeNameIsLatin1: true,
+          storeNameAgainstLatin1Name: true,
+        });
+      },
+    },
+  });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
     assetNaming: "[name].[ext]",

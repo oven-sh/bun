@@ -82,16 +82,13 @@ pub(super) struct Reader<'r> {
 enum AnsweredBy {
     /// The rules here: the plugin has its usual name.
     Here,
-    /// The rules here, under the configuration's name for the plugin: `ts` for `@typescript-eslint/eslint-plugin` in
-    /// `@antfu/eslint-config`. Reports and comments use that name.
+    /// The rules here, under the configuration's name: `ts` for `@typescript-eslint/eslint-plugin`.
     Alias(Plugin),
     /// The package: JavaScript.
     Package,
 }
 
-/// `name`: what the plugin says it is called, with its version, if it says so. A plugin is built in under its usual name, or
-/// under any name if it says it is the package that the rules here replace. Not if the rules here
-/// [do not answer for it](Registry::answers_for) and `can_be_loaded`.
+/// `name`: what the plugin says it is called, with its version. `can_be_loaded`: the package is there.
 fn answered_by(
     registry: &Registry,
     prefix: &[u8],
@@ -129,8 +126,7 @@ fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<&'j [u8]> {
     name.as_str().or_else(|| module().map(package_of))
 }
 
-/// Collects the [foreign](AnsweredBy::Package) and the [other](AnsweredBy::Alias) names of the plugins in `json`, which is what
-/// a configuration file exports or a part of it. An object can have the rules of a plugin that an object after it has.
+/// The [foreign](AnsweredBy::Package) and the [other](AnsweredBy::Alias) names of the plugins of a whole configuration file.
 fn add_plugin_names(
     registry: &Registry,
     json: &Json,

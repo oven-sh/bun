@@ -271,8 +271,7 @@ pub struct ResolvedConfig {
     /// The plugins that are configured and that are not implemented here, by the prefix of their
     /// rules. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
-    /// The built-in plugins that are configured under another name: `ts` for `@typescript-eslint/eslint-plugin`. Their
-    /// rules keep the configuration's name.
+    /// The built-in plugins that are configured under another name: `ts` for `@typescript-eslint/eslint-plugin`.
     pub aliases: Vec<(Box<[u8]>, Plugin)>,
     /// The plugins of an `eslint.config.js` as `--print-config` has them, but for ESLint's own: `prefix:name@version`.
     pub printed_plugins: Vec<Box<[u8]>>,

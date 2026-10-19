@@ -281,8 +281,7 @@ enum Named<'c> {
     Native(&'static RuleEntry),
     /// One that has a [name](ConfiguredRule::name).
     Instance(&'c ConfiguredRule, &'c Arc<[u8]>),
-    /// One that a comment names under an [alias](ResolvedConfig::alias_of) and the configuration does not: the rule, and
-    /// the alias.
+    /// One that only a comment names, under an [alias](ResolvedConfig::alias_of).
     Aliased(&'static RuleEntry, &'c [u8]),
     Js(&'c Arc<js_plugin::Rule>),
 }

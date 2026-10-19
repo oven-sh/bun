@@ -1718,7 +1718,138 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   for (const k in globalThis.Worker.prototype) enumerable.push(k);
   expect(enumerable).not.toContain("startCpuProfileInternal");
   expect(enumerable).not.toContain("stopCpuProfileInternal");
+  expect(enumerable).not.toContain("startHeapProfileInternal");
+  expect(enumerable).not.toContain("stopHeapProfileInternal");
   expect(enumerable).not.toContain("cpuUsageInternal");
+});
+
+describe("startHeapProfile", () => {
+  test("samples the worker's allocations and attributes them to the worker's functions", async () => {
+    const worker = new Worker(
+      /* js */ `
+        import { parentPort } from "node:worker_threads";
+        globalThis.kept = [];
+        function allocateInWorker(count) {
+          for (let i = 0; i < count; i++) globalThis.kept.push({ index: i, a: i + 1, b: i + 2 });
+        }
+        parentPort.on("message", count => {
+          allocateInWorker(count);
+          parentPort.postMessage("done");
+        });
+      `,
+      { eval: true },
+    );
+    try {
+      await once(worker, "online");
+      const handle = await worker.startHeapProfile({ sampleInterval: 1024, stackDepth: 8 });
+      // A second start while one runs is refused, as in node.
+      await expect(worker.startHeapProfile()).rejects.toMatchObject({ code: "ERR_HEAP_PROFILE_HAVE_BEEN_STARTED" });
+      worker.postMessage(20000);
+      await once(worker, "message");
+      const profile = JSON.parse(await handle.stop());
+      expect(profile.head.callFrame).toEqual({
+        functionName: "(root)",
+        scriptId: "0",
+        url: "",
+        lineNumber: -1,
+        columnNumber: -1,
+      });
+      expect(profile.samples.length).toBeGreaterThan(100);
+      for (const sample of profile.samples) {
+        expect(Number.isInteger(sample.size) && sample.size > 0).toBe(true);
+      }
+      const names: string[] = [];
+      const walk = (node: any) => {
+        names.push(node.callFrame.functionName);
+        node.children.forEach(walk);
+      };
+      walk(profile.head);
+      expect(names).toContain("allocateInWorker");
+      // stop() again yields the same profile.
+      expect(await handle.stop()).toBe(await handle.stop());
+      // Sampling is off: a new start is accepted.
+      const again = await worker.startHeapProfile();
+      JSON.parse(await again.stop());
+    } finally {
+      await worker.terminate();
+    }
+  });
+
+  test("stop() after the worker exited rejects ERR_WORKER_NOT_RUNNING, like node", async () => {
+    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+    await once(worker, "online");
+    const handle = await worker.startHeapProfile();
+    worker.postMessage("done");
+    await once(worker, "exit");
+    await expect(handle.stop()).rejects.toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
+    await expect(worker.startHeapProfile()).rejects.toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
+  });
+
+  test("stop() racing terminate() settles either way, never hangs", async () => {
+    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+    await once(worker, "online");
+    const handle = await worker.startHeapProfile();
+    const stopped = handle.stop();
+    await worker.terminate();
+    await expect(
+      stopped.then(
+        json => (typeof JSON.parse(json).head === "object" ? "ok" : "bad"),
+        e => e?.code,
+      ),
+    ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
+  });
+
+  test("stackDepth is an int32 and forceGC and the include flags are honoured", async () => {
+    const worker = new Worker(
+      /* js */ `
+        import { parentPort } from "node:worker_threads";
+        import { edenGC } from "bun:jsc";
+        globalThis.kept = [];
+        function keptObjects(count) { for (let i = 0; i < count; i++) globalThis.kept.push({ i, a: 1 }); }
+        function droppedObjects(count) { let sink; for (let i = 0; i < count; i++) sink = { i, a: 1 }; return sink; }
+        parentPort.on("message", ({ count, eden }) => {
+          keptObjects(count);
+          droppedObjects(count);
+          if (eden) edenGC();
+          parentPort.postMessage("done");
+        });
+      `,
+      { eval: true },
+    );
+    const bytesOf = (node: any, name: string): number =>
+      (node.callFrame.functionName === name ? node.selfSize : 0) +
+      node.children.reduce((sum: number, child: any) => sum + bytesOf(child, name), 0);
+    const run = async (options: object, eden = false) => {
+      const handle = await worker.startHeapProfile(options);
+      worker.postMessage({ count: 20000, eden });
+      await once(worker, "message");
+      const profile = JSON.parse(await handle.stop());
+      return { kept: bytesOf(profile.head, "keptObjects"), dropped: bytesOf(profile.head, "droppedObjects") };
+    };
+    try {
+      await once(worker, "online");
+      expect(() => worker.startHeapProfile({ stackDepth: 2 ** 31 })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      // forceGC: the profile comes after a full collection, and the dropped objects are gone from it.
+      let { kept, dropped } = await run({ sampleInterval: 1024, forceGC: true });
+      expect(kept).toBeGreaterThan(400_000);
+      expect(dropped).toBeLessThan(kept / 10);
+      // Kept as collected by a major collection.
+      ({ kept, dropped } = await run({ sampleInterval: 1024, forceGC: true, includeObjectsCollectedByMajorGC: true }));
+      expect(dropped).toBeGreaterThan(kept / 2);
+      expect(dropped).toBeLessThan(kept * 2);
+      // An eden collection in the worker, its dead kept by the minor flag, no forced full collection.
+      ({ kept, dropped } = await run(
+        { sampleInterval: 1024, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true },
+        true,
+      ));
+      expect(dropped).toBeGreaterThan(kept / 2);
+      expect(dropped).toBeLessThan(kept * 2);
+    } finally {
+      await worker.terminate();
+    }
+  });
 });
 
 test("env: process.env reads in a worker module are evaluated at runtime against the worker's env", async () => {

@@ -13,6 +13,7 @@ namespace JSC {
 class TopExceptionScope;
 }
 namespace Bun {
+class HeapSampler;
 // A TerminationException that has unwound past the outermost script frame (!vm.isEntered()) is the VM's stop arriving
 // at native code that keeps running: take it off the VM, reset JSC's request flag as an entry-scope exit would, forbid
 // execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
@@ -306,6 +307,9 @@ public:
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
+
+    // The allocation-sampling heap profiler, while HeapProfiler.startSampling or worker.startHeapProfile has it on.
+    std::unique_ptr<Bun::HeapSampler> heapSampler;
 
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);

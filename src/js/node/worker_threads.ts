@@ -7,6 +7,14 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
   getHeapStatistics(): Promise<Record<string, number | boolean>>;
   startCpuProfileInternal(): Promise<void>;
   stopCpuProfileInternal(): Promise<string>;
+  startHeapProfileInternal(
+    sampleInterval: number,
+    stackDepth: number,
+    forceGC: boolean,
+    includeObjectsCollectedByMajorGC: boolean,
+    includeObjectsCollectedByMinorGC: boolean,
+  ): Promise<boolean>;
+  stopHeapProfileInternal(): Promise<string>;
   cpuUsageInternal(): Promise<{ user: number; system: number }>;
 };
 
@@ -17,6 +25,7 @@ const {
   validateString,
   validateObject,
   validateInteger,
+  validateInt32,
   validateNumber,
   validateBoolean,
 } = require("internal/validators");
@@ -1140,31 +1149,49 @@ class Worker extends EventEmitter {
   }
 
   startHeapProfile(options?: object) {
+    // node's defaults: 512 KiB between samples, 16 frames, no forced GC.
+    let sampleInterval = 512 * 1024;
+    let stackDepth = 16;
+    let forceGC = false;
+    let includeObjectsCollectedByMajorGC = false;
+    let includeObjectsCollectedByMinorGC = false;
     if (options !== undefined && options !== null) {
       validateObject(options, "options");
-      const {
+      ({
+        sampleInterval = sampleInterval,
+        stackDepth = stackDepth,
+        forceGC = forceGC,
+        includeObjectsCollectedByMajorGC = includeObjectsCollectedByMajorGC,
+        includeObjectsCollectedByMinorGC = includeObjectsCollectedByMinorGC,
+      } = options as any);
+      validateInteger(sampleInterval, "options.sampleInterval", 1);
+      validateInt32(stackDepth, "options.stackDepth", 0);
+      validateBoolean(forceGC, "options.forceGC");
+      validateBoolean(includeObjectsCollectedByMajorGC, "options.includeObjectsCollectedByMajorGC");
+      validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
+    }
+    if (this.#exited) {
+      return Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"));
+    }
+    return this.#worker
+      .startHeapProfileInternal(
         sampleInterval,
         stackDepth,
         forceGC,
         includeObjectsCollectedByMajorGC,
         includeObjectsCollectedByMinorGC,
-      } = options as any;
-      if (sampleInterval !== undefined) validateInteger(sampleInterval, "options.sampleInterval", 1);
-      if (stackDepth !== undefined) validateInteger(stackDepth, "options.stackDepth", 0);
-      if (forceGC !== undefined) validateBoolean(forceGC, "options.forceGC");
-      if (includeObjectsCollectedByMajorGC !== undefined)
-        validateBoolean(includeObjectsCollectedByMajorGC, "options.includeObjectsCollectedByMajorGC");
-      if (includeObjectsCollectedByMinorGC !== undefined)
-        validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
-    }
-    if (this.#exited) {
-      return Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"));
-    }
-    // Bun has no allocation-sampling heap profiler; yield a valid but empty
-    // v8 sampling-heap-profile so the handle/stop() shape matches node.
-    const empty =
-      '{"head":{"callFrame":{"functionName":"(root)","scriptId":"0","url":"","lineNumber":-1,"columnNumber":-1},"selfSize":0,"id":1,"children":[]},"samples":[]}';
-    return Promise.$resolve({ stop: () => Promise.$resolve(empty) });
+      )
+      .then((started: boolean) => {
+        if (!started) throw $ERR_HEAP_PROFILE_HAVE_BEEN_STARTED("Heap profile have been started already");
+        // stop() is idempotent, as in node: a second call yields the same profile.
+        let stopped: Promise<string> | undefined;
+        return {
+          stop: () =>
+            (stopped ??= this.#exited
+              ? Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"))
+              : this.#worker.stopHeapProfileInternal()),
+        };
+      });
   }
 
   #onClose(e) {

@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "BunHeapSampler.h"
 #include "WorkerMessagingProxy.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -101,6 +102,8 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
 
 JSVMClientData::~JSVMClientData()
 {
+    // Stops sampling while the heap's directories (m_heapData's subspaces) still exist.
+    heapSampler = nullptr;
     while (!m_clients.isEmpty()) {
         auto* client = &*m_clients.begin();
         client->remove();

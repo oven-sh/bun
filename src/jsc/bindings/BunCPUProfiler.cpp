@@ -29,6 +29,24 @@ void Bun__setSamplingInterval(int intervalMicroseconds)
 
 namespace Bun {
 
+void normalizeProfileURL(WTF::String& url)
+{
+    if (url.isEmpty())
+        return;
+    bool isAbsolutePath = false;
+    if (url[0] == '/') {
+        isAbsolutePath = true;
+    } else if (url.length() >= 2 && url[1] == ':') {
+        char firstChar = url[0];
+        if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+            isAbsolutePath = true;
+    } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\') {
+        isAbsolutePath = true;
+    }
+    if (isAbsolutePath)
+        url = WTF::URL::fileURLWithFileSystemPath(url).string();
+}
+
 // Store the profiling start time in microseconds since Unix epoch
 static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
@@ -393,31 +411,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         scriptId = static_cast<int>(provider->asID());
                     }
 
-                    // Absolute file path → `file://` URL. Chrome DevTools
-                    // expects `callFrame.url` to be a proper URL; leaving
-                    // the raw path breaks source-view resolution. We run
-                    // this AFTER the sourcemap callbacks below because the
-                    // callback (see FormatStackTraceForJS.cpp) unconditionally
-                    // rewrites its out-param back to the raw provider URL when
-                    // no sourcemap is found, which would undo an earlier
-                    // normalization. See #29240.
-                    auto normalizeURL = [](WTF::String& u) {
-                        if (u.isEmpty())
-                            return;
-                        bool isAbsolutePath = false;
-                        if (u[0] == '/') {
-                            isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[1] == ':') {
-                            char firstChar = u[0];
-                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
-                            isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
-                    };
-
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
                     // The definition (not the sample position) is remapped
@@ -448,9 +441,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             : 0;
                     }
 
-                    // Normalize `url` to a `file://` URL now that any
-                    // sourcemap rewriting is done.
-                    normalizeURL(url);
+                    // After the sourcemap callback, which rewrites `url` (#29240).
+                    normalizeProfileURL(url);
 
                     if (frame.hasExpressionInfo()) {
                         // Sample position for positionTicks. Use a throwaway
@@ -466,7 +458,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         // Seed with the raw provider URL (NOT empty). If the
                         // sourcemap callback is a no-op — BUN_JSC_ADDITIONS
                         // off, fn null, or the provider has no sourcemap —
-                        // sampleURL stays at this seed, and normalizeURL()
+                        // sampleURL stays at this seed, and normalizeProfileURL()
                         // below converts it to the same `file://` form as
                         // `url`, letting the `sampleURL == url` guard pass
                         // for plain .js files. Seeding empty would silently
@@ -481,7 +473,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             }
 #endif
                         }
-                        normalizeURL(sampleURL);
+                        normalizeProfileURL(sampleURL);
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
@@ -653,20 +645,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     auto* provider = std::get<0>(sourceProviderAndID);
                     if (provider) {
                         url = provider->sourceURL();
-
-                        bool isAbsolutePath = false;
-                        if (!url.isEmpty()) {
-                            if (url[0] == '/')
-                                isAbsolutePath = true;
-                            else if (url.length() >= 2 && url[1] == ':') {
-                                char firstChar = url[0];
-                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                    isAbsolutePath = true;
-                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
-                                isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                        normalizeProfileURL(url);
                     }
 
                     if (frame.hasExpressionInfo()) {

@@ -37,8 +37,7 @@ static inline shim::HeapProfilerImpl* toImpl(HeapProfiler* p)
 
 bool HeapProfiler::StartSamplingHeapProfiler(uint64_t, int, SamplingFlags)
 {
-    // JSC has no allocation-sampling profiler hook; record the state so the
-    // Start/Stop/Get contract matches V8 (false if already running).
+    // Not yet backed by Bun::HeapSampler; false if already running, as in V8.
     auto* impl = toImpl(this);
     if (impl->m_samplingActive)
         return false;
@@ -53,9 +52,7 @@ void HeapProfiler::StopSamplingHeapProfiler()
 
 AllocationProfile* HeapProfiler::GetAllocationProfile()
 {
-    // JSC has no allocation-sampling profiler; V8 returns nullptr when the
-    // sampling heap profiler is not active, and callers (e.g. @datadog/pprof)
-    // handle that.
+    // Not yet backed by Bun::HeapSampler; null is what V8 returns when not sampling.
     return nullptr;
 }
 

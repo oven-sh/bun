@@ -10,3 +10,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopPreciseCoverage);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_collectPreciseCoverage);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_startAllocationSampling);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_getAllocationSamplingProfile);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_stopAllocationSampling);

@@ -187,9 +187,67 @@ fn has_owner_of(path: &ZStr, cwd: &[u8]) -> bool {
     bun_sys::lstat(&bun_core::ZBox::from_bytes(cwd)).is_ok_and(|dir| dir.st_uid == file.st_uid)
 }
 
-#[cfg(not(unix))]
-fn has_owner_of(path: &ZStr, _: &[u8]) -> bool {
-    bun_sys::exists_z(path)
+/// The owner of a file or directory.
+#[cfg(windows)]
+struct Owner {
+    /// Points into `descriptor`.
+    sid: *mut core::ffi::c_void,
+    descriptor: *mut core::ffi::c_void,
+}
+
+#[cfg(windows)]
+impl Owner {
+    fn of(path: &[u8]) -> Option<Owner> {
+        use bun_sys::windows::advapi32;
+        use core::ptr::null_mut;
+
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path);
+        let mut owner = Owner {
+            sid: null_mut(),
+            descriptor: null_mut(),
+        };
+        // SAFETY: `wpath` is NUL-terminated, the two out-pointers are valid, and the others may be null.
+        let status = unsafe {
+            advapi32::GetNamedSecurityInfoW(
+                wpath.as_ptr(),
+                advapi32::SE_FILE_OBJECT,
+                advapi32::OWNER_SECURITY_INFORMATION,
+                &raw mut owner.sid,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &raw mut owner.descriptor,
+            )
+        };
+        (status == 0 && !owner.sid.is_null()).then_some(owner)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Owner {
+    fn drop(&mut self) {
+        // SAFETY: `descriptor` is null or what `GetNamedSecurityInfoW` allocated, and nothing else frees it.
+        unsafe { bun_sys::windows::kernel32::LocalFree(self.descriptor) };
+    }
+}
+
+#[cfg(windows)]
+fn has_owner_of(path: &ZStr, cwd: &[u8]) -> bool {
+    // `Owner::of` follows a link, and another user can make one to a file of the owner of `cwd`.
+    if bun_sys::get_file_attributes(path).is_none_or(|it| it.is_reparse_point) {
+        return false;
+    }
+    let (Some(file), Some(dir)) = (Owner::of(path.as_bytes()), Owner::of(cwd)) else {
+        return false;
+    };
+    // SAFETY: both are valid SIDs in descriptors that `file` and `dir` keep alive.
+    unsafe { bun_sys::windows::advapi32::EqualSid(file.sid, dir.sid) != 0 }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn has_owner_of(_: &ZStr, _: &[u8]) -> bool {
+    false
 }
 
 /// The nearest bunfig.toml above `cwd` that is in the same project: not above the nearest package.json, or the workspace root that lists it.

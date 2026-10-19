@@ -11,7 +11,7 @@ Bun relies on pre-existing configuration files like `package.json` and `tsconfig
 
 Put `bunfig.toml` in your project root, alongside your `package.json`.
 
-`bun <file>`, `bun run`, `bun test`, and `bun build` read the `bunfig.toml` in the working directory. If there is none, they read the nearest one in a parent directory of the same project. The search stops at the directory of the nearest `package.json`, or at the workspace root whose `workspaces` lists that directory. Bun reads only one of these files and does not merge them. It skips a file in a parent directory that belongs to another user than the working directory, and it does not search parent directories when the working directory is inside `node_modules`.
+`bun <file>`, `bun run`, `bun test`, and `bun build` read the `bunfig.toml` in the working directory. If there is none, they read the nearest one in a parent directory of the same project. The search stops at the directory of the nearest `package.json`, or at the workspace root whose `workspaces` lists that directory. Bun reads only one of these files and does not merge them. It skips a file in a parent directory that belongs to another user than the working directory (on Windows, also one that is a symbolic link), and it does not search parent directories when the working directory is inside `node_modules`.
 
 To configure Bun's package manager globally, you can also create a `.bunfig.toml` file at one of the following paths:
 

@@ -797,8 +797,32 @@ pub use ntdll::NtClose;
 
 /// `user32` namespace (subset placeholder; fill in as needed).
 pub mod user32 {}
-/// `advapi32` namespace (subset placeholder; fill in as needed).
-pub mod advapi32 {}
+/// `advapi32` namespace (subset).
+pub mod advapi32 {
+    use super::*;
+
+    /// `SE_OBJECT_TYPE::SE_FILE_OBJECT` (`accctrl.h`).
+    pub const SE_FILE_OBJECT: c_int = 1;
+    /// `OWNER_SECURITY_INFORMATION` (`winnt.h`).
+    pub const OWNER_SECURITY_INFORMATION: DWORD = 0x0000_0001;
+
+    #[cfg_attr(windows, link(name = "advapi32"))]
+    unsafe extern "system" {
+        /// `GetNamedSecurityInfoW` (`aclapi.h`). The SIDs and ACLs point into `*ppSecurityDescriptor`, which the caller `LocalFree`s.
+        pub fn GetNamedSecurityInfoW(
+            pObjectName: LPCWSTR,
+            ObjectType: c_int,
+            SecurityInfo: DWORD,
+            ppsidOwner: *mut *mut c_void,
+            ppsidGroup: *mut *mut c_void,
+            ppDacl: *mut *mut c_void,
+            ppSacl: *mut *mut c_void,
+            ppSecurityDescriptor: *mut *mut c_void,
+        ) -> DWORD;
+        /// `EqualSid` (`securitybaseapi.h`).
+        pub fn EqualSid(pSid1: *mut c_void, pSid2: *mut c_void) -> BOOL;
+    }
+}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
 // module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
@@ -886,6 +910,8 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `LocalFree` (`winbase.h`). Ignores null.
+        pub fn LocalFree(hMem: *mut c_void) -> *mut c_void;
         /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
         pub fn LockFileEx(
             hFile: HANDLE,

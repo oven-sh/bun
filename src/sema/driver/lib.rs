@@ -17,7 +17,6 @@ use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::RecentAtoms;
-use bun_sema::check::commit::AfterFile;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::{
@@ -4230,6 +4229,8 @@ fn check_named_files(
     // Which files are checked for good, and how many from the first one on, in program order. The task that checks the
     // next one enters a ring where `tsc --singleThreaded` does: `Checker::set_first_in_order`.
     let checked_for_good = Guarded::new((vec![false; to_check.len()], 0usize));
+    // How many files are checked for good.
+    let files_done = AtomicUsize::new(0);
     /// What the driver remembers about the last time a file was checked.
     #[derive(Clone, Default)]
     struct Visit {
@@ -4237,6 +4238,8 @@ fn check_named_files(
         unresolved_cycle: Vec<u64>,
         /// Commits up to this number don't resolve `unresolved_cycle`.
         commits_compared: u32,
+        /// `files_done` when the visit began.
+        files_done: usize,
         /// `Checker::can_recheck_early`
         can_recheck_early: bool,
         /// The file was already rechecked once because all earlier files were done.
@@ -4315,8 +4318,13 @@ fn check_named_files(
         };
         // Returns the first file in program order that was discarded and is worth rechecking now: its commit was invalid,
         // a commit has resolved the cycle it was discarded for, or all earlier files are done, so its task will be trusted.
+        //
+        // The round ends: a file is rechecked early only if another file was checked for good since its last visit began.
+        // That count only grows, and no further than the number of files. So it is greater at the start of each early
+        // recheck of a file than at the start of the visit before, whatever that visit was discarded for.
         let take_file_to_recheck = || -> Option<usize> {
             let next = checked_for_good.lock().1;
+            let done = files_done.load(Ordering::Acquire);
             let last = program.last_commit();
             let (mut lost, mut visits) = (lost.lock(), visits.lock());
             let mut can_recheck = |file: usize| {
@@ -4325,10 +4333,8 @@ fn check_named_files(
                 if program.is_cycle_resolved(&visit.unresolved_cycle, after, last) {
                     visit.unresolved_cycle.clear();
                 }
-                // One early recheck per file. If that one is discarded too, the file waits until it's the first unchecked
-                // file, so a file is checked four times at most, counting the last round.
                 visit.can_recheck_early
-                    && (visit.unresolved_cycle.is_empty() && visit.rechecks == 0
+                    && (visit.unresolved_cycle.is_empty() && visit.files_done < done
                         || file == next && !visit.was_retried_as_first)
             };
             let candidates = lost.iter().enumerate();
@@ -4344,6 +4350,20 @@ fn check_named_files(
                 && !request.plan_options.after_file_is_for_checked_files;
         let sums: Guarded<Sums> = Guarded::new(Sums::default());
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
+        /// What a worker that has run out of files waits for.
+        #[derive(Default)]
+        struct Activity {
+            /// How many workers are looking for a file or running a task.
+            active: usize,
+            /// Counts commits and discards. Each one can make a discarded file recheckable.
+            changes: u64,
+        }
+        let activity = Guarded::new(Activity::default());
+        let activity_has_changed = bun_threading::Condvar::new();
+        let note_change = || {
+            activity.lock().changes += 1;
+            activity_has_changed.notify_all();
+        };
         // One task, which begins with the file `first` and goes on with what `next` returns. Returns the file that the
         // next task of the thread begins with.
         let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
@@ -4356,17 +4376,18 @@ fn check_named_files(
             };
             checker.begin_task(round as u32, first as u32);
             checker.see_commits(is_last_round);
-            // Of the files that are checked and that no commit has followed.
-            let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
-            let mut waiting: Vec<usize> = Vec::new();
             let mut trees_to_free = Vec::new();
             let (mut done, mut spent, mut index) = (0, 0, first);
             let upcoming = loop {
                 let file = to_check[index];
-                visits.lock()[index].commits_compared = program.last_commit();
+                {
+                    let visit = &mut visits.lock()[index];
+                    visit.commits_compared = program.last_commit();
+                    visit.files_done = files_done.load(Ordering::Acquire);
+                }
                 {
                     let (is_checked, next) = &*checked_for_good.lock();
-                    let is_done = |before: usize| is_checked[before] || waiting.contains(&before);
+                    let is_done = |before: usize| is_checked[before];
                     // The files in the same import cycle.
                     let components = &program.files.components;
                     let component = components.of_file.get(file.idx());
@@ -4378,22 +4399,19 @@ fn check_named_files(
                         around.take_while(|&it| it < index).all(is_done),
                     );
                 }
-                checked.push((file, checker.check_file(file)));
+                let checked = checker.check_file(file);
                 if let Some(after_file) = request.after_file
                     && expected == wanted
                     && !checker.is_lost()
                 {
                     after_file(&mut checker, file);
                 }
-                if checker.take_ran_out_of_stack() {
-                    incomplete.push(file);
-                }
+                let incomplete = checker.take_ran_out_of_stack().then_some(file);
                 if let Some(progress) = request.progress {
                     progress.checked.fetch_add(1, Ordering::Relaxed);
                     let bytes = bytes_of(index);
                     progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
                 }
-                waiting.push(index);
                 (done, spent) = (done + 1, spent + size_of(index));
                 let upcoming = next();
                 // A task keeps what it evaluated about other files, and a file's own check must not find what a later
@@ -4401,45 +4419,37 @@ fn check_named_files(
                 let is_last = upcoming.is_none_or(|it| it < index) || spent >= task_cost;
                 // Nothing waits for what the tasks that end last have found out.
                 let is_read = upcoming.is_some() || is_read_afterwards || !lost.lock().is_empty();
-                match checker.commit_after_file(is_last, is_read) {
-                    AfterFile::Waits => {}
-                    AfterFile::Committed => {
-                        {
-                            let (is_checked, next) = &mut *checked_for_good.lock();
-                            for file in waiting.drain(..) {
-                                is_checked[file] = true;
-                            }
-                            while is_checked.get(*next) == Some(&true) {
-                                *next += 1;
-                            }
-                        }
-                        let files = checked.iter().map(|it: &(FileId, Checked)| it.0);
-                        trees_to_free
-                            .extend(files.filter(|it| program.files.modules[it.idx()].is_leaf));
-                        accept(Outcome {
-                            checked: std::mem::take(&mut checked),
-                            incomplete: std::mem::take(&mut incomplete),
-                        });
+                if !checker.commit_after_file(is_last, is_read) {
+                    if let Some(progress) = request.progress {
+                        progress.checked.fetch_sub(1, Ordering::Relaxed);
+                        let bytes = bytes_of(index);
+                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                     }
-                    AfterFile::Lost => {
-                        if let Some(progress) = request.progress {
-                            let bytes = waiting.iter().map(|&file| bytes_of(file)).sum();
-                            progress.checked.fetch_sub(waiting.len(), Ordering::Relaxed);
-                            progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
-                        }
-                        {
-                            let mut visits = visits.lock();
-                            for &file in &waiting {
-                                visits[file].can_recheck_early = checker.can_recheck_early();
-                                visits[file].unresolved_cycle.clear();
-                            }
-                            // Only the last file hit a cycle. The earlier ones can be rechecked right away.
-                            visits[index].unresolved_cycle = checker.take_unresolved_cycle();
-                        }
-                        lost.lock().append(&mut waiting);
-                        break upcoming;
+                    {
+                        let visit = &mut visits.lock()[index];
+                        visit.can_recheck_early = checker.can_recheck_early();
+                        visit.unresolved_cycle = checker.take_unresolved_cycle();
+                    }
+                    lost.lock().push(index);
+                    note_change();
+                    break upcoming;
+                }
+                {
+                    let (is_checked, next) = &mut *checked_for_good.lock();
+                    is_checked[index] = true;
+                    while is_checked.get(*next) == Some(&true) {
+                        *next += 1;
                     }
                 }
+                files_done.fetch_add(1, Ordering::Release);
+                if program.files.modules[file.idx()].is_leaf {
+                    trees_to_free.push(file);
+                }
+                accept(Outcome {
+                    checked: vec![(file, checked)],
+                    incomplete: incomplete.into_iter().collect(),
+                });
+                note_change();
                 match upcoming {
                     Some(following) if !is_last => index = following,
                     _ => break upcoming,
@@ -4474,8 +4484,15 @@ fn check_named_files(
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);
         let workers_started = AtomicUsize::new(0);
-        // Returns a closure that runs one task per call on the current thread. It returns false once the queue is empty.
+        // Returns a closure that runs one task per call on the current thread. It returns false once this thread has nothing
+        // left to do in this round.
+        //
+        // A worker that finds no file waits as long as a file is discarded and another worker is active: that worker's next
+        // commit can make the file recheckable. Every wait ends. An active worker either finishes a file, which counts as a
+        // change, or finds nothing and stops being active. Both wake every waiting worker, and one that wakes up to no
+        // change and no active worker returns. A waiting worker holds no lock and no file.
         let shared = (&take_file_to_recheck, &take_run, &run_task, &queue, &lost);
+        let (activity, activity_has_changed) = (&activity, &activity_has_changed);
         let worker = || {
             let (take_file_to_recheck, take_run, run_task, queue, lost) = shared;
             let (first_files_worker, id) = (
@@ -4504,11 +4521,26 @@ fn check_named_files(
                     }
                     run.next().map(|at| queue[at])
                 };
+                let seen = {
+                    let mut activity = activity.lock();
+                    activity.active += 1;
+                    activity.changes
+                };
                 // A task asks for its next file before it commits the last one, and that commit can make a discarded file
                 // the next.
                 let file = first.take().or_else(&mut next);
                 first = file.and_then(|file| run_task(file, &mut next));
-                file.is_some()
+                let mut activity = activity.lock();
+                activity.active -= 1;
+                activity_has_changed.notify_all();
+                while file.is_none()
+                    && activity.changes == seen
+                    && activity.active != 0
+                    && !lost.lock().is_empty()
+                {
+                    activity_has_changed.wait_guarded(&mut activity);
+                }
+                file.is_some() || activity.changes != seen
             }
         };
         let work = || {

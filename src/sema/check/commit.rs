@@ -1,10 +1,10 @@
 //! Commits: how tasks share what they compute while they run.
 //!
 //! Every thread takes the next task of one list. What a task stores goes to its own part of the tables, as ever, and the
-//! key goes to a log (`crate::local::Log`). From time to time, while nothing is in progress in it, and when it ends, the
-//! task commits (`Checker::commit`): on its own thread it stores what it has logged since its last commit in the shared
-//! part, where the tasks that are running find it. The records are shared already (`Sharing::Publishes`), so an entry
-//! needs no rewriting.
+//! key goes to a log (`crate::local::Log`). After every file, and from time to time within a file while nothing is in
+//! progress in it, the task commits (`Checker::commit`): on its own thread it stores what it has logged since its last
+//! commit in the shared part, where the tasks that are running find it. The records are shared already
+//! (`Sharing::Publishes`), so an entry needs no rewriting.
 //!
 //! Which task is first anywhere depends on timing. These rules keep the report a function of the program:
 //!
@@ -25,21 +25,21 @@
 //! - **A commit is valid or nothing of it is stored.** Some results depend on which of two evaluations came first in their
 //!   checker, and `Program::is_invalid` says which. The serial order that a commit is compared with is the order of the
 //!   commits. What is thrown away is what the task has done since its last commit. It ends then, and the driver rechecks the
-//!   files that it had not checked to the end by that commit right away, on any thread. The new task starts after the
-//!   commit that the old one conflicted with, so it finds those variances and walks.
+//!   file that it was visiting right away, on any thread. The new task starts after the commit that the old one
+//!   conflicted with, so it finds those variances and walks.
 //! - **A task that gives up at a limit is not believed** (`Checker::note_gave_up`). How far from a limit a computation
 //!   begins depends on what was computed before, which for a task includes what it has found. It is thrown away like an
-//!   invalid one, but its files wait for the last round.
+//!   invalid one, but its file waits for the last round.
 //! - **A ring is entered from the first file that leads to it.** What a query gets that comes round to itself, or to what
 //!   it has in place, depends on where the checker came in (`Checker::close_ring_from`). `tsc --singleThreaded` comes in
 //!   from the first file in program order that leads there. So a task is believed about a ring only if every file before
 //!   the one that it visits is checked for good: none of those leads there, or the task would have found what the members
-//!   got (`Task::close_ring`). Any other task is lost, and the driver checks its files again as soon as the files
-//!   before them are checked.
+//!   got (`Task::close_ring`). Any other task is discarded, and the driver rechecks its file once all earlier files are
+//!   done.
 //!   - Earlier files that can't reach the cycle don't matter. If only importers of the current file can reach it, the task
 //!     is trusted once the earlier files of its own import cycle are done (`Checker::is_reachable_only_by_importers`).
 //!   - A discarded task stops at its next statement. The driver rechecks its file as soon as a commit resolves that cycle
-//!     (`Program::is_cycle_resolved`), on any thread.
+//!     (`Program::is_cycle_resolved`), on any thread. The recheck can be discarded at the file's next unresolved cycle.
 //!   - Once a file is discarded, one worker switches from the heavy files to the first unchecked files of the program, so
 //!     cycles that everything uses are resolved early.
 //! - **A ring is seen whole or not at all.** A task has a snapshot for each file, and none for the entries under records. So
@@ -234,8 +234,8 @@ impl<'s> Commits<'s> {
     }
 }
 
-/// A task commits at its first idle moment after it has logged this many keys since its last commit. The number changes how
-/// long a check takes, never its result.
+/// Within a file, a task commits at its first idle moment after it has logged this many keys since its last commit. The
+/// number changes how long a check takes, never its result.
 const KEYS_PER_COMMIT: usize = 1024;
 
 const NO_FILE: u32 = u32::MAX;
@@ -574,17 +574,6 @@ impl<'s> Program<'s> {
     }
 }
 
-/// What `Checker::commit_after_file` has done.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum AfterFile {
-    /// Nothing: no commit is due.
-    Waits,
-    /// The files that the task has checked so far are checked for good.
-    Committed,
-    /// The task is discarded. The files that it has checked since it last returned `Committed` have to be rechecked.
-    Lost,
-}
-
 impl<'s> Checker<'_, 's> {
     /// Right after `begin_task`: the task commits while it runs, and sees the commits of the others.
     /// `is_alone`: no other task runs, as in the last round.
@@ -704,19 +693,19 @@ impl<'s> Checker<'_, 's> {
         (self.task).set_first_in_order(is_first, is_first_in_component);
     }
 
-    /// After `check_file`, and whatever is asked about the file afterwards. `is_last`: the task ends here.
+    /// Call after `check_file` and whatever is asked about the file afterwards. `is_last`: the task ends with this file.
     /// `is_read`: see `commit`.
-    pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> AfterFile {
+    ///
+    /// Returns true if the file is checked for good. Otherwise the task is discarded and the file has to be rechecked. A
+    /// commit follows every file, so a discarded task never takes an earlier file with it. The exception is the last
+    /// round's task.
+    pub fn commit_after_file(&mut self, is_last: bool, is_read: bool) -> bool {
         self.lose_what_has_missed_a_ring();
-        let is_due =
-            self.is_commit_due() || self.task.has_closed_a_ring() && !self.task.is_believed();
-        if !is_last && !is_due && !self.task.is_lost() {
-            return AfterFile::Waits;
+        // The last round's task commits once, when it ends: see `is_commit_due`. It is never discarded.
+        if self.task.is_believed() && !is_last && !self.task.is_lost() {
+            return true;
         }
-        match self.commit(true, is_read) {
-            true => AfterFile::Committed,
-            false => AfterFile::Lost,
-        }
+        self.commit(true, is_read)
     }
 
     /// See the head of this file. Nothing is in progress in the task.

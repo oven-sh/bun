@@ -982,6 +982,13 @@ fn download_error_reason(e: crate::Error) -> &'static [u8] {
 // Task
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What `Installer::link_bins` links when the bins do not go into a platform package.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fallback {
+    OwnBins,
+    Nothing,
+}
+
 pub struct Task {
     pub(crate) entry_id: StoreEntryId,
     /// BACKREF: `Installer` owns `tasks[]` and outlives every `Task`. Stored as
@@ -1229,7 +1236,7 @@ impl Task {
                     {
                         let mut links = installer.bin_links(entry_id);
                         installer
-                            .link_bins(&mut links, pkg_id, own_name, false, true)
+                            .link_bins(&mut links, pkg_id, own_name, false, Fallback::OwnBins)
                             .map_err(TaskError::Binaries)?;
                     }
                     installer
@@ -1328,7 +1335,7 @@ impl Task {
                     let mut links = installer.bin_links(self.entry_id);
                     // `Step::Binaries` links again after a failure, and reports it.
                     self.linked_native_bins = installer
-                        .link_bins(&mut links, pkg_id, own_name, false, false)
+                        .link_bins(&mut links, pkg_id, own_name, false, Fallback::Nothing)
                         .unwrap_or(false);
                 }
                 if self.linked_native_bins {
@@ -2339,7 +2346,7 @@ impl<'a> Installer<'a> {
             }
 
             let alias = dependencies[dep.dep_id as usize].name.slice(string_buf);
-            if let Err(err) = self.link_bins(&mut links, pkg_id, alias, global, true) {
+            if let Err(err) = self.link_bins(&mut links, pkg_id, alias, global, Fallback::OwnBins) {
                 failed.push((dep.entry_id, err));
             }
         }
@@ -2370,14 +2377,14 @@ impl<'a> Installer<'a> {
     }
 
     /// Links the bins of `pkg_id`, which is `package_name` in `links.node_modules_path`.
-    /// `Ok(true)`: they link into its platform package. Without `fall_back` nothing else is tried.
+    /// `Ok(true)`: they link into its platform package.
     fn link_bins(
         &self,
         links: &mut BinLinks,
         pkg_id: PackageID,
         package_name: &[u8],
         global: bool,
-        fall_back: bool,
+        fallback: Fallback,
     ) -> crate::Result<bool> {
         let lockfile = self.lockfile();
         let package_name = strings::StringOrTinyString::init(package_name);
@@ -2395,7 +2402,7 @@ impl<'a> Installer<'a> {
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
                 )
             });
-        if replacement.is_none() && !fall_back {
+        if replacement.is_none() && fallback == Fallback::Nothing {
             return Ok(false);
         }
         // A bin link to a replacement package points outside the workspace's `node_modules`. If
@@ -2434,7 +2441,7 @@ impl<'a> Installer<'a> {
         let redirect_failed = bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some();
         let redirected = replacement.is_some() && !redirect_failed;
 
-        if !fall_back {
+        if fallback == Fallback::Nothing {
             links.is_behind_link = bin_linker.is_behind_link;
             return Ok(redirected);
         }

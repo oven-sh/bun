@@ -8957,7 +8957,8 @@ impl<'s> Files<'s> {
         let decls: Guarded<Vec<Vec<(Sym, &'s [(FileId, Decl)])>>> = Guarded::new(Vec::new());
         // (`place` of the component, its results that are held back)
         let left_over: Guarded<Vec<(u64, Resolved<'s>)>> = Guarded::new(Vec::new());
-        host.parallel(host.threads().min(widest_from[0]), &|_| {
+        let workers = host.threads().min(widest_from[0]);
+        host.parallel(workers, &|_| {
             let mut queue = shared.lock();
             queue.present += 1;
             let mut has_paused = false;
@@ -8989,13 +8990,15 @@ impl<'s> Files<'s> {
                     continue;
                 };
                 has_paused = false;
-                // A package of ten thousand one-line modules is ten thousand components that are ready at the same time. A
-                // thread takes its share of half of them, so that the threads don't queue up for the lock. They're all of
-                // one level: a component only waits for lower levels (`LinkPlan::sees`), so none of them waits for what
-                // another one of them makes ready, which this thread only queues when it's through with all of them.
+                // A package of ten thousand one-line modules is ten thousand components that are ready at the same time.
+                // A thread takes its share of half of them, so that the threads don't queue up for the lock. The share
+                // counts the threads that have yet to start: the files without imports are all ready when the first
+                // thread gets here. The components are all of one level. A component only waits for lower levels
+                // (`LinkPlan::sees`), so none of them waits for what another one of them makes ready, which this thread
+                // only queues when it's through with all of them.
                 taken.clear();
                 taken.push(next);
-                let more = queue.ready.len() / (2 * queue.present);
+                let more = queue.ready.len() / (2 * workers);
                 for _ in 0..more {
                     match queue.ready.peek() {
                         Some(it) if it.0 >> 32 == next >> 32 => taken.push(it.0),

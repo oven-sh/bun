@@ -1520,9 +1520,10 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
 
     describe.skipIf(!dtUnknownReaddir.available)("where readdir does not report the entry type", () => {
       let env: NodeJS.Dict<string>;
+      // This compiles the shim. A C compiler on a busy machine can take longer than the default hook timeout.
       beforeAll(async () => {
         env = await dtUnknownReaddir.env();
-      });
+      }, 30_000);
 
       test("the same segments name the same links", async () => {
         using dir = makeNamedTree("glob-scan-symlink-named-dt-unknown");

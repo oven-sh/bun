@@ -150,7 +150,8 @@ struct Parser<'a, 'tool> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
-    /// `./bunfig.toml`, which comes with the project: not the user's own file, not `--config`.
+    /// True for `./bunfig.toml`, which comes with the project. False for the user's own file and
+    /// for `--config`.
     is_project_file: bool,
     /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
@@ -1348,7 +1349,7 @@ impl<'a> Parser<'a, '_> {
     ) -> crate::Result<()> {
         let cafile = install_obj.get(b"cafile");
         let ca = install_obj.get(b"ca");
-        // `ca` + `cafile` are one setting: a file that sets either replaces both.
+        // `ca` and `cafile` are one setting, so a file that sets either one replaces both.
         if cafile.is_some() || ca.is_some() {
             install.cafile = None;
             install.ca = None;

@@ -262,7 +262,7 @@ impl Checker<'_, '_> {
             return;
         }
         // The type of an index signature is bound twice, so a declaration in it is listed twice.
-        let decls = &bound.symbols[symbol.idx()].decls;
+        let decls = bound.symbol(symbol).decls;
         if decls.first() != Some(&Decl::TypeParam(param)) || decls.iter().all(|d| *d == decls[0]) {
             return;
         }
@@ -513,7 +513,7 @@ impl Checker<'_, '_> {
             }
             // Parentheses are not stored, so its direct parent is the result of
             // `WalkUpParenthesizedExpressions`.
-            if matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right.idx() == i))
+            if matches!(bound.parent_of_expr(ExprId(i as u32)), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Instanceof, right, .. } if right.idx() == i))
             {
                 let end = self.end_inside_parentheses(file, ExprId(i as u32));
                 self.error_at((file, self.start_of(file, expr), end), 2848, &[]);
@@ -540,7 +540,7 @@ impl Checker<'_, '_> {
             }
             let (name, name_pos) = match hir[right].kind {
                 ExprKind::Ident(name) => (name, hir[right].pos),
-                ExprKind::Dot { name, name_pos, .. } => (name, name_pos),
+                ExprKind::Dot { name, .. } => (name, hir.name_pos(right)),
                 _ => continue,
             };
             let after = skip_trivia(text, name_pos as usize + self.atoms().bytes(name).len());
@@ -550,7 +550,7 @@ impl Checker<'_, '_> {
             // `a instanceof B < c` is a comparison. Within its own parentheses, the name would not
             // be the only content.
             let is_in_parentheses = is_parenthesized(hir, right);
-            let is_compared = matches!(bound.expr_parent[i], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
+            let is_compared = matches!(bound.parent_of_expr(ExprId(i as u32)), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Binary { op: BinOp::Lt, left, .. } if left.idx() == i));
             if is_in_parentheses || !is_compared {
                 let start = self.start_inside_parentheses(file, right);
                 let end =

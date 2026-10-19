@@ -336,7 +336,8 @@ struct ConfigObject {
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
     /// `$framework`: skip this object unless the project uses this framework. Empty means it always applies.
-    /// Only Bun's built-in config sets it. See [`Config::get_with_frameworks`].
+    /// `$packageType` does the same with [`Frameworks::TYPE_MODULE`].
+    /// Only Bun's built-in config sets them. See [`Config::get_with_frameworks`].
     required_framework: Frameworks,
     /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its
     /// `rules` that yield are what `categories` turn on.
@@ -1581,6 +1582,14 @@ impl Config {
         config.language.eslint_major = self.eslint_major;
         config.language.without_modules = self.without_modules;
         config.language.infers_globals = self.infers_globals;
+        let decides_by_syntax = self.has_every_rule
+            && match config.language.follow_the_runtime(&language_options) {
+                Ok(decides_by_syntax) => decides_by_syntax,
+                Err(message) => {
+                    config.error.get_or_insert(message);
+                    false
+                }
+            };
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         // Without the plugins in whose place the file has another of the same name.
@@ -1814,6 +1823,14 @@ impl Config {
             config.plugins = Some(implemented);
         }
         config.language.has_rule_that_requires_types = config.has_enabled(|it| it.requires_types);
+        if decides_by_syntax {
+            config.language.decide_by_syntax();
+            let commonjs = config.language.without_module_syntax.as_deref();
+            let commonjs = commonjs.filter(|_| config.js_settings.is_some());
+            // There's no config file, so no object has a `$source`.
+            config.js_settings_without_module_syntax =
+                commonjs.map(|it| js_plugin::FileSettings::from_objects(it, &[], parser_location));
+        }
         let on = || (config.rules.iter()).filter(|it| it.severity != Severity::Off);
         // ESLint 10 and later reject a rule that doesn't support the file's language.
         let unsupported = on().filter(|it| !config.supports_language(it.entry.meta));

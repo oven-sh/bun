@@ -79,7 +79,8 @@ enum Selects {
     SameRange,
 }
 
-/// Whether a rule keyed `name@<range>` selects a dependency declared as `declared`.
+/// Returns true if a rule with the key `name@<range>` applies to a dependency declared as
+/// `declared`.
 fn range_selects(
     range: &dependency::Version,
     declared: &dependency::Version,
@@ -120,7 +121,8 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
     })
 }
 
-/// dependency id -> owning package id, filled lazily. Checked on use: a package's rows can move.
+/// Maps a dependency id to the package that owns it. Filled lazily and verified on use, because a
+/// package's dependencies can move.
 #[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,

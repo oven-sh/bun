@@ -72,7 +72,10 @@ impl Rule for JsxNewline {
             cx.report(at, message).fix(|fixer| {
                 let (newlines, replacement): (&[u8], &[u8]) =
                     if is_doubled { (b"\n", b"\n\n") } else { (b"\n\n", b"\n") };
-                fixer.replace(between, with_the_last_replaced(file.slice(between), newlines, replacement))
+                let raw = file.slice(between);
+                let replaced = with_the_last_replaced(raw, newlines, replacement);
+                // `{a} and {b}` on one line has no line break to double.
+                (replaced != raw).then(|| fixer.replace(between, replaced))
             });
         }
     }

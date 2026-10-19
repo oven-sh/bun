@@ -829,7 +829,10 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
         { includeObjectsCollectedByMinorGC: null },
       ]) {
         expect(() => session.post("HeapProfiler.startSampling", params)).toThrow(
-          expect.objectContaining({ code: "ERR_INSPECTOR_COMMAND", message: "Inspector error -32602: Invalid parameters" }),
+          expect.objectContaining({
+            code: "ERR_INSPECTOR_COMMAND",
+            message: "Inspector error -32602: Invalid parameters",
+          }),
         );
       }
       for (const samplingInterval of [0, -1, 0.5]) {
@@ -873,7 +876,9 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(node.callFrame.columnNumber).toBeGreaterThanOrEqual(0);
       // getSamplingProfile leaves sampling on: the next profile has more samples.
       allocateObjects(20000, holder);
-      const { profile: later } = (await session.post("HeapProfiler.getSamplingProfile")) as { profile: SamplingProfile };
+      const { profile: later } = (await session.post("HeapProfiler.getSamplingProfile")) as {
+        profile: SamplingProfile;
+      };
       expect(later.samples.length).toBeGreaterThan(profile.samples.length);
       const { profile: last } = (await session.post("HeapProfiler.stopSampling")) as { profile: SamplingProfile };
       validate(last);
@@ -945,7 +950,9 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       // The other session did not start it: its disable() and disconnect() leave it running.
       await other.post("HeapProfiler.disable");
       other.disconnect();
-      expect(((await starter.post("HeapProfiler.getSamplingProfile")) as any).profile.samples.length).toBeGreaterThan(0);
+      expect(((await starter.post("HeapProfiler.getSamplingProfile")) as any).profile.samples.length).toBeGreaterThan(
+        0,
+      );
       // A stop from any session stops it.
       const third = new inspectorPromises.Session();
       third.connect();

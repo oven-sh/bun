@@ -186,7 +186,7 @@ test.concurrent("Bun.serve({ app }) reports a route with more than 64 params", a
 // `await` waits on for a pending promise that setup() returns, so it calls that then(). The fixture value
 // starts itself on the next turn of the event loop when nothing called its then(), and counts that in
 // `notAwaited`.
-test("Bun.serve({ app }) plugin setup() awaits a pending Promise subclass through its own then()", async () => {
+test.concurrent("Bun.serve({ app }) plugin setup() awaits a pending Promise subclass through its then()", async () => {
   const fixtures = pathToFileURL(join(import.meta.dir, "../js/bun/test/fixtures/returned-thenable.ts")).href;
   using dir = tempDir("bake-app-plugin-setup-promise-subclass", {
     "server.ts": `export function render() { return new Response("ok"); }`,

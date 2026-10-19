@@ -7685,7 +7685,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     #[cfg(target_os = "macos")]
     {
         out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
+        if let Err(mut err) = fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize) {
+            // `F_GETPATH` reports a path longer than `MAXPATHLEN` as `ENOSPC`.
+            if err.get_errno() == E::ENOSPC {
+                err.errno = E::ENAMETOOLONG as _;
+            }
+            return Err(err);
+        }
         // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
         let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
         return Ok(&mut out.0[..len]);
@@ -9340,12 +9346,11 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
-/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
-/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
-fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+/// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
+pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
         match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up
+            Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),
             Ok(n) => bytes = &bytes[n..],
             #[cfg(unix)]
             Err(e) if e.get_errno() == E::EAGAIN => {
@@ -9355,14 +9360,18 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
                     events: posix::POLL_OUT,
                     revents: 0,
                 }];
-                if posix::poll(&mut pfd, -1).is_err() {
-                    return false;
-                }
+                posix::poll(&mut pfd, -1)?;
             }
-            Err(_) => return false,
+            Err(e) => return Err(e),
         }
     }
-    true
+    Ok(())
+}
+
+/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
+/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {
+    write_all_to_stdio(fd, bytes).is_ok()
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

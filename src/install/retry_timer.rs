@@ -11,11 +11,13 @@ use crate::package_manager_real::run_tasks::download_outcome;
 use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
 use crate::{NetworkTask, PackageManager};
 
-/// Install thread only. Its tasks are not in `pending_tasks`: `pending_task_count` adds `len()`.
+/// Only used on the install thread. Its tasks aren't counted in `pending_tasks`, so
+/// `pending_task_count` adds `len()`.
 #[derive(Default)]
 pub(crate) struct RetryQueue {
     waiting: Vec<(Instant, *mut NetworkTask)>,
-    /// Without `--verbose`, one line stands for every retry of the install.
+    /// True once "registry requests failed, retrying" has been printed. It's printed at most once
+    /// per install, after a timeout.
     announced: bool,
     /// The highest attempt for which a wait that the registry asked for was announced, since the
     /// queue was last empty.
@@ -37,9 +39,6 @@ impl RetryQueue {
     }
 }
 
-/// A shorter wait is not worth a line. The default backoff gets this long at the third retry.
-const ANNOUNCED_WAIT: Duration = Duration::from_millis(150);
-
 /// Returns the wait. `attempt` is 1 for the first retry.
 pub(crate) fn retry(
     manager: &mut PackageManager,
@@ -55,7 +54,7 @@ pub(crate) fn retry(
     // A host that never answers costs minutes per attempt, so that is said at the first retry, also
     // with `--verbose`, whose lines are only printed once everything is resolved.
     let timed_out = matches!(response.fail, Some(bun_http::Error::Timeout));
-    // An outage hits many requests at once. `--verbose` has a line for each retry of each request.
+    // `--verbose` prints a line for every retry of every request.
     let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
     // The requests of a later wave start at the first attempt again.
     if queue.len() == 0 {
@@ -67,10 +66,7 @@ pub(crate) fn retry(
             "registry asked to wait {}s before retrying",
             wait.as_secs()
         ))
-    } else if !asked
-        && !queue.announced
-        && (timed_out || (wait >= ANNOUNCED_WAIT && !log_level.is_verbose()))
-    {
+    } else if !asked && !queue.announced && timed_out {
         queue.announced = true;
         Some("registry requests failed, retrying".to_owned())
     } else {
@@ -100,7 +96,6 @@ impl PackageManager {
         response_buffer: &mut MutableString,
     ) -> bun_http::Result<HTTPResponseMetadata> {
         let mut attempt: u16 = 0;
-        let mut announced = false;
         loop {
             response_buffer.reset();
             let response = request.send_sync_for_result(response_buffer)?;
@@ -120,9 +115,6 @@ impl PackageManager {
                         self.options.max_retry_count,
                         wait.as_millis(),
                     );
-                } else if wait >= ANNOUNCED_WAIT && !announced {
-                    announced = true;
-                    bun_core::warn!("registry request failed, retrying");
                 }
             }
             std::thread::sleep(wait);
@@ -130,8 +122,8 @@ impl PackageManager {
     }
 }
 
-/// Returns how long to wait before retry number `attempt`, and whether the registry asked for
-/// that wait. Zero means that the retry starts at once.
+/// Returns how long to wait before retry number `attempt`, and whether the registry asked for that
+/// wait. Zero means the retry starts immediately.
 fn wait_before(
     manager: &PackageManager,
     attempt: u16,
@@ -180,7 +172,7 @@ static TIMER: Guarded<Timer> = Guarded::new(Timer {
 });
 static CHANGED: Condition = Condition::new();
 
-/// False when the thread could not be started: nothing would end the wait.
+/// Returns false if the thread couldn't be started, because nothing would end the wait then.
 fn wake_at(deadline: Instant) -> bool {
     let mut timer = TIMER.lock();
     if timer.thread.is_none() {

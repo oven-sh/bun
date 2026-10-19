@@ -216,8 +216,8 @@ impl<'l, S: Storage> Yields<'l, S> {
             _ => NOWHERE,
         };
         match at {
-            Place::Expr(e) => match b.expr_parent.get(e.idx()).copied().unwrap_or(Parent::None) {
-                Parent::Expr(above) | Parent::PropKey(above, _) => Next::At(Place::Expr(above)),
+            Place::Expr(e) => match b.parent_of_expr(e) {
+                Parent::Expr(above) => Next::At(Place::Expr(above)),
                 Parent::Stmt(s) => Next::At(Place::Stmt(s)),
                 Parent::VarInit(d) => statement(b.var_stmt.get(d.idx())),
                 Parent::Case(c) => statement(b.case_stmt.get(c.idx())),
@@ -230,17 +230,15 @@ impl<'l, S: Storage> Yields<'l, S> {
                     .pat_elems
                     .get(p.idx())
                     .map_or(NOWHERE, |it| Next::At(Place::Pat(it.pat))),
-                Parent::Prop(p) | Parent::MethodKey(p) => b
+                Parent::Prop(p) | Parent::PropKey(p) | Parent::MethodKey(p) => b
                     .prop_owner
                     .get(p.idx())
                     .map_or(NOWHERE, |&it| Next::At(Place::Expr(it))),
                 Parent::MemberKey(m) | Parent::MemberInit(m) => class_of(m),
-                Parent::ClassExtends(c) | Parent::Decorator(c, DecoratorOwner::Class(_)) => {
-                    class(c)
-                }
+                Parent::ClassExtends(c) | Parent::ClassDecorator(c) => class(c),
                 // "visits only the computed name of a method, an accessor or a constructor"
-                Parent::Decorator(c, DecoratorOwner::Member(m)) => match f.members.get(m.idx()) {
-                    Some(member) if member.func.is_none() => class(c),
+                Parent::MemberDecorator(m) => match f.members.get(m.idx()) {
+                    Some(member) if member.func.is_none() => class_of(m),
                     _ => NOWHERE,
                 },
                 // Any other is a decorator of a parameter.
@@ -248,16 +246,13 @@ impl<'l, S: Storage> Yields<'l, S> {
                     Some(FnBody::Expr(body)) if body == e => Next::Is(func),
                     _ => NOWHERE,
                 },
-                Parent::Decorator(_, DecoratorOwner::Param(_))
+                Parent::ParamDecorator(_)
                 | Parent::EnumInit(_)
                 | Parent::Module(_)
                 | Parent::File
                 | Parent::None => NOWHERE,
             },
-            Place::Stmt(s) => match (
-                f.stmts.get(s.idx()).map(|it| it.kind),
-                b.stmt_parent.get(s.idx()),
-            ) {
+            Place::Stmt(s) => match (f.stmts.get(s.idx()).map(|it| it.kind), b.parent_of_stmt(s)) {
                 (
                     None
                     | Some(
@@ -269,9 +264,9 @@ impl<'l, S: Storage> Yields<'l, S> {
                     ),
                     _,
                 ) => NOWHERE,
-                (_, Some(&Parent::Stmt(above))) => Next::At(Place::Stmt(above)),
+                (_, Parent::Stmt(above)) => Next::At(Place::Stmt(above)),
                 // "visits a static block like any statement"
-                (_, Some(&Parent::FnBody(func))) => match (
+                (_, Parent::FnBody(func)) => match (
                     f.fns.get(func.idx()).map(|it| it.kind),
                     b.fns.get(func.idx()),
                 ) {

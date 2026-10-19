@@ -39,6 +39,21 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let mut all = self.p.import_items_for_namespace.iter();
         all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
     }
+    fn is_module_level(&self, ref_: js_ast::Ref) -> bool {
+        let p = &*self.p;
+        let is_member = p
+            .symbols
+            .get(ref_.inner_index() as usize)
+            .is_some_and(|symbol| {
+                let member = p.module_scope.members.get(symbol.original_name.slice());
+                member.is_some_and(|member| member.ref_ == ref_)
+            });
+        // A `require()` that became an import statement of the module: its namespace is in no scope yet.
+        is_member
+            || p.imports_to_convert_from_require
+                .iter()
+                .any(|import| import.namespace.ref_ == ref_)
+    }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }
@@ -212,6 +227,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 has_react_hooks_suppression,
                 body,
             );
+            self.react_compiler_must_keep_body = false;
         }
         prev
     }

@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, PrependTempRefsOpts, Ref, RelocateVarsMode,
+    ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts, VisitDeclOpts,
+    is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -297,6 +297,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let was_anonymous_named_expr = val.is_anonymous_named();
 
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
+                // Only `x = require("pkg")` as written: an initializer that folds to it stays a variable.
+                let is_call_as_written = matches!(val.data, ExprData::ECall(_));
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
                 // `replacement` is a `BackRef` so the
@@ -356,7 +358,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
-                        is_immediately_assigned_to_decl: true,
                         // `const { a } = x` reads `x.a` and drops `x`.
                         is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
@@ -390,24 +391,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if self.should_unwrap_common_js_to_esm() {
-                    if prev_require_to_convert_count < self.imports_to_convert_from_require.len() {
-                        if let BData::BIdentifier(id) = decl.binding.data {
-                            let ref_ = id.r#ref;
-                            if let Some(value) = decl.value {
-                                if let ExprData::ERequireString(req) = value.data {
-                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
-                                        let deferred = &mut self.imports_to_convert_from_require
-                                            [unwrapped_id.get_usize()];
-                                        deferred.namespace.ref_ = ref_;
-                                        self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::default());
-                                        continue 'outer;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                // `transpose_require` turned a `require()` in the initializer into an import.
+                if prev_require_to_convert_count < self.imports_to_convert_from_require.len()
+                    && is_call_as_written
+                    && self.note_require_alias(
+                        decl.binding,
+                        val,
+                        kind,
+                        is_export,
+                        prev_require_to_convert_count,
+                    )
+                {
+                    // Kept as written until `settle_require_aliases`.
+                    decls.swap(j, i - 1);
+                    j += 1;
+                    continue 'outer;
                 }
 
                 // `const|let|var <binding> = await import("str")` — record which
@@ -558,7 +556,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let local = id.r#ref;
                             if self.import_items_for_namespace.contains_key(&local)
                                 || !self.options.bundle
-                                || req.unwrapped_id.get().is_some()
                             {
                                 break 'split_require;
                             }
@@ -973,14 +970,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
         }
 
-        let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
-        self.is_inside_single_stmt_body = true;
+        let old_single_stmt_body_scope = self.single_stmt_body_scope.replace(self.current_scope);
 
         let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
 
-        self.is_inside_single_stmt_body = old_is_inside_single_stmt_body;
+        self.single_stmt_body_scope = old_single_stmt_body_scope;
 
         if has_if_scope {
             self.pop_scope();
@@ -1752,6 +1748,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 
+        // `stmts` are all the statements of the scope: no `case`, no body without braces, no part of the module.
+        if p.require_aliases
+            .last()
+            .is_some_and(|alias| alias.scope == p.current_scope)
+            && kind != StmtsKind::SwitchStmt
+            && p.single_stmt_body_scope != Some(p.current_scope)
+            && (p.current_scope != p.module_scope || p.module_is_one_part())
+        {
+            p.settle_require_aliases(stmts);
+        }
+
         // Lower using declarations
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
@@ -1775,6 +1782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
+            && !p.react_compiler_must_keep_body
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending
@@ -1960,6 +1968,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // fail if something with side effects is in between the declaration
                     // and the usage.
                     if symbol.use_count_estimate == 1
+                        // In a `case` list, a `require()` variable still waits for the cases after this one.
+                        && p.require_alias_of(id).is_none()
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just

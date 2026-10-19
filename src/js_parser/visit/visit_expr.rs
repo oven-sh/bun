@@ -247,7 +247,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.record_assignment(result.r#ref);
+            // A write that never runs does not rebind a variable that waits in `require_aliases`.
+            if !(p.is_control_flow_dead && p.require_alias_of(result.r#ref).is_some()) {
+                p.record_assignment(result.r#ref);
+            }
         }
 
         let mut original_name: Option<&[u8]> = None;
@@ -1869,7 +1872,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_call(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         p.call_target = e_.target.data;
@@ -2168,21 +2171,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // error from the unbundled require() call failing.
             if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
-                let state = TransposeState {
-                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
-                        && matches!(first.data, Data::EString(..)),
-                    ..Default::default()
-                };
                 match &first.data {
                     Data::EString(..) => {
                         // require(FOO) => require(FOO)
-                        *e = p.transpose_require(first, &state);
+                        *e = p.transpose_require(first);
                         return;
                     }
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require(first, &state);
+                        *e = p.transpose_known_to_be_if_require(first);
                         return;
                     }
                     _ => {}

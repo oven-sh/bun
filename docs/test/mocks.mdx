@@ -88,6 +88,8 @@ Mock functions implement the following properties and methods:
 | `mockFn.mockRejectedValueOnce(value)`     | Sets rejected Promise for next call only       |
 | `mockFn.withImplementation(fn, callback)` | Temporarily changes implementation             |
 
+`mockFn.withImplementation(fn, callback)` uses `fn` as the implementation while `callback` runs. If `callback` returns a promise, or any other object with a `then()` method, `fn` stays the implementation until that value settles. In that case `withImplementation()` returns a promise. Await it to continue after the previous implementation is back. For an object that is not a promise, Bun calls its `then()` method after `withImplementation()` returns. If `callback` throws, `fn` stays the implementation.
+
 ### Practical Examples
 
 #### Basic Mock Usage

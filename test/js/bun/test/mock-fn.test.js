@@ -753,6 +753,8 @@ describe("mock()", () => {
         },
       ),
     ).toThrow("from callback");
+    // As in Jest and Vitest, a callback that throws leaves the temporary implementation.
+    expect(fn()).toBe("2");
   });
   test("withImplementation restores a queued mockImplementationOnce chain", () => {
     const fn = jest.fn(() => "base");
@@ -766,6 +768,70 @@ describe("mock()", () => {
     fn.mockImplementationOnce(() => "c");
     expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
   });
+  test("withImplementation waits for a thenable that the callback returns", async () => {
+    const fn = jest.fn(() => "1");
+    let thenCalls = 0;
+    let fulfill;
+    const result = fn.withImplementation(
+      () => "2",
+      () => ({
+        then(onFulfilled) {
+          thenCalls++;
+          fulfill = onFulfilled;
+        },
+      }),
+    );
+    // Bun calls then() from a microtask, as `await` does. Jest and Vitest call it before they return.
+    if (isBun) expect(thenCalls).toBe(0);
+    await null;
+    expect(thenCalls).toBe(1);
+    expect(fn()).toBe("2");
+    fulfill("3");
+    if (isBun) expect(await expectResolves(result)).toBe("3");
+    else await result;
+    expect(fn()).toBe("1");
+    expect(thenCalls).toBe(1);
+  });
+  test("withImplementation does not wait for an object without a then() method", () => {
+    for (const value of [{ then: 42 }, { a: 1 }, () => {}]) {
+      const fn = jest.fn(() => "1");
+      const result = fn.withImplementation(
+        () => "2",
+        () => value,
+      );
+      expect(fn()).toBe("1");
+      if (isBun) expect(result).toBeUndefined();
+    }
+  });
+  if (isBun) {
+    // Jest and Vitest keep the temporary implementation when the returned value rejects.
+    test("withImplementation restores the implementation when the returned thenable rejects", async () => {
+      const fn = jest.fn(() => "1");
+      const error = new Error("rejected");
+      const result = fn.withImplementation(
+        () => "2",
+        () => ({ then: (_, onRejected) => onRejected(error) }),
+      );
+      expect(fn()).toBe("2");
+      expect(await expectRejects(result)).toBe(error);
+      expect(fn()).toBe("1");
+    });
+    // Vitest does not look for a then() on a function.
+    test("withImplementation waits for a function with a then() that the callback returns", async () => {
+      const fn = jest.fn(() => "1");
+      let fulfill;
+      const thenable = Object.assign(() => {}, { then: onFulfilled => void (fulfill = onFulfilled) });
+      const result = fn.withImplementation(
+        () => "2",
+        () => thenable,
+      );
+      await null;
+      expect(fn()).toBe("2");
+      fulfill();
+      await expectResolves(result);
+      expect(fn()).toBe("1");
+    });
+  }
   test("copying name/length from the implementation propagates getter errors", () => {
     const impl = function () {};
     Object.defineProperty(impl, "length", {

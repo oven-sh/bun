@@ -1508,6 +1508,13 @@ impl Run<'_> {
                         entry,
                     )
                 }
+                // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the
+                // kill signal's JS handlers run first, as in watch mode.
+                if entry.is_none() {
+                    bun_jsc::posix_signal_handle::set_watch_kill_signal(
+                        ctx.debug.watch_kill_signal,
+                    );
+                }
             }
             cli::command::HotReload::Watch => {
                 // SAFETY: `vm` is the boxed-and-leaked main-thread VM
@@ -2790,7 +2797,6 @@ impl RunCommand {
             if no_clear_screen {
                 ctx.debug.no_clear_screen = true;
             }
-            let hot_reload = ctx.debug.hot_reload;
             if ctx.debug.watch_flag {
                 pretty_errorln!(
                     "<r><red>error<r>: \"bun bake\" reloads app/server.ts on its own. Remove --watch."
@@ -2805,11 +2811,20 @@ impl RunCommand {
                 cli::watch_instead_of_hot_for_check(ctx);
             }
             // Flags before `bake` that only apply in watch mode, which may only be on now.
-            cli::apply_watch_mode_flags(ctx);
-            if hot_reload != ctx.debug.hot_reload {
-                cli::set_up_watch_restarts(ctx);
+            cli::apply_watch_mode_flags(ctx, true);
+            // A change to `bake.config.ts` starts `bun bake` again, also when it reloads in place
+            // otherwise. On Windows, that needs the watcher-manager parent in every mode.
+            #[cfg(windows)]
+            {
+                if !bun_sys::windows::is_watcher_child() {
+                    bun_sys::windows::become_watcher_manager();
+                } else if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                    bun_core::set_auto_reload_on_crash(true);
+                }
             }
             // Before the type check: a first start with type errors never runs `internal/bake.ts`.
+            // Only `--check` restarts on every change. A restart for `bake.config.ts` is a first
+            // start: it watches no file yet that could fix an error at the start.
             if ctx.debug.hot_reload == cli::command::HotReload::Watch {
                 crate::bake::config::plugins::mark_restart();
             }

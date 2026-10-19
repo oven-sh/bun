@@ -122,7 +122,8 @@ impl Symlinker {
                                         linked => linked.map(|()| true),
                                     }
                                 }
-                                // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
+                                // Keep it. It's the copy that `bun patch <pkg>` made, or a mount
+                                // point (EBUSY).
                                 _ => {
                                     let has_package_json = {
                                         let mut dest = self.dest.save();

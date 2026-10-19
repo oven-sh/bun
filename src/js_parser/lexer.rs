@@ -1978,7 +1978,6 @@ impl<'a> Lexer<'a> {
                     let offset = self.scan_pragma(
                         self.start + i + (text.len() - rest.len()),
                         chunk,
-                        CommentKind::MultiLine,
                         PureAnnotation::Allow,
                     );
 
@@ -2117,12 +2116,7 @@ impl<'a> Lexer<'a> {
                         };
                         first_marker = false;
                         let chunk = js_ast::StoreStr::new(self.remaining());
-                        self.current += self.scan_pragma(
-                            pragma_trigger_pos,
-                            chunk.slice(),
-                            CommentKind::SingleLine,
-                            pure,
-                        );
+                        self.current += self.scan_pragma(pragma_trigger_pos, chunk.slice(), pure);
                         continue;
                     }
                     _ => {
@@ -2150,11 +2144,8 @@ impl<'a> Lexer<'a> {
         &mut self,
         offset_for_errors: usize,
         chunk: &[u8],
-        comment: CommentKind,
         pure: PureAnnotation,
     ) -> usize {
-        // A `//` comment ends at the line break, so a pragma argument stops there.
-        let allow_newline = comment == CommentKind::SingleLine;
         if pure == PureAnnotation::Allow && !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
                 self.has_pure_comment_before = true;
@@ -2163,61 +2154,29 @@ impl<'a> Lexer<'a> {
         }
 
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
-            if let Some(span) =
-                PragmaArg::scan(self.start + offset_for_errors, b"jsx", chunk, allow_newline)
-            {
+            if let Some(span) = PragmaArg::scan(self.start + offset_for_errors, b"jsx", chunk) {
                 self.jsx_pragma._jsx = span;
-                return "jsx".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return "jsx".len() + usize::try_from(span.range.len).expect("int cast");
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxFrag") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsxFrag",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) = PragmaArg::scan(self.start + offset_for_errors, b"jsxFrag", chunk) {
                 self.jsx_pragma._jsx_frag = span;
-                return "jsxFrag".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return "jsxFrag".len() + usize::try_from(span.range.len).expect("int cast");
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxRuntime") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsxRuntime",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) =
+                PragmaArg::scan(self.start + offset_for_errors, b"jsxRuntime", chunk)
+            {
                 self.jsx_pragma._jsx_runtime = span;
-                return "jsxRuntime".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                return "jsxRuntime".len() + usize::try_from(span.range.len).expect("int cast");
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxImportSource") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsxImportSource",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) =
+                PragmaArg::scan(self.start + offset_for_errors, b"jsxImportSource", chunk)
+            {
                 self.jsx_pragma._jsx_import_source = span;
                 return "jsxImportSource".len()
-                    + if span.range.len > 0 {
-                        usize::try_from(span.range.len).expect("int cast")
-                    } else {
-                        0
-                    };
+                    + usize::try_from(span.range.len).expect("int cast");
             }
         } else if chunk.len() > " sourceMappingURL=".len()
             && chunk.starts_with(b" sourceMappingURL=")
@@ -3452,12 +3411,6 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     name.len()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CommentKind {
-    SingleLine,
-    MultiLine,
-}
-
 /// Whether a `__PURE__` match at this position marks the next call.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PureAnnotation {
@@ -3468,10 +3421,6 @@ enum PureAnnotation {
 pub struct PragmaArg;
 
 impl PragmaArg {
-    pub(crate) fn is_newline(c: CodePoint) -> bool {
-        c == 0x0D || c == 0x0A || c == 0x2028 || c == 0x2029
-    }
-
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
@@ -3518,12 +3467,7 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
-    pub(crate) fn scan(
-        offset_: usize,
-        pragma: &[u8],
-        text_: &[u8],
-        allow_newline: bool,
-    ) -> Option<js_ast::Span> {
+    pub(crate) fn scan(offset_: usize, pragma: &[u8], text_: &[u8]) -> Option<js_ast::Span> {
         let mut text = &text_[pragma.len()..];
         let mut iter = CodepointIterator::init(text);
 
@@ -3548,8 +3492,9 @@ impl PragmaArg {
         iter = CodepointIterator::init(text);
         let _ = iter.next(&mut cursor);
 
+        // A line break ends the value too. esbuild's `scanForPragmaArg` stops at white space only.
         let mut i: usize = 0;
-        while !is_whitespace(cursor.c) && (!allow_newline || !Self::is_newline(cursor.c)) {
+        while !strings::is_js_whitespace(cursor.c as u32) {
             i += cursor.width as usize;
             if i >= text.len() {
                 break;
@@ -3558,6 +3503,10 @@ impl PragmaArg {
             if !iter.next(&mut cursor) {
                 break;
             }
+        }
+
+        if i == 0 {
+            return None;
         }
 
         Some(js_ast::Span {

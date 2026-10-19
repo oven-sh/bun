@@ -625,3 +625,125 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+// Each parse-worker thread creates its own macro VM at its first macro call. The VM's transpiler
+// loads the `.env` files of the cwd into the VM's env loader, so the macro's `process.env` sees
+// them. That loader used to be the build's own loader, shared by every worker thread.
+describe("the macro VM's env loader is its own", () => {
+  const macroModules = 8;
+  const files: Record<string, string> = {
+    ".env": Array.from({ length: 5000 }, (_, i) => `VAR_${i}=value_number_${i}`).join("\n") + "\n",
+    "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
+    "entry.ts":
+      Array.from({ length: macroModules }, (_, i) => `import m${i} from "./m${i}.ts";`).join("\n") +
+      `\nconsole.log(${Array.from({ length: macroModules }, (_, i) => `m${i}`).join(", ")});\n`,
+  };
+  for (let i = 0; i < macroModules; i++) {
+    files[`m${i}.ts`] = `import { value } from "./macro.ts" with { type: "macro" };\nexport default value("m${i}");\n`;
+  }
+
+  // Several worker threads load the same `.env` into one map at the same time. A few builds at
+  // once, each with a fixed pool of eight threads, make the overlap likely in every environment.
+  test("bun build with several macro modules and a .env does not crash", async () => {
+    using dir = tempDir("macro-env-loader-race", files);
+    const builds = 4;
+    const results = await Promise.all(
+      Array.from({ length: builds }, async (_, i) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./entry.ts", "--target=bun", "--outdir", `out${i}`],
+          env: { ...bunEnv, UV_THREADPOOL_SIZE: "8" },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      }),
+    );
+    expect(results).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
+    for (let i = 0; i < builds; i++) {
+      const out = await Bun.file(path.join(String(dir), `out${i}`, "entry.js")).text();
+      for (let m = 0; m < macroModules; m++) {
+        expect(out).toContain(`var m${m}_default = "m${m}";`);
+      }
+    }
+  }, 60_000);
+
+  // `bun build` without `--env` does not read `.env`. The macro VM reads it for its own
+  // `process.env`, and that read must not change what the build's resolver sees.
+  test.concurrent("a macro's .env load does not reach the build's resolver", async () => {
+    using dir = tempDir("macro-env-loader-isolated", {
+      "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
+      "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
+      "with-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nimport { dep } from "dep";\nconsole.log(value("a"), dep);\n`,
+      "without-macro.ts": `import { dep } from "dep";\nconsole.log("b", dep);\n`,
+    });
+    await Bun.write(path.join(String(dir), ".env"), `NODE_PATH=${path.join(String(dir), "vendor")}\n`);
+    const build = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", entry, "--target=bun"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        resolved: stdout.includes("from NODE_PATH"),
+        unresolved: stderr.includes('Could not resolve: "dep"'),
+        exitCode,
+      };
+    };
+    const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
+    expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
+    expect(withMacro).toEqual(withoutMacro);
+  });
+
+  test.concurrent("a macro reads .env through its own loader", async () => {
+    using dir = tempDir("macro-env-loader-reads-dotenv", {
+      ".env": "FROM_DOTENV=hello\n",
+      "macro.ts": `export function fromDotenv() {\n  return process.env.FROM_DOTENV ?? "unset";\n}\n`,
+      "entry.ts": `import { fromDotenv } from "./macro.ts" with { type: "macro" };\nconsole.log(fromDotenv());\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--target=bun"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lastLine: stdout.trim().split("\n").pop(), exitCode }).toEqual({
+      lastLine: `console.log("hello");`,
+      exitCode: 0,
+    });
+  });
+
+  // The copy carries the record of what the program's loader already read. `Bun.build()` in a
+  // program that loaded `.env` at start does not read it again.
+  test.concurrent("Bun.build() gives the macro VM a copy of the program's env", async () => {
+    using dir = tempDir("macro-env-loader-build-api", {
+      ".env": "FROM_DOTENV=hello\n",
+      "macro.ts": `export function vars() {\n  return [process.env.FROM_DOTENV ?? "unset", process.env.ADDED_AFTER_START ?? "unset"].join(",");\n}\n`,
+      "entry.ts": `import { vars } from "./macro.ts" with { type: "macro" };\nconsole.log(vars());\n`,
+      "build.ts": `
+        import { appendFileSync } from "node:fs";
+        appendFileSync(".env", "ADDED_AFTER_START=yes\\n");
+        const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun" });
+        console.log(await result.outputs[0].text());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lastLine: stdout.trim().split("\n").pop(), exitCode }).toEqual({
+      lastLine: `console.log("hello,unset");`,
+      exitCode: 0,
+    });
+  });
+});

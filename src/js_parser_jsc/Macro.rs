@@ -442,10 +442,21 @@ impl Macro {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
+            // `env` is the build's loader. Every parse thread shares it, and the
+            // build thread reads it while this thread parses. This VM's transpiler
+            // loads `.env` files into its loader, so it gets a copy, owned by the VM.
+            // SAFETY: `env` comes from `MacroContext.env`, the transpiler's loader,
+            // which is live for the whole build. The bundler does not write it
+            // while parse tasks run.
+            let owned_env_loader = match unsafe { env.as_ref() } {
+                Some(env) => Some(Box::new(env.clone_loaded()?)),
+                None => None,
+            };
+
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
-                env_loader: NonNull::new(env),
+                owned_env_loader,
                 is_main_thread: false,
                 ..Default::default()
             })?;

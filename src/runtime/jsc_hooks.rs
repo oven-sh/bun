@@ -84,6 +84,10 @@ pub(crate) struct RuntimeState {
     /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub(crate) transpiler_arena: Box<bun_alloc::Arena>,
+    /// The env loader `vm.transpiler` points at when the VM owns its own
+    /// (`InitOptions::owned_env_loader`). `None` when the transpiler shares
+    /// the caller's loader. Freed with the state, after the VM.
+    pub(crate) owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
@@ -351,6 +355,7 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
+        owned_env_loader: opts.owned_env_loader.take(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -418,10 +423,19 @@ unsafe fn init_runtime_state(
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
         let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
-        // Forward `opts.env_loader` so the VM
-        // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
-        // `NODE_ENV=test` into it after init).
-        match bun_bundler::Transpiler::init(arena, log, args, opts.env_loader.map(|p| p.as_ptr())) {
+        // The VM's own loader when it has one. Otherwise forward
+        // `opts.env_loader` so the VM shares the caller's `DotEnv.Loader`
+        // (e.g. `bun test` writes `NODE_ENV=test` into it after init).
+        // SAFETY: `state` is the unique freshly-boxed `RuntimeState`; the
+        // inner `Box<Loader>` payload is heap-stable and, like the arena,
+        // outlives the `Transpiler`.
+        let env_loader: Option<*mut bun_dotenv::Loader> = unsafe {
+            match (*state).owned_env_loader.as_deref_mut() {
+                Some(owned) => Some(ptr::from_mut(owned)),
+                None => opts.env_loader.map(|p| p.as_ptr()),
+            }
+        };
+        match bun_bundler::Transpiler::init(arena, log, args, env_loader) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).

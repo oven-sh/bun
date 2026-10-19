@@ -298,6 +298,8 @@ await s3.abortMultipartUpload(key, uploadId);
 
 The same three methods are static on `S3Client`, with the credentials as the last argument.
 
+The `retry` option has no effect on these three methods. If `abortMultipartUpload` rejects with `NoSuchUpload`, there is nothing left to abort. An abort that worked can reject this way too, because Bun sends the `DELETE` a second time when a reused connection closes before the response arrives.
+
 ### `new Response(S3File)`
 
 To redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.

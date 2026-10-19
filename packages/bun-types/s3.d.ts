@@ -282,6 +282,9 @@ declare module "bun" {
      * - Default: 3
      * - Maximum: 255
      *
+     * `createMultipartUpload`, `completeMultipartUpload` and
+     * `abortMultipartUpload` do not use it.
+     *
      * @example
      * ```ts
      * // Setting retry attempts
@@ -1598,10 +1601,14 @@ declare module "bun" {
      * Abort a multipart upload: discard the uploaded parts. S3 bills the
      * parts of an upload until it is completed or aborted.
      *
+     * Rejects with `NoSuchUpload` when the upload does not exist. An abort
+     * that worked can reject this way too: Bun sends the `DELETE` again when
+     * a reused connection closes before the response arrives.
+     *
      * @param path The path to the file in the bucket
      * @param uploadId The id from {@link createMultipartUpload}
      * @param options Additional S3 options to override defaults
-     * @returns A promise that resolves when the upload is gone
+     * @returns A promise that resolves when S3 answers the request with 200 or 204
      *
      * @example
      * ```ts
@@ -1614,10 +1621,14 @@ declare module "bun" {
      * Abort a multipart upload: discard the uploaded parts. S3 bills the
      * parts of an upload until it is completed or aborted.
      *
+     * Rejects with `NoSuchUpload` when the upload does not exist. An abort
+     * that worked can reject this way too: Bun sends the `DELETE` again when
+     * a reused connection closes before the response arrives.
+     *
      * @param path The path to the file in the bucket
      * @param uploadId The id from {@link createMultipartUpload}
      * @param options S3 credentials and configuration options
-     * @returns A promise that resolves when the upload is gone
+     * @returns A promise that resolves when S3 answers the request with 200 or 204
      */
     static abortMultipartUpload(path: string, uploadId: string, options?: S3Options): Promise<void>;
   }

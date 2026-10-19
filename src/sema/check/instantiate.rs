@@ -78,6 +78,9 @@ impl Recent {
     }
 }
 
+/// The arguments of `steps_of_sig_mapper` and its result.
+pub(super) type Steps = ((FileId, FnId, MapperId), Option<(MapperId, MapperId)>);
+
 /// `activeMappers`. tsgo caches the instantiations under a mapper for as long as an instantiation
 /// with that mapper is in progress (`activeTypeMappersCaches`), and a hit in that cache does not
 /// add to `instantiationCount`. The results are cached elsewhere here. This records what that
@@ -1681,6 +1684,22 @@ impl<'p, 's> Checker<'p, 's> {
         if own.is_empty() {
             return None;
         }
+        let recent = &self.recent_steps[mapper.0 as usize % RECENT_SIGS];
+        if recent.get().0 == (file, func, mapper) {
+            return recent.get().1;
+        }
+        let steps = self.derive_steps_of_sig_mapper(file, func, mapper);
+        recent.set(((file, func, mapper), steps));
+        steps
+    }
+
+    fn derive_steps_of_sig_mapper(
+        &self,
+        file: FileId,
+        func: FnId,
+        mapper: MapperId,
+    ) -> Option<(MapperId, MapperId)> {
+        let own = self.hir(file)[func].type_params;
         let outer = (self.types().mapping(mapper).iter().copied())
             .filter(|pair| !self.is_declared_among(pair.0, file, own));
         if outer.clone().all(|pair| pair.0 == pair.1) {

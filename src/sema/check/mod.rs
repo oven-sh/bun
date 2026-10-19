@@ -130,6 +130,7 @@ pub use shape::{MEMBER_COUNTS, Members};
 pub use spans::compute_ecma_line_starts;
 
 const RECENT_SIGS: usize = 256;
+const RECENT_TYPE_PARAMS: usize = 64;
 
 /// A non-cacheable query result. It is valid while `frames[depth]` has the serial number `serial`.
 #[derive(Copy, Clone)]
@@ -992,6 +993,12 @@ impl<'s> Program<'s> {
             ),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
+            recent_type_params: Box::new(std::array::from_fn(|_| {
+                std::cell::Cell::new(((FileId(u32::MAX), TypeParamId(0)), TypeId::UNRESOLVED))
+            })),
+            recent_steps: Box::new(std::array::from_fn(|_| {
+                std::cell::Cell::new(((FileId(u32::MAX), FnId(0), MapperId::IDENTITY), None))
+            })),
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             undefined_properties: Default::default(),
@@ -1855,6 +1862,11 @@ pub struct Checker<'p, 's> {
     /// of the signature id.
     recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
     recent_sig_type_params: Box<[(SigId, &'p [TypeId]); RECENT_SIGS]>,
+    /// The most recent results of `type_param`, indexed by the low bits of the type parameter's number.
+    recent_type_params: Box<[std::cell::Cell<((FileId, TypeParamId), TypeId)>; RECENT_TYPE_PARAMS]>,
+    /// The most recent results of `steps_of_sig_mapper` for functions with type parameters, indexed by the low bits of
+    /// the mapper id.
+    recent_steps: Box<[std::cell::Cell<instantiate::Steps>; RECENT_SIGS]>,
     /// The unions whose members are being awaited.
     awaiting: Vec<TypeId>,
     /// `lastFlowNode`, `lastFlowNodeReachable`
@@ -2154,10 +2166,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type parameter `tp` of `file`, as declared.
     #[inline]
     pub fn type_param(&self, file: FileId, tp: TypeParamId) -> TypeId {
-        match self.p.declared_type_params.get(&self.task, &(file, tp)) {
+        let recent = &self.recent_type_params[tp.0 as usize % RECENT_TYPE_PARAMS];
+        if recent.get().0 == (file, tp) {
+            return recent.get().1;
+        }
+        let declared = match self.p.declared_type_params.get(&self.task, &(file, tp)) {
             Some(kept) => kept,
             None => self.intern_type_param(file, tp),
-        }
+        };
+        recent.set(((file, tp), declared));
+        declared
     }
 
     #[inline(never)]

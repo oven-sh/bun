@@ -1045,7 +1045,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `GetErrorRangeForNode(right)` for a property access's name. A missing identifier has an
     /// empty range.
-    pub(super) fn place_of_right(
+    pub(super) fn span_of_right(
         &self,
         file: FileId,
         name: Atom,
@@ -1219,7 +1219,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ..
                 }
             ) {
-                let right = self.place_of_right(file, name, name_pos);
+                let right = self.span_of_right(file, name, name_pos);
                 if self.is_block_scoped_global(name) {
                     self.error_at(right, 2339, &[Arg::Atom(name), Arg::Type(left)]);
                 } else if self.p.files.options.no_implicit_any {
@@ -1272,7 +1272,7 @@ impl<'p, 's> Checker<'p, 's> {
             if self.p.files.options.no_property_access_from_index_signature
                 && !bound.is_in_type_query(e)
             {
-                let right = self.place_of_right(file, name, name_pos);
+                let right = self.span_of_right(file, name, name_pos);
                 self.error_at(right, 4111, &[Arg::Atom(name)]);
             }
         } else {
@@ -1302,7 +1302,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(prop) = prop
             && self.is_assignment_to_readonly_entity(file, e, obj, prop)
         {
-            let right = self.place_of_right(file, name, name_pos);
+            let right = self.span_of_right(file, name, name_pos);
             let text = self.source_text(file, right.1, right.2);
             self.error_at(right, 2540, &[Arg::Bytes(&text)]);
             return (TypeId::ERROR, may_short_circuit);

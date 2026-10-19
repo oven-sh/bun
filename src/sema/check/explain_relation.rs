@@ -873,7 +873,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.synthetic_param_has_non_circular_constraint(source, (file, tp), target)
         {
             let constraint = self.type_to_string(target);
-            let at = self.place_of_type_parameter_declaration(file, tp);
+            let at = self.span_of_type_parameter_declaration(file, tp);
             r.related_info
                 .push(self.new_diagnostic(at, 2208, &[Arg::Bytes(&constraint)]));
         }
@@ -928,7 +928,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getErrorRangeForNode` of `symbol.Declarations[0]` for `file`'s type parameter `tp`. That's
     /// the whole declaration, including a leading `const`, `in` or `out`.
-    pub(super) fn place_of_type_parameter_declaration(
+    pub(super) fn span_of_type_parameter_declaration(
         &self,
         file: FileId,
         tp: TypeParamId,

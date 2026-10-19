@@ -73,12 +73,12 @@ impl Checker<'_, '_> {
         file: FileId,
         e: ExprId,
     ) -> Option<Vec<u8>> {
-        let (_, start, end) = self.place_of_assignment_declaration_name(file, e)?;
+        let (_, start, end) = self.span_of_assignment_declaration_name(file, e)?;
         Some(self.source_text(file, start, end))
     }
 
     /// `GetNonAssignedNameOfDeclaration(e)` for an assignment or a call that declares a property.
-    pub(super) fn place_of_assignment_declaration_name(
+    pub(super) fn span_of_assignment_declaration_name(
         &self,
         file: FileId,
         e: ExprId,

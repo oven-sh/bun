@@ -259,7 +259,7 @@ impl Checker<'_, '_> {
         match decl {
             Decl::Module(m) => Some(self.span_of_token(file, self.hir(file)[m].name_pos)),
             Decl::ExportsProperty(e) | Decl::Expando(e) | Decl::ThisProperty(e) => {
-                self.place_of_assignment_declaration_name(file, e)
+                self.span_of_assignment_declaration_name(file, e)
             }
             _ => self.span_of_declaration(file, decl),
         }

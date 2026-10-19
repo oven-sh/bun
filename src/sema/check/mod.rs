@@ -3002,7 +3002,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let at = match self.current_node().or(self.current_source_element) {
-            Some(current) => self.place_of_current_node(current),
+            Some(current) => self.span_of_current_node(current),
             // A check after `check_source_file`. See `error_at_current_node`.
             None => match self.outermost_comparison.flatten() {
                 Some(error_node) => error_node,
@@ -3272,7 +3272,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `GetErrorRangeForNode(c.currentNode)`
-    fn place_of_current_node(&self, current: CurrentNode) -> (FileId, u32, u32) {
+    fn span_of_current_node(&self, current: CurrentNode) -> (FileId, u32, u32) {
         match current {
             CurrentNode::Expr(file, e) => (
                 file,
@@ -3379,12 +3379,12 @@ impl<'p, 's> Checker<'p, 's> {
         // is at. The checks after `check_source_file` don't know it. The `errorNode` of their comparison
         // begins at the same position for an assignment, a variable declaration and a `return` statement.
         let at = match self.current_node() {
-            Some(current) => Some(self.place_of_current_node(current)),
+            Some(current) => Some(self.span_of_current_node(current)),
             // A comparison without an `errorNode` that `check_source_file` makes: of a rest
             // parameter with an array type (2370), of the two types of an assertion.
             None => self.outermost_comparison.flatten().or_else(|| {
                 let current = self.current_source_element?;
-                Some(self.place_of_current_node(current))
+                Some(self.span_of_current_node(current))
             }),
         };
         let Some(at) = at.filter(|_| is_reported) else {
@@ -3424,7 +3424,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn error_about_comparison_at_current_node(&mut self, code: u32, args: &[Arg<'_>]) {
         let current = self.current_node().or(self.current_source_element);
         if let (Some(current), true) = (current, self.eager.is_empty()) {
-            let at = self.place_of_current_node(current);
+            let at = self.span_of_current_node(current);
             let diagnostic = self.new_diagnostic(at, code, args);
             // tsgo caches the overflow in the relation cache, so the next comparison of the two
             // types is a cache hit and reports nothing.

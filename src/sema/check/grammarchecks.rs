@@ -536,7 +536,7 @@ impl Checker<'_, '_> {
                 return true;
             }
             if member.init.is_some() {
-                let at = self.place_of_initializer(file, member.init, None);
+                let at = self.span_of_initializer(file, member.init, None);
                 return self.grammar_error_at(at, if is_interface { 1246 } else { 1247 }, &[]);
             }
         }
@@ -585,7 +585,7 @@ impl Checker<'_, '_> {
         if initializer.is_none() {
             return false;
         }
-        let at = self.place_of_initializer(file, initializer, name);
+        let at = self.span_of_initializer(file, initializer, name);
         if !is_const_or_readonly || type_node.is_some() {
             return self.grammar_error_at(at, 1039, &[]);
         }
@@ -623,7 +623,7 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode` for an initializer. `name` is the position of the name of the
     /// variable it initializes, if that's a plain identifier (`getAssignedName`).
-    fn place_of_initializer(&self, file: FileId, e: ExprId, name: Option<u32>) -> FileSpan {
+    fn span_of_initializer(&self, file: FileId, e: ExprId, name: Option<u32>) -> FileSpan {
         let hir = self.hir(file);
         match (hir[e].kind, name) {
             (ExprKind::Fn(f), Some(name))

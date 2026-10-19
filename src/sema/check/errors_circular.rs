@@ -399,6 +399,6 @@ impl Checker<'_, '_> {
         if of == file && (is_in(error_node, current_node) || is_in(current_node, error_node)) {
             return None;
         }
-        Some(Reported::bare(self.place_of_current_node(current), 2751))
+        Some(Reported::bare(self.span_of_current_node(current), 2751))
     }
 }

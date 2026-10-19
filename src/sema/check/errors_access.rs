@@ -1365,7 +1365,7 @@ impl<'p> Checker<'p, '_> {
         name_pos: u32,
     ) {
         let (at, writing) = (Parent::Expr(e), self.is_write_access(file, e));
-        let error_node = |c: &Self| c.place_of_right(file, name, name_pos);
+        let error_node = |c: &Self| c.span_of_right(file, name, name_pos);
         self.check_property_accessibility_at_location(
             file,
             self.hir(file).node(e),

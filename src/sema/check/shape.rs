@@ -3279,7 +3279,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let constraint = self.constraint_of_type_param(constructor);
                     let first = constraint.and_then(|t| self.signatures(t, true).first().copied());
                     let returned = first.map_or(TypeId::UNKNOWN, |sig| self.sig_return(sig));
-                    let at = self.place_of_type_parameter_declaration(of, tp);
+                    let at = self.span_of_type_parameter_declaration(of, tp);
                     let args = [Arg::Atom(self.hir(of)[tp].name), Arg::Type(returned)];
                     let related = self.new_diagnostic(at, 2735, &args);
                     err.add_related_info(related);

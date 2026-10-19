@@ -1,7 +1,7 @@
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createPrivateKey, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -392,15 +392,33 @@ describe("pending streams", () => {
     }
   };
 
-  // A server and a client session on loopback. Disposal destroys both: after
-  // a failed expectation, a graceful close waits for the idle timeout.
+  // The endpoints of this block stay open until its last test ends. An
+  // endpoint answers a late packet for a session that is gone with a
+  // stateless reset. A reset to a closed port makes the next send of that
+  // endpoint fail. lsquic then sends nothing for a second, and it leaks a
+  // reset that it could not send.
+  const endpoints: QuicEndpoint[] = [];
+  afterAll(() => {
+    for (const endpoint of endpoints) endpoint.destroy();
+  });
+
+  // A server and a client session on loopback. Disposal destroys the sessions
+  // of both sides: after a failed expectation, a graceful close waits for the
+  // idle timeout.
   async function connected(onsession: (session: any) => void, serverOptions: any = {}, clientOptions: any = {}) {
-    const server = await listen(onsession, {
-      sni,
-      ...serverOptions,
-      transportParams: { maxIdleTimeout: 10, ...serverOptions.transportParams },
-    });
     const sessions: any[] = [];
+    const server = await listen(
+      (session: any) => {
+        sessions.push(session);
+        return onsession(session);
+      },
+      {
+        sni,
+        ...serverOptions,
+        transportParams: { maxIdleTimeout: 10, ...serverOptions.transportParams },
+      },
+    );
+    endpoints.push(server);
     const connectClient = async (options: any = {}) => {
       const client = await connect(server.address!, {
         servername: "localhost",
@@ -418,7 +436,6 @@ describe("pending streams", () => {
       connectClient,
       [Symbol.dispose]() {
         for (const session of sessions) session.destroy();
-        server.destroy();
       },
     };
   }
@@ -631,7 +648,8 @@ describe("pending streams", () => {
   test("a destroyed stream of a server that waited for stream credit does not take the credit", async () => {
     const release = Promise.withResolvers<void>();
     const result = Promise.withResolvers<{ pending: boolean[]; ids: bigint[] }>();
-    await using endpoint = new QuicEndpoint();
+    const endpoint = new QuicEndpoint();
+    endpoints.push(endpoint);
     using sessions = await connected(
       async (serverSession: any) => {
         ignoreStreams(serverSession);

@@ -1,5 +1,5 @@
 import { dlopen, ptr } from "bun:ffi";
-import { describe, expect, jest, test } from "bun:test";
+import { afterAll, describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
@@ -987,6 +987,34 @@ test("a send to a closed port does not fail the send to a live peer that follows
 // that option also gets a queued report for each ICMP error and for each send
 // that failed locally, and each report would be one more 'error'.
 describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
+  const internals = () => require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const fdOf = (socket: any): number => socket[internals().kStateSymbol].handle.fd;
+
+  let libc: ReturnType<typeof dlopen> | undefined;
+  afterAll(() => libc?.close());
+  function libcSymbols() {
+    libc ??= dlopen(isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6", {
+      setsockopt: { args: ["int", "int", "int", "ptr", "u32"], returns: "int" },
+      poll: { args: ["ptr", "u64", "int"], returns: "int" },
+    });
+    return libc.symbols;
+  }
+  // Whether the descriptor has a pending error or a queued error report
+  // (POLLERR), after a wait of at most `timeoutMs` for one: the kernel can
+  // handle the ICMP error of a loopback datagram after send() returned.
+  function hasPollErr(fd: number, timeoutMs: number) {
+    const POLLERR = 0x8;
+    // struct pollfd { int fd; short events; short revents; }
+    const pollfd = new DataView(new ArrayBuffer(8));
+    pollfd.setInt32(0, fd, true);
+    libcSymbols().poll(ptr(pollfd), 1, timeoutMs);
+    return (pollfd.getInt16(6, true) & POLLERR) !== 0;
+  }
+  // Echoes between other sockets until `done`, at most 20 times.
+  async function roundTripsUntil(done: () => boolean) {
+    for (let i = 0; i < 20 && !done(); i++) await loopbackRoundTrips();
+  }
+
   async function connectedTo(port: number) {
     const socket = createSocket("udp4");
     const errors: { message: string; errqueue: boolean }[] = [];
@@ -1006,6 +1034,8 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
       await new Promise<void>((resolve, reject) =>
         peer.send("ping", socket.address().port, "127.0.0.1", err => (err ? reject(err) : peer.close(() => resolve()))),
       );
+      await roundTripsUntil(() => errors.length > 0);
+      // A second report of the same ICMP error would be here after this.
       await loopbackRoundTrips();
       expect(errors).toEqual([{ message: "recvmsg ECONNREFUSED", errqueue: false }]);
     } finally {
@@ -1027,11 +1057,11 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
   test("a pending error fails the next send and is not emitted as well", async () => {
     const { socket, errors } = await connectedTo(await getDeadPort());
     try {
-      // One tick: the ICMP error of "one" is pending when "two" goes out.
-      const results: any[] = await Promise.all([
-        new Promise(resolve => socket.send("one", resolve)),
-        new Promise(resolve => socket.send("two", resolve)),
-      ]);
+      const one = new Promise(resolve => socket.send("one", resolve));
+      // The ICMP error of "one" is pending when "two" goes out.
+      expect(hasPollErr(fdOf(socket), 2000)).toBe(true);
+      const two = new Promise(resolve => socket.send("two", resolve));
+      const results: any[] = await Promise.all([one, two]);
       await loopbackRoundTrips();
       expect({ results: results.map(err => err?.message ?? null), errors }).toEqual({
         results: [null, "send ECONNREFUSED"],
@@ -1046,8 +1076,9 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
     const { socket, errors } = await connectedTo(await getDeadPort());
     try {
       socket.send("x");
+      expect(hasPollErr(fdOf(socket), 2000)).toBe(true);
       socket.disconnect();
-      await loopbackRoundTrips();
+      await roundTripsUntil(() => errors.length > 0);
       expect(errors).toEqual([{ message: "recvmsg ECONNREFUSED", errqueue: false }]);
     } finally {
       socket.close();
@@ -1077,31 +1108,16 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
   // (bind({ fd }), a socket received over IPC). The kernel then keeps EPOLLERR
   // raised while a report is queued, and only recvmsg(MSG_ERRQUEUE) takes it.
   test("a descriptor whose creator set IP_RECVERR emits each error once and is drained", async () => {
-    const { _createSocketHandle, kStateSymbol } =
-      require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-    const libc = dlopen(isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6", {
-      setsockopt: { args: ["int", "int", "int", "ptr", "u32"], returns: "int" },
-      poll: { args: ["ptr", "u64", "int"], returns: "int" },
-    });
     const IPPROTO_IP = 0;
     const IP_RECVERR = 11;
-    const POLLERR = 0x8;
-    // struct pollfd { int fd; short events; short revents; }
-    const hasPollErr = (fd: number) => {
-      const pollfd = new DataView(new ArrayBuffer(8));
-      pollfd.setInt32(0, fd, true);
-      libc.symbols.poll(ptr(pollfd), 1, 0);
-      return (pollfd.getInt16(6, true) & POLLERR) !== 0;
-    };
-
     const deadPort = await getDeadPort();
-    const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+    const wrap = internals()._createSocketHandle("127.0.0.1", 0, "udp4");
     expect(typeof wrap).not.toBe("number");
     const live = createSocket("udp4");
     const socket = createSocket("udp4");
     try {
       const enabled = new Int32Array([1]);
-      expect(libc.symbols.setsockopt(wrap.fd, IPPROTO_IP, IP_RECVERR, ptr(enabled), enabled.byteLength)).toBe(0);
+      expect(libcSymbols().setsockopt(wrap.fd, IPPROTO_IP, IP_RECVERR, ptr(enabled), enabled.byteLength)).toBe(0);
       const { promise: delivered, resolve: onMessage } = Promise.withResolvers<string>();
       live.on("message", msg => onMessage(msg.toString()));
       await new Promise<void>(resolve => live.bind(0, "127.0.0.1", resolve));
@@ -1118,9 +1134,11 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
       await new Promise<void>(resolve => socket.connect(deadPort, "127.0.0.1", () => resolve()));
 
       socket.send("dead");
-      expect(hasPollErr(wrap.fd)).toBe(true);
+      expect(hasPollErr(wrap.fd, 2000)).toBe(true);
+      await roundTripsUntil(() => errors.length > 1);
+      // A report that stays queued keeps POLLERR raised.
       await loopbackRoundTrips();
-      expect({ errors, pollErr: hasPollErr(wrap.fd) }).toEqual({
+      expect({ errors, pollErr: hasPollErr(wrap.fd, 0) }).toEqual({
         errors: [
           { message: "recvmsg ECONNREFUSED", errqueue: false },
           { message: "recvmsg ECONNREFUSED", errqueue: false },
@@ -1131,12 +1149,11 @@ describe.skipIf(!isLinux)("connected socket and ICMP errors", () => {
       socket.disconnect();
       socket.send("alive", live.address().port, "127.0.0.1");
       expect(await delivered).toBe("alive");
-      expect(socket[kStateSymbol].handle.socket.closed).toBe(false);
+      expect(socket[internals().kStateSymbol].handle.socket.closed).toBe(false);
     } finally {
       socket.close();
       live.close();
       wrap.close();
-      libc.close();
     }
   });
 });

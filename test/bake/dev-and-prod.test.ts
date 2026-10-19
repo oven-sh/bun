@@ -202,6 +202,29 @@ devTest("using runtime import", {
     );
   },
 });
+// Bun writes `require` into ES-module output through `import.meta`. A page over such files gets what they require.
+devAndProductionTest("files that bun wrote require through import.meta", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { name } from "./dist/lib.js";
+      import { port } from "./dist/index.js";
+      console.log(name + " " + port());
+    `,
+    // \`bun build --no-bundle --target=bun\`
+    "dist/lib.js": `var {require}=import.meta;const config = require("./config.json");\nexport const name = config.name;\n`,
+    "dist/config.json": `{ "name": "world" }`,
+    // \`bun build --splitting --target=bun\`
+    "dist/index.js": `// @bun\nfunction port() {\n  return import.meta.require("./settings-xzncmjae.js").port;\n}\nexport {\n  port\n};\n`,
+    "dist/settings-xzncmjae.js": `// @bun\nvar port = 3000;\nexport {\n  port\n};\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("world 3000");
+  },
+});
 devTest("hmr handles rapid consecutive edits", {
   files: {
     "index.html": emptyHtmlFile({

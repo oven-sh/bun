@@ -139,7 +139,9 @@ impl VM {
     }
 
     /// While the guard is alive, native code can put and delete the properties of what `BUN_JSC_immutableGlobals` covers. No JavaScript may run.
-    pub fn allow_lazy_materialization_of_immutable_properties(&self) -> AllowLazyMaterializationOfImmutableProperties<'_> {
+    pub fn allow_lazy_materialization_of_immutable_properties(
+        &self,
+    ) -> AllowLazyMaterializationOfImmutableProperties<'_> {
         JSC__VM__allowLazyMaterializationOfImmutableProperties(self, true);
         AllowLazyMaterializationOfImmutableProperties { vm: self }
     }

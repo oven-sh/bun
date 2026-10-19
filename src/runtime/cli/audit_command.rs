@@ -22,7 +22,6 @@ use bun_url::URL;
 
 use crate::cli::Command;
 use crate::cli::install_command::InstallCommand;
-use crate::cli::package_manager_command::PackageManagerCommand;
 
 struct VulnerabilityInfo {
     severity: Box<[u8]>,
@@ -156,15 +155,7 @@ impl AuditCommand {
             Output::flush();
         }
 
-        {
-            let log_level = manager.options.log_level;
-            let load_lockfile = manager.load_lockfile_from_cwd::<true>();
-            PackageManagerCommand::handle_load_lockfile_errors_for(
-                &load_lockfile,
-                log_level,
-                "audit",
-            );
-        }
+        manager.load_lockfile_from_cwd_or_exit::<true>("nothing to audit");
 
         if fix {
             return Self::audit_fix(
@@ -267,7 +258,7 @@ impl AuditCommand {
 
         // Audit the saved lockfile, which is what the next `bun audit` reads. The copy in memory
         // can contain a package that was not saved.
-        pm.load_lockfile_from_cwd_or_exit("nothing to audit");
+        pm.load_lockfile_from_cwd_or_exit::<true>("nothing to audit");
         let reaudit = audit_for_fix(pm, audit_level, ignore_list, false)?;
         if json_output {
             plan.unaudited = reaudit.unaudited;

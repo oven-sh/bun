@@ -459,7 +459,7 @@ impl LoadResultErr {
     /// Used by the commands that exit on this error. `bun install` continues and prints a different
     /// message.
     #[cold]
-    pub(crate) fn report(&self, log: &bun_ast::Log) {
+    pub fn report(&self, log: &bun_ast::Log) {
         if crate::migration::reported_unsupported_lockfile_version(self) {
             return;
         }
@@ -574,8 +574,7 @@ impl<'a> LoadResult<'a> {
         )
     }
 
-    // Callers reach this only after `handleLoadLockfileErrors` has exited on
-    // the `NotFound`/`Err` arms, so the variant is known-`Ok`.
+    // Callers rule out `NotFound` and `Err` before they call this.
     bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 

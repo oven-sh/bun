@@ -1879,8 +1879,33 @@ describe.concurrent("a bun.lock that does not parse", () => {
 
   it("bun pm ls", async () => {
     const { out, err, exitCode } = await run("unparsable-lockfile-pm-ls", "pm", "ls");
-    expect(err).toMatchInlineSnapshot(`"error: failed to parse lockfile: ParserError"`);
+    expect(err).toMatchInlineSnapshot(`
+      "1 | this is not a lockfile
+          ^
+      error: Unexpected this
+          at bun.lock:1:1
+      error: failed to parse lockfile: ParserError"
+    `);
     expect(out).toMatchInlineSnapshot(`""`);
+    expect(exitCode).toBe(1);
+  });
+
+  // Some of these commands print their name first, on stdout or on stderr. The error is the same for all of them.
+  it.each([
+    "audit",
+    "why no-deps",
+    "pm hash",
+    "pm licenses",
+    "pm untrusted",
+    "pm trust --all",
+    "pm cache pack cache.pack",
+    "prune",
+    "dedupe",
+  ])("bun %s", async command => {
+    const { err, exitCode } = await run("unparsable-lockfile-" + command.replaceAll(" ", "-"), ...command.split(" "));
+    expect(err).toEndWith(
+      "1 | this is not a lockfile\n    ^\nerror: Unexpected this\n    at bun.lock:1:1\nerror: failed to parse lockfile: ParserError",
+    );
     expect(exitCode).toBe(1);
   });
 });

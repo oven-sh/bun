@@ -183,7 +183,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         && (manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty())
         && manager.options.do_.load_lockfile()
     {
-        manager.load_lockfile_from_cwd_or_exit("nothing to update");
+        manager.load_lockfile_from_cwd_or_exit::<true>("nothing to update");
         let filter_patterns = manager.options.filter_patterns;
         let workspace_selection::LockfileSelection {
             ids: selected,

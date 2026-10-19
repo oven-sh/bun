@@ -3135,6 +3135,19 @@ describe.concurrent("without a package.json", () => {
     });
   });
 
+  test("bun pm ls -g says why a global lockfile does not load", async () => {
+    using project = fresh("pm-ls-global-broken-lockfile");
+    expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });
+    await Bun.write(join(project.globalDir, "bun.lock"), "this is not a lockfile");
+    expect(await project.run("pm", "ls", "-g")).toEqual({
+      stdout: "",
+      stderr:
+        "1 | this is not a lockfile\n    ^\nerror: Unexpected this\n    at bun.lock:1:1\n" +
+        "error: failed to parse lockfile: ParserError\n",
+      exitCode: 1,
+    });
+  });
+
   test("bun pm ls -g skips a global package that's missing on disk", async () => {
     using project = fresh("pm-ls-global-deleted");
     expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });

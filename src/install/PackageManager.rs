@@ -1033,6 +1033,13 @@ pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCel
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What `LoadResult::Ok` holds besides the lockfile.
+type LoadedParts = (
+    lockfile::Migrated,
+    lockfile::Serializer::SerializerLoadResult,
+    lockfile::LockfileFormat,
+);
+
 impl PackageManager {
     pub(crate) fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
@@ -1043,7 +1050,7 @@ impl PackageManager {
     /// is a self-referential split borrow. Encapsulated here so callers stay
     /// in safe code: the returned `LoadResult` mutably borrows `self` for its
     /// lifetime, after which `self.lockfile` holds the loaded data.
-    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
+    pub(crate) fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
         &mut self,
     ) -> lockfile::LoadResult<'_> {
         self.clear_cached_items_depending_on_lockfile_buffer();
@@ -1061,19 +1068,62 @@ impl PackageManager {
         }
     }
 
+    /// Exits if the lockfile exists and doesn't load. Returns `None` if there is no lockfile.
+    fn load_lockfile_or_exit_if_broken<const ATTEMPT_OTHER: bool>(
+        &mut self,
+    ) -> Option<LoadedParts> {
+        // Returning the `Ok` itself would keep `self` borrowed in the other arms of the callers.
+        match self.load_lockfile_from_cwd::<ATTEMPT_OTHER>() {
+            lockfile::LoadResult::Ok(ok) => Some((ok.migrated, ok.serializer_result, ok.format)),
+            lockfile::LoadResult::NotFound => None,
+            lockfile::LoadResult::Err(cause) => {
+                if self.options.log_level != package_manager_options::LogLevel::Silent {
+                    cause.report(self.log_mut());
+                }
+                Global::exit(1);
+            }
+        }
+    }
+
+    fn loaded_lockfile(
+        &mut self,
+        (migrated, serializer_result, format): LoadedParts,
+    ) -> lockfile::LoadResult<'_> {
+        lockfile::LoadResult::Ok(lockfile::LoadResultOk {
+            lockfile: &mut self.lockfile,
+            migrated,
+            serializer_result,
+            format,
+        })
+    }
+
     /// `nothing` is the end of the error message for a missing lockfile, e.g. "nothing to update".
-    pub fn load_lockfile_from_cwd_or_exit(&mut self, nothing: &str) {
-        let silent = self.options.log_level == package_manager_options::LogLevel::Silent;
-        match self.load_lockfile_from_cwd::<true>() {
-            lockfile::LoadResult::Ok(_) => return,
-            lockfile::LoadResult::NotFound if !silent => {
-                Output::err_generic("missing lockfile, {s}", (nothing,));
+    pub fn load_lockfile_from_cwd_or_exit<const ATTEMPT_OTHER: bool>(
+        &mut self,
+        nothing: &str,
+    ) -> lockfile::LoadResult<'_> {
+        let Some(parts) = self.load_lockfile_or_exit_if_broken::<ATTEMPT_OTHER>() else {
+            if self.options.log_level != package_manager_options::LogLevel::Silent {
+                if nothing.is_empty() {
+                    Output::err_generic("missing lockfile", ());
+                } else {
+                    Output::err_generic("missing lockfile, {s}", (nothing,));
+                }
                 bun_core::note!("run 'bun install' first");
             }
-            lockfile::LoadResult::Err(cause) if !silent => cause.report(self.log_mut()),
-            _ => {}
+            Global::exit(1);
+        };
+        self.loaded_lockfile(parts)
+    }
+
+    /// For a command that has its own answer to a missing lockfile, which comes back as `NotFound`.
+    pub fn load_lockfile_from_cwd_if_any<const ATTEMPT_OTHER: bool>(
+        &mut self,
+    ) -> lockfile::LoadResult<'_> {
+        match self.load_lockfile_or_exit_if_broken::<ATTEMPT_OTHER>() {
+            Some(parts) => self.loaded_lockfile(parts),
+            None => lockfile::LoadResult::NotFound,
         }
-        Global::exit(1);
     }
 
     pub(crate) fn crash(&mut self) -> ! {

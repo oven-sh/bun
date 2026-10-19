@@ -15,8 +15,6 @@ use bun_parsers::json as JSON;
 use bun_paths::{AutoAbsPath, resolve_path};
 use bun_sys::{self, Dir, Fd, File};
 
-use crate::cli::package_manager_command::PackageManagerCommand;
-
 const UNKNOWN_LICENSE: &[u8] = b"Unknown";
 const MAX_SCAN_DEPTH: usize = 64;
 
@@ -95,8 +93,7 @@ impl PmLicensesCommand {
         }
 
         let configured_linker = pm.options.node_linker;
-        let load = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load, log_level, "list");
+        let load = pm.load_lockfile_from_cwd_or_exit::<true>("nothing to list");
         let isolated = load.node_linker(configured_linker) == NodeLinker::Isolated;
 
         let json_output = pm.options.json_output;

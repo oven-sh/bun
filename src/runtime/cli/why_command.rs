@@ -17,7 +17,6 @@ use bun_install_types::NodeLinker::NodeLinker;
 use bun_semver as semver;
 
 use crate::command;
-use crate::package_manager_command::PackageManagerCommand;
 use bun_collections::index_sort;
 
 pub(crate) struct WhyCommand;
@@ -270,14 +269,13 @@ Explain why a package is installed
         } else {
             pm.options.depth.unwrap_or(100)
         };
-        let log_level = pm.options.log_level;
         let configured_linker = pm.options.node_linker;
 
         // Load into `pm.lockfile` itself, because a migration fetches the manifests of the packages
         // that it finds there.
-        let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "");
-        let linker = load_lockfile.node_linker(configured_linker);
+        let linker = pm
+            .load_lockfile_from_cwd_or_exit::<true>("")
+            .node_linker(configured_linker);
 
         let lockfile: &Lockfile = &pm.lockfile;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();

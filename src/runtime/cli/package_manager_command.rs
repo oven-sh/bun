@@ -130,36 +130,19 @@ fn cwd_or_exit(buf: &mut bun_paths::PathBuffer) -> &[u8] {
 pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
-    pub(crate) fn handle_load_lockfile_errors_for(
+    /// Exits if the lockfile exists and didn't load. The caller handles a missing lockfile.
+    pub(crate) fn exit_on_lockfile_load_error(
         load_lockfile: &LoadResult<'_>,
+        log: &bun_ast::Log,
         log_level: LogLevel,
-        nothing_to: &str,
     ) {
-        let not_silent = log_level != LogLevel::Silent;
-
-        match load_lockfile {
-            LoadResult::NotFound => {
-                if not_silent {
-                    if nothing_to.is_empty() {
-                        Output::err_generic("missing lockfile", ());
-                    } else {
-                        Output::err_generic("missing lockfile, nothing to {s}", (nothing_to,));
-                    }
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::exit(1);
-            }
-            LoadResult::Err(err) => {
-                if not_silent && !migration::reported_unsupported_lockfile_version(err) {
-                    Output::err_generic(
-                        "failed to {s} lockfile: {s}",
-                        (err.step.verb(), err.value.name()),
-                    );
-                }
-                Global::exit(1);
-            }
-            LoadResult::Ok(_) => {}
+        let LoadResult::Err(err) = load_lockfile else {
+            return;
+        };
+        if log_level != LogLevel::Silent {
+            err.report(log);
         }
+        Global::exit(1);
     }
 
     #[cold]
@@ -174,7 +157,7 @@ impl PackageManagerCommand {
 
         let mut lockfile = Box::<Lockfile>::default();
         let load_lockfile = lockfile.load_from_bytes(None, bytes, log);
-        Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
+        Self::exit_on_lockfile_load_error(&load_lockfile, log, LogLevel::Default);
 
         Output::flush();
         Output::disable_buffering();
@@ -372,9 +355,7 @@ impl PackageManagerCommand {
             Output::flush();
             return Ok(());
         } else if matches!(subcommand, b"hash" | b"hash-print" | b"hash-string") {
-            let log_level = pm.options.log_level;
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+            pm.load_lockfile_from_cwd_or_exit::<true>("nothing to hash");
 
             let print_string = strings::eql_comptime(subcommand, b"hash-string");
             if !strings::eql_comptime(subcommand, b"hash-print") {
@@ -393,9 +374,7 @@ impl PackageManagerCommand {
             let action: &[u8] = positionals.get(1).copied().unwrap_or(b"");
             if matches!(action, b"pack" | b"unpack") {
                 if strings::eql_comptime(action, b"pack") {
-                    let log_level = pm.options.log_level;
-                    let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-                    Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "pack");
+                    pm.load_lockfile_from_cwd_or_exit::<true>("nothing to pack");
                 }
                 bun_install::cache_pack::exec(pm, &cwd);
             }
@@ -608,7 +587,11 @@ impl PackageManagerCommand {
             // As in `npm ls`, a package name is searched for among all installed packages, and
             // `--depth` takes precedence over `--all`.
             let all = pm.options.depth.is_none() && (!names.is_empty() || cli.all);
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+            let load_lockfile = if global {
+                pm.load_lockfile_from_cwd_if_any::<true>()
+            } else {
+                pm.load_lockfile_from_cwd_or_exit::<true>("nothing to list")
+            };
             // Before the first `bun add -g`, and after the last package was removed.
             if global && matches!(load_lockfile, LoadResult::NotFound) {
                 Output::println(format_args!(
@@ -620,7 +603,6 @@ impl PackageManagerCommand {
                 ));
                 Global::exit(0);
             }
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
             let trusted_only = cli.trusted_only;
             if trusted_only {
                 read_trusted_dependencies(pm);
@@ -798,7 +780,7 @@ impl PackageManagerCommand {
                 bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);
             }
-            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "");
+            Self::exit_on_lockfile_load_error(&load_lockfile, pm.log_mut(), log_level);
             if pm.options.dry_run {
                 if log_level != LogLevel::Silent {
                     bun_core::prettyln!(

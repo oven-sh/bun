@@ -4498,7 +4498,7 @@ test.concurrent("a lockfile that fails to parse is an error and nothing is delet
   await write(join(dir, "bun.lock"), "{ this is not a lockfile");
 
   const { stdout, stderr, exitCode } = await prune(dir);
-  expect(stderr).toContain("error: failed to load lockfile: ");
+  expect(stderr).toContain("error: failed to parse lockfile: ");
   expect(out(stdout)).toMatchInlineSnapshot(`"bun prune <version> (<revision>)"`);
   expect(exitCode).toBe(1);
   expect(existsSync(junk)).toBeTrue();

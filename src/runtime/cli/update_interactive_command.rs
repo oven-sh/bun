@@ -440,7 +440,7 @@ impl UpdateInteractiveCommand {
         groups: UpdateGroups,
     ) -> crate::Result<()> {
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        manager.load_lockfile_from_cwd_or_exit("nothing to update");
+        manager.load_lockfile_from_cwd_or_exit::<true>("nothing to update");
 
         let workspace_pkg_ids: Vec<PackageID> =
             if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {

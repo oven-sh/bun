@@ -334,7 +334,7 @@ pub(crate) fn parse_root_overrides(
 }
 
 /// True when the migrator already printed the version warn/error + upgrade note, so lockfile-load reporters must stay quiet.
-pub fn reported_unsupported_lockfile_version(err: &LoadResultErr) -> bool {
+pub(crate) fn reported_unsupported_lockfile_version(err: &LoadResultErr) -> bool {
     err.step == LoadStep::Migrating && matches!(err.value, Error::UnexpectedLockfileVersion)
 }
 

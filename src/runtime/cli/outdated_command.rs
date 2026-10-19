@@ -118,7 +118,7 @@ impl OutdatedCommand {
                 }
             };
 
-        manager.load_lockfile_from_cwd_or_exit("nothing outdated");
+        manager.load_lockfile_from_cwd_or_exit::<true>("nothing outdated");
         Self::outdated_dispatch(&original_cwd, manager)
     }
 

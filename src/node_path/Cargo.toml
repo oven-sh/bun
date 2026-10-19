@@ -1,0 +1,16 @@
+[package]
+name = "bun_node_path"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = "1"
+bun_core.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true

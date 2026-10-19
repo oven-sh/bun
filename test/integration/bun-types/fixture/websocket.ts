@@ -56,6 +56,20 @@ import { expectType } from "./utilities";
       rejectUnauthorized: true,
     },
   });
+
+  // tls.serverName and tls.checkServerIdentity, as in fetch()
+  const options = {
+    tls: {
+      serverName: "dev.local",
+      checkServerIdentity(hostname, cert) {
+        expectType<string>(hostname);
+        expectType<string>(cert.fingerprint256);
+        expectType<Buffer>(cert.raw);
+        return hostname === "dev.local" ? undefined : new Error("pin mismatch");
+      },
+    },
+  } satisfies Bun.WebSocketOptions;
+  options.tls.checkServerIdentity("dev.local", {} as import("node:tls").PeerCertificate);
 }
 
 // Assignability test
@@ -129,7 +143,7 @@ import { expectType } from "./utilities";
   };
 
   ws.onerror = event => {
-    expectType(event).is<Event>();
+    expectType(event.type).is<string>();
   };
 
   ws.onclose = event => {
@@ -268,4 +282,67 @@ import { expectType } from "./utilities";
 
   // Terminate the connection immediately
   ws.terminate();
+}
+
+// tls.servername, the node spelling of tls.serverName
+{
+  const options = { tls: { servername: "dev.local" } } satisfies Bun.WebSocketOptions;
+  expectType<string>(options.tls.servername);
+}
+
+// Bun.WebSocket is Bun's own declaration. lib.dom doesn't override it.
+{
+  const ws = {} as Bun.WebSocket;
+
+  // https://github.com/oven-sh/bun/issues/36329
+  ws.onerror = event => {
+    expectType(event).is<ErrorEvent>();
+  };
+  ws.addEventListener("error", event => {
+    expectType(event).is<ErrorEvent>();
+    expectType(event.message).is<string>();
+    expectType(event.error).is<any>();
+  });
+  const onError = (event: ErrorEvent) => {};
+  ws.onerror = onError;
+  ws.addEventListener("error", onError);
+  ws.removeEventListener("error", onError);
+  // Listeners typed for the old declaration (plain Event) still type-check.
+  ws.onerror = (event: Event) => {};
+  ws.addEventListener("error", (event: Event) => {});
+
+  ws.onmessage = event => {
+    expectType(event).is<MessageEvent>();
+  };
+  ws.addEventListener("message", ({ data }) => {
+    expectType(data).is<any>();
+  });
+
+  ws.addEventListener("ping", event => {
+    expectType(event).is<MessageEvent>();
+  });
+  ws.addEventListener("pong", ({ data }) => {
+    expectType(data).is<any>();
+  });
+  const onPong = (event: MessageEvent) => {};
+  ws.addEventListener("pong", onPong);
+  ws.removeEventListener("pong", onPong);
+
+  expectType<Bun.WebSocket["binaryType"]>().is<"arraybuffer" | "blob" | "nodebuffer">();
+  const blob = new Blob(["payload"]);
+  ws.send(blob);
+  ws.ping(blob);
+  ws.pong(blob);
+
+  ({ headers: new Headers() }) satisfies Bun.WebSocketOptions;
+  ({ headers: [["a", "b"]] }) satisfies Bun.WebSocketOptions;
+}
+
+// cork() passes the socket to the callback and returns the callback's return value.
+{
+  const ws = {} as Bun.ServerWebSocket<{ id: number }>;
+  expectType(ws.cork(corked => corked.data.id)).is<number>();
+  ws.cork(corked => {
+    expectType(corked).is<Bun.ServerWebSocket<{ id: number }>>();
+  });
 }

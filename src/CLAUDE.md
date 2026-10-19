@@ -1,8 +1,8 @@
 ## Rust
 
 `src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
-member crates). The runtime is built as `libbun_runtime.a` via `cargo build -p
-bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
+member crates). Each crate is one rustc invocation producing an rlib,
+planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/`). Key crates:
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
@@ -11,8 +11,8 @@ bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
-  C-ABI symbols that must be direct link inputs; `bun_runtime` itself is the
-  `staticlib` that `cargo build` produces for the C++ link.
+  C-ABI symbols the C++ side and the C runtime look up; `bun_runtime` is the root of the crate graph, and the
+  final link takes every crate's rlib beside the C/C++ objects.
 
 Conventions:
 
@@ -177,7 +177,10 @@ with runtime CPU dispatch). Byte and substring search **must** go through it —
 `str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
 `bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
 of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
-`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`:
+`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
+Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
+source lint bans the `core::arch` intrinsics. A new kernel goes in
+`src/jsc/bindings/highway_strings.cpp`, with its safe wrapper in `src/highway/lib.rs`.
 
 ```rust
 use bun_core::strings;

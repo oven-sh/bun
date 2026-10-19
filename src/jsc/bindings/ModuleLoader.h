@@ -19,6 +19,8 @@ class JSPromise;
 }
 
 namespace Bun {
+class JSModuleGraph;
+
 using namespace JSC;
 
 class JSCommonJSModule;
@@ -76,8 +78,11 @@ public:
     bool wasModuleMock = false;
 };
 
+// `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file
+// becomes a module of that graph's require cache.
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
+    Bun::JSModuleGraph* graph,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -86,6 +91,7 @@ JSValue fetchESMSourceCodeSync(
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
+    Bun::JSModuleGraph* graph,
     JSString* spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,

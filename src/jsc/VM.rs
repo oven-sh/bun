@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -104,6 +105,14 @@ impl VM {
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.
     pub(crate) fn collect_async_idle(&self) {
         JSC__VM__collectAsyncIdle(self)
+    }
+
+    /// Let go of what JSC gets back cheaply, of functions that have no linked code any more (an idle collection has found
+    /// them not running): unlinked bytecode it can decode again from a bytecode cache, the parser's caches. Nothing that
+    /// would have to be parsed again. The caller's next full collection frees it. `false`: nothing was done, because JS
+    /// is on the stack or a collection is under way (JSC would wait for it to finish).
+    pub(crate) fn shrink_footprint_now(&self) -> bool {
+        JSC__VM__shrinkFootprintNow(self)
     }
 
     /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.

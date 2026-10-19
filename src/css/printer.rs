@@ -404,8 +404,7 @@ impl<'a> Printer<'a> {
 
 pub(crate) struct ResolvedImportRecordUrl<'u> {
     pub(crate) url: &'u [u8],
-    /// A unique key the bundler replaces with the final output path after printing.
-    /// It is always printed quoted, as esbuild does since 0.19.5 (evanw/esbuild#3410).
+    /// A unique key the bundler fills in after printing. Always quoted, as in esbuild#3410.
     pub(crate) is_placeholder: bool,
 }
 

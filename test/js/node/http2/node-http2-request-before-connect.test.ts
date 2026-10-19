@@ -420,19 +420,28 @@ describe("a request made before the connect", () => {
       assert.deepStrictEqual({ request, sent: peer.frames.filter(isHeaders) }, { request: [], sent: [] });
     }));
 
-  test("is cancelled with the request that its 'aborted' listener makes, when a listener destroys the session", () =>
+  test("ends, and so does the retry of its 'aborted' listener, when a listener destroys the session", () =>
     withPeer({}, async (peer, own) => {
       const session = own(http2.connect(peer.target.url, () => session.destroy()));
+      const attempts: Promise<string[]>[] = [];
       // A request whose writable side is open emits 'aborted' when the session cancels it.
-      const early = session.request({ ":method": "POST", ":path": "/early", authorization: "Bearer SECRET" });
-      let retryEnded!: Promise<string[]>;
-      early.on("aborted", () => (retryEnded = ending(session.request({ ":path": "/retry" }))));
-      const request = await ending(early);
-      const retry = await retryEnded;
+      const post = () => {
+        const req = session.request({ ":method": "POST", ":path": "/", authorization: "Bearer SECRET" });
+        req.on("aborted", () => {
+          if (!session.destroyed) post();
+        });
+        attempts.push(ending(req));
+      };
+      post();
+      const endings: string[][] = [];
+      for (let i = 0; i < attempts.length; i++) endings.push(await attempts[i]);
       await peer.gone;
+      // node: `session.destroyed` is true in the listener. Bun: it is false while destroy() runs, so the
+      // listener makes one more request, and the session refuses that one.
+      const refused = isBun ? [["error ERR_HTTP2_INVALID_SESSION"]] : [];
       assert.deepStrictEqual(
-        { request, retry, sent: peer.frames.filter(isHeaders) },
-        { request: ["error ERR_HTTP2_STREAM_CANCEL"], retry: ["error ERR_HTTP2_STREAM_CANCEL"], sent: [] },
+        { endings, sent: peer.frames.filter(isHeaders) },
+        { endings: [["error ERR_HTTP2_STREAM_CANCEL"], ...refused], sent: [] },
       );
     }));
 

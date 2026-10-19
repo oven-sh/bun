@@ -5894,17 +5894,14 @@ class ClientHttp2Session extends Http2Session {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the
         // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
         // as its cause).
-        let pendingRequests = this.#takeQueuedRequests();
+        const pendingRequests = this.#takeQueuedRequests();
         if (pendingRequests !== null && pendingRequests.length > 0) {
           const cancelError = createPendingStreamCancelError(error);
-          // An 'aborted' listener of a request that is cancelled here can make a request. node cancels that one too.
-          for (; pendingRequests !== null; pendingRequests = this.#takeQueuedRequests()) {
-            for (let i = 0; i < pendingRequests.length; i++) {
-              const req = pendingRequests[i].req;
-              if (!req.destroyed) {
-                req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
-                req.destroy(cancelError);
-              }
+          for (let i = 0; i < pendingRequests.length; i++) {
+            const req = pendingRequests[i].req;
+            if (!req.destroyed) {
+              req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
+              req.destroy(cancelError);
             }
           }
         }
@@ -5983,7 +5980,8 @@ class ClientHttp2Session extends Http2Session {
         if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
         if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
       }
-      if (this.destroyed) {
+      // destroy() can run an 'aborted' listener before `destroyed` is true. Nothing ends a request that is queued then.
+      if (this.destroyed || this.#destroying) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(destroyWithInvalidSessionNT, req);
         return req;

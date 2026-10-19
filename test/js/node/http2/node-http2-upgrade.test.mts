@@ -1,6 +1,7 @@
 /**
- * Tests for the net.Server → Http2SecureServer upgrade path
- * (upgradeRawSocketToH2 in _http2_upgrade.ts).
+ * Tests for the net.Server → Http2SecureServer upgrade path: tls.Server's
+ * 'connection' listener wraps the injected socket in a server-side TLSSocket,
+ * and the secure connection reaches the h2 connection listener.
  *
  * This pattern is used by http2-wrapper, crawlee, and other libraries that
  * accept raw TCP connections and upgrade them to HTTP/2 via
@@ -404,7 +405,6 @@ describe("HTTP/2 upgrade — the client closes its side first", () => {
       await writing.promise;
       // A turn later only what the kernel did not take is left.
       await new Promise(resolve => setImmediate(resolve));
-      if (process.versions.bun !== undefined) assert.notStrictEqual(raw?.writableLength, 0);
       let received = 0;
       const ended = once(client, "end");
       client.end();
@@ -647,11 +647,6 @@ describe("HTTP/2 upgrade — the accepted socket is released when the server sid
     if (netServer.listening) netServer.close();
   }
 
-  // Once the application has the socket, what it wrote may still be on its way when the session goes down: in Bun a write
-  // over a stream completes before the stream has sent it. So the accepted socket is ended, not destroyed, and a client
-  // that never closes its side holds it. Releasing it needs a write that completes as in Node (#43877).
-  const heldByTheClient = process.versions.bun !== undefined && "the accepted socket waits for the client's FIN";
-
   test("after a failed handshake", async () => {
     const h2Server = http2.createSecureServer(TLS);
     const tlsClientError = once(h2Server, "tlsClientError");
@@ -668,7 +663,7 @@ describe("HTTP/2 upgrade — the accepted socket is released when the server sid
     }
   });
 
-  test("after the session is destroyed", { todo: heldByTheClient }, async () => {
+  test("after the session is destroyed", async () => {
     const h2Server = http2.createSecureServer(TLS);
     const sessionClosed = new Promise<void>(resolve => {
       h2Server.once("session", (session: http2.ServerHttp2Session) => {
@@ -703,7 +698,7 @@ describe("HTTP/2 upgrade — the accepted socket is released when the server sid
     }
   });
 
-  test("after a client that negotiated no protocol is turned away", { todo: heldByTheClient }, async () => {
+  test("after a client that negotiated no protocol is turned away", async () => {
     const h2Server = http2.createSecureServer({ ...TLS, unknownProtocolTimeout: 0 });
     h2Server.on("session", () => assert.fail("a client without ALPN must not get a session"));
     const { netServer, port, accepted } = await acceptInto(h2Server);

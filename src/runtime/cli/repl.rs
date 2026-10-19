@@ -68,6 +68,9 @@ unsafe extern "C" {
 
 const MAX_HISTORY_SIZE: usize = 1000;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
+/// A line break inside an entry, as the file stores it: one entry is one line there. Node's
+/// history file uses the same byte. An entry never holds it: the line editor reads CR as Enter.
+const HISTORY_STORED_NEWLINE: u8 = b'\r';
 /// Tab lists its candidates up to this many, and above it prints only their count.
 const MAX_LISTED_COMPLETIONS: usize = 50;
 
@@ -178,7 +181,16 @@ struct History {
     position: usize,
     temp_line: Option<Box<[u8]>>,
     file_path: Option<Box<[u8]>>,
-    modified: bool,
+    /// Open for appending from the first entry of the session on.
+    file: Option<sys::File>,
+    /// The file cannot be opened for appending. It is not tried again in this session.
+    append_failed: bool,
+    /// Lines in the file: those `load` read, and those appended since.
+    file_records: usize,
+    /// The file does not end with a line break, so the next record starts with one.
+    needs_leading_newline: bool,
+    /// Reused for each record that is written.
+    record: Vec<u8>,
 }
 
 impl History {
@@ -188,7 +200,11 @@ impl History {
             position: 0,
             temp_line: None,
             file_path: None,
-            modified: false,
+            file: None,
+            append_failed: false,
+            file_records: 0,
+            needs_leading_newline: false,
+            record: Vec::new(),
         }
     }
 
@@ -207,59 +223,137 @@ impl History {
         );
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
-            sys::Result::Ok(bytes) => bytes.into(),
+        let content: Vec<u8> = match sys::File::read_from(Fd::cwd(), path) {
+            sys::Result::Ok(bytes) => bytes,
             sys::Result::Err(_) => return Ok(()),
         };
+        self.needs_leading_newline = content.last().is_some_and(|&last| last != b'\n');
 
+        let mut lines: Vec<&[u8]> = Vec::new();
         for line in strings::split(&content, b"\n") {
+            // A CRLF line ending. It is not the end of an entry: `add` gets no outer line break.
+            let line = strings::trim_suffix(line, b"\r");
             if !line.is_empty() {
-                self.entries.push(Box::<[u8]>::from(line));
+                lines.push(line);
             }
         }
+        self.file_records = lines.len();
 
-        // Trim to max size
-        while self.entries.len() > MAX_HISTORY_SIZE {
-            let _ = self.entries.remove(0);
-        }
+        let newest = &lines[lines.len().saturating_sub(MAX_HISTORY_SIZE)..];
+        self.entries = newest
+            .iter()
+            .map(|line| Self::replaced(line, HISTORY_STORED_NEWLINE, b'\n').collect())
+            .collect();
 
         self.position = self.entries.len();
         Ok(())
     }
 
-    fn save(&mut self) {
-        if !self.modified {
+    /// An entry as its line of the file, or that line as the entry: every `from` is `to`.
+    fn replaced(bytes: &[u8], from: u8, to: u8) -> impl Iterator<Item = u8> + '_ {
+        bytes
+            .iter()
+            .map(move |&byte| if byte == from { to } else { byte })
+    }
+
+    /// Writes `entry` to the file now. However the process ends after this, the entry is kept, and
+    /// no session replaces what another one wrote.
+    fn append(&mut self, entry: &[u8]) {
+        if self.append_failed {
             return;
         }
         let Some(path) = self.file_path.as_deref() else {
             return;
         };
-
-        // Build content
-        let start = if self.entries.len() > MAX_HISTORY_SIZE {
-            self.entries.len() - MAX_HISTORY_SIZE
-        } else {
-            0
+        if self.file.is_none() {
+            self.file = Self::open_for_append(path);
+        }
+        let Some(file) = &self.file else {
+            self.append_failed = true;
+            return;
         };
 
-        let mut content: Vec<u8> = Vec::new();
-        for entry in &self.entries[start..] {
-            content.extend_from_slice(entry);
-            content.push(b'\n');
+        self.record.clear();
+        if self.needs_leading_newline {
+            self.record.push(b'\n');
+        }
+        self.record
+            .extend(Self::replaced(entry, b'\n', HISTORY_STORED_NEWLINE));
+        self.record.push(b'\n');
+
+        if file.write_all(&self.record).is_ok() {
+            self.needs_leading_newline = false;
+            self.file_records += 1;
+        }
+        // A handle on Windows writes where it is, not at the end of the file, so one that stays
+        // open would write over the entries of another session.
+        #[cfg(windows)]
+        {
+            self.file = None;
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
-            sys::Result::Ok(fd) => sys::File::from_fd(fd),
-            sys::Result::Err(_) => return,
-        };
+        if self.file_records >= 2 * MAX_HISTORY_SIZE {
+            Self::compact(path);
+            self.file_records = MAX_HISTORY_SIZE;
+        }
+    }
+
+    fn open_for_append(path: &[u8]) -> Option<sys::File> {
+        let flags = sys::O::WRONLY | sys::O::APPEND | sys::O::CREAT | sys::O::CLOEXEC;
+        let file = sys::File::from_fd(sys::open_a(path, flags, 0o600).ok()?);
+        // A file that exists keeps its mode at open. Other users must not read what was typed.
         #[cfg(unix)]
         let _ = sys::fchmod(file.fd(), 0o600);
-        match file.write_all(&content) {
-            sys::Result::Ok(()) => {}
-            sys::Result::Err(_) => return,
+        Some(file)
+    }
+
+    /// Cuts the file down to its newest `MAX_HISTORY_SIZE` lines, in place. The file is never
+    /// truncated first and never replaced: it is not empty at any time, the descriptors of other
+    /// sessions stay on it, and a symbolic link stays one.
+    fn compact(path: &[u8]) {
+        let Ok(fd) = sys::open_a(path, sys::O::RDWR | sys::O::CLOEXEC, 0) else {
+            return;
+        };
+        let file = sys::File::from_fd(fd);
+        // One session at a time. A session that does not get the lock leaves it to the holder.
+        if !matches!(
+            sys::flock(file.fd(), sys::FileLockMode::Exclusive, true),
+            Ok(true)
+        ) {
+            return;
+        }
+        let Ok(content) = file.read_to_end() else {
+            return;
+        };
+
+        // Where the newest lines start. The break at the end of the file ends the last line.
+        let mut start = 0;
+        let mut end = strings::trim_suffix(&content, b"\n").len();
+        for _ in 0..MAX_HISTORY_SIZE {
+            let Some(line_break) = strings::last_index_of_char(&content[..end], b'\n') else {
+                return;
+            };
+            start = line_break + 1;
+            end = line_break;
+        }
+        let kept = &content[start..];
+        if file.pwrite_all(kept, 0).is_err() {
+            return;
         }
 
-        self.modified = false;
+        // What another session appended since the read is behind `content`. It moves down too.
+        let mut len = kept.len();
+        if let Ok(size) = file.get_end_pos() {
+            if size > content.len() {
+                let mut appended = vec![0u8; size - content.len()];
+                if let Ok(read) = file.pread_all(&mut appended, content.len() as u64) {
+                    if file.pwrite_all(&appended[..read], len as i64).is_ok() {
+                        len += read;
+                    }
+                }
+            }
+        }
+        let _ = sys::ftruncate(file.fd(), len as i64);
     }
 
     fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
@@ -277,13 +371,14 @@ impl History {
 
         self.entries.push(Box::<[u8]>::from(line));
         self.position = self.entries.len();
-        self.modified = true;
 
         // Trim if too large
         while self.entries.len() > MAX_HISTORY_SIZE {
             let _ = self.entries.remove(0);
             self.position = self.position.saturating_sub(1);
         }
+
+        self.append(line);
         Ok(())
     }
 
@@ -2510,7 +2605,6 @@ impl<'a> Repl<'a> {
         }
 
         self.restore_terminal();
-        self.history.save();
         Ok(())
     }
 
@@ -2849,7 +2943,6 @@ fn completion_candidate(
 impl<'a> Drop for Repl<'a> {
     fn drop(&mut self) {
         self.restore_terminal();
-        self.history.save();
         // line_editor, history, multiline_buffer, editor_buffer, last_result,
         // last_error dropped automatically (ProtectedJSValue unprotects).
     }

@@ -28,7 +28,7 @@ undefined
 - **TypeScript & JSX** — Write TypeScript and JSX directly. Bun transpiles everything on the fly.
 - **Top-level `await`** — Await promises directly at the prompt without wrapping in an async function.
 - **Syntax highlighting** — The REPL highlights input as you type.
-- **Persistent history** — The REPL saves history to `~/.bun_repl_history`. History persists across sessions.
+- **Persistent history** — The REPL writes each input to `~/.bun_repl_history` when you enter it. History persists across sessions.
 - **Tab completion** — Press `Tab` to complete property names and REPL commands.
 - **Multi-line input** — Unclosed brackets, braces, and parentheses automatically continue on the next line.
 - **Node.js globals** — `require`, `module`, `__dirname`, and `__filename` are available, resolved relative to your current working directory.
@@ -148,7 +148,7 @@ The REPL supports Emacs-style line editing.
 
 ## History
 
-The REPL automatically saves history to `~/.bun_repl_history` (up to 1000 entries) and loads it at the start of each session. Use `Up`/`Down` to navigate.
+The REPL appends each input to `~/.bun_repl_history` when you enter it, so a session that ends in any way keeps its history, and two sessions at once keep the inputs of both. Each session loads the newest 1000 entries at its start. When the file reaches 2000 entries, the REPL cuts it back to the newest 1000. Use `Up`/`Down` to navigate.
 
 To export your history to a different file, use `.save`:
 

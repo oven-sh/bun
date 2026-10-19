@@ -1,7 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, statSync, symlinkSync } from "node:fs";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -56,6 +56,53 @@ async function runRepl(
     .map(chunk => chunk.replace(/^ +at .*\n?/gm, "").trim());
 
   return { stdout, stderr, exitCode, outputs };
+}
+
+/**
+ * Runs `bun repl` with a stdin that stays open, so that a test can look at the
+ * history file between two inputs. `waitFor` consumes stdout up to and
+ * including `text`.
+ */
+async function withPipedRepl(
+  home: string,
+  fn: (helpers: {
+    proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
+    send: (text: string) => void;
+    waitFor: (text: string) => Promise<void>;
+  }) => Promise<void>,
+) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repl"],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: home, USERPROFILE: home },
+  });
+
+  let pending = "";
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  const waitFor = async (text: string) => {
+    while (!pending.includes(text)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stdout ended before ${JSON.stringify(text)}. Left over: ${JSON.stringify(pending)}`);
+      pending += decoder.decode(value, { stream: true });
+    }
+    pending = pending.slice(pending.indexOf(text) + text.length);
+  };
+  const send = (text: string) => {
+    proc.stdin.write(text);
+    proc.stdin.flush();
+  };
+
+  await waitFor("> ");
+  await fn({ proc, send, waitFor });
+
+  if (proc.exitCode === null && proc.signalCode === null) {
+    // End of input ends the session.
+    proc.stdin.end();
+    await proc.exited;
+  }
 }
 
 interface Screen {
@@ -2140,6 +2187,161 @@ describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
 
     expect(await Bun.file(historyPath).text()).toBe(`1 + 1\n${secret}\n`);
     expect(statSync(historyPath).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe.concurrent("REPL history file", () => {
+  const historyFile = (home: string) => path.join(home, ".bun_repl_history");
+
+  test("holds an entry as soon as it is entered", async () => {
+    using dir = tempDir("repl-history-append", {});
+    const home = String(dir);
+    await withPipedRepl(home, async ({ send, waitFor }) => {
+      send("1 + 1\n");
+      await waitFor("2\n");
+      expect(await Bun.file(historyFile(home)).text()).toBe("1 + 1\n");
+      send("2 + 2\n");
+      await waitFor("4\n");
+      expect(await Bun.file(historyFile(home)).text()).toBe("1 + 1\n2 + 2\n");
+    });
+  });
+
+  test("keeps the session when the input calls process.exit", async () => {
+    using dir = tempDir("repl-history-process-exit", {});
+    const home = String(dir);
+    const { stderr, exitCode } = await runRepl(["1 + 1", "2 + 2", "process.exit(0)"], { home });
+    expect(await Bun.file(historyFile(home)).text()).toBe("1 + 1\n2 + 2\nprocess.exit(0)\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A terminal that is closed sends SIGHUP.
+  test.skipIf(isWindows).each(["SIGHUP", "SIGKILL"] as const)(
+    "keeps the session when the process gets %s",
+    async signal => {
+      using dir = tempDir("repl-history-signal", {});
+      const home = String(dir);
+      await withPipedRepl(home, async ({ proc, send, waitFor }) => {
+        send("1 + 1\n");
+        await waitFor("2\n");
+        send("2 + 2\n");
+        await waitFor("4\n");
+        proc.kill(signal);
+        await proc.exited;
+        expect(proc.signalCode).toBe(signal);
+      });
+      expect(await Bun.file(historyFile(home)).text()).toBe("1 + 1\n2 + 2\n");
+    },
+  );
+
+  test("two sessions at once keep the entries of both", async () => {
+    using dir = tempDir("repl-history-two-sessions", { ".bun_repl_history": "old\n" });
+    const home = String(dir);
+    await withPipedRepl(home, async first => {
+      await withPipedRepl(home, async second => {
+        first.send('"a1"\n');
+        await first.waitFor('"a1"\n');
+        second.send('"b1"\n');
+        await second.waitFor('"b1"\n');
+        first.send('"a2"\n');
+        await first.waitFor('"a2"\n');
+        second.send('"b2"\n');
+        await second.waitFor('"b2"\n');
+      });
+    });
+    expect(await Bun.file(historyFile(home)).text()).toBe('old\n"a1"\n"b1"\n"a2"\n"b2"\n');
+  });
+
+  test("starts a new line behind a file that does not end with one", async () => {
+    using dir = tempDir("repl-history-no-final-newline", { ".bun_repl_history": "a" });
+    const home = String(dir);
+    const { stderr, exitCode } = await runRepl(['"b"', ".exit"], { home });
+    expect(await Bun.file(historyFile(home)).text()).toBe('a\n"b"\n');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("is not created or changed by a session with no entry", async () => {
+    using empty = tempDir("repl-history-no-entry", {});
+    const none = await runRepl([".exit"], { home: String(empty) });
+    expect(existsSync(historyFile(String(empty)))).toBe(false);
+    expect(none.exitCode).toBe(0);
+
+    using dir = tempDir("repl-history-no-entry-existing", { ".bun_repl_history": "old\n" });
+    const home = String(dir);
+    const before = statSync(historyFile(home));
+    const { exitCode } = await runRepl([".exit"], { home });
+    const after = statSync(historyFile(home));
+    expect({ mode: after.mode, mtimeMs: after.mtimeMs, size: after.size }).toEqual({
+      mode: before.mode,
+      mtimeMs: before.mtimeMs,
+      size: before.size,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => `line ${index}\n`).join("");
+
+  test("is cut to the newest 1000 lines, in place, when it reaches 2000", async () => {
+    using dir = tempDir("repl-history-compact", { ".bun_repl_history": lines(1999) });
+    const home = String(dir);
+    const before = statSync(historyFile(home));
+    const { stderr, exitCode } = await runRepl(['"newest"', ".exit"], { home });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const kept = (await Bun.file(historyFile(home)).text()).split("\n");
+    expect(kept.length).toBe(1001);
+    expect(kept.slice(0, 2)).toEqual(["line 1000", "line 1001"]);
+    expect(kept.slice(-3)).toEqual(["line 1998", '"newest"', ""]);
+    // The same file, not a new one in its place.
+    if (!isWindows) expect(statSync(historyFile(home)).ino).toBe(before.ino);
+  });
+
+  test("keeps every line below 2000", async () => {
+    using dir = tempDir("repl-history-below-compact", { ".bun_repl_history": lines(1500) });
+    const home = String(dir);
+    const { stderr, exitCode } = await runRepl(['"newest"', ".exit"], { home });
+    expect(await Bun.file(historyFile(home)).text()).toBe(lines(1500) + '"newest"\n');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("stays a symbolic link when it is cut", async () => {
+    using dir = tempDir("repl-history-compact-symlink", { "real-history": lines(1999) });
+    const home = String(dir);
+    symlinkSync(path.join(home, "real-history"), historyFile(home));
+    const { stderr, exitCode } = await runRepl(['"newest"', ".exit"], { home });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(lstatSync(historyFile(home)).isSymbolicLink()).toBe(true);
+    expect((await Bun.file(path.join(home, "real-history")).text()).split("\n").length).toBe(1001);
+  });
+
+  test("keeps an entry of several lines as one entry", async () => {
+    using dir = tempDir("repl-history-multiline", {});
+    const home = String(dir);
+    const first = await runRepl(["function three() {", "  return 3", "}", ".exit"], { home });
+    expect(first.stderr).toBe("");
+    expect(first.exitCode).toBe(0);
+    // One entry is one line of the file. A line break inside it is stored as CR, as in node's history file.
+    expect(await Bun.file(historyFile(home)).text()).toBe("function three() {\r  return 3\r}\n");
+
+    // The next session reads it back as one entry.
+    const second = await runRepl(["three()", ".history", ".exit"], { home });
+    expect(second.outputs[1]).toStartWith("Command History:\n     1  function three() {\n");
+    expect(second.outputs[1]).toEndWith("\n     2  three()");
+    expect(second.stderr).toBe("");
+    expect(second.exitCode).toBe(0);
+  });
+
+  test("reads a file with CRLF line endings", async () => {
+    using dir = tempDir("repl-history-crlf", { ".bun_repl_history": "old_one\r\nold_two\r\n" });
+    const home = String(dir);
+    const { outputs, stderr, exitCode } = await runRepl([".history", ".exit"], { home });
+    expect(outputs).toEqual(["Command History:\n     1  old_one\n     2  old_two"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

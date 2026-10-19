@@ -1464,11 +1464,12 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // builds alike.
 test.concurrent("--isolate: destroying a global with many leaked AbortControllers is not quadratic", async () => {
   const count = 100_000;
-  // Which later GC destroys the retired global depends on the build: stale
-  // stack words in the runner's frames can hold its address through the next
-  // file (on a debug build the first global of a run survives every GC, from
-  // TestCommand::exec's frame). So the first file is not the one measured, and
-  // three files collect in turn. The drain is timed in whichever GC did it.
+  // The first global of a run is not the one measured: on a debug build
+  // TestCommand::exec's frame holds its address in stale spill slots, so it
+  // survives every GC. Which of the following files' collections destroys the
+  // retired second global varies by build and platform (one release aarch64
+  // lane kept it through the next file), so three files collect in turn and
+  // every collection must be linear: wherever the drain ran, it was cheap.
   const collectFile = `
     import { test, expect } from "bun:test";
     import { heapStats } from "bun:jsc";
@@ -1532,13 +1533,14 @@ test.concurrent("--isolate: destroying a global with many leaked AbortController
     live: Number(m[2]),
   }));
   expect(collections).toHaveLength(3);
-  // The GC that destroyed the leaked global ran the observer drain.
-  const drain = collections.find(c => c.live < count / 10);
-  expect(drain, `the leaked global survived: ${JSON.stringify(collections)}`).toBeDefined();
+  // The leaked global and its controllers are gone by the end, so one of the
+  // timed collections ran the observer drain.
+  expect(collections[2].live, `the leaked global survived: ${JSON.stringify(collections)}`).toBeLessThan(count / 10);
   // Creating the controllers and collecting them are both linear in count
   // (1.2x to 1.8x each other on a debug build, under load). Before the fix
-  // the collection took 20x the creation on release and debug builds alike.
-  expect(drain!.ms, `alloc ${allocMs}ms, collections ${JSON.stringify(collections)}`).toBeLessThan(allocMs * 8);
+  // the draining collection took 20x the creation on release and debug alike.
+  const slowest = Math.max(...collections.map(c => c.ms));
+  expect(slowest, `alloc ${allocMs}ms, collections ${JSON.stringify(collections)}`).toBeLessThan(allocMs * 8);
 });
 
 // The swap sweeps what exists AT the file boundary. Work a finished file left

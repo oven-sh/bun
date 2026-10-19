@@ -3277,13 +3277,10 @@ pub(crate) enum Filter {
     ScriptAndDescriptions,
 }
 
-/// How long `bun file.md` waits for the remote images of the document, all of
-/// them together. An image that has not arrived by then renders as its alt
-/// text. Nothing is printed while the wait runs, so it is short.
+/// One wait for all the remote images of a document. Nothing prints until it ends.
 const REMOTE_IMAGE_DEADLINE: Duration = Duration::from_secs(3);
 
-/// How many body bytes the remote images of one document may add up to. The
-/// image that passes it and every image still in flight render as alt text.
+/// The body bytes that all the remote images of a document may add up to.
 const REMOTE_IMAGE_BYTE_BUDGET: usize = 64 * 1024 * 1024;
 
 enum RemoteImage {
@@ -3302,9 +3299,7 @@ struct RemoteImageBatchState {
     images: Vec<RemoteImage>,
 }
 
-/// What the render thread and the HTTP thread share for the remote images of
-/// one document. Every request holds a reference, so a callback that runs
-/// after the render stopped waiting still finds it alive.
+/// Every request holds a reference, so a callback that runs after the wait ended finds it alive.
 struct RemoteImageBatch {
     urls: Vec<Box<[u8]>>,
     /// The bytes of the request headers, which every request borrows.
@@ -3318,10 +3313,7 @@ struct RemoteImageBatch {
 }
 
 impl RemoteImageBatch {
-    /// Blocks until every request has reported, the batch is over its byte
-    /// budget, or `deadline` passes. Then aborts the requests that still run
-    /// and returns what each request ended with. An aborted request stays
-    /// `Pending`: it reports later, to a batch that is `closed`.
+    /// Returns at `deadline` at the latest, and aborts the requests that still run.
     fn settle(&self, deadline: Instant, request_ids: &[u32]) -> Vec<RemoteImage> {
         let mut state = self.state.lock();
         while state.pending > 0 && !state.over_budget {
@@ -3353,25 +3345,19 @@ impl RemoteImageBatch {
     }
 }
 
-/// One remote-image request. From `HTTPThread::schedule` on it belongs to the
-/// HTTP thread, which frees it in the request's last callback.
+/// Owned by the HTTP thread from `HTTPThread::schedule` on, and freed in its last callback.
 struct RemoteImageDownload {
-    /// `None` only until `prefetch_remote_images` has this allocation's
-    /// address, which `AsyncHTTP::init` takes as the callback context.
-    /// Borrows `batch.urls[index]`.
+    /// `None` until `AsyncHTTP::init` can take the address of this allocation as its context.
     async_http: Option<bun_http::AsyncHTTP<'static>>,
     batch: Arc<RemoteImageBatch>,
     index: usize,
-    /// The response is one to stage: status 200, a body that is not
-    /// compressed, and the batch within its byte budget.
+    /// Status 200, no compressed coding, and the batch within its byte budget.
     keep_body: bool,
     body: Vec<u8>,
 }
 
 impl RemoteImageDownload {
-    /// Whether the response names a content coding that `bun_http` would have
-    /// decoded. The request asks for `identity` and decompression is off, so
-    /// such a body stays compressed, and the terminal cannot read it.
+    /// Decompression is off, so such a body would reach the terminal still compressed.
     fn has_compressed_coding(metadata: &bun_http::HTTPResponseMetadata) -> bool {
         metadata.response.headers.list.iter().any(|header| {
             strings::eql_case_insensitive_ascii(header.name(), b"content-encoding", true)
@@ -3384,8 +3370,7 @@ impl RemoteImageDownload {
         })
     }
 
-    /// Runs on the HTTP thread: once per body chunk, and once more when the
-    /// request ends.
+    /// Runs on the HTTP thread, once per body chunk and once when the request ends.
     fn on_progress(
         this: *mut RemoteImageDownload,
         _: *mut bun_http::AsyncHTTP<'static>,
@@ -3458,10 +3443,9 @@ impl RunCommand {
 
     /// Parse `contents` once with an ImageUrlCollector, download every
     /// http(s) image URL it finds to a temp file, and populate `out_map`
-    /// with url → temp-path entries. The downloads share
-    /// `REMOTE_IMAGE_DEADLINE` and `REMOTE_IMAGE_BYTE_BUDGET`. Failures are
-    /// silent: an image that misses either bound, or fails another way,
-    /// falls back to alt-text rendering.
+    /// with url → temp-path entries. Failures are silent — an image that
+    /// can't be downloaded just falls back to alt-text rendering.
+    /// The downloads share `REMOTE_IMAGE_DEADLINE` and `REMOTE_IMAGE_BYTE_BUDGET`.
     fn prefetch_remote_images(
         contents: &[u8],
         md_opts: md::Options,
@@ -3503,8 +3487,7 @@ impl RunCommand {
         bun_http::http_thread::init(&Default::default());
 
         let count = remote_urls.len();
-        // The byte budget counts the bytes the host sends, so the requests
-        // ask for a body with no content coding.
+        // The byte budget counts the bytes on the wire, so ask for a body with no content coding.
         let headers = bun_http::HeaderBuilder::from_pairs(&[(b"Accept-Encoding", b"identity")])
             .unwrap_or_oom();
         let batch = Arc::new(RemoteImageBatch {
@@ -3520,15 +3503,12 @@ impl RunCommand {
             }),
             settled: bun_threading::Condvar::new(),
         });
-        // A body comes to `on_progress` chunk by chunk, which is where the
-        // byte budget is counted.
+        // `on_progress` counts the byte budget chunk by chunk.
         batch
             .signals
             .response_body_streaming
             .store(true, Ordering::SeqCst);
 
-        // Every request goes to the HTTP thread in one schedule() call and
-        // runs there concurrently.
         let mut request_ids: Vec<u32> = Vec::with_capacity(count);
         let mut tasks = bun_threading::thread_pool::Batch::default();
         for (index, url) in batch.urls.iter().enumerate() {
@@ -3571,8 +3551,7 @@ impl RunCommand {
                     bun_http::FetchRedirect::Follow,
                     bun_http::async_http::Options {
                         signals: Some(signals),
-                        // A decoder would expand a body before `on_progress`
-                        // counts it.
+                        // A decoder would expand the body before `on_progress` counts it.
                         disable_decompression: Some(true),
                         ..Default::default()
                     },
@@ -3584,9 +3563,7 @@ impl RunCommand {
         bun_http::HTTPThread::schedule(tasks);
         let images = batch.settle(deadline, &request_ids);
 
-        // Second pass: write the fetched bodies to temp files and populate
-        // out_map. An image without a body stays out of the map and renders
-        // as its alt text.
+        // Second pass: write the fetched bodies to temp files and populate out_map.
         let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
         for (url, image) in batch.urls.iter().zip(images) {
             let RemoteImage::Fetched(bytes) = image else {
@@ -3650,8 +3627,7 @@ impl RunCommand {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            // Check capacity first while `path` is still borrowable for
-            // `unlink_staged_path`.
+            // Check capacity first while `path` is still borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
                 Self::unlink_staged_path(&path);
                 continue;
@@ -3808,8 +3784,7 @@ impl RunCommand {
         // this process races Kitty's open() and typically drops images
         // silently (q=2 suppresses the error). System tmp cleanup
         // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
-        // bun-md-* files. One run stages at most `REMOTE_IMAGE_BYTE_BUDGET`
-        // of image bytes. Nothing bounds the sum over runs.
+        // bun-md-* files: at most `REMOTE_IMAGE_BYTE_BUDGET` per run, with no bound over runs.
         0
     }
 

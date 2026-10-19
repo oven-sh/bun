@@ -350,6 +350,8 @@ describe("bun <file.md>", () => {
   // The path of an image is what its destination means: `\_` is `_`. A file
   // can also have the name that is written: `..\..\x.png` has worked so far.
   test("a local image is found by the path that its destination means, or by the path as written", async () => {
+    // Windows has no file names with a tab.
+    const withTab = isPosix ? { file: { "x/y/t\tb.png": "6" }, image: ["![6](<t\tb.png>)"], shown: ["6"] } : undefined;
     using dir = tempDir("md-local-img-", {
       "img/logo.png": "1",
       ".github/logo.png": "2",
@@ -357,12 +359,14 @@ describe("bun <file.md>", () => {
       "x/y/img_1/a.png": "4",
       "x/y/c_d.png": "5",
       "x/y/c/_d.png": "not this one",
+      ...withTab?.file,
       "x/y/doc.md": [
         String.raw`![1](..\..\img\logo.png)`,
         String.raw`![2](..\..\.github\logo.png)`,
         String.raw`![3](a\_b.png)`,
         String.raw`![4](.\img_1\a.png)`,
         String.raw`![5](c\_d.png)`,
+        ...(withTab?.image ?? []),
         "",
       ].join("\n\n"),
     });
@@ -383,7 +387,7 @@ describe("bun <file.md>", () => {
     const shown = Array.from(stdout.matchAll(/\x1b_Ga=T,t=f,f=100,q=2;([A-Za-z0-9+/=]+)\x1b\\/g), ([, path]) =>
       readFileSync(Buffer.from(path, "base64").toString(), "utf8"),
     );
-    expect(shown).toEqual(["1", "2", "3", "4", "5"]);
+    expect(shown).toEqual(["1", "2", "3", "4", "5", ...(withTab?.shown ?? [])]);
     expect(exitCode).toBe(0);
   });
 

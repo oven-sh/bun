@@ -177,8 +177,8 @@ describe("Bun.markdown.render", () => {
       expect(metas(Buffer.from(md))).toEqual(expected as any);
     });
 
-    // The parser reads a Buffer in place, and a callback can write to it. What
-    // the callback of a later link gets is resolved, if it is what was written.
+    // The parser reads a Buffer in place. It cuts the second destination after
+    // the callback of the first link has written an escape into it.
     test("an escape that a callback writes into a later destination", () => {
       const source = "x [a](/b-c) then [d](/eYZf) y\n";
       const buffer = Buffer.from(source);
@@ -190,8 +190,7 @@ describe("Bun.markdown.render", () => {
           return children;
         },
       });
-      expect(hrefs[0]).toBe("/b-c");
-      expect(hrefs[1]).toBeOneOf(["/e_f", "/eYZf"]);
+      expect(hrefs).toEqual(["/b-c", "/e_f"]);
     });
   });
 

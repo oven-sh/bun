@@ -1587,17 +1587,24 @@ describe("ansi renderer escapes and character references in link destinations an
 
   test("a character reference cannot put a control byte into the output", () => {
     // `&#27;` is ESC, `&#7;` is BEL, `&#155;` is CSI. A line feed (`&#10;`)
-    // or a tab (`&#9;`) in a destination would break the OSC 8 sequence.
+    // or a tab (`&#9;`) in a destination would break the OSC 8 sequence. Only
+    // these bytes go: what follows them is part of the address, as in html().
     const linkMd = String.raw`[click](<x&#7;&#27;]52;c;Y3VybCBldmlsLnNoIHwgc2g=&#7;y&#10;z&#9;w&#155;31m>)` + "\n";
-    expect(Markdown.ansi(linkMd, { colors: false })).toBe("click (xyzw31m)\n");
-    expect(Markdown.ansi(linkMd, { hyperlinks: true })).toContain("\x1b]8;;xyzw31m\x1b\\");
+    expect(Markdown.ansi(linkMd, { colors: false })).toBe("click (x]52;c;Y3VybCBldmlsLnNoIHwgc2g=yzw31m)\n");
+    expect(Markdown.ansi(linkMd, { hyperlinks: true })).toContain(
+      "\x1b]8;;x]52;c;Y3VybCBldmlsLnNoIHwgc2g=yzw31m\x1b\\",
+    );
+    expect(Markdown.ansi("[a](https://example.com/x&#27;]y/long/path)\n", { colors: false })).toBe(
+      "a (https://example.com/x]y/long/path)\n",
+    );
 
+    // The title is text: an escape sequence goes as a whole.
     const imgMd = String.raw`![](<i&#27;]0;owned&#7;.png&#10;> "ti&#27;]0;owned&#7;tle")` + "\n";
     expect(Markdown.ansi(imgMd, { colors: false })).toBe("[img] title\n");
-    expect(Markdown.ansi(imgMd, { hyperlinks: true })).toContain("\x1b]8;;i.png\x1b\\");
+    expect(Markdown.ansi(imgMd, { hyperlinks: true })).toContain("\x1b]8;;i]0;owned.png\x1b\\");
 
     const byReference = "[a][r]\n\n" + String.raw`[r]: <https://example.com/a&#10;b&#27;[31m> "t"` + "\n";
-    expect(Markdown.ansi(byReference, { colors: false })).toBe("a (https://example.com/ab)\n");
+    expect(Markdown.ansi(byReference, { colors: false })).toBe("a (https://example.com/ab[31m)\n");
   });
 });
 

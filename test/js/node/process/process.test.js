@@ -3215,8 +3215,12 @@ it.concurrent.each([
        const missing = process.execPath + ".missing";
        const framed = new Error("framed");
        const error = new Error("boom");
-       const noStack = new TypeError("cannot read config");
+       class ConfigError extends TypeError {}
+       const noStack = new ConfigError("cannot read config");
        noStack.stack = undefined;
+       const symbolName = new TypeError("symbol name");
+       symbolName.stack = undefined;
+       symbolName.name = Symbol("not a string");
        Error.prepareStackTrace = (_, callSites) => callSites;
        const hooked = new TypeError("hooked");
        const callSites = hooked.stack;
@@ -3227,7 +3231,8 @@ it.concurrent.each([
          ["an Error, reported under a JavaScript frame", framed, framed.stack],
          ["a string, reported under a JavaScript frame", "framed text", NONE],
          ["an Error", error, error.stack],
-         ["a TypeError whose stack is undefined", noStack, undefined],
+         ["an instance of a subclass of TypeError whose stack is undefined", noStack, undefined],
+         ["a TypeError whose name is a Symbol and whose stack is undefined", symbolName, undefined],
          ["a TypeError whose stack is an array of call sites", hooked, callSites],
          ["an object with no prototype whose stack is 42", { __proto__: null, stack: 42 }, 42],
          ["an object with no prototype whose stack getter throws", { __proto__: null, get stack() { throw new Error("from the getter"); } }, NONE],
@@ -3236,10 +3241,9 @@ it.concurrent.each([
        ];
        function stackOf(warning, fromReason) {
          const stack = warning.stack;
-         const own = Object.hasOwn(warning, "stack");
-         if (own && stack === fromReason) return "the reason's";
-         // The header, or no stack at all where the engine makes none for an error with no frames.
-         if (own ? stack === warning.name + ": " + warning.message : stack === undefined) return "its own, with no frames";
+         if (!Object.hasOwn(warning, "stack")) return "none";
+         if (stack === fromReason) return "the reason's";
+         if (stack === warning.name + ": " + warning.message) return "its own header";
          return "other";
        }
        const seen = [];
@@ -3287,12 +3291,18 @@ it.concurrent.each([
         reason: "a string, reported under a JavaScript frame",
         firstWarning: "framed text",
         keys,
-        stack: "its own, with no frames",
+        stack: "its own header",
       },
       { reason: "an Error", firstWarning: "Error: boom", keys, stack: "the reason's" },
       {
-        reason: "a TypeError whose stack is undefined",
+        reason: "an instance of a subclass of TypeError whose stack is undefined",
         firstWarning: "TypeError: cannot read config",
+        keys,
+        stack: "the reason's",
+      },
+      {
+        reason: "a TypeError whose name is a Symbol and whose stack is undefined",
+        firstWarning: "symbol name",
         keys,
         stack: "the reason's",
       },
@@ -3312,9 +3322,9 @@ it.concurrent.each([
         reason: "an object with no prototype whose stack getter throws",
         firstWarning: "[object Object]",
         keys,
-        stack: "its own, with no frames",
+        stack: "its own header",
       },
-      { reason: "a string", firstWarning: "text", keys, stack: "its own, with no frames" },
+      { reason: "a string", firstWarning: "text", keys, stack: "its own header" },
       {
         reason: "an error that native code made with no frames",
         firstWarning: "Error: ENOENT: no such file or directory, open '<missing>'",

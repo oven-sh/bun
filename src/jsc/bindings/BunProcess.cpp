@@ -1413,6 +1413,21 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
 
+// A string that is a data property of `object` or of one of its prototypes, or the empty string. No script runs.
+static String stringDataProperty(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasProperty = object->getNonIndexPropertySlot(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasProperty || slot.isAccessor() || slot.isCustom())
+        return emptyString();
+    JSValue value = slot.getPureResult();
+    if (!value.isString())
+        return emptyString();
+    RELEASE_AND_RETURN(scope, value.toWTFString(globalObject));
+}
+
 extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1441,11 +1456,11 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
         return JSC::JSValue::encode(decodedReason);
     if (decodedReason.isBigInt())
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, decodedReason.toWTFString(globalObject))));
-    // What Error.prototype.toString() returns, read from data properties only.
+    // As V8's NoSideEffectsErrorToString(): `name` and `message` count only when they are strings in data properties.
     if (auto* error = dynamicDowncast<ErrorInstance>(decodedReason)) {
-        String name = error->sanitizedNameString(globalObject);
+        String name = stringDataProperty(vm, globalObject, error, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(scope, {});
-        String message = error->sanitizedMessageString(globalObject);
+        String message = stringDataProperty(vm, globalObject, error, vm.propertyNames->message);
         RETURN_IF_EXCEPTION(scope, {});
         String text = tryMakeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsString(vm, text.isNull() ? message : text)));
@@ -1464,6 +1479,8 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
                                                   "or by rejecting a promise which was not handled with .catch(). "
                                                   "To terminate the bun process on unhandled promise "
                                                   "rejection, use the CLI flag `--unhandled-rejections=strict`."_s);
+    // Node makes the warning under Error.stackTraceLimit = 0. With a trace, the first lookup of `stack` would format it over the property.
+    uncheckedDowncast<ErrorInstance>(warning)->setErrorInfoForEmbedderError({}, {}, String());
     auto* warningName = jsString(vm, "UnhandledPromiseRejectionWarning"_str);
     // Own and enumerable, as the `name` field of Node's UnhandledPromiseRejectionWarning class.
     warning->putDirect(vm, vm.propertyNames->name, warningName, 0);
@@ -1482,8 +1499,6 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
 
     bool emittedReasonStack = false;
     if (reasonStack) {
-        // The warning keeps no trace: the first lookup of `stack` would format one over the reason's stack.
-        uncheckedDowncast<ErrorInstance>(warning)->setErrorInfoForEmbedderError({}, {}, String());
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack, JSC::PropertyAttribute::DontEnum | 0);
         Process::emitWarning(globalObject, reasonStack, warningName, jsUndefined(), jsUndefined());
         emittedReasonStack = !scope.exception();
@@ -1491,8 +1506,9 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
     } else {
-        // Node makes the warning under Error.stackTraceLimit = 0: it has no frames of a script that waits for the event loop.
-        uncheckedDowncast<ErrorInstance>(warning)->setStackFrames(vm, {});
+        // The first read makes the stack of an error with no frames: the header.
+        auto* realm = defaultGlobalObject(globalObject);
+        warning->putDirectCustomAccessor(vm, vm.propertyNames->stack, realm->m_lazyStackCustomGetterSetter.get(realm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor);
     }
     if (!emittedReasonStack) {
         JSValue reasonText = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));

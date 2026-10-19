@@ -209,7 +209,9 @@ test("a macro required inside the message handler reads the next frame", async (
       if (message === "hel") finished.resolve();
     },
     close(ws, code, reason) {
-      finished.reject(new Error(`${code}: ${reason}`));
+      const error = new Error(`${code}: ${reason}`);
+      done.reject(error);
+      finished.reject(error);
     },
   });
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);

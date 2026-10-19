@@ -584,9 +584,9 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
     await expectIsolated(original, original.clone());
   });
 
-  test("new Request(request)", async () => {
+  test("new Request(url, request)", async () => {
     const original = new Request("https://example.com", { method: "POST", body: makeStream() });
-    await expectIsolated(original, new Request(original));
+    await expectIsolated(original, new Request("https://example.com/other", original));
   });
 
   test("the clone read first", async () => {
@@ -678,20 +678,31 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
     expect(new Set(values.map(v => v.buffer)).size).toBe(3);
   });
 
-  test("after the clone's body is canceled, the original hands out the producer's own chunk", async () => {
-    const chunk = new Uint8Array([1, 2, 3]);
-    const original = new Response(
-      new ReadableStream({
-        start(controller) {
-          controller.enqueue(chunk);
-          controller.close();
-        },
-      }),
-    );
+  test.each(["clone1 first", "original first"])(
+    "a clone chain with the leaf canceled still isolates the other two bodies (%s)",
+    async order => {
+      // The chunk the leaf's tee forwarded by reference still sits in the original's queue, so a
+      // canceled sibling is no reason to hand out the shared object.
+      const original = new Response(makeStream());
+      const clone1 = original.clone();
+      const clone2 = clone1.clone();
+      clone2.body!.cancel();
+      const first = order === "clone1 first" ? clone1 : original;
+      const second = order === "clone1 first" ? original : clone1;
+      const a = (await first.body!.getReader().read()).value as Uint8Array;
+      a[0] = 99;
+      const b = (await second.body!.getReader().read()).value as Uint8Array;
+      expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
+    },
+  );
+
+  test("Bun.readableStreamToArray() on both bodies", async () => {
+    const original = new Response(makeStream());
     const clone = original.clone();
-    clone.body!.cancel();
-    const a = (await original.body!.getReader().read()).value as Uint8Array;
-    expect(a).toBe(chunk);
+    const [a] = await Bun.readableStreamToArray(original.body!);
+    const [b] = await Bun.readableStreamToArray(clone.body!);
+    a[0] = 99;
+    expect([a[0], b[0], a.buffer === b.buffer]).toEqual([99, 1, false]);
   });
 
   test("non-byte chunks: strings pass through, other values are structured clones with their own type", async () => {
@@ -728,8 +739,8 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
     expect((values[4] as ArrayBuffer).byteLength).toBe(8);
   });
 
-  test("an unclonable chunk errors both bodies", async () => {
-    const original = new Response(
+  const unclonable = () =>
+    new Response(
       new ReadableStream({
         start(controller) {
           controller.enqueue(() => {});
@@ -737,9 +748,61 @@ describe("#45782: a chunk read from one body is not aliased by its clone", () =>
         },
       }),
     );
+
+  test("an unclonable chunk errors both bodies (read waiting when the chunk arrives)", async () => {
+    const original = unclonable();
     const clone = original.clone();
     await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
     await expect(original.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("an unclonable chunk errors both bodies (chunk already queued)", async () => {
+    const original = unclonable();
+    const clone = original.clone();
+    await Bun.sleep(0);
+    await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+    await expect(original.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("an unclonable chunk errors both bodies (readMany on a queued chunk)", async () => {
+    const original = unclonable();
+    const clone = original.clone();
+    await Bun.sleep(0);
+    // readMany() on a queue it can drain now is synchronous, so the failed copy throws.
+    expect(() => clone.body!.getReader().readMany()).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+    await expect(original.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("a failed copy cancels the source from a microtask, so cancel() can release the reader", async () => {
+    let reader!: ReadableStreamDefaultReader;
+    let cancelReason: unknown;
+    const source = new ReadableStream({
+      start(controller) {
+        controller.enqueue(() => {});
+      },
+      cancel(reason) {
+        cancelReason = reason;
+        reader.releaseLock();
+      },
+    });
+    const clone = new Response(source).clone();
+    reader = clone.body!.getReader();
+    await Bun.sleep(0);
+    await expect(reader.read()).rejects.toMatchObject({ name: "DataCloneError" });
+    await Bun.sleep(0);
+    expect(cancelReason).toMatchObject({ name: "DataCloneError" });
+  });
+
+  test("a Symbol chunk is unclonable", async () => {
+    const clone = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(Symbol("chunk"));
+          controller.close();
+        },
+      }),
+    ).clone();
+    await expect(clone.body!.getReader().read()).rejects.toMatchObject({ name: "DataCloneError" });
   });
 
   test("ReadableStream.prototype.tee() still shares the chunk object per spec", async () => {
@@ -1597,10 +1660,11 @@ test("Blob type from a consumed Response keeps the original content-type after c
   expect(exitCode).toBe(0);
 });
 
-describe("Response.clone() of a stream body shares chunk references between tee branches", () => {
-  // Node, Chrome, and Firefox enqueue the same chunk object into both tee branches when cloning
-  // a body (cloneForBranch2 = false). Deep-copying every chunk per branch turns an N-deep clone
-  // chain into O(N * body bytes) of retained memory.
+describe("Response.clone() of a stream body keeps one chunk in both tee branch queues", () => {
+  // The tee behind clone() enqueues the same chunk object into both branches and copies it only
+  // when a branch hands it to script. Each level of a clone chain reads its source through the
+  // tee's own (native) reader, and the leaf's .arrayBuffer() is a native drain, so an N-deep
+  // chain drained natively retains O(body bytes), not O(N * body bytes).
   test("deep clone chain does not retain O(depth * bytes)", async () => {
     // A 4 MB streaming body cloned 50 deep previously retained ~50 separate copies of every
     // 64 KB chunk (~200 MB). With shared chunk references only one copy of the body bytes is

@@ -232,9 +232,10 @@ JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!chunk.isObject())
+    if (!chunk.isObject() && !chunk.isSymbol())
         return chunk;
-    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
+    // A view over a shared or resizable buffer keeps its buffer's kind through the generic path.
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk); view && !view->isShared() && !view->isResizableOrGrowableShared()) {
         if (view->isDetached()) [[unlikely]] {
             WebCore::throwDataCloneError(*globalObject, scope);
             return {};

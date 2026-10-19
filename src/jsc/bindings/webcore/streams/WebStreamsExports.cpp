@@ -280,7 +280,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObj
         readableStreamClose(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    acquireReadableStreamDefaultReader(globalObject, stream);
+    acquireReadableStreamDefaultReader(globalObject, stream, ReaderOwner::Native);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);
 }

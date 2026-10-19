@@ -66,10 +66,9 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
-    // Bun: the reader was acquired by a native consumer that never hands a chunk to script
-    // (a Body drain, a tee or text-decode source read, a native sink pump). A body-clone tee
-    // branch with this bit delivers the shared chunk as is instead of a copy. Set at reader
-    // acquire; never cleared.
+    // Bun: the default reader was acquired with ReaderOwner::Native (see StreamsForward.h). A
+    // body-clone tee branch with this bit delivers the shared chunk as is instead of a copy.
+    // Set by acquireReadableStreamDefaultReader; never cleared.
     bool m_nonScriptConsumer : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).

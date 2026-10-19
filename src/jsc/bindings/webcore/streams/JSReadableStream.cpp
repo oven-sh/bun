@@ -634,7 +634,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_getReader, (JSGlobalO
 
     stream->materializeIfNeeded(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto* reader = acquireReadableStreamDefaultReader(lexicalGlobalObject, stream);
+    auto* reader = acquireReadableStreamDefaultReader(lexicalGlobalObject, stream, ReaderOwner::Script);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(reader);
 }
@@ -744,7 +744,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_values, (JSGlobalObje
 
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* iterator = JSReadableStreamAsyncIterator::create(vm, getDOMStructure<JSReadableStreamAsyncIterator>(vm, *domGlobalObject));
-    auto* reader = acquireReadableStreamDefaultReader(lexicalGlobalObject, stream);
+    auto* reader = acquireReadableStreamDefaultReader(lexicalGlobalObject, stream, ReaderOwner::Script);
     RETURN_IF_EXCEPTION(scope, {});
     iterator->m_reader.set(vm, iterator, reader);
     iterator->m_preventCancel = preventCancel;

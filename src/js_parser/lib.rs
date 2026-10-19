@@ -249,8 +249,15 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
         self.arena
     }
     #[inline]
-    fn module_ref(&self) -> Ref {
-        self.module_ref
+    fn is_module_ref(&self, r#ref: Ref) -> bool {
+        if r#ref.eql(self.module_ref) {
+            return true;
+        }
+        if !r#ref.is_symbol() {
+            return false;
+        }
+        let symbol = &self.symbols[r#ref.inner_index() as usize];
+        symbol.kind == bun_ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"module"
     }
 }
 

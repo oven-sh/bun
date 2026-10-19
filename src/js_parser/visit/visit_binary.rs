@@ -255,7 +255,7 @@ impl BinaryExpressionVisitor {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage_of_runtime_require();
-                        p.ignore_usage(p.module_ref);
+                        p.ignore_usage_of_require_main_module(&e_.left.data);
                         return p.value_for_import_meta_main(false, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
@@ -284,7 +284,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinStrictEq => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
+                        p.ignore_usage_of_require_main_module(&e_.left.data);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(false, v.loc);
                     }
@@ -307,7 +307,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinLooseNe => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
+                        p.ignore_usage_of_require_main_module(&e_.left.data);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
@@ -334,7 +334,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinStrictNe => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
+                        p.ignore_usage_of_require_main_module(&e_.left.data);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }

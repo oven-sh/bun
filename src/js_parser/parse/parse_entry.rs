@@ -316,6 +316,15 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
+        // The hint decides the output of the same source (`exports`/`module`
+        // bindings, strict mode). `Unknown` adds nothing, so cache entries
+        // written before the hint was hashed stay valid.
+        match self.module_type {
+            options::ModuleType::Unknown => {}
+            options::ModuleType::Cjs => hasher.update(b"mt=cjs"),
+            options::ModuleType::Esm => hasher.update(b"mt=esm"),
+        }
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -1539,17 +1548,14 @@ impl<'a> Parser<'a> {
                         }
                         // This is a workaround for packages which have broken ESM checks
                         // If they never actually assign to exports.foo, only check for it
-                        // and the package specifies type "module"
                         // and the package uses ESM syntax
                         // We should just say
                         // You're ESM and lying about it.
-                        if p.options.module_type == options::ModuleType::Esm
-                            || p.has_es_module_syntax
-                        {
-                            if needs_decl_count == export_names_len {
-                                force_esm = true;
-                                break 'break_optimize;
-                            }
+                        // (A file whose module type is already ESM never binds
+                        // `exports`, so it never reaches this block.)
+                        if p.has_es_module_syntax && needs_decl_count == export_names_len {
+                            force_esm = true;
+                            break 'break_optimize;
                         }
 
                         if needs_decl_count > 0 || p.has_top_level_function_merged_with_var {

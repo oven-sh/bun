@@ -136,6 +136,20 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
   });
+  test("the module type hint is part of the cache key", async () => {
+    // The same source transpiles differently as `.cjs` and as `.mjs`: the
+    // CommonJS wrapper binds `module`, an ES module does not. A cache entry
+    // written for one extension must not be served for the other.
+    const source = dummyFile(50 * 1024, "1", { code: "typeof module" });
+    writeFileSync(join(temp_dir, "a.cjs"), source);
+    expect(await bunRun(join(temp_dir, "a.cjs"), env)).toSpawn("object");
+    expect(newCacheCount()).toBe(1);
+
+    writeFileSync(join(temp_dir, "a.mjs"), source);
+    expect(await bunRun(join(temp_dir, "a.mjs"), env)).toSpawn("undefined");
+    expect(await bunRun(join(temp_dir, "a.cjs"), env)).toSpawn("object");
+    expect(await bunRun(join(temp_dir, "a.mjs"), env)).toSpawn("undefined");
+  });
   test("doing 50 buns at once does not crash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));

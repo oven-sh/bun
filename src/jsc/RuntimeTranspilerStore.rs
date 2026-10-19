@@ -322,6 +322,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
+        module_type: ModuleType,
         package_json: Option<&PackageJSON>,
         module_loader: JSValue,
     ) -> *mut c_void {
@@ -365,6 +366,7 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
+                module_type,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
@@ -416,6 +418,9 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
+    /// The ESM-or-CommonJS hint from the extension or package.json `"type"`,
+    /// decided by the caller with the same rule as the synchronous loader.
+    pub(crate) module_type: ModuleType,
     pub(crate) promise: StrongOptional,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
@@ -805,11 +810,7 @@ impl TranspilerJob {
                 && strings::eql_long(vm_main, path.text, false)
         });
 
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
+        let module_type = self.module_type;
 
         let mut parse_options = ParseOptions {
             arena: &arena,

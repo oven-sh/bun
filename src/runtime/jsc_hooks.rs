@@ -3926,6 +3926,10 @@ struct LoaderResult<'a> {
     specifier: &'a [u8],
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+    /// The nearest package.json, named or not: the one whose `"type"` decides
+    /// the module type of a `.js`/`.ts` file, as in Node. `None` for non-JS-like
+    /// loaders.
+    package_json_for_module_type: Option<&'a bun_resolver::package_json::PackageJSON>,
 }
 
 /// `options.getLoaderAndVirtualSource` — high-tier body.
@@ -4048,15 +4052,18 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
+    let (package_json, package_json_for_module_type) = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
-            _ => None,
+            Ok(Some(dir_info)) => (
+                dir_info.package_json().or(dir_info.enclosing_package_json),
+                dir_info.package_json_for_module_type,
+            ),
+            _ => (None, None),
         }
     } else {
-        None
+        (None, None)
     };
 
     Ok(LoaderResult {
@@ -4066,6 +4073,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_main,
         specifier,
         package_json,
+        package_json_for_module_type,
     })
 }
 
@@ -4238,34 +4246,21 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     }
 
-    // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
+    // ── module_type hint from extension / package.json ──────────────────────
+    // Shared by the synchronous and the concurrent transpiler below.
+    let module_type: ModuleType = {
         let ext = lr.path.name().ext;
-        // regex /\.[cm][jt]s$/
-        if ext.len() == b".cjs".len() {
-            if ext == b".cjs" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mjs" {
-                break 'brk ModuleType::Esm;
-            }
-            if ext == b".cts" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mts" {
-                break 'brk ModuleType::Esm;
-            }
-        }
-        // regex /\.[jt]s$/
-        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
+        if let Some(from_ext) = bun_resolver::module_type_from_ext(ext) {
+            from_ext
+        } else if ext == b".js" || ext == b".ts" {
             // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
+            lr.package_json_for_module_type
                 .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
+                .unwrap_or(ModuleType::Unknown)
+        } else {
+            // For JSX/TSX and other extensions, let the file contents decide.
+            ModuleType::Unknown
         }
-        // For JSX/TSX and other extensions, let the file contents decide.
-        ModuleType::Unknown
     };
     let pkg_name: Option<&[u8]> = lr
         .package_json
@@ -4322,7 +4317,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     &lr.path,
                     referrer.clone(),
                     concurrent_loader,
-                    lr.package_json,
+                    module_type,
+                    lr.package_json_for_module_type,
                     module_loader,
                 )
             };

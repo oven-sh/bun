@@ -2629,7 +2629,9 @@ impl EqlKindT for StrictEql {
 /// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
     fn arena(&self) -> &Bump;
-    fn module_ref(&self) -> Ref;
+    /// Whether `r#ref` is the CommonJS `module` binding, or the unbound global
+    /// `module` in a file that does not declare that binding.
+    fn is_module_ref(&self, r#ref: Ref) -> bool;
 }
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
@@ -2760,7 +2762,7 @@ impl Data {
                 // always re-ordered to the right side.
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
-                        if id.ref_.eql(p.module_ref()) {
+                        if p.is_module_ref(id.ref_) {
                             return Equality::RequireMainAndModule;
                         }
                     }

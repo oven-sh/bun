@@ -1324,6 +1324,9 @@ describe("wildcard exports with extensionless target", () => {
       "node_modules/wildcard-pkg/dist/esm/exact/index.js": "export const exact = 'exact';",
       "node_modules/wildcard-pkg/dist/esm/server/stdio.js": "export const stdio = 'stdio';",
       "node_modules/wildcard-pkg/dist/esm/server/http.mjs": "export const http = 'http';",
+      // The package is `"type": "module"`, so its CommonJS build carries its
+      // own package.json, as @modelcontextprotocol/sdk does.
+      "node_modules/wildcard-pkg/dist/cjs/package.json": JSON.stringify({ type: "commonjs" }),
       "node_modules/wildcard-pkg/dist/cjs/server/stdio.js": "module.exports = { stdio: 'cjs-stdio' };",
       ...extra,
     });

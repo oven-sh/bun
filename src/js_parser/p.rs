@@ -3344,10 +3344,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
 
-        self.exports_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
-        self.module_ref =
-            self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
+        if self.is_file_considered_to_have_esm_exports {
+            // An ES module has no `exports` or `module` binding: a source
+            // reference to either name is an unbound global, as in Node. The
+            // symbols still back generated code (the ESM namespace object,
+            // `export =`, the HMR wrapper), so they live on `generated` only.
+            self.exports_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"exports");
+            self.module_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"module");
+            let (exports_ref, module_ref) = (self.exports_ref, self.module_ref);
+            VecExt::append(&mut self.module_scope_mut().generated, exports_ref);
+            VecExt::append(&mut self.module_scope_mut().generated, module_ref);
+        } else {
+            self.exports_ref =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
+            self.module_ref =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
+        }
 
         self.require_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"require")?;
@@ -5976,7 +5988,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.repl_mode {
                 return None;
             }
-            if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
+            if (self.has_es_module_syntax || self.is_file_considered_to_have_esm_exports)
+                && self.commonjs_named_exports.count() == 0
+            {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
                 // compile time using expression substitution here.
@@ -6028,6 +6042,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.ensure_require_symbol();
             let r = self.runtime_identifier_ref(b"__require");
             self.record_usage(r);
+        }
+    }
+
+    /// `require.main === module` becomes `import.meta.main`, so the `module`
+    /// operand (the CommonJS binding, or the unbound global in an ES module)
+    /// is no longer used.
+    pub(crate) fn ignore_usage_of_require_main_module(&mut self, module_operand: &js_ast::ExprData) {
+        if let js_ast::ExprData::EIdentifier(id) = module_operand {
+            self.ignore_usage(id.ref_);
         }
     }
 

@@ -330,11 +330,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             start += tags.len_of(|tags, out| tags.opening_tag_start_marker(child, out));
         }
         let mut end = self.end_location(child) as usize;
-        if self
-            .tree
-            .next(child)
-            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next))
-        {
+        // Prettier only checks whether the next sibling borrows the marker. The parent borrows it from its last child,
+        // so Prettier prints it twice: `<a><b></b>></a>`.
+        if tags.lends_closing_tag_end_marker(child) {
             end = end
                 .saturating_sub(tags.len_of(|tags, out| tags.closing_tag_end_marker(child, out)));
         }
@@ -522,15 +520,18 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         let (tags, tree, options) = (self.tags(), self.tree, self.options);
         let node = &tree[id];
         if node.has(Flags::PRESERVES_CONTENT) {
-            self.out.built_text(|out| tags.opening_tag_prefix(id, out));
+            // The tags already include the markers they borrow. Prettier prints those markers again around them:
+            // `<b>a</b>><pre>` with strict whitespace sensitivity, and
+            // `<span>><!--[if a]><p>b<![endif]--></span</span>`.
             self.out.start_group();
             self.print_opening_tag(id);
             self.out.end_group();
             self.out.text(tags.node_content(id));
-            if !tags.is_written_to_its_end(id) {
-                self.out.built_text(|out| tags.closing_tag(id, out));
-            }
-            self.out.built_text(|out| tags.closing_tag_suffix(id, out));
+            self.out
+                .built_text(|out| match tags.is_written_to_its_end(id) {
+                    true => tags.closing_tag_suffix(id, out),
+                    false => tags.closing_tag(id, out),
+                });
             return;
         }
         let (Some(first), Some(last)) = (tree.first_child(id), tree.last_child(id)) else {

@@ -16,18 +16,18 @@ use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::atom::{Atom, RecentAtoms};
-use bun_sema::bind::{SymFlags, SymbolId};
+use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
-use bun_sema::check::task::{Finished, Published};
-use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts};
+use bun_sema::check::{
+    INFERENCE_WALK_COUNTS, MEMBER_COUNTS, Program, Requested, compute_ecma_line_starts,
+};
 use bun_sema::config::{self, ConfigError};
-use bun_sema::hir::{ExprTag, FileKind};
+use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, Claim, FileId, Files, GlobalName, Run, SharedVerdict, Sym,
+    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, GlobalName, Run,
     declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
@@ -35,16 +35,15 @@ use bun_sema::resolve::{
     Host, ModuleDetection, Options, Phase, ProjectFile, ProjectFiles, ancestors, contains_path,
     displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
     is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, to_path, to_path_in, typescript_path,
+    output_declaration_file_name, run_with_current_helpers, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
-use bun_sema::types::LinkCounts;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
@@ -142,6 +141,31 @@ pub fn for_each_parallel_in_runs(
     }
     let mut runners = vec![(); region.threads];
     pool_of_regions().each((), |(), (), _| region.work_off(), &mut runners);
+}
+
+/// The same, while the calling thread runs `meanwhile`. A thread that keeps its regions runs `meanwhile` afterwards.
+pub(crate) fn for_each_parallel_while(
+    caches: &ThreadCaches,
+    threads: usize,
+    count: usize,
+    run: usize,
+    work: &(dyn Fn(usize) + Sync),
+    meanwhile: &mut dyn FnMut(),
+) {
+    if count == 0 || keeps_regions() {
+        for_each_parallel_in_runs(caches, threads, count, run, work);
+        return meanwhile();
+    }
+    let region = Region {
+        caches,
+        threads: threads.clamp(1, count.div_ceil(run)),
+        next: AtomicUsize::new(0),
+        count,
+        run,
+        work,
+    };
+    let mut runners = vec![(); region.threads];
+    pool_of_regions().each_while((), |(), (), _| region.work_off(), &mut runners, meanwhile);
 }
 
 /// The same, on the calling thread and on at most `helpers` threads of the pool. The calling thread begins at once, and in the
@@ -406,64 +430,21 @@ impl Region<'_> {
     }
 }
 
-/// The work of one thread between two barriers, with one `Checker` and one buffer: `check_file` for
-/// each file, in program order. A file is identified by its index: its position in program order
-/// among the files to check.
-type Task = Vec<usize>;
+/// A checker is replaced after it has checked `1 / MIN_TASKS` of the total cost, because its private tables grow with every
+/// file. A file that costs more than that is heavy and starts before the others.
+const MIN_TASKS: usize = 128;
+/// A thread takes a run of consecutive files from the queue at a time. The run's cost is the remaining cost divided by the
+/// number of threads and by this.
+const RUNS_PER_THREAD: usize = 4;
 
-/// `Some`: the task checks ahead the statements of its one file that begin in this range of the
-/// text. See `PlanOptions::split_files`.
-type Ahead = Option<(u32, u32)>;
-
-/// The constants of a `Plan`. They are options while they are still being tuned: the standalone
-/// command line sets them.
+/// How a request is run.
 #[derive(Clone, Copy)]
 pub struct PlanOptions {
-    /// Consecutive steps hold at most 1, g, g * g, .. tasks.
-    pub step_growth: usize,
-    /// How many light files are checked in steps of growing size, one file per task, before the one step with all other files. They
-    /// are spread evenly over the light files of the program.
-    pub warm_up_files: usize,
-    /// A larger file is heavy. It is not in the warm-up, and it is a task of its own.
-    pub warm_up_max_bytes: usize,
-    /// After the warm-up, consecutive light files in program order form one task until they reach
-    /// this many bytes of source. 0: one file per task.
-    pub chunk_bytes: usize,
-    /// .. or until they reach the source size of the step divided by this, if that is less: a step
-    /// with many files has about this many tasks at least. Not a function of the thread count.
-    pub min_tasks: usize,
-    /// What a type node adds to the cost estimate of a file, in which an identifier of an expression counts 1.
-    pub type_node_cost: usize,
-    /// Nonzero: a declaration file is split if its cost estimate is more than the cost of the last step divided by this. Tasks of
-    /// about that cost check ranges of its statements ahead and publish what they evaluate (`Checker::check_statements_ahead`). They
-    /// stand where the task of the file stood, in the order of the ranges. The task of the file follows in a step of its own.
-    /// 0: no file is split.
-    pub split_files: u32,
-    /// The obstacles that `check_statements_ahead` returns in spite of which a range is published, as a bit set.
-    pub split_tolerates: u8,
-    /// Whether a range publishes the tables keyed by a type, a signature or a mapper too.
-    pub split_publishes_everything: bool,
-    /// Whether one thread gets the plan of several. For measuring the tasks one at a time.
-    pub tasks_on_one_thread: bool,
-    /// The cost estimate at which a task of `Plan::of_one_thread` is complete.
-    pub one_thread_task_cost: usize,
-    /// The cost estimate of a program above which one thread gets the plan of several. The tasks of
-    /// `Plan::of_one_thread` publish nothing, so each begins with nothing: VS Code, of three times
-    /// this cost, takes 8% to 25% longer in 13 to 4 of them, and 6% longer and 1.8 times the memory
-    /// in one.
-    pub one_thread_max_cost: usize,
-    /// `--checkers`. Nonzero: `checkerPool` is used, and none of the above applies.
-    pub checkers: usize,
-    /// One checker (`checkers`) hands out symbol ids as `tsc --singleThreaded` does. Not for
-    /// TypeScript's own baselines: its test runner compiles every test in one process, and
-    /// `nextSymbolId` belongs to the process.
-    pub reproduces_symbol_ids: bool,
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most, if each reads the sources of
     /// what it references. Otherwise four times as many. Each occupies memory.
     pub projects_at_once: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
-    /// declaration files and the JSON files that are not. Then nothing reads what the last step
-    /// publishes, so it publishes nothing. The declaration files of the project itself, which are
+    /// declaration files and the JSON files that are not. The declaration files of the project itself, which are
     /// not in the default library or in `node_modules`, count as checked even with `skipLibCheck`,
     /// which still means that nothing is reported for them.
     pub after_file_is_for_checked_files: bool,
@@ -517,20 +498,6 @@ pub struct PlanOptions {
 impl Default for PlanOptions {
     fn default() -> PlanOptions {
         PlanOptions {
-            step_growth: 8,
-            warm_up_files: 1 + 8 + 64,
-            warm_up_max_bytes: 16 << 10,
-            chunk_bytes: 64 << 10,
-            min_tasks: 128,
-            type_node_cost: 1,
-            split_files: 64,
-            split_tolerates: 0,
-            split_publishes_everything: false,
-            tasks_on_one_thread: false,
-            one_thread_task_cost: 256 << 10,
-            one_thread_max_cost: 1 << 20,
-            checkers: 0,
-            reproduces_symbol_ids: true,
             projects_at_once: 4,
             after_file_is_for_checked_files: false,
             checks_only_named: false,
@@ -545,177 +512,6 @@ impl Default for PlanOptions {
             only_the_globals: false,
             memory: 0,
         }
-    }
-}
-
-/// Which task is in which step, and in which order the tasks of a step are published. A function of
-/// the program and of whether there is more than one thread (`Plan::of_one_thread`): not of how many
-/// there are, not of time. During a step the published state is
-/// read-only and a task writes to its own buffer, so the result of a task is a function of the
-/// program and of the published state at the start of its step. By induction over the steps, so is
-/// the output.
-struct Plan {
-    steps: Vec<Vec<Task>>,
-    /// By task of the step before the last. Empty: no file is split.
-    ahead: Vec<Ahead>,
-    /// The number of its first step. Not 0 if another plan runs before this one.
-    first_step: usize,
-    /// Its tasks come from `of_one_thread`.
-    is_of_one_thread: bool,
-}
-
-impl Plan {
-    /// `createCheckers`, `forEachCheckerGroupDo`: file `i` of the program belongs to checker `i %
-    /// checkers`, and a checker visits its files in program order. The checkers share nothing.
-    /// `rank_of(i)`: the position of file `i` of the files to check in the program, which has
-    /// `files` files.
-    fn of_checkers(
-        count: usize,
-        rank_of: &dyn Fn(usize) -> usize,
-        files: usize,
-        checkers: usize,
-    ) -> Plan {
-        let checkers = checkers.min(files).clamp(1, 256);
-        let mut tasks: Vec<Task> = vec![Vec::new(); checkers];
-        for file in 0..count {
-            tasks[rank_of(file) % checkers].push(file);
-        }
-        Plan {
-            steps: vec![tasks],
-            ahead: Vec::new(),
-            first_step: 0,
-            is_of_one_thread: false,
-        }
-    }
-
-    /// The tasks of one thread for `files`, which are in program order like those of
-    /// `tsc --singleThreaded`: as few as `one_thread_task_cost` allows. Most programs are one task.
-    ///
-    /// Every task computes its own copy of what it shares with the other tasks of its step. That
-    /// occupies threads that have nothing else to do, and one thread has: with the plan of several
-    /// threads it is a fifth to a half of all the work. But a task keeps what it has computed until
-    /// it ends, so its size is what the memory grows by.
-    fn of_one_thread(
-        files: Vec<usize>,
-        size_of: &dyn Fn(usize) -> usize,
-        options: &PlanOptions,
-    ) -> Vec<Task> {
-        let options = PlanOptions {
-            min_tasks: 0,
-            chunk_bytes: options.one_thread_task_cost,
-            ..*options
-        };
-        Plan::cut(files, size_of, &options)
-    }
-
-    /// `files`: the files to check. `size_of(i)`: the source size of file `i` in bytes.
-    ///
-    /// No order among the tasks is needed: what they observe of each other is published, or each
-    /// computes its own copy.
-    fn new(
-        files: std::ops::Range<usize>,
-        bytes_of: &dyn Fn(usize) -> usize,
-        size_of: &dyn Fn(usize) -> usize,
-        ranges_of: &dyn Fn(usize, usize) -> Vec<(u32, u32)>,
-        options: &PlanOptions,
-    ) -> Plan {
-        assert!(options.step_growth >= 1);
-        let mut steps: Vec<Vec<Task>> = Vec::new();
-        // The warm-up fills the published state with what most tasks need. Until that is published,
-        // each task of a step computes its own copy. The steps should be short, so they consist of
-        // light files. The files are a sample of the whole program, because its first files are not
-        // representative of the rest.
-        let is_heavy = |file: usize| bytes_of(file) > options.warm_up_max_bytes;
-        let light: Vec<usize> = files.clone().filter(|&file| !is_heavy(file)).collect();
-        let expected = options.warm_up_files.min(light.len());
-        let warm_up = (0..expected).map(|i| light[i * light.len() / expected]);
-        let warm_up: Vec<usize> = warm_up.collect();
-        let (mut tasks, mut limit) = (warm_up.iter().map(|&file| vec![file]).peekable(), 1usize);
-        while tasks.peek().is_some() {
-            steps.push(tasks.by_ref().take(limit).collect());
-            limit = limit.saturating_mul(options.step_growth);
-        }
-        // One step with all other files. The heaviest file of a program takes about as long as a
-        // thread's share of the whole check, so there is one step in which heavy files run, and
-        // they are started first.
-        let rest = files.filter(|file| warm_up.binary_search(file).is_err());
-        let chunks = Plan::cut(rest.collect(), size_of, options);
-        // `split_files`. `ranges_of(file, parts)`: see there.
-        let cost: usize = chunks.iter().flatten().map(|&file| size_of(file)).sum();
-        let parts_of = |file: usize| (size_of(file) * options.split_files as usize).div_ceil(cost);
-        let (mut tasks, mut ahead, mut split) = (Vec::new(), Vec::new(), Vec::new());
-        for chunk in chunks {
-            let ranges = match chunk[..] {
-                [file] if parts_of(file) > 1 => ranges_of(file, parts_of(file)),
-                _ => Vec::new(),
-            };
-            if ranges.is_empty() {
-                tasks.push(chunk);
-                ahead.push(None);
-                continue;
-            }
-            for range in ranges {
-                tasks.push(chunk.clone());
-                ahead.push(Some(range));
-            }
-            split.push(chunk);
-        }
-        if !tasks.is_empty() {
-            steps.push(tasks);
-        }
-        if split.is_empty() {
-            ahead.clear();
-        } else {
-            steps.push(split);
-        }
-        Plan {
-            steps,
-            ahead,
-            first_step: 0,
-            is_of_one_thread: false,
-        }
-    }
-
-    /// `ahead`, if `number` is the step whose tasks it describes.
-    fn ahead_of(&self, number: usize) -> &[Ahead] {
-        if number + 2 == self.steps.len() {
-            &self.ahead
-        } else {
-            &[]
-        }
-    }
-
-    /// The tasks of one step for `rest`, which is in program order.
-    fn cut(rest: Vec<usize>, size_of: &dyn Fn(usize) -> usize, options: &PlanOptions) -> Vec<Task> {
-        let bytes: usize = rest.iter().map(|&file| size_of(file)).sum();
-        // About `min_tasks` tasks, whatever the size of the program: enough for any number of threads, and every further task computes
-        // its own copy of what it shares with the others.
-        let chunk_bytes = match options.min_tasks {
-            0 => options.chunk_bytes,
-            tasks => (bytes / tasks).max(1),
-        };
-        let is_heavy = |file: usize| size_of(file) >= chunk_bytes;
-        // The files of a task share a buffer, and neighbours in program order use the same types.
-        let mut chunks: Vec<Task> = Vec::new();
-        // The source size of the last chunk, if it consists of light files.
-        let mut bytes_of_last = None;
-        for file in rest {
-            match bytes_of_last {
-                _ if is_heavy(file) => {
-                    chunks.push(vec![file]);
-                    bytes_of_last = None;
-                }
-                Some(so_far) if so_far < chunk_bytes => {
-                    chunks.last_mut().unwrap().push(file);
-                    bytes_of_last = Some(so_far + size_of(file));
-                }
-                _ => {
-                    chunks.push(vec![file]);
-                    bytes_of_last = Some(size_of(file));
-                }
-            }
-        }
-        chunks
     }
 }
 
@@ -1093,15 +889,10 @@ pub struct Request<'a> {
     /// Of all loaded files, only those whose path contains this are checked. For investigating one
     /// file of a large project.
     pub only: Option<&'a [u8]>,
-    /// The order in which the tasks of a step are started. 1: the largest first. Any other odd
+    /// The order in which the files are queued. 1: the largest first. Any other odd
     /// number: by index * `order` (mod 2^32), a fixed permutation. The output does not depend on
     /// it. For tests of that property.
     pub order: u32,
-    /// `Published::digest` is computed at every barrier. For tests: it is a function of the program.
-    pub digests: bool,
-    /// What the tasks cost is measured with this in place of the time. For tuning the plan: with
-    /// one thread, the instructions of the process are those of the task.
-    pub task_clock: Option<&'a (dyn Fn() -> u64 + Sync)>,
     pub plan_options: PlanOptions,
     /// Nothing is freed after it is checked: for a caller that goes on to query the program. It
     /// uses several times the memory.
@@ -1117,8 +908,8 @@ pub struct Request<'a> {
     /// Called with it again when all of it is checked.
     pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
-    /// are still alive. The way to read the type of every expression without `retains_everything`. An invalid task is retried
-    /// (`Program::validate`), so this can be called more than once for a file: the last call counts.
+    /// are still alive. The way to read the type of every expression without `retains_everything`. A discarded task's files are
+    /// rechecked, so this can be called more than once for a file: the last call counts.
     pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, FileId) + Sync)>,
     /// Called with the path and the text of each declaration file that a project of a `tsc -b` run
     /// emits for the projects that reference it.
@@ -1161,37 +952,25 @@ pub struct Diagnostic {
     pub project: u32,
 }
 
-/// A step of a `Plan`, as it ran.
+/// One pass over the queue of files, as it ran. For `--timing`.
 #[derive(Clone)]
-pub struct StepReport {
+pub struct RoundReport {
     pub tasks: usize,
-    /// Of all its tasks.
     pub files: usize,
-    /// Wall time from the start of the first task to the end of the last, and in each of the two
-    /// parts of the barrier after it.
-    pub in_tasks: Duration,
-    pub in_link: Duration,
-    pub in_publish: Duration,
-    /// How long threads had no task because the step was not over, summed over the threads.
+    /// Wall time from the start of the first task to the end of the last.
+    pub elapsed: Duration,
+    /// Summed over the tasks: time spent waiting for the commit mutex, holding it, and waiting for claims of variances.
+    pub waits: [Duration; 3],
+    /// The discarded tasks: the file each was checking, and why.
+    pub lost: Vec<(Vec<u8>, &'static str)>,
+    /// Time that threads spent without a task before the round ended, summed over the threads.
     pub idle: Duration,
-    /// The five tasks that took longest: wall time, the number of files, the path of the first file.
-    /// With `Request::task_clock`, all of them, and what that clock measured, as nanoseconds.
+    /// The five slowest tasks: wall time, number of files, path of the first file.
     pub slowest_tasks: Vec<(Duration, usize, Vec<u8>)>,
-    /// `PlanOptions::split_files`: how many of the tasks checked a range ahead, how many of those were not published, and how many
-    /// met each obstacle of `Checker::check_statements_ahead`, by bit.
-    pub ranges: usize,
-    pub ranges_dropped: usize,
-    pub ranges_by_obstacle: [usize; 3],
-    /// Entries of the tasks' buffers: all that were passed to the barrier, those that were
-    /// published, those that lost to a task with a lower index.
-    pub entries: Published,
-    /// Types, signatures, mappers and component lists that the tasks have created.
-    pub records: LinkCounts,
-    /// `Checker::generic_relation_entries_not_published`, summed over the tasks.
-    pub generic_relation_entries_not_published: u64,
-    /// `Finished::foreign_evaluations`, summed over the tasks: by kind of query, in the order of `FOREIGN_EVALUATION_KINDS`. What a
-    /// task computed about a source file of another component, because nothing had published it.
-    pub foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
+    /// Keys that the tasks logged for their commits.
+    pub logged: u64,
+    /// Entries that those commits stored. The other keys were bound, or another task stored them first.
+    pub stored: u64,
 }
 
 /// `taskResult.builder`: how much of a `Report` one task of a build has printed.
@@ -1228,7 +1007,7 @@ impl Incomplete {
     }
 }
 
-/// A program that was not made: `PlanOptions::refuses_broken_configurations`.
+/// A program that was not made: its configuration file can't be read, or `PlanOptions::refuses_broken_configurations`.
 pub struct Refused {
     pub config_path: Vec<u8>,
     /// The errors of reading the configuration file, or else those of the program about its options and its files.
@@ -1297,8 +1076,8 @@ pub struct Report {
     /// Those that were to be checked in a program with an error in its syntax, its options or its
     /// global types. As in `tsc`, nothing else is reported for such a program.
     pub files_not_checked: usize,
-    /// The steps that ran, in order. See `Plan`.
-    pub steps: Vec<StepReport>,
+    /// The rounds that ran, in order.
+    pub rounds: Vec<RoundReport>,
     /// How many projects are reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
     /// The configuration file has `references` and no files of its own, and `--build` was not
@@ -1313,6 +1092,10 @@ pub struct Report {
     pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
+    /// `Checker::inference_walk_counts`, summed over the tasks.
+    pub inference_walks: [u64; INFERENCE_WALK_COUNTS.len()],
+    /// `Checker::member_counts`, summed over the tasks.
+    pub members: [u64; MEMBER_COUNTS.len()],
 }
 
 impl Report {
@@ -1345,12 +1128,18 @@ impl Report {
         self.files_parsed_for_all += other.files_parsed_for_all;
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
-        self.steps.extend(other.steps);
+        self.rounds.extend(other.rounds);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
             *phase += more;
         }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
+        for (sum, more) in self.inference_walks.iter_mut().zip(other.inference_walks) {
+            *sum += more;
+        }
+        for (sum, more) in self.members.iter_mut().zip(other.members) {
+            *sum += more;
+        }
     }
 
     /// `BuildTask.report`
@@ -1574,6 +1363,7 @@ pub fn check_provided_then<R>(
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
+    disk.ends_the_process = provided.ends_the_process;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -2538,31 +2328,29 @@ fn check_project_of(
             Ok(project) => project,
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as
             // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
-            Err(errors) if request.plan_options.refuses_broken_configurations => {
+            Err(errors) => {
                 let is_case_sensitive = disk.is_case_sensitive();
                 let files = of.named.map(|it| it.1).unwrap_or_default().iter();
                 let mut last = None;
+                let diagnostics: Vec<Diagnostic> = (errors.iter())
+                    .map(|it| of_config_error(disk, config, it, &mut last))
+                    .collect();
+                if !request.plan_options.refuses_broken_configurations {
+                    match request.build {
+                        true => report
+                            .diagnostics
+                            .push(global(6053, &[displayed_path(config)])),
+                        false => report.diagnostics.extend(diagnostics.iter().cloned()),
+                    }
+                    report.load_time = started.elapsed();
+                }
                 report.refused.push(Refused {
                     config_path: config.to_vec(),
-                    diagnostics: (errors.iter())
-                        .map(|it| of_config_error(disk, config, it, &mut last))
-                        .collect(),
+                    diagnostics,
                     files: files
                         .map(|it| to_path(it, is_case_sensitive).into_owned())
                         .collect(),
                 });
-                return report;
-            }
-            Err(errors) => {
-                let mut last = None;
-                let errors = (errors.iter()).map(|it| of_config_error(disk, config, it, &mut last));
-                match request.build {
-                    true => report
-                        .diagnostics
-                        .push(global(6053, &[displayed_path(config)])),
-                    false => report.diagnostics.extend(errors),
-                }
-                report.load_time = started.elapsed();
                 return report;
             }
         },
@@ -2916,6 +2704,8 @@ struct WithOutputs<'h> {
     /// How many projects are being built now. The thread that builds this one loads and checks it, so it has the stack of a
     /// worker, and `helpers` help it. `None`: it only waits, and the pool does the work.
     built_now: Option<&'h AtomicUsize>,
+    /// See `Host::ends_the_process`.
+    is_last_of_the_process: bool,
 }
 
 impl WithOutputs<'_> {
@@ -3060,26 +2850,32 @@ impl Host for WithOutputs<'_> {
             None => self.disk.parallel(count, work),
         }
     }
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        match self.built_now {
+            // The calling thread is one of those that work.
+            Some(_) => {
+                self.parallel(count, work);
+                meanwhile();
+            }
+            None => self.disk.parallel_while(count, work, meanwhile),
+        }
+    }
     fn is_of_one_thread(&self) -> bool {
         (self.built_now).is_some_and(|built_now| self.helpers(built_now) == 0)
     }
+    fn ends_the_process(&self, _: bool) -> bool {
+        self.is_last_of_the_process
+    }
+    fn helpers_now(&self) -> Option<usize> {
+        self.built_now.map(|built_now| self.helpers(built_now))
+    }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.with_helpers(helpers, count, work);
-    }
-    fn parallel_while_others_wait(
-        &self,
-        blocked: usize,
-        count: usize,
-        work: &(dyn Fn(usize) + Sync),
-    ) {
-        match self.built_now {
-            // Each project has a thread of its own and as many helpers as this one.
-            Some(built_now) => {
-                let helpers = (self.helpers(built_now) + 1) * (blocked + 1) - 1;
-                self.disk.with_helpers(helpers, count, work);
-            }
-            None => self.disk.parallel(count, work),
-        }
     }
     fn loaded(&self) {
         // The threads go on to parse the files of the next project.
@@ -3095,6 +2891,22 @@ impl Host for WithOutputs<'_> {
         match self.built_now.map(|it| it.load(Ordering::Relaxed)) {
             Some(2..) => None,
             _ => self.disk.io_pool(),
+        }
+    }
+}
+
+/// A session that's dropped on all threads if the process is about to exit.
+struct Dropped<'a> {
+    session: Session,
+    /// `None` if the process keeps running or the request has more programs.
+    before_the_process_ends: Cell<Option<&'a dyn Host>>,
+}
+
+impl Drop for Dropped<'_> {
+    fn drop(&mut self) {
+        if let Some(host) = self.before_the_process_ends.get() {
+            let session = std::mem::take(&mut self.session);
+            session.drop_before_the_process_ends(&|count, work| host.parallel(count, work));
         }
     }
 }
@@ -3118,7 +2930,12 @@ fn check_with_references(
     place: Option<&Place<'_>>,
 ) -> Report {
     // Declared before the session of any program, so it is dropped after them.
-    let of_build = Session::new();
+    let of_build = Dropped {
+        session: Session::new(),
+        before_the_process_ends: Cell::new(None),
+    };
+    // True if the process exits after this build, unless a program finds scripts that belong to another tsconfig.
+    let ends_the_process = host.ends_the_process(run.is_some()) && place.is_none();
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
     let follows_references = !request.build && root.files.is_empty();
@@ -3150,8 +2967,10 @@ fn check_with_references(
         not_found,
         ..
     } = graph;
-    // `buildOrClean`: "Circularity errors prevent any project from being built".
-    if !errors.is_empty() {
+    let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
+    // `buildOrClean`: "Circularity errors prevent any project from being built". A program that reads the sources of what it
+    // references waits for no build, like that of `tsc -p`, which doesn't look for a circle.
+    if !errors.is_empty() && !reads_sources {
         report.diagnostics.append(&mut errors);
         report.load_time = started.elapsed();
         return report;
@@ -3196,7 +3015,6 @@ fn check_with_references(
             Some((output_dir.clone(), root_dir.to_vec()))
         })
         .collect();
-    let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
     // Then there is one program, that of `root`, and it reads what is on the disk. Otherwise what one program emits
     // another reads, and several run at the same time.
     let is_one_program = reads_sources && !reports_references;
@@ -3255,7 +3073,8 @@ fn check_with_references(
     // The programs read the same declaration files: the libraries, what is in `node_modules`, and what one emits for the
     // others. Each is parsed once, and freed in the end.
     let of_this_build = (run.is_none() && !reads_sources && loaded().count() > 1).then(|| {
-        Run::new(&of_build, host.provided_paths().cloned().collect()).of_declaration_files()
+        let provided = host.provided_paths().cloned().collect();
+        Run::new(&of_build.session, provided).of_declaration_files()
     });
     let of_request = run.filter(|_| !reads_sources);
     let first_origin = match &of_this_build {
@@ -3356,7 +3175,11 @@ fn check_with_references(
     let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
     // `built_before`: how many are built now. `Err`: the projects that have to be built first, besides
     // those that it references.
-    let build = |index: usize, built_before: usize| -> Result<Option<Report>, Vec<usize>> {
+    // `is_last`: every other project is already built.
+    let build = |index: usize,
+                 built_before: usize,
+                 is_last: bool|
+     -> Result<Option<Report>, Vec<usize>> {
         let (mut project, mut about_references) = inputs[index].clone();
         if project.files.is_empty() && project.has_references {
             // `upToDateStatusTypeSolution`: there is no program. `buildProject` reports each of
@@ -3398,6 +3221,7 @@ fn check_with_references(
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
             built_now: built_now.as_ref(),
+            is_last_of_the_process: is_last && ends_the_process,
         };
         project.options.referenced_options = referenced
             .iter()
@@ -3536,8 +3360,13 @@ fn check_with_references(
             state.left -= 1;
             state.running += 1;
             let built_before = state.built;
+            let is_last = state.left == 0 && state.running == 1;
             drop(state);
-            let built = build(index, built_before);
+            let goes_on_elsewhere = |it: &Guarded<Option<Report>>| {
+                (it.lock().as_ref()).is_some_and(|it| !it.scripts_elsewhere.is_empty())
+            };
+            let is_last = is_last && !reports.iter().any(goes_on_elsewhere);
+            let built = build(index, built_before, is_last);
             state = builds.lock();
             let now = &mut *state;
             now.running -= 1;
@@ -3615,6 +3444,9 @@ fn check_with_references(
     }
     report.follows_references = follows_references && named.is_none();
     report.load_time = started.elapsed().saturating_sub(report.check_time);
+    if ends_the_process && report.scripts_elsewhere.is_empty() {
+        of_build.before_the_process_ends.set(Some(host));
+    }
     report
 }
 
@@ -3686,7 +3518,25 @@ fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
 
 /// `SortAndDeduplicateDiagnostics`
 fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.shared_sort_by(compare_diagnostics);
+    // The path decides first. So the diagnostics of each file are sorted by themselves, and the files by their paths: of
+    // tens of thousands of diagnostics most comparisons would be of two long paths that begin alike.
+    let mut files: FxHashMap<&[u8], usize> = FxHashMap::default();
+    let file_of = diagnostics.iter().map(|d| {
+        let next = files.len();
+        *files.entry(typescript_path(&d.path)).or_insert(next)
+    });
+    let file_of: Vec<usize> = file_of.collect();
+    let mut by_file: Vec<Vec<Diagnostic>> = Vec::new();
+    by_file.resize_with(files.len(), Vec::new);
+    drop(files);
+    for (d, file) in diagnostics.drain(..).zip(file_of) {
+        by_file[file].push(d);
+    }
+    by_file.shared_sort_by(|a, b| typescript_path(&a[0].path).cmp(typescript_path(&b[0].path)));
+    for mut of_file in by_file {
+        of_file.shared_sort_by(compare_diagnostics);
+        diagnostics.append(&mut of_file);
+    }
     // `compactAndMergeRelatedInfos`
     diagnostics.dedup_by(|next, first| {
         let is_same = equal_diagnostics_no_related_info(first, next);
@@ -3968,17 +3818,25 @@ fn check_named_files(
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
+    project.options.keeps_comments = request.retains_everything
+        || request.loaded.is_some()
+        || request.checked.is_some()
+        || request.after_file.is_some();
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
-    let session = Session::new();
+    let dropped = Dropped {
+        session: Session::new(),
+        before_the_process_ends: Cell::new(host.ends_the_process(run.is_some()).then_some(host)),
+    };
+    let session = &dropped.session;
     let files_are_found = |until_it_is_loaded: usize| {
         if let Some(place) = in_room {
             place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);
         }
     };
     let files = Files::load(
-        &session,
+        session,
         run,
         host,
         project.options,
@@ -4000,7 +3858,7 @@ fn check_named_files(
     }
     if refuses {
         let problems = files.program_problems();
-        let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+        let problems = ConfigError::of_problems(host, session, &config_path, problems.iter());
         about_options.extend(problems.iter().map(of_configuration));
         if !about_options.is_empty() {
             report.refused.push(refused(about_options));
@@ -4010,7 +3868,7 @@ fn check_named_files(
     // In an arena, so that no destructor runs for them: the session frees what they refer to all
     // at once. `Program::release` frees the little that is on the regular heap.
     let files = session.arena().alloc(files);
-    let root = session.arena().alloc(Program::new(&session, files));
+    let root = session.arena().alloc(Program::new(session, files));
     let program: &Program = root;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
@@ -4053,7 +3911,7 @@ fn check_named_files(
     let trace = program.files.resolution_trace.iter();
     report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
     let problems = program.files.program_problems();
-    let problems = ConfigError::of_problems(host, &session, &config_path, problems.iter());
+    let problems = ConfigError::of_problems(host, session, &config_path, problems.iter());
     about_options.extend(problems.iter().map(of_configuration));
 
     let checking = Instant::now();
@@ -4112,6 +3970,10 @@ fn check_named_files(
         }
         is_reached
     });
+    // `check_request` checks those scripts in another program afterwards.
+    if !scripts_elsewhere.is_empty() {
+        dropped.before_the_process_ends.set(None);
+    }
     report.scripts_elsewhere = scripts_elsewhere;
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
@@ -4134,89 +3996,19 @@ fn check_named_files(
     report.files_checked = to_check.len();
     // `SkipTypeChecking`: besides its syntax, such a file only has what `Emit` reports, which is
     // called after the semantic and the global diagnostics of the whole program are collected. So
-    // these files come after the plan, or before it under `Options::emits_first`. If there are no
-    // others, the plan is theirs.
-    let checker = program.checker();
+    // these files come after the type-checked ones, or before them under `Options::emits_first`. If
+    // there are no others, they go through the queue themselves.
+    // A `Checker` is about 30 KB. Boxing keeps this function's stack frame small.
+    let boxed_checker = || Box::new(program.checker());
+    let checker = boxed_checker();
     let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) =
         (to_check.into_iter()).partition(|&file| checker.reports_semantic_errors(file));
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
-    let (mut to_check, only_emitted) = match is_any_type_checked {
+    let (to_check, only_emitted) = match is_any_type_checked {
         true => (type_checked, only_emitted),
         false => (only_emitted, type_checked),
     };
-    // The libraries are checked once for all the programs of a request that agree on them. "The libraries" are the files of
-    // `Files::global_part` that come before every other file of the program.
-    //
-    // A file outside the global part cannot change a symbol or a type that these files see. It could still decide whether an
-    // error in one of them gets reported, because TypeScript collects the diagnostics of a file right after it has checked
-    // that file, but only a file that comes earlier in program order can do that. So what is reported in them depends on:
-    // - the global part,
-    // - which of them are checked,
-    // - the options (`Options::write_check_key`).
-    // Those three are the key. The rest of a `Request` is the same for all of its programs.
-    //
-    // Most keys belong to one program, so the first program with a key only registers it and goes on as usual. The second one
-    // checks these files for all: before it runs any other task, so that whatever the check leaves behind comes from them.
-    // If it reports nothing, the programs after it skip these files and start from what it left behind. If it reports
-    // anything, every program checks them for itself.
-    let wants_only_errors = request.after_file.is_none()
-        && request.checked.is_none()
-        && !request.retains_everything
-        && !request.plan_options.reports_nothing_about_files
-        && request.plan_options.checkers == 0;
-    let global_part = run
-        .filter(|run| run.is_of_declaration_files() && wants_only_errors && is_any_type_checked)
-        .filter(|_| (to_check.first()).is_some_and(|it| program.files.module(*it).shared_id != 0))
-        .and_then(|run| Some((run, program.files.global_part(run)?)));
-    // Not 0 if this program checks files for all: how many, from the start of `to_check`.
-    let mut shared_count = 0;
-    let mut claim: Option<Claim<'_>> = None;
-    if let Some((run, (files, mut description))) = global_part {
-        let mut is_first = vec![false; program.files.modules.len()];
-        let first = program.files.order.iter().zip(&files);
-        for (file, _) in first.take_while(|(file, of_part)| file == of_part) {
-            is_first[file.idx()] = true;
-        }
-        let count = to_check.iter().take_while(|it| is_first[it.idx()]).count();
-        let number_of = |file: &FileId| program.files.module(*file).shared_id;
-        let checked = to_check[..count].iter().map(number_of);
-        description.extend(
-            [count as u32]
-                .into_iter()
-                .chain(checked)
-                .flat_map(u32::to_le_bytes),
-        );
-        let mut options = Vec::new();
-        program.files.options.write_check_key(&mut options);
-        description.extend(run.number_of(&options).to_le_bytes());
-        // The reverse of `portable` below.
-        let here = |file: u32, id: SymbolId, name: Atom| {
-            let file = *files.iter().find(|it| number_of(it) == file)?;
-            let symbols = &program.files.module(file).bound.symbols;
-            let is_it = symbols.get(id.idx()).is_some_and(|it| it.name == name);
-            is_it.then(|| program.files.canonical(Sym { file, id }))
-        };
-        let carried: Option<Vec<_>> = match (count != 0).then(|| run.claim_or_wait(description)) {
-            Some(SharedVerdict::Unknown(it)) => {
-                (claim, shared_count) = (Some(it), count);
-                None
-            }
-            Some(SharedVerdict::Clean(carried)) => (carried.iter())
-                .map(|it| Some((here(it.0, it.1, it.2)?, &it.3[..])))
-                .collect(),
-            Some(SharedVerdict::Unshared) | None => None,
-        };
-        if let Some(carried) = carried {
-            for (sym, variances) in carried {
-                program.assume_variances(sym, variances);
-            }
-            to_check.drain(..count);
-        }
-    }
-    let (to_check, claim) = (to_check, Guarded::new(claim));
-    // `Finished::only_variances` of the tasks that check those files. `None`: there is more than that.
-    let carried: Guarded<Option<Vec<(Sym, Box<[u8]>)>>> = Guarded::new(Some(Vec::new()));
     if let Some(progress) = request.progress {
         let bytes = to_check
             .iter()
@@ -4232,6 +4024,8 @@ fn check_named_files(
     let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
+    let inference_walks = Guarded::new([0u64; INFERENCE_WALK_COUNTS.len()]);
+    let members = Guarded::new([0u64; MEMBER_COUNTS.len()]);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -4327,107 +4121,53 @@ fn check_named_files(
         false => Requested::All,
     };
     let new_checker = |expected: Requested| {
-        let mut checker = program.checker();
+        let mut checker = boxed_checker();
         checker.set_requested(expected);
         checker.begin_stack_budget();
         checker
     };
-    // 0: the tasks are not `checkerPool` checkers.
-    let checker_count = match request.plan_options.checkers {
-        0 => 0,
-        checkers => checkers.min(program.files.order.len()).clamp(1, 256),
-    };
     // The files that are checked but not yet rendered. The task of another file may still report
     // diagnostics in them.
     let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
-    /// The result of a task at the barrier.
-    struct Outcome<'s> {
-        /// `None`: the files were checked outside the plan.
-        finished: Option<Finished<'s>>,
+    /// Checked files whose results are kept.
+    struct Outcome {
         /// For `finish_files`.
         checked: Vec<(FileId, Checked)>,
         /// The files in which the native stack ran out.
         incomplete: Vec<FileId>,
-        generic_relation_entries_not_published: u64,
-        /// The files whose HIR is freed once the task is validated: a retry reads it again.
-        trees_to_free: Vec<FileId>,
-        /// What `Checker::check_statements_ahead` returned. 0 for any other task.
-        obstacles: u8,
     }
     let free_trees = |files: Vec<FileId>| {
         for file in files {
-            // SAFETY: the only task that reads the HIR has ended and will not be retried.
+            // SAFETY: the only task that reads the HIR has ended, and its files won't be rechecked.
             unsafe { program.files.free_tree(file) };
         }
     };
-    // `task`: its step, its index in the step, and `is_read_later`. `None`: the files are checked
-    // outside the plan.
-    let check_chunk =
-        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool)>| {
-            let mut checker = new_checker(expected);
-            if let Some((step, index, is_read_later)) = task {
-                checker.begin_task(step as u32, index as u32, is_read_later);
-                checker.set_checker_count(checker_count as u32);
-                if checker_count == 1 && request.plan_options.reproduces_symbol_ids {
-                    checker.hand_out_symbol_ids();
-                }
-            }
-            let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
-            for &file in files {
-                checked.push((file, checker.check_file(file)));
-                if let Some(after_file) = request.after_file
-                    && expected == wanted
-                {
-                    after_file(&mut checker, file);
-                }
-                if checker.take_ran_out_of_stack() {
-                    incomplete.push(file);
-                }
-                if let (Some(progress), Some(_)) = (request.progress, task) {
-                    progress.checked.fetch_add(1, Ordering::Relaxed);
-                    let bytes = size(file) as usize;
-                    progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
-                }
-            }
-            deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
-            let mut outcome = Outcome {
-                finished: task.map(|_| checker.end_task()),
-                checked,
-                incomplete,
-                generic_relation_entries_not_published: checker
-                    .generic_relation_entries_not_published(),
-                trees_to_free: Vec::new(),
-                obstacles: 0,
-            };
-            // It holds references into the HIR of files.
-            drop(checker);
-            // At the end of the task, not of the file: an entry of the buffer can hold a value that is
-            // bound to an earlier file of the task.
-            // A freed HIR cannot be restored, and a file that is checked outside the plan is checked
-            // again by its task.
-            if let Some(finished) = &outcome.finished {
-                let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
-                outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
-                if !finished.can_be_invalid() {
-                    free_trees(std::mem::take(&mut outcome.trees_to_free));
-                }
-            }
-            outcome
-        };
-    // `place`: the step of the task, and its index in the step.
-    let check_ahead = |file: FileId, range: (u32, u32), expected: Requested, place: [usize; 2]| {
+    // Checks files outside the queue. Whatever the checker stores is dropped with it.
+    let check_chunk = |files: &[FileId], expected: Requested| {
         let mut checker = new_checker(expected);
-        checker.begin_task(place[0] as u32, place[1] as u32, true);
-        let everything = request.plan_options.split_publishes_everything;
-        let obstacles = checker.check_statements_ahead(file, range, everything);
+        let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
+        for &file in files {
+            checked.push((file, checker.check_file(file)));
+            if let Some(after_file) = request.after_file
+                && expected == wanted
+            {
+                after_file(&mut checker, file);
+            }
+            if checker.take_ran_out_of_stack() {
+                incomplete.push(file);
+            }
+        }
+        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        let walks = checker.inference_walk_counts();
+        for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
+            *sum += more;
+        }
+        for (sum, more) in members.lock().iter_mut().zip(checker.member_counts()) {
+            *sum += more;
+        }
         Outcome {
-            finished: Some(checker.end_task()),
-            checked: Vec::new(),
-            incomplete: Vec::new(),
-            generic_relation_entries_not_published: checker
-                .generic_relation_entries_not_published(),
-            trees_to_free: Vec::new(),
-            obstacles,
+            checked,
+            incomplete,
         }
     };
     let declaration_files: Guarded<Vec<(Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
@@ -4471,301 +4211,382 @@ fn check_named_files(
     // whereas tasks partitioned by this estimate take 1.1 times as long.
     // A type node is a type to compute too. A declaration file has no expressions: next.js checks one of 2.9 MB that takes 23% of the
     // instructions of the check.
-    let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
     let cost_of = |file: FileId| {
-        let hir = program.files.hir(file);
-        let tags = hir.exprs.iter().map(|it| it.kind.tag());
-        let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
-        tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+        let (identifiers, type_nodes) = program.files.sizes[file.idx()];
+        identifiers as usize + type_nodes as usize + 1
     };
     let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
-    // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
-    // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
-    // deferred. Nothing that mentions a node of a leaf is published.
-    let ranges_of = |index: usize, parts: usize| -> Vec<(u32, u32)> {
-        let module = &program.files.modules[to_check[index].idx()];
-        let (hir, options) = (&module.hir, &program.files.options);
-        let mut ranges: Vec<(u32, u32)> = Vec::new();
-        if module.is_leaf
-            || hir.kind != FileKind::Declaration
-            || options.skip_lib_check
-            || options.no_check
-        {
-            return ranges;
-        }
-        let mut part_of_last = usize::MAX;
-        for s in hir.ids(hir.body) {
-            let start = hir[s].start;
-            let part = start as usize * parts / (hir.source_len as usize + 1);
-            if part != part_of_last {
-                if let Some(last) = ranges.last_mut() {
-                    last.1 = start;
-                }
-                ranges.push((start, u32::MAX));
-                part_of_last = part;
-            }
-        }
-        if ranges.len() < 2 {
-            ranges.clear();
-        }
-        ranges
-    };
-    // Of all the files, so that those that are only emitted are not divided over an empty published state.
-    let cost =
-        costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
     let threads = match in_room {
         Some(place) if place.is_for_one_thread => 1,
         _ => threads,
     };
-    // The thread that builds a project of a build checks it alone if the others have projects of their own.
-    let may_be_one_thread = !request.plan_options.tasks_on_one_thread
-        && cost <= request.plan_options.one_thread_max_cost;
-    let is_one_thread = (threads == 1 || host.is_of_one_thread()) && may_be_one_thread;
-    let plan_of =
-        |files: std::ops::Range<usize>, is_one_thread: bool| match request.plan_options.checkers {
-            0 if is_one_thread => Plan {
-                steps: match Plan::of_one_thread(files.collect(), &size_of, &request.plan_options) {
-                    tasks if tasks.is_empty() => Vec::new(),
-                    tasks => vec![tasks],
-                },
-                ahead: Vec::new(),
-                first_step: 0,
-                is_of_one_thread: true,
-            },
-            0 => Plan::new(
-                files,
-                &bytes_of,
-                &size_of,
-                &ranges_of,
-                &request.plan_options,
-            ),
-            checkers => Plan::of_checkers(
-                files.len(),
-                &|index| place(to_check[index]) as usize,
-                program.files.order.len(),
-                checkers,
-            ),
-        };
-    // Other programs wait for the files that are checked for all, and this one may use their threads meanwhile.
-    let shared_plan = match shared_count {
-        0 => Plan {
-            steps: Vec::new(),
-            ahead: Vec::new(),
-            first_step: 0,
-            is_of_one_thread: false,
-        },
-        count => plan_of(0..count, threads == 1 && may_be_one_thread),
-    };
-    let plan = Plan {
-        first_step: shared_plan.steps.len(),
-        ..plan_of(shared_count..to_check.len(), is_one_thread)
-    };
-    let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
-        host.parallel(count, work);
-    };
-    let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
-    // For every task since the last barrier: wall time, the number of files, the index of the first file.
+    let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
+    // For every task of the round: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
-    // Returns the invalid tasks.
-    // `is_retry`: the valid tasks publish, so that the tasks retried after them find what they stored.
-    let run_round =
-        |plan: &Plan, number: usize, step: &[Task], expected: Requested, is_retry: bool| {
-            let ahead = match is_retry {
-                true => &[][..],
-                false => plan.ahead_of(number),
-            };
-            // After the last step the published state is read by the loop over the files that are not
-            // checked, which runs with `after_file`, and by a caller that goes on to query the program.
-            // The tasks of split files read the ranges, and nothing else of the step before theirs.
-            let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
-                || is_retry
-                || request.retains_everything
-                || request.after_file.is_some()
-                    && !request.plan_options.after_file_is_for_checked_files;
-            let (tasks, at) = (step.len(), plan.first_step + number);
-            let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
-            // The largest first, so that no thread begins it when the others are nearly done.
-            let mut start_order: Vec<usize> = (0..tasks).collect();
-            match request.order {
-                1 if plan.is_of_one_thread => {}
-                1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
-                order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
-            }
-            let outcomes: Vec<Guarded<Option<Outcome>>> =
-                (0..tasks).map(|_| Guarded::new(None)).collect();
-            let (started, busy) = (Instant::now(), AtomicU64::new(0));
-            let blocked = claim.lock().as_ref().map_or(0, Claim::blocked);
-            host.parallel_while_others_wait(blocked, tasks, &|i| {
-                let (index, began) = (start_order[i], Instant::now());
-                let cost_before = request.task_clock.map(|clock| clock());
-                let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
-                let outcome = match ahead.get(index).copied().flatten() {
-                    Some(range) => check_ahead(files[0], range, expected, [at, index]),
-                    None => check_chunk(&files, expected, Some((at, index, is_read_later))),
-                };
-                *outcomes[index].lock() = Some(outcome);
-                let elapsed = began.elapsed();
-                busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-                let cost = match (request.task_clock, cost_before) {
-                    (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
-                    _ => elapsed,
-                };
-                task_times.lock().push((cost, files.len(), step[index][0]));
-            });
-            let in_tasks = started.elapsed();
-            // The barrier. Everything from here on is in task order.
-            let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
-                .map(|mut outcome| outcome.get_mut().take().unwrap())
-                .collect();
-            let mut finished: Vec<Finished> = (outcomes.iter_mut())
-                .map(|outcome| outcome.finished.take().unwrap())
-                .collect();
-            // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
-            let mut invalid: Vec<Task> = Vec::new();
-            let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
-            if checker_count == 0 {
-                // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
-                let mut is_invalid = program.validate(&finished, is_read_later);
-                if std::ptr::eq(plan, &raw const shared_plan) {
-                    let reports_nothing = |it: &Outcome| {
-                        it.incomplete.is_empty() && it.checked.iter().all(|it| it.1.is_empty())
-                    };
-                    let mut carried = carried.lock();
-                    if is_invalid.contains(&true) || !outcomes.iter().all(reports_nothing) {
-                        *carried = None;
-                    }
-                    for finished in &finished {
-                        match (finished.only_variances(), &mut *carried) {
-                            (Some(variances), Some(all)) => all
-                                .extend(variances.map(|(sym, variances)| (sym, variances.into()))),
-                            _ => *carried = None,
-                        }
-                    }
-                }
-                // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
-                // evaluates what is missing.
-                let tolerated = request.plan_options.split_tolerates & 7;
-                for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
-                    *is_invalid |= outcome.obstacles & !tolerated != 0;
-                    for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
-                        *count += usize::from((outcome.obstacles >> bit) & 1);
-                    }
-                }
-                let mut at = is_invalid.iter();
-                finished.retain(|_| !*at.next().unwrap());
-                let mut at = is_invalid.iter().zip(step).enumerate();
-                outcomes.retain(|_| {
-                    let (index, (&is_invalid, task)) = at.next().unwrap();
-                    if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
-                        ranges_dropped += 1;
-                    } else if is_invalid {
-                        if let Some(progress) = request.progress {
-                            let bytes = task.iter().map(|&file| bytes_of(file)).sum();
-                            progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
-                            progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
-                        }
-                        invalid.push(task.clone());
-                    }
-                    !is_invalid
-                });
-            }
-            for outcome in &mut outcomes {
-                free_trees(std::mem::take(&mut outcome.trees_to_free));
-            }
-            let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
-            for finished in &finished {
-                for (sum, &more) in foreign_evaluations
-                    .iter_mut()
-                    .zip(&finished.foreign_evaluations)
-                {
-                    *sum += u64::from(more);
-                }
-            }
-            let linking = Instant::now();
-            let records = program.link(&mut finished, &in_parallel);
-            let (in_link, publishing) = (linking.elapsed(), Instant::now());
-            let entries = program.publish(&mut finished, &in_parallel, request.digests);
-            let in_publish = publishing.elapsed();
-            let not_published = outcomes
-                .iter()
-                .map(|it| it.generic_relation_entries_not_published);
-            let generic_relation_entries_not_published = not_published.sum();
-            outcomes.into_iter().for_each(&accept);
-            let mut slowest = std::mem::take(&mut *task_times.lock());
-            slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-            if request.task_clock.is_none() {
-                slowest.truncate(5);
-            }
-            let path_of = |file: usize| {
-                program.files.modules[to_check[file].idx()]
-                    .file_name()
-                    .to_vec()
-            };
-            steps.lock().push(StepReport {
-                slowest_tasks: (slowest.into_iter())
-                    .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
-                    .collect(),
-                tasks,
-                ranges: ahead.iter().flatten().count(),
-                ranges_dropped,
-                ranges_by_obstacle,
-                files: step.iter().map(Vec::len).sum(),
-                in_tasks,
-                in_link,
-                in_publish,
-                idle: (in_tasks * threads as u32)
-                    .saturating_sub(Duration::from_nanos(busy.into_inner())),
-                entries,
-                records,
-                generic_relation_entries_not_published,
-                foreign_evaluations,
-            });
-            invalid
+    // The files of the tasks that were lost.
+    let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
+    // Which files are checked for good, and how many from the first one on, in program order. The task that checks the
+    // next one enters a ring where `tsc --singleThreaded` does: `Checker::set_first_in_order`.
+    let checked_for_good = Guarded::new((vec![false; to_check.len()], 0usize));
+    // How many files are checked for good.
+    let files_done = AtomicUsize::new(0);
+    /// What the driver remembers about the last time a file was checked.
+    #[derive(Clone, Default)]
+    struct Visit {
+        /// `Checker::take_unresolved_cycle`
+        unresolved_cycle: Vec<u64>,
+        /// Commits up to this number don't resolve `unresolved_cycle`.
+        commits_compared: u32,
+        /// `files_done` when the visit began.
+        files_done: usize,
+        /// `Checker::can_recheck_early`
+        can_recheck_early: bool,
+        /// The file was already rechecked once because all earlier files were done.
+        was_retried_as_first: bool,
+        /// How many times the file was rechecked before the last round.
+        rechecks: usize,
+    }
+    let visits = Guarded::new(vec![Visit::default(); to_check.len()]);
+    let index_of_file: FxHashMap<FileId, usize> = (to_check
+        .iter()
+        .enumerate()
+        .map(|(index, &file)| (file, index)))
+    .collect();
+    // A task that starts with a rechecked file gets a round number of its own, starting here, so task numbers stay unique.
+    const AGAIN: usize = 2;
+    /// What the tasks of a round add up to.
+    #[derive(Default)]
+    struct Sums {
+        tasks: usize,
+        logged: u64,
+        stored: u64,
+        waits: [Duration; 3],
+        lost: Vec<(usize, &'static str)>,
+    }
+    // Every thread takes files from one queue until none is left. `files`: in program order.
+    // `is_last_round`: one thread checks them all in that order, in one task, which is believed.
+    //
+    // No thread holds a file that it has not begun but for the rest of its run, so none is left with a long list when
+    // the others are through: how long a file takes is known only afterwards.
+    let run_tasks = |round: usize, files: &[usize], expected: Requested, is_last_round: bool| {
+        let cost: usize = files.iter().map(|&file| size_of(file)).sum();
+        // A checker is replaced by a new one after this much: what it holds for itself grows with every file.
+        let task_cost = match is_last_round {
+            true => usize::MAX,
+            false => (cost / MIN_TASKS).max(1),
         };
-    // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
-    // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-    let run_step = |plan: &Plan, number: usize, step: &[Task], expected: Requested| {
-        program.compare_listings();
-        let mut invalid = run_round(plan, number, step, expected, false);
-        let mut retried = 0;
-        while !invalid.is_empty() {
-            let mut files = invalid.concat();
-            files.shared_sort_unstable();
-            // A round of retries that left every file invalid.
-            if retried != 0 && files.len() >= retried {
-                program.stop_comparing_listings();
-            }
-            retried = files.len();
-            let again = match plan.is_of_one_thread {
-                true => Plan::of_one_thread(files, &size_of, &request.plan_options),
-                false => Plan::cut(files, &size_of, &request.plan_options),
-            };
-            invalid = run_round(plan, number, &again, expected, true);
+        let workers = if is_last_round { 1 } else { threads };
+        // The heavy files first, the largest first, so that no thread begins one when the others are nearly done. Then
+        // the others in program order: neighbors use the same types. One thread takes them all in program order.
+        let is_heavy = |file: &usize| workers != 1 && size_of(*file) >= task_cost;
+        let (mut queue, light): (Vec<usize>, Vec<usize>) =
+            files.iter().partition(|it| is_heavy(it));
+        queue.shared_sort_by_key(|&file| Reverse(size_of(file)));
+        let mut heavy = queue.len();
+        queue.extend(light);
+        if request.order != 1 {
+            queue.shared_sort_by_key(|&file| (file as u32 + 1).wrapping_mul(request.order));
+            heavy = 0;
         }
-    };
-    // After `shared_plan`, before any other task of the program.
-    let publish_verdict = || {
-        let Some(claim) = claim.lock().take() else {
-            return;
+        // How many heavy files of `queue` are taken, how many light ones, and the cost of the rest.
+        let left = Guarded::new((0usize, 0usize, cost));
+        // The next run: consecutive files of `queue` for one thread. Threads that work far apart ask for different
+        // types at any one time. A run is a share of what is left, so the runs get shorter toward the end. A heavy file is a
+        // run by itself. `skips_heavy_files`: this worker takes light files first, so the first files of the program get
+        // done and discarded files can be rechecked. See `checked_for_good`.
+        let take_run = |skips_heavy_files: bool| -> std::ops::Range<usize> {
+            let (heavy_taken, light_taken, cost_left) = &mut *left.lock();
+            let from = heavy + *light_taken;
+            if *heavy_taken < heavy && (!skips_heavy_files || from == queue.len()) {
+                *heavy_taken += 1;
+                *cost_left = cost_left.saturating_sub(size_of(queue[*heavy_taken - 1]));
+                return *heavy_taken - 1..*heavy_taken;
+            }
+            let share = match is_last_round {
+                true => usize::MAX,
+                false => *cost_left / (workers * RUNS_PER_THREAD),
+            };
+            let (mut to, mut cost_of_run) = (from, 0);
+            while to < queue.len() && (to == from || cost_of_run < share) {
+                cost_of_run += size_of(queue[to]);
+                to += 1;
+            }
+            *light_taken = to - heavy;
+            *cost_left = cost_left.saturating_sub(cost_of_run);
+            from..to
         };
-        // A merged symbol is made for each program. The symbol that the binder made for its first declaration is part of the
-        // shared file, so it has the same id in every program, and leads back to the merged one.
-        let portable = |(sym, variances): (Sym, Box<[u8]>)| {
-            let part = *program.files.parts(sym).first()?;
-            let (shared_id, symbol) = (
-                program.files.module(part.file).shared_id,
-                program.files.symbol(part),
+        // Returns the first file in program order that was discarded and is worth rechecking now: its commit was invalid,
+        // a commit has resolved the cycle it was discarded for, or all earlier files are done, so its task will be trusted.
+        //
+        // The round ends: a file is rechecked early only if another file was checked for good since its last visit began.
+        // That count only grows, and no further than the number of files. So it is greater at the start of each early
+        // recheck of a file than at the start of the visit before, whatever that visit was discarded for.
+        let take_file_to_recheck = || -> Option<usize> {
+            let next = checked_for_good.lock().1;
+            let done = files_done.load(Ordering::Acquire);
+            let last = program.last_commit();
+            let (mut lost, mut visits) = (lost.lock(), visits.lock());
+            let mut can_recheck = |file: usize| {
+                let visit = &mut visits[file];
+                let after = std::mem::replace(&mut visit.commits_compared, last);
+                if program.is_cycle_resolved(&visit.unresolved_cycle, after, last) {
+                    visit.unresolved_cycle.clear();
+                }
+                visit.can_recheck_early
+                    && (visit.unresolved_cycle.is_empty() && visit.files_done < done
+                        || file == next && !visit.was_retried_as_first)
+            };
+            let candidates = lost.iter().enumerate();
+            let candidates = candidates.filter(|&(_, &file)| can_recheck(file));
+            let (at, &file) = candidates.min_by_key(|&(_, &file)| file)?;
+            visits[file].was_retried_as_first |= file == next;
+            visits[file].rechecks += 1;
+            lost.swap_remove(at);
+            Some(file)
+        };
+        let is_read_afterwards = request.retains_everything
+            || request.after_file.is_some()
+                && !request.plan_options.after_file_is_for_checked_files;
+        let sums: Guarded<Sums> = Guarded::new(Sums::default());
+        let (started, busy) = (Instant::now(), AtomicU64::new(0));
+        /// What a worker that has run out of files waits for.
+        #[derive(Default)]
+        struct Activity {
+            /// How many workers are looking for a file or running a task.
+            active: usize,
+            /// Counts commits and discards. Each one can make a discarded file recheckable.
+            changes: u64,
+        }
+        let activity = Guarded::new(Activity::default());
+        let activity_has_changed = bun_threading::Condvar::new();
+        let note_change = || {
+            activity.lock().changes += 1;
+            activity_has_changed.notify_all();
+        };
+        // One task, which begins with the file `first` and goes on with what `next` returns. Returns the file that the
+        // next task of the thread begins with.
+        let run_task = |first: usize, next: &mut dyn FnMut() -> Option<usize>| -> Option<usize> {
+            let began = Instant::now();
+            let mut checker = new_checker(expected);
+            // The index of a task is that of its first file, which no other task of the round has.
+            let round = match visits.lock()[first].rechecks {
+                rechecks if rechecks != 0 && !is_last_round => AGAIN + rechecks,
+                _ => round,
+            };
+            checker.begin_task(round as u32, first as u32);
+            checker.see_commits(is_last_round);
+            let mut trees_to_free = Vec::new();
+            let (mut done, mut spent, mut index) = (0, 0, first);
+            let upcoming = loop {
+                let file = to_check[index];
+                {
+                    let visit = &mut visits.lock()[index];
+                    visit.commits_compared = program.last_commit();
+                    visit.files_done = files_done.load(Ordering::Acquire);
+                }
+                {
+                    let (is_checked, next) = &*checked_for_good.lock();
+                    let is_done = |before: usize| is_checked[before];
+                    // The files in the same import cycle.
+                    let components = &program.files.components;
+                    let component = components.of_file.get(file.idx());
+                    let component = component.and_then(|&at| components.all.get(at as usize));
+                    let around = component.map_or(&[][..], |it| it.files).iter();
+                    let around = around.filter_map(|it| index_of_file.get(it).copied());
+                    checker.set_first_in_order(
+                        (*next..index).all(is_done),
+                        around.take_while(|&it| it < index).all(is_done),
+                    );
+                }
+                let checked = checker.check_file(file);
+                if let Some(after_file) = request.after_file
+                    && expected == wanted
+                    && !checker.is_lost()
+                {
+                    after_file(&mut checker, file);
+                }
+                let incomplete = checker.take_ran_out_of_stack().then_some(file);
+                if let Some(progress) = request.progress {
+                    progress.checked.fetch_add(1, Ordering::Relaxed);
+                    let bytes = bytes_of(index);
+                    progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
+                }
+                (done, spent) = (done + 1, spent + size_of(index));
+                let upcoming = next();
+                // A task keeps what it evaluated about other files, and a file's own check must not find what a later
+                // file's check evaluated. So a task only moves forward in program order.
+                let is_last = upcoming.is_none_or(|it| it < index) || spent >= task_cost;
+                // Nothing waits for what the tasks that end last have found out.
+                let is_read = upcoming.is_some() || is_read_afterwards || !lost.lock().is_empty();
+                if !checker.commit_after_file(is_last, is_read) {
+                    if let Some(progress) = request.progress {
+                        progress.checked.fetch_sub(1, Ordering::Relaxed);
+                        let bytes = bytes_of(index);
+                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+                    }
+                    {
+                        let visit = &mut visits.lock()[index];
+                        visit.can_recheck_early = checker.can_recheck_early();
+                        visit.unresolved_cycle = checker.take_unresolved_cycle();
+                    }
+                    lost.lock().push(index);
+                    note_change();
+                    break upcoming;
+                }
+                {
+                    let (is_checked, next) = &mut *checked_for_good.lock();
+                    is_checked[index] = true;
+                    while is_checked.get(*next) == Some(&true) {
+                        *next += 1;
+                    }
+                }
+                files_done.fetch_add(1, Ordering::Release);
+                if program.files.modules[file.idx()].is_leaf {
+                    trees_to_free.push(file);
+                }
+                accept(Outcome {
+                    checked: vec![(file, checked)],
+                    incomplete: incomplete.into_iter().collect(),
+                });
+                note_change();
+                match upcoming {
+                    Some(following) if !is_last => index = following,
+                    _ => break upcoming,
+                }
+            };
+            deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+            let walks = checker.inference_walk_counts();
+            for (sum, more) in inference_walks.lock().iter_mut().zip(walks) {
+                *sum += more;
+            }
+            for (sum, more) in members.lock().iter_mut().zip(checker.member_counts()) {
+                *sum += more;
+            }
+            let ended = checker.end_task_after_commits();
+            {
+                let mut sums = sums.lock();
+                sums.tasks += 1;
+                sums.logged += ended.logged;
+                sums.stored += ended.stored;
+                for (sum, more) in sums.waits.iter_mut().zip(ended.waits) {
+                    *sum += more;
+                }
+                (sums.lost).extend(ended.lost_because_of.map(|why| (index, why)));
+            }
+            // It holds references into the HIR of files.
+            drop(checker);
+            free_trees(trees_to_free);
+            let elapsed = began.elapsed();
+            busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+            task_times.lock().push((elapsed, done, first));
+            upcoming
+        };
+        let first_files_worker = AtomicUsize::new(usize::MAX);
+        let workers_started = AtomicUsize::new(0);
+        // Returns a closure that runs one task per call on the current thread. It returns false once this thread has nothing
+        // left to do in this round.
+        //
+        // A worker that finds no file waits as long as a file is discarded and another worker is active: that worker's next
+        // commit can make the file recheckable. Every wait ends. An active worker either finishes a file, which counts as a
+        // change, or finds nothing and stops being active. Both wake every waiting worker, and one that wakes up to no
+        // change and no active worker returns. A waiting worker holds no lock and no file.
+        let shared = (&take_file_to_recheck, &take_run, &run_task, &queue, &lost);
+        let (activity, activity_has_changed) = (&activity, &activity_has_changed);
+        let worker = || {
+            let (take_file_to_recheck, take_run, run_task, queue, lost) = shared;
+            let (first_files_worker, id) = (
+                &first_files_worker,
+                workers_started.fetch_add(1, Ordering::Relaxed),
             );
-            let is_of_the_binder = !symbol.flags.contains(SymFlags::TRANSIENT);
-            (shared_id != 0 && is_of_the_binder && program.files.canonical(part) == sym)
-                .then_some((shared_id, part.id, symbol.name, variances))
+            let (mut run, mut first) = (0..0, None);
+            move || {
+                let mut next = || {
+                    if let Some(file) = take_file_to_recheck() {
+                        return Some(file);
+                    }
+                    if run.is_empty() {
+                        // The first worker that sees a discarded file moves to the first unchecked files, and stays there.
+                        let is_needed = !lost.lock().is_empty();
+                        let is_mine = is_needed
+                            && first_files_worker
+                                .compare_exchange(
+                                    usize::MAX,
+                                    id,
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                )
+                                .is_ok();
+                        run = take_run(is_mine || first_files_worker.load(Ordering::Relaxed) == id);
+                    }
+                    run.next().map(|at| queue[at])
+                };
+                let seen = {
+                    let mut activity = activity.lock();
+                    activity.active += 1;
+                    activity.changes
+                };
+                // A task asks for its next file before it commits the last one, and that commit can make a discarded file
+                // the next.
+                let file = first.take().or_else(&mut next);
+                first = file.and_then(|file| run_task(file, &mut next));
+                let mut activity = activity.lock();
+                activity.active -= 1;
+                activity_has_changed.notify_all();
+                while file.is_none()
+                    && activity.changes == seen
+                    && activity.active != 0
+                    && !lost.lock().is_empty()
+                {
+                    activity_has_changed.wait_guarded(&mut activity);
+                }
+                file.is_some() || activity.changes != seen
+            }
         };
-        let carried = carried.lock().take();
-        let carried = carried.filter(|_| !program.has_notes_outside_finished());
-        match carried.and_then(|it| it.into_iter().map(portable).collect()) {
-            Some(carried) => claim.report_clean(carried),
-            None => claim.report_not_clean(),
+        let work = || {
+            let mut run_a_task = worker();
+            while run_a_task() {}
+        };
+        match host.helpers_now() {
+            Some(_) if workers > 1 => {
+                run_with_current_helpers(host, 0, &mut worker(), &work);
+            }
+            _ => host.parallel(workers, &|_| work()),
+        }
+        let elapsed = started.elapsed();
+        let sums = std::mem::take(&mut *sums.lock());
+        let mut slowest = std::mem::take(&mut *task_times.lock());
+        slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
+        slowest.truncate(5);
+        let path_of = |file: usize| {
+            program.files.modules[to_check[file].idx()]
+                .file_name()
+                .to_vec()
+        };
+        rounds.lock().push(RoundReport {
+            slowest_tasks: (slowest.into_iter())
+                .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
+                .collect(),
+            tasks: sums.tasks,
+            files: files.len(),
+            elapsed,
+            waits: sums.waits,
+            lost: (sums.lost.into_iter())
+                .map(|(file, why)| (path_of(file), why))
+                .collect(),
+            idle: (elapsed * threads as u32)
+                .saturating_sub(Duration::from_nanos(busy.into_inner())),
+            logged: sums.logged,
+            stored: sums.stored,
+        });
+    };
+    let run_without_steps = |expected: Requested| {
+        let all: Vec<usize> = (0..to_check.len()).collect();
+        run_tasks(0, &all, expected, false);
+        let mut again = std::mem::take(&mut *lost.lock());
+        if !again.is_empty() {
+            again.shared_sort_unstable();
+            run_tasks(1, &again, expected, true);
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
@@ -4783,36 +4604,20 @@ fn check_named_files(
     // only if there is none of the previous kind. A file that does not parse, or is checked under
     // inconsistent options, produces errors that are not worth reading.
     let stops = request.stops_like_tsc;
-    // `type_checked`: the files that are, or else the others.
+    // `type_checked`: check the files that are type checked, or else the others.
     let check_files = |expected: Requested, type_checked: bool| {
         if type_checked == is_any_type_checked {
-            for (number, step) in shared_plan.steps.iter().enumerate() {
-                run_step(&shared_plan, number, step, expected);
-            }
-            publish_verdict();
-            for (number, step) in plan.steps.iter().enumerate() {
-                run_step(&plan, number, step, expected);
-            }
+            run_without_steps(expected);
         }
         if !type_checked {
-            // Like the tasks of the plan.
-            let tasks: Vec<Vec<FileId>> = if is_one_thread {
-                let cost_of = |index: usize| cost_of(only_emitted[index]);
-                Plan::of_one_thread(
-                    (0..only_emitted.len()).collect(),
-                    &cost_of,
-                    &request.plan_options,
-                )
-                .into_iter()
-                .map(|task| task.into_iter().map(|index| only_emitted[index]).collect())
-                .collect()
-            } else {
-                let tasks = request.plan_options.min_tasks.max(1);
-                let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
-                tasks.map(<[FileId]>::to_vec).collect()
+            let tasks = match threads == 1 || host.is_of_one_thread() {
+                true => 1,
+                false => MIN_TASKS,
             };
+            let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
+            let tasks: Vec<&[FileId]> = tasks.collect();
             host.parallel(tasks.len(), &|i| {
-                accept(check_chunk(&tasks[i], expected, None));
+                accept(check_chunk(tasks[i], expected));
             });
         }
         finish_files();
@@ -4828,8 +4633,6 @@ fn check_named_files(
             false => options.is_incremental,
         };
     let emit_on_early_exit = || -> Vec<Diagnostic> {
-        // This program will not check the shared files. Another one has to.
-        drop(claim.lock().take());
         if emits_despite_errors {
             check_files(Requested::Declaration, true);
             check_files(Requested::Declaration, false);
@@ -4850,7 +4653,7 @@ fn check_named_files(
                 .map(|i| FileId(i as u32))
                 .collect();
             host.parallel(suspects.len(), &|i| {
-                accept(check_chunk(&suspects[i..=i], Requested::Syntactic, None));
+                accept(check_chunk(&suspects[i..=i], Requested::Syntactic));
             });
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
@@ -4921,14 +4724,16 @@ fn check_named_files(
                 if is_left_out || is_checked[i] {
                     continue;
                 }
-                let mut checker = program.checker();
+                let mut checker = boxed_checker();
                 checker.begin_stack_budget();
                 after_file(&mut checker, file);
             }
         }
     }
     report.deepest_stack = deepest_stack.into_inner();
-    report.steps = std::mem::take(&mut *steps.lock());
+    report.inference_walks = *inference_walks.lock();
+    report.members = *members.lock();
+    report.rounds = std::mem::take(&mut *rounds.lock());
     report.incomplete = std::mem::take(&mut *incomplete.lock());
     report.incomplete.shared_sort();
     report.incomplete.dedup();

@@ -24,6 +24,7 @@ public:
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };
     IsoSubspace* m_subspaceForJSSQLStatement { nullptr };
+    IsoSubspace* m_subspaceForJSSQLDatabase { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteDatabaseSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSyncIterator { nullptr };
@@ -178,7 +179,6 @@ public:
     IsoSubspace* m_subspaceForJSHash { nullptr };
     IsoSubspace* m_subspaceForServerRouteList { nullptr };
     IsoSubspace* m_subspaceForBunRequest { nullptr };
-    IsoSubspace* m_subspaceForBakeResponse { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellman { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellmanGroup { nullptr };
     IsoSubspace* m_subspaceForJSECDH { nullptr };

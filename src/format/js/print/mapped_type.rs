@@ -90,7 +90,8 @@ pub(crate) fn write_ts_mapped_type<'a>(
                 &format_inner,
                 f.options().bracket_spacing.value()
             ))
-            .should_expand(should_expand),
+            .should_expand(should_expand)
+            .stays_expanded(f.options().expand == Expand::Auto),
             "}",
         ]
     );

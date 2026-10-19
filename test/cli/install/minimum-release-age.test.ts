@@ -1643,7 +1643,7 @@ describe("minimum-release-age", () => {
         expect(resolved).toEqual({
           // Too recent for the gate, but listed.
           "excluded-package": "excluded-package@1.0.1",
-          // Not listed: still gated (3.0.0 is 1 day old).
+          // It isn't listed, so it's still gated (3.0.0 is 1 day old).
           "regular-package": "regular-package@2.1.0",
         });
         // Installing a listed version is not a downgrade, so only
@@ -1800,7 +1800,7 @@ describe("minimum-release-age", () => {
         expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual(
           entries.map(
             entry =>
-              `warn: Ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+              `warn: ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
           ),
         );
         // "excluded-package@" must not turn into a whole-package exemption, and
@@ -1883,7 +1883,7 @@ describe("minimum-release-age", () => {
             args: ["--minimum-release-age-excludes", "excluded-package@^1.0.0"],
           });
           expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual([
-            `warn: Ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+            `warn: ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
           ]);
           expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
           expect(exitCode).toBe(0);

@@ -92,9 +92,9 @@ fn report_bad_response(registry: &[u8], reason: &SkipReason) {
     Output::err_generic(
         match reason {
             SkipReason::NotAdvisories => {
-                "{f} returned an audit response that is not a list of advisories"
+                "invalid audit response from {f}: not a list of advisories"
             }
-            SkipReason::Empty => "{f} returned an empty audit response",
+            SkipReason::Empty => "empty audit response from {f}",
             _ => "{f} returned a non-JSON audit response",
         },
         (bun_core::fmt::redacted_npm_url(registry),),
@@ -912,7 +912,8 @@ fn collect_vulnerabilities(
         Err(_) => return Ok(Err(SkipReason::NotJson)),
     };
 
-    // The bulk endpoint answers `{ [package name]: Advisory[] }`; anything else is not a clean audit.
+    // The bulk endpoint responds with `{ [package name]: Advisory[] }`. Any other response doesn't
+    // count as a clean audit.
     let ExprData::EObjectJSON(obj) = &parsed.root.data else {
         return Ok(Err(SkipReason::NotAdvisories));
     };

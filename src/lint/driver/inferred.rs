@@ -250,8 +250,6 @@ impl<'e> Inferred<'e> {
             progress: None,
             only: None,
             order: 1,
-            digests: false,
-            task_clock: None,
             plan_options: bun_sema_driver::PlanOptions {
                 only_the_globals: true,
                 // A script beside a project that does not include it is not written for the libraries of that project.

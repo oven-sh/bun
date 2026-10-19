@@ -737,13 +737,14 @@ impl<'a> ZlibCompressorArrayList<'a> {
                         uLong::try_from(input.len()).expect("int cast"),
                     )
                 };
-                let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
-                if zlib_reader.list_ptr.try_reserve_exact(need).is_err() {
+                if zlib_reader
+                    .list_ptr
+                    .try_reserve_exact(bound as usize)
+                    .is_err()
+                {
                     drop(zlib_reader);
                     return Err(ZlibError::OutOfMemory);
                 }
-                zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
-                zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
                 Ok(zlib_reader)
             }
@@ -774,89 +775,54 @@ impl<'a> ZlibCompressorArrayList<'a> {
     }
 
     pub fn read_all(&mut self) -> Result<(), ZlibError> {
-        let result = (|| -> Result<(), ZlibError> {
-            while self.state == ZlibCompressorArrayListState::Uninitialized
-                || self.state == ZlibCompressorArrayListState::Inflating
+        while self.state == ZlibCompressorArrayListState::Uninitialized
+            || self.state == ZlibCompressorArrayListState::Inflating
+        {
+            if self.list_ptr.len() == self.list_ptr.capacity()
+                && self.list_ptr.try_reserve(4096).is_err()
             {
-                // Before the call of inflate(), the application should ensure
-                // that at least one of the actions is possible, by providing
-                // more input and/or consuming more output, and updating the
-                // next_* and avail_* values accordingly. If the caller of
-                // inflate() does not provide both available input and available
-                // output space, it is possible that there will be no progress
-                // made. The application can consume the uncompressed output
-                // when it wants, for example when the output buffer is full
-                // (avail_out == 0), or after each call of inflate(). If inflate
-                // returns Z_OK and with zero avail_out, it must be called again
-                // after making room in the output buffer because there might be
-                // more output pending.
-
-                // - Decompress more input starting at next_in and update
-                //   next_in and avail_in accordingly. If not all input can be
-                //   processed (because there is not enough room in the output
-                //   buffer), then next_in and avail_in are updated accordingly,
-                //   and processing will resume at this point for the next call
-                //   of inflate().
-
-                // - Generate more output starting at next_out and update
-                //   next_out and avail_out accordingly. inflate() provides as
-                //   much output as possible, until there is no more input data
-                //   or no more space in the output buffer (see below about the
-                //   flush parameter).
-
-                if self.zlib.avail_out == 0 {
-                    if self.list_ptr.try_reserve(4096).is_err() {
-                        self.end();
-                        self.state = ZlibCompressorArrayListState::Error;
-                        return Err(ZlibError::OutOfMemory);
-                    }
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
-                    self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
-                }
-
-                if self.zlib.avail_out == 0 {
-                    return Err(ZlibError::ShortRead);
-                }
-
-                // SAFETY: self.zlib was initialized via deflateInit2_.
-                let rc = unsafe { deflate(&raw mut self.zlib, FlushValue::Finish) };
-                self.state = ZlibCompressorArrayListState::Inflating;
-
-                match rc {
-                    ReturnCode::StreamEnd => {
-                        // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-                        unsafe { self.list_ptr.set_len(self.zlib.total_out as usize) };
-                        self.end();
-
-                        return Ok(());
-                    }
-                    ReturnCode::MemError => {
-                        self.end();
-                        self.state = ZlibCompressorArrayListState::Error;
-                        return Err(ZlibError::OutOfMemory);
-                    }
-                    ReturnCode::StreamError
-                    | ReturnCode::DataError
-                    | ReturnCode::BufError
-                    | ReturnCode::NeedDict
-                    | ReturnCode::VersionError
-                    | ReturnCode::ErrNo => {
-                        self.end();
-                        self.state = ZlibCompressorArrayListState::Error;
-                        return Err(ZlibError::ZlibError);
-                    }
-                    ReturnCode::Ok => {}
-                }
+                self.end();
+                self.state = ZlibCompressorArrayListState::Error;
+                return Err(ZlibError::OutOfMemory);
             }
-            Ok(())
-        })();
+            let spare = self.list_ptr.spare_capacity_mut();
+            let room = spare.len().min(u32::MAX as usize);
+            self.zlib.next_out = spare.as_mut_ptr().cast::<u8>();
+            self.zlib.avail_out = room as uInt;
 
-        // epilogue (runs unconditionally): sync the output length back.
-        self.list_ptr.truncate(self.zlib.total_out as usize);
+            // SAFETY: self.zlib was initialized via deflateInit2_; spare is valid for `room` bytes.
+            let rc = unsafe { deflate(&raw mut self.zlib, FlushValue::Finish) };
+            self.state = ZlibCompressorArrayListState::Inflating;
 
-        result
+            // `total_out` is 32 bits on Windows.
+            let produced = room - self.zlib.avail_out as usize;
+            // SAFETY: zlib has initialized `produced` bytes at the start of spare.
+            unsafe { bun_core::vec::commit_spare(self.list_ptr, produced) };
+
+            match rc {
+                ReturnCode::StreamEnd => {
+                    self.end();
+                    return Ok(());
+                }
+                ReturnCode::MemError => {
+                    self.end();
+                    self.state = ZlibCompressorArrayListState::Error;
+                    return Err(ZlibError::OutOfMemory);
+                }
+                ReturnCode::StreamError
+                | ReturnCode::DataError
+                | ReturnCode::BufError
+                | ReturnCode::NeedDict
+                | ReturnCode::VersionError
+                | ReturnCode::ErrNo => {
+                    self.end();
+                    self.state = ZlibCompressorArrayListState::Error;
+                    return Err(ZlibError::ZlibError);
+                }
+                ReturnCode::Ok => {}
+            }
+        }
+        Ok(())
     }
 }
 

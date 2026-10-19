@@ -189,7 +189,6 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
-#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -2145,7 +2144,6 @@ void GlobalObject::finishCreation(VM& vm)
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
-    m_bakeAdditions.initialize();
     m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
@@ -2404,6 +2402,9 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(WebCore::createJSSQLStatementStructure(init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLDatabaseStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(WebCore::createJSSQLDatabaseStructure(init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(

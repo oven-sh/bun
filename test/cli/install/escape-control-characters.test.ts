@@ -183,7 +183,7 @@ test.concurrent("resolution errors escape the dist-tag", async () => {
 test.concurrent("resolution errors escape a file: path", async () => {
   using dir = project("file-path", { dependencies: { dep: `file:./missing-${C1}` } });
   const { stdout, stderr, exitCode } = await run(String(dir), "install");
-  expect(stderr).toContain(`Could not find package.json for "file:missing-${C1_ESCAPED}" dependency "dep"`);
+  expect(stderr).toContain(`package.json not found for "file:missing-${C1_ESCAPED}" dependency "dep"`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
 });
@@ -336,7 +336,7 @@ const messages: Record<string, Message> = {
       }),
     }),
     command: ["install"],
-    printed: value => `error: Couldn't find patch file: 'patches/${value}.patch'\n`,
+    printed: value => `error: patch file not found: 'patches/${value}.patch'\n`,
     exitCode: 1,
   },
   "a CA file that is not there": {
@@ -360,8 +360,8 @@ const messages: Record<string, Message> = {
         },
       }),
     }),
-    command: ["pm", "migrate"],
-    printed: value => `not depended on by any package: "node_modules/${value}"\n`,
+    command: ["pm", "migrate", "--verbose"],
+    printed: value => `unused package-lock.json entry: "node_modules/${value}"\n`,
     exitCode: 0,
   },
   "a version in yarn.lock that is not one": {
@@ -369,8 +369,8 @@ const messages: Record<string, Message> = {
       "package.json": JSON.stringify({ ...app, dependencies: { dep: "^1.0.0" } }),
       "yarn.lock": `# yarn lockfile v1\n\n\ndep@^1.0.0:\n  version "1.0.0_${value}"\n  resolved "${registryUrl}/dep.tgz#aa"\n`,
     }),
-    command: ["pm", "migrate"],
-    printed: value => `warn: skipped "dep@^1.0.0" from yarn.lock: invalid version "1.0.0_${value}"\n`,
+    command: ["pm", "migrate", "--verbose"],
+    printed: value => `warn: skipping "dep@^1.0.0" from yarn.lock: invalid version "1.0.0_${value}"\n`,
     exitCode: 0,
   },
   "the version that `bun pm version` starts from": {
@@ -449,7 +449,7 @@ test.concurrent.skipIf(isWindows).each(characters)("--verbose, a file of a packa
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("the mark under a line of a file stands under the place it is about", async () => {
+test.concurrent("the marker under a source line points at the right column", async () => {
   using dir = tempDir("escape-controls-mark", { "package.json": `{ "a${C1}b": 1, oops }` });
   const { stdout, stderr, exitCode } = await run(String(dir), "install");
   const before = `1 | { "a${C1_ESCAPED}b": 1, `;
@@ -459,7 +459,7 @@ test.concurrent("the mark under a line of a file stands under the place it is ab
 });
 
 // It does nothing on a terminal.
-test.concurrent("a NUL stays in the line of a file, and is spelled out in the message", async () => {
+test.concurrent("a NUL is kept in the source line, and is escaped in the message", async () => {
   using dir = tempDir("escape-controls-nul", { "package.json": `{ "name": "app", /*\0*/ a\0b }` });
   const { stderr, exitCode } = await run(String(dir), "install");
   const before = `1 | { "name": "app", /*\0*/ `;
@@ -469,15 +469,15 @@ test.concurrent("a NUL stays in the line of a file, and is spelled out in the me
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("a name that is not one", async () => {
+test.concurrent("an invalid name", async () => {
   using dir = tempDir("escape-controls-name", { "package.json": JSON.stringify({ ...app, name: `a${C1}b` }) });
   const { stdout, stderr, exitCode } = await run(String(dir), "link");
-  expect(stderr).toContain(`error: Invalid package name "a${C1_ESCAPED}b"\n`);
+  expect(stderr).toContain(`error: invalid package name "a${C1_ESCAPED}b"\n`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("what git says about a repository it cannot read", async () => {
+test.concurrent("git's output about a repository that it can't read", async () => {
   using dir = project("git", {});
   const repository = `git+file://${join(String(dir), `missing-${C1}.git`).replaceAll("\\", "/")}`;
   await Bun.write(join(String(dir), "package.json"), JSON.stringify({ ...app, dependencies: { dep: repository } }));

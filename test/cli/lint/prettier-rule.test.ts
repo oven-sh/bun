@@ -232,6 +232,25 @@ describe.concurrent("prettier/prettier", () => {
     );
   });
 
+  test("prettier-plugin-tailwindcss: the rule of the package is asked, unless there is no Tailwind CSS to ask", async () => {
+    const plugin = "prettier-plugin-tailwindcss";
+    const files = {
+      "a.js": 'html`<a class="p-4 flex"></a>`  ;\n',
+      ".prettierrc": `{ "plugins": ["${plugin}"] }`,
+      ...installed(),
+      "eslint.config.mjs": config(),
+    };
+    const [withPlugin, withPackage, without] = await Promise.all([
+      lint({ ...files, [`node_modules/${plugin}/package.json`]: "{}" }),
+      lint({ ...files, "node_modules/tailwindcss/package.json": "{}" }),
+      lint(files),
+    ]);
+    expect(withPlugin.reports).toEqual({ "a.js": ["theirs"] });
+    expect(withPackage.reports).toEqual({ "a.js": ["theirs"] });
+    // As `bun fmt`, which leaves the classes as they are.
+    expect(without.reports).toEqual({ "a.js": ['1:31-1:33 delete [30,32] "" Delete `··`'] });
+  });
+
   test("a comment turns the rule of the package off as well, and is not called unused", async () => {
     const files = {
       // The stand-in reports the `Program`, which begins where the text does.
@@ -320,13 +339,14 @@ describe.concurrent("prettier/prettier", () => {
       unchecked("the Prettier config uses a plugin that bun fmt does not include"),
     );
     expect(plugin.exitCode).toBe(1);
-    const classes = await lint({
+    const withClasses = {
       ...rule,
       ".oxfmtrc.json": '{ "sortTailwindcss": true }',
       "a.js": 'a  (`<a class="p-4 flex">`);\nhtml`<a class="p-4 flex"></a>`;\n',
       "b.js": "b  ;\n",
       "off.js": '/* eslint-disable bun/format */\nhtml`<a class="p-4 flex"></a>`;\n',
-    });
+    };
+    const classes = await lint({ ...withClasses, "node_modules/tailwindcss/package.json": "{}" });
     expect(classes.reports["a.js"]).toEqual(unchecked("only bun fmt can sort Tailwind CSS classes"));
     expect(classes.reports["off.js"]).toEqual([]);
     expect(classes.reports["b.js"]).toEqual(['1:2-1:4 delete [1,3] "" Delete `··`']);
@@ -337,6 +357,7 @@ describe.concurrent("prettier/prettier", () => {
       {
         ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
         ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+        "node_modules/tailwindcss/package.json": "{}",
         "a.js": `#!/usr/bin/env bun\n// a\n${html}`,
         "off.js": `/* oxlint-disable bun/format */\n${html}`,
       },
@@ -345,6 +366,13 @@ describe.concurrent("prettier/prettier", () => {
     );
     const places = stdout.split("\n").filter(it => it.includes("bun(format)"));
     expect(places.map(it => it.split(": ")[0])).toEqual(["a.js:3:1"]);
+    // Without the package `bun fmt` leaves the classes as they are, so there is nothing that only it can do.
+    const { reports, exitCode } = await lint(withClasses);
+    expect(reports).toMatchObject({
+      "a.js": ['1:2-1:4 delete [1,3] "" Delete `··`'],
+      "b.js": ['1:2-1:4 delete [1,3] "" Delete `··`'],
+    });
+    expect(exitCode).toBe(1);
   });
 
   test("bun/format: what the configuration of one package has is nothing to the files of another", async () => {

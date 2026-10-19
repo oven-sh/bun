@@ -583,6 +583,7 @@ impl AnyRoute {
     fn bundled_html_manifest_item_from_js(
         argument: JSValue,
         index_path: &[u8],
+        bundle_dir: Option<&[u8]>,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         if !argument.is_object() {
@@ -597,6 +598,7 @@ impl AnyRoute {
             BunString::from_js(path_js, init_ctx.global)?,
             false,
         )?);
+        let is_index_route = path.path().slice() == index_path;
 
         // Construct the route by stripping paths above the root.
         //
@@ -605,15 +607,20 @@ impl AnyRoute {
         //    "/index-abc.js" -> "/index-abc.js"
         //    "index-abc.js" -> "/index-abc.js"
         //
+        let base_dir = bundle_dir.unwrap_or(FileSystem::instance().top_level_dir);
         let path_slice = path.path().slice();
-        let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
+        let route_root: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
-            FileSystem::instance().top_level_dir
+            base_dir
         };
 
-        let abs_path = FileSystem::instance().abs(&[path_slice]);
-        let mut relative_path = FileSystem::instance().relative(cwd, abs_path);
+        let abs_path =
+            paths::resolve_path::join_abs_string::<paths::platform::Loose>(base_dir, &[path_slice]);
+        if bundle_dir.is_some() && !paths::is_absolute(path_slice) {
+            path = Node::PathOrFileDescriptor::Path(Node::PathLike::owned(abs_path.to_vec()));
+        }
+        let mut relative_path = FileSystem::instance().relative(route_root, abs_path);
 
         if relative_path.starts_with(b"./") {
             relative_path = &relative_path[2..];
@@ -622,7 +629,6 @@ impl AnyRoute {
                 relative_path = &relative_path[3..];
             }
         }
-        let is_index_route = path.path().slice() == index_path;
         let mut builder: Vec<u8> = Vec::new();
         if !relative_path.starts_with(b"/") {
             builder.push(b'/');
@@ -677,12 +683,17 @@ impl AnyRoute {
         let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
             return Ok(None);
         };
+        // Set by the bundle to its own directory; the paths are relative to it.
+        let bundle_dir = argument.get_optional_slice(init_ctx.global, b"dir")?;
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {
-            if let Some(item) =
-                Self::bundled_html_manifest_item_from_js(file_entry, index.slice(), init_ctx)?
-            {
+            if let Some(item) = Self::bundled_html_manifest_item_from_js(
+                file_entry,
+                index.slice(),
+                bundle_dir.as_deref(),
+                init_ctx,
+            )? {
                 html_route = Some(item);
             }
         }

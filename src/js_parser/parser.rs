@@ -1721,6 +1721,54 @@ pub fn new_lazy_export_ast_impl<'bump>(
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
+    lazy_export_ast(
+        bump,
+        define,
+        opts,
+        log_to_copy_into,
+        expr,
+        source,
+        runtime_api_call,
+        symbols,
+        false,
+    )
+}
+
+/// The module a server bundle gets for an HTML import:
+/// `__jsonParse(manifest, import.meta.dir)` (`__dirname` in CommonJS output),
+/// so the manifest's relative paths resolve against the output file's directory.
+pub fn new_html_import_manifest_ast<'bump>(
+    bump: &'bump bun_alloc::Arena,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
+    log_to_copy_into: &mut bun_ast::Log,
+    expr: Expr,
+    source: &'bump bun_ast::Source,
+) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
+    lazy_export_ast(
+        bump,
+        define,
+        opts,
+        log_to_copy_into,
+        expr,
+        source,
+        b"__jsonParse",
+        js_ast::symbol::List::new_in(bump),
+        true,
+    )
+}
+
+fn lazy_export_ast<'bump>(
+    bump: &'bump bun_alloc::Arena,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
+    log_to_copy_into: &mut bun_ast::Log,
+    expr: Expr,
+    source: &'bump bun_ast::Source,
+    runtime_api_call: &'static [u8],
+    symbols: js_ast::symbol::List<'bump>,
+    pass_module_dir: bool,
+) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     let mut temp_log = bun_ast::Log::init();
     // parser.log and lexer.log both store `NonNull<Log>`; copy the lexer's
     // pointer so they share one provenance chain. See `Parser::init` for the
@@ -1736,7 +1784,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols, pass_module_dir) {
         Ok(r) => r,
         Err(err) => {
             let range = parser.lexer.range();

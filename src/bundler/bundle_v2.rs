@@ -7523,6 +7523,12 @@ pub mod bv2_impl {
                 Loader::Html,
             );
             js_parser_options.bundle = true;
+            let output_format = self.transpiler_for_target(target).options.output_format;
+            let pass_module_dir = target.is_bun()
+                && matches!(output_format, options::Format::Esm | options::Format::Cjs);
+            if output_format == options::Format::Cjs {
+                js_parser_options.output_format = bun_js_parser::options::Format::Cjs;
+            }
 
             // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
             // outlives this AST. `E::EString.data` is `&'static [u8]` per the
@@ -7551,25 +7557,37 @@ pub mod bv2_impl {
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
 
+            let manifest = Expr::init(
+                E::EString {
+                    data: unique_key.into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
+            let (define, log) = unsafe { (&mut *define_ptr, &mut *log_ptr) };
+            // We replace the `__jsonParse` call's ref later via .link on the Symbol.
             let ast_for_html_entrypoint = JSAst::init(
-                bun_js_parser::new_lazy_export_ast(
-                    heap,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *define_ptr },
-                    js_parser_options,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *log_ptr },
-                    Expr::init(
-                        E::EString {
-                            data: unique_key.into(),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    empty_html_file_source,
-                    // We replace this runtime API call's ref later via .link on the Symbol.
-                    b"__jsonParse",
-                )?
+                if pass_module_dir {
+                    bun_js_parser::new_html_import_manifest_ast(
+                        heap,
+                        define,
+                        js_parser_options,
+                        log,
+                        manifest,
+                        empty_html_file_source,
+                    )
+                } else {
+                    bun_js_parser::new_lazy_export_ast(
+                        heap,
+                        define,
+                        js_parser_options,
+                        log,
+                        manifest,
+                        empty_html_file_source,
+                        b"__jsonParse",
+                    )
+                }?
                 .ok_or(Error::ParserError)?,
             );
 

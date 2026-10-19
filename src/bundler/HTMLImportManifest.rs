@@ -11,15 +11,21 @@
 //!
 //! ```javascript
 //! var src_default = __jsonParse(
-//!   '{"index":"./index.html","files":[{"input":"index.html","path":"./index-f2me3qnf.js","loader":"js","isEntry":true,"headers":{"etag": "eet6gn75","content-type": "text/javascript;charset=utf-8"}},{"input":"index.html","path":"./index.html","loader":"html","isEntry":true,"headers":{"etag": "r9njjakd","content-type": "text/html;charset=utf-8"}},{"input":"index.html","path":"./index-gysa5fmk.css","loader":"css","isEntry":true,"headers":{"etag": "50zb7x61","content-type": "text/css;charset=utf-8"}},{"input":"logo.svg","path":"./logo-kygw735p.svg","loader":"file","isEntry":false,"headers":{"etag": "kygw735p","content-type": "application/octet-stream"}},{"input":"react.svg","path":"./react-ck11dneg.svg","loader":"file","isEntry":false,"headers":{"etag": "ck11dneg","content-type": "application/octet-stream"}}]}'
+//!   '{"index":"./index.html","files":[{"input":"index.html","path":"./index-f2me3qnf.js","loader":"js","isEntry":true,"headers":{"etag": "eet6gn75","content-type": "text/javascript;charset=utf-8"}},{"input":"index.html","path":"./index.html","loader":"html","isEntry":true,"headers":{"etag": "r9njjakd","content-type": "text/html;charset=utf-8"}},{"input":"index.html","path":"./index-gysa5fmk.css","loader":"css","isEntry":true,"headers":{"etag": "50zb7x61","content-type": "text/css;charset=utf-8"}},{"input":"logo.svg","path":"./logo-kygw735p.svg","loader":"file","isEntry":false,"headers":{"etag": "kygw735p","content-type": "application/octet-stream"}},{"input":"react.svg","path":"./react-ck11dneg.svg","loader":"file","isEntry":false,"headers":{"etag": "ck11dneg","content-type": "application/octet-stream"}}]}',
+//!   import.meta.dir,
 //! );
 //! ```
+//!
+//! For `--target=bun`, the second argument is the output file's directory
+//! (`__dirname` in CommonJS output); `__jsonParse` stores it as the
+//! non-enumerable `dir` property, and `Bun.serve()` resolves the paths against it.
 //!
 //! The manifest JSON structure contains:
 //! - `index`: The original HTML file path
 //! - `files`: Array of all generated files with metadata:
 //!   - `input`: Original source file path
-//!   - `path`: Generated output file path (with content hash)
+//!   - `path`: Generated output file path (with content hash), relative to the
+//!     directory of the output file that holds the manifest
 //!   - `loader`: File type/loader used (js, css, html, file, etc.)
 //!   - `isEntry`: Whether this file is an entry point
 //!   - `headers`: HTTP headers including ETag and Content-Type
@@ -42,7 +48,9 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
+use bun_paths::resolve_path::{
+    platform, platform_to_posix_in_place, relative_normalized, relative_platform_buf,
+};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -57,6 +65,7 @@ pub struct HTMLImportManifest<'a> {
     pub(crate) graph: &'a Graph<'a>,
     pub(crate) chunks: &'a [Chunk],
     pub(crate) linker_graph: &'a LinkerGraph<'a>,
+    pub(crate) from_chunk_dir: &'a [u8],
 }
 
 impl<'a> fmt::Display for HTMLImportManifest<'a> {
@@ -67,6 +76,7 @@ impl<'a> fmt::Display for HTMLImportManifest<'a> {
             self.graph,
             self.linker_graph,
             self.chunks,
+            self.from_chunk_dir,
             &mut adapter,
         ) {
             Ok(()) => Ok(()),
@@ -132,10 +142,18 @@ pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
+    from_chunk_dir: &[u8],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
     let mut bytes: Vec<u8> = Vec::new();
-    write(index, graph, linker_graph, chunks, &mut bytes)?;
+    write(
+        index,
+        graph,
+        linker_graph,
+        chunks,
+        from_chunk_dir,
+        &mut bytes,
+    )?;
     bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
         &bytes, writer,
     )?;
@@ -153,6 +171,7 @@ impl<'a> fmt::Display for EscapedJson<'a> {
             self.0.graph,
             self.0.linker_graph,
             self.0.chunks,
+            self.0.from_chunk_dir,
             &mut adapter,
         ) {
             Ok(()) => Ok(()),
@@ -167,11 +186,14 @@ impl<'a> HTMLImportManifest<'a> {
     }
 }
 
+/// `from_chunk_dir` is the outdir-relative directory of the chunk the manifest is
+/// printed into; outside compile mode the paths are relative to it.
 pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
+    from_chunk_dir: &[u8],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
@@ -196,9 +218,11 @@ pub(crate) fn write<W: Write + ?Sized>(
 
     writer.write_all(b"{")?;
 
-    let inject_compiler_filesystem_prefix = options.compile_mode.is_executable();
     // Use the server-side public path here.
-    let public_path: &[u8] = &options.public_path;
+    let compile_prefix: Option<&[u8]> = options
+        .compile_mode
+        .is_executable()
+        .then_some(&options.public_path[..]);
     let mut temp_buffer: Vec<u8> = Vec::new();
     let mut input_buffer: Vec<u8> = Vec::new();
 
@@ -210,21 +234,15 @@ pub(crate) fn write<W: Write + ?Sized>(
 
             if matches!(ch.content, Content::Html) {
                 writer.write_all(b"\"index\":")?;
-                if inject_compiler_filesystem_prefix {
-                    temp_buffer.clear();
-                    temp_buffer.extend_from_slice(public_path);
-                    temp_buffer
-                        .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
-                    bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
-                        &temp_buffer,
-                        writer,
-                    )?;
-                } else {
-                    bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
-                        &ch.final_rel_path[..],
-                        writer,
-                    )?;
-                }
+                bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
+                    output_path(
+                        &mut temp_buffer,
+                        &ch.final_rel_path,
+                        compile_prefix,
+                        from_chunk_dir,
+                    ),
+                    writer,
+                )?;
                 writer.write_all(b",")?;
             }
         }
@@ -278,20 +296,15 @@ pub(crate) fn write<W: Write + ?Sized>(
                 )
             };
 
-            let path: &[u8] = if inject_compiler_filesystem_prefix {
-                temp_buffer.clear();
-                temp_buffer.extend_from_slice(public_path);
-                temp_buffer
-                    .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
-                &temp_buffer[..]
-            } else {
-                &ch.final_rel_path
-            };
-
             write_entry_item(
                 writer,
                 input,
-                path,
+                output_path(
+                    &mut temp_buffer,
+                    &ch.final_rel_path,
+                    compile_prefix,
+                    from_chunk_dir,
+                ),
                 // The HTML chunk's body embeds the hashed paths of its JS/CSS
                 // chunks, so its etag must change when those do. `isolated_hash`
                 // by design excludes those substitutions; the placeholder hash
@@ -335,21 +348,15 @@ pub(crate) fn write<W: Write + ?Sized>(
                     sources[source_index.get() as usize].path.text,
                 );
 
-                let path: &[u8] = if inject_compiler_filesystem_prefix {
-                    temp_buffer.clear();
-                    temp_buffer.extend_from_slice(public_path);
-                    temp_buffer.extend_from_slice(strings::remove_leading_dot_slash(
-                        &output_file.dest_path,
-                    ));
-                    &temp_buffer[..]
-                } else {
-                    &output_file.dest_path[..]
-                };
-
                 write_entry_item(
                     writer,
                     path_for_key,
-                    path,
+                    output_path(
+                        &mut temp_buffer,
+                        &output_file.dest_path,
+                        compile_prefix,
+                        from_chunk_dir,
+                    ),
                     output_file.hash.value,
                     output_file.loader,
                     output_file.output_kind,
@@ -374,12 +381,14 @@ pub mod html_import_manifest {
         graph: &'a Graph,
         chunks: &'a [Chunk],
         linker_graph: &'a LinkerGraph,
+        from_chunk_dir: &'a [u8],
     ) -> EscapedJson<'a> {
         super::HTMLImportManifest {
             index,
             graph,
             chunks,
             linker_graph,
+            from_chunk_dir,
         }
         .format_escaped_json()
     }
@@ -389,16 +398,44 @@ pub mod html_import_manifest {
         graph: &Graph,
         linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
+        from_chunk_dir: &[u8],
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
         let taken = core::mem::take(w);
         let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
-        super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
+        super::write_escaped_json(index, graph, linker_graph, chunks, from_chunk_dir, &mut fbs)
             .map_err(|_| core::fmt::Error)?;
         let bun_io::FixedBufferStream { buffer, pos } = fbs;
         *w = &mut buffer[pos..];
         Ok(())
     }
+}
+
+/// The manifest's form of an outdir-relative output path.
+fn output_path<'b>(
+    buf: &'b mut Vec<u8>,
+    path: &'b [u8],
+    compile_prefix: Option<&[u8]>,
+    from_chunk_dir: &[u8],
+) -> &'b [u8] {
+    if let Some(prefix) = compile_prefix {
+        buf.clear();
+        buf.extend_from_slice(prefix);
+        buf.extend_from_slice(strings::remove_leading_dot_slash(path));
+        return buf;
+    }
+    if from_chunk_dir.is_empty() {
+        return path;
+    }
+    let mut rel_buf = bun_paths::path_buffer_pool::get();
+    let rel =
+        relative_platform_buf::<platform::Posix, false>(&mut rel_buf[..], from_chunk_dir, path);
+    buf.clear();
+    if !rel.starts_with(b"../") {
+        buf.extend_from_slice(b"./");
+    }
+    buf.extend_from_slice(rel);
+    buf
 }
 
 /// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.

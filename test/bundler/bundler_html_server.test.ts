@@ -1,7 +1,53 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
+  // The server entry lands in dist/src/ when a second entry point widens the root.
+  test.each([
+    { name: "esm", format: "esm", entrypoints: ["src/server.ts"], output: "dist/server.js" },
+    { name: "cjs", format: "cjs", entrypoints: ["src/server.ts"], output: "dist/server.js" },
+    { name: "subdirectory", format: "esm", entrypoints: ["src/server.ts", "other.ts"], output: "dist/src/server.js" },
+  ] as const)("HTMLServerRunFromAnotherDirectory/$name", async ({ format, entrypoints, output }) => {
+    using dir = tempDir("html-server-cwd", {
+      "src/server.ts": `
+        import about from "./pages/about.html";
+        const server = Bun.serve({ port: 0, development: false, routes: { "/about": about } });
+        (async () => {
+          const page = await fetch(new URL("/about", server.url));
+          const html = await page.text();
+          const script = await fetch(new URL(html.match(/src="([^"]+)"/)[1], page.url));
+          const css = await fetch(new URL(html.match(/href="([^"]+)"/)[1], page.url));
+          console.log(page.status, html.includes("<h1>about</h1>"), script.status, (await script.text()).includes("about.ts ran"), css.status);
+          server.stop();
+        })();
+      `,
+      "src/pages/about.html": `<!doctype html><html><head><link rel="stylesheet" href="./about.css"><script type="module" src="./about.ts"></script></head><body><h1>about</h1></body></html>`,
+      "src/pages/about.ts": `console.log("about.ts ran");`,
+      "src/pages/about.css": `h1 { color: red; }`,
+      "other.ts": `console.log("other");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: entrypoints.map(entry => join(String(dir), entry)),
+      outdir: join(String(dir), "dist"),
+      target: "bun",
+      format,
+    });
+    expect(build.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), output],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe("200 true 200 true 200");
+    expect(exitCode).toBe(0);
+  });
+
   for (const backend of ["api", "cli"] as const) {
     itBundled(`compile/${backend}/HTMLServerBasic`, {
       compile: true,

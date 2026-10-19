@@ -2382,4 +2382,59 @@ describe("bundler", () => {
     outdir: "/out",
     run: { stdout: "a undefined undefined" },
   });
+
+  // A bare import asks the barrel for no name. With the flag the linker keeps
+  // the import for its side effects, so each re-export still has to load.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`barrel/IgnoreDCEAnnotationsBareImportLoadsEveryReExport/${backend}`, {
+      files: {
+        ...annotatedBarrel(`export { other } from 'other-pkg';`),
+        "/entry.js": /* js */ `
+          import 'barrel-pkg';
+          console.log(globalThis.b, globalThis.other);
+        `,
+      },
+      ignoreDCEAnnotations: true,
+      backend,
+      outdir: "/out",
+      run: { stdout: "b ran other-pkg ran" },
+    });
+  }
+
+  // A listed package that also has "sideEffects": false stays optimized with
+  // the flag: b.js would fail the build. An annotated package that is not
+  // listed loads in full.
+  itBundled("barrel/IgnoreDCEAnnotationsKeepsListedAnnotatedPackage", {
+    files: {
+      ...annotatedBarrel(`export { other } from 'other-pkg';`),
+      "/entry.js": /* js */ `
+        import { a } from 'barrel-pkg';
+        import { c } from 'unlisted-pkg';
+        console.log(a, c, globalThis.other, globalThis.d);
+      `,
+      "/node_modules/barrel-pkg/b.js": /* js */ `
+        export const b = <<<SYNTAX_ERROR>>>;
+      `,
+      "/node_modules/unlisted-pkg/package.json": JSON.stringify({
+        name: "unlisted-pkg",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/unlisted-pkg/index.js": /* js */ `
+        export { c } from './c.js';
+        export { d } from './d.js';
+      `,
+      "/node_modules/unlisted-pkg/c.js": /* js */ `
+        export const c = "c";
+      `,
+      "/node_modules/unlisted-pkg/d.js": /* js */ `
+        globalThis.d = "d ran";
+        export const d = 1;
+      `,
+    },
+    optimizeImports: ["barrel-pkg"],
+    ignoreDCEAnnotations: true,
+    outdir: "/out",
+    run: { stdout: "a c undefined d ran" },
+  });
 });

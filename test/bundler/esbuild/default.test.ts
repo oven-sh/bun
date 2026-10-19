@@ -3619,7 +3619,7 @@ describe.concurrent("bundler", () => {
     const build = async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--sourcemap=inline", "a.js"],
-        env: isDebug ? { ...bunEnv, GOMAXPROCS: "8" } : bunEnv,
+        env: isDebug ? { ...bunEnv, UV_THREADPOOL_SIZE: "8" } : bunEnv,
         cwd: String(dir),
         stdout: "ignore",
         stderr: "pipe",

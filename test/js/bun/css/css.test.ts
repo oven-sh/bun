@@ -5372,6 +5372,21 @@ describe("css tests", () => {
     // The nested form prints as `li:before::marker`, and that output parses again.
     prefix_test("li::before { &::marker {color:red} }", "li:before::marker { color: red; }", { chrome: 100 << 16 });
     minify_test("li:before::marker {color:red}", "li:before::marker{color:red}");
+    // A lowered logical property puts its direction fallback on `li`, as it does for `li::before`.
+    prefix_test(
+      "li::before::marker {inset-inline-start: 1px}",
+      `
+      li:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)):before::marker {
+        left: 1px;
+      }
+
+      li:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi):before::marker {
+        right: 1px;
+      }
+      `,
+      { safari: 14 << 16 },
+    );
+    minify_test("li:lang(ae, ar):after::marker {right:1px}", "li:lang(ae,ar):after::marker{right:1px}");
     minify_test("::before:hover {color:red}", ":before:hover{color:red}");
 
     // No other pseudo-element can follow ::before, ::after or ::marker, and

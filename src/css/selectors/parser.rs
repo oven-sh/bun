@@ -1811,6 +1811,20 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
             }
             self.components.len()
         };
+        // `li::before::marker`: in front of `::before`, where `li::before` gets it.
+        let index = if let Some(GenericComponent::PseudoElement(PseudoElement::Marker)) =
+            self.components.get(index)
+            && let Some(
+                [
+                    GenericComponent::Combinator(Combinator::PseudoElement),
+                    GenericComponent::PseudoElement(PseudoElement::Before | PseudoElement::After),
+                ],
+            ) = self.components.get(index + 1..index + 3)
+        {
+            index + 2
+        } else {
+            index
+        };
         self.components.insert(index, component);
     }
 

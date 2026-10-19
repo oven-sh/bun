@@ -199,7 +199,7 @@ const didCreateBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionDidCrea
 
 // Port of node's IsInsideNodeModules: first real user frame inside node_modules?
 // https://github.com/nodejs/node/blob/main/src/node_util.cc
-function isInsideNodeModules(frameLimit: number): boolean {
+function isInsideNodeModules(frameLimit: number = 10): boolean {
   const frames = captureCallSites(frameLimit, isInsideNodeModules);
   try {
     for (const frame of frames) {

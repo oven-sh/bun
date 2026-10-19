@@ -5077,15 +5077,6 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
-// JSC::AllowLazyMaterializationOfImmutableProperties for Rust, which pairs the two calls in a guard.
-extern "C" void JSC__VM__allowLazyMaterializationOfImmutableProperties(JSC::VM* vm, bool allow)
-{
-    vm->allowLazyMaterializationOfImmutablePropertiesCount += allow ? 1 : -1;
-#if ASSERT_ENABLED
-    vm->disallowVMEntryCount += allow ? 1 : -1;
-#endif
-}
-
 // The TerminationException cell itself (what a pending one reads as), not the error object it wraps.
 extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
 {

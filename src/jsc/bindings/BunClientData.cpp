@@ -366,6 +366,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * glob
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// JSC::AllowLazyMaterializationOfImmutableProperties for Rust, which pairs the two calls in a guard.
+extern "C" void JSC__VM__allowLazyMaterializationOfImmutableProperties(JSC::VM* vm, bool allow)
+{
+    vm->allowLazyMaterializationOfImmutablePropertiesCount += allow ? 1 : -1;
+#if ASSERT_ENABLED
+    vm->disallowVMEntryCount += allow ? 1 : -1;
+#endif
+}
+
 void reifyStaticPropertyTable(JSC::VM& vm, const JSC::ClassInfo* classInfo, std::span<const JSC::HashTableValue> values, JSC::JSObject& object)
 {
     JSC::reifyStaticProperties(vm, classInfo, values, object);

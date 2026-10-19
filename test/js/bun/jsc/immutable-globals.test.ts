@@ -593,6 +593,19 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       },
     );
 
+    test("Module.prototype.require can be replaced, as a module's exports can", async () => {
+      using dir = tempDir("immutable-globals-require", {
+        "index.cjs": `
+          "use strict";
+          const Module = require("node:module"), original = Module.prototype.require, ids = [];
+          Module.prototype.require = function (id) { ids.push(id); return original.call(this, id); };
+          require("node:os");
+          console.log(JSON.stringify(ids));
+        `,
+      });
+      expect(await run("*", ["index.cjs"], String(dir))).toEqual({ stdout: '["node:os"]\n', stderr: "", exitCode: 0 });
+    });
+
     test("a trap that is called while bun:ffi loads cannot write", async () => {
       using dir = tempDir("immutable-globals-planted", {
         "index.cjs": `

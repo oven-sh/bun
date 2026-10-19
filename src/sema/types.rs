@@ -12,6 +12,7 @@ use crate::table::{ById, Frozen};
 use crate::util::memory::{OWN, Placeholder, Placeholders, Segmented};
 use crate::util::{
     FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedPlaces, spread_in_window,
+    spread_of,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use bun_threading::Guarded;
@@ -2428,7 +2429,7 @@ type Of<'s, V> = for<'a> fn(&'a OwnStore<'s>) -> &'a Own<'s, V>;
 /// record.
 /// - `is_it` returns true if a record matches `key`.
 /// - `make` builds the record for `key` and returns it with its destination (`Types::home_of`). Its
-///   second argument is the id the record gets if it's task-local.
+///   second argument is the id the record gets if it's task-local, its third what `is_bound` returned.
 /// - `is_bound` returns `Follow::is_bound` of the record for `key`.
 /// - `mentions_own` returns true if `key` is known to reference a task-local record. No published
 ///   record does.
@@ -2444,7 +2445,7 @@ fn intern_record<'s, V: Record, K>(
     is_bound: impl FnOnce(&K) -> bool,
     mentions_own: impl FnOnce(&K) -> bool,
     is_it: impl Fn(&V, &K) -> bool,
-    make: impl FnOnce(K, u32) -> (V, Home<'s>),
+    make: impl FnOnce(K, u32, bool) -> (V, Home<'s>),
 ) -> u32 {
     let mine = of(own);
     let (key_is_bound, keeps_all) = (is_bound(&key), own.sharing != Sharing::Publishes);
@@ -2466,7 +2467,7 @@ fn intern_record<'s, V: Record, K>(
         return id;
     }
     let index = mine.records.len();
-    match make(key, index | LOCAL) {
+    match make(key, index | LOCAL, key_is_bound) {
         (record, Home::Own { is_bound }) => {
             debug_assert_eq!(is_bound, key_is_bound);
             mine.push(record, is_bound);
@@ -2484,20 +2485,38 @@ fn intern_record<'s, V: Record, K>(
     }
 }
 
-/// A mapper's pairs, sorted (`is_in_order`). At least three quarters of all mappers have three
+/// A mapper's pairs, sorted (`Survey::is_in_order`). At least three quarters of all mappers have three
 /// pairs or fewer.
 pub type Mapping<'s> = ShortList<(TypeId, TypeId), 3, List<'s, (TypeId, TypeId)>>;
 
-/// The interning key of a mapper.
-struct Pairs<'a>(&'a [(TypeId, TypeId)]);
+/// What one pass over the pairs of a mapper finds.
+struct Survey {
+    /// The hash that the mapper is found by. Its window is that of the youngest type.
+    spread: u64,
+    /// True if the type parameters are sorted by id without duplicates. That order makes equal sets of pairs intern as
+    /// one mapper and lets `map` search.
+    is_in_order: bool,
+    /// True if one of the types is task-local.
+    mentions_own: bool,
+}
 
-impl std::hash::Hash for Pairs<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(self.0.len());
-        for pair in self.0 {
-            state.write_u64(u64::from(pair.0.0) << 32 | u64::from(pair.1.0));
-        }
+#[inline]
+fn survey(pairs: &[(TypeId, TypeId)]) -> Survey {
+    let mut hasher = FxHasher::default();
+    hasher.write_usize(pairs.len());
+    let (mut youngest, mut all, mut is_in_order) = (0, 0, true);
+    let mut before = None;
+    for pair in pairs {
+        hasher.write_u64(u64::from(pair.0.0) << 32 | u64::from(pair.1.0));
+        youngest = youngest.max(pair.0.0).max(pair.1.0);
+        all |= pair.0.0 | pair.1.0;
+        is_in_order &= before.is_none_or(|before| before < pair.0.arrival_order());
+        before = Some(pair.0.arrival_order());
+    }
+    Survey {
+        spread: spread_of(Window::of_type(youngest), hasher.finish()),
+        is_in_order,
+        mentions_own: all & LOCAL != 0,
     }
 }
 
@@ -2533,14 +2552,6 @@ fn window_of_functions(decls: &[(FileId, FnId)], mapper: MapperId) -> Window {
         Some(first) => Window::of_place(first.0.0, first.1.0),
         None => Window::of_type(0),
     })
-}
-
-impl Windowed for Pairs<'_> {
-    #[inline]
-    fn window(&self) -> Window {
-        let youngest = |most: u32, pair: &(TypeId, TypeId)| most.max(pair.0.0).max(pair.1.0);
-        Window::of_type(self.0.iter().fold(0, youngest))
-    }
 }
 
 impl Windowed for [IndexComponent] {
@@ -2653,14 +2664,7 @@ windowed_by! {
     (MapperId, MapperId): |it| Window::of_mapper(it.0.0.max(it.1.0));
 }
 
-/// Whether the type parameters are sorted by id without duplicates. That order makes equal sets of
-/// pairs intern as one mapper and lets `map` search.
-#[inline]
-fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
-    pairs.is_sorted_by(|a, b| a.0.arrival_order() < b.0.arrival_order())
-}
-
-/// Sorts `pairs` (`is_in_order`) and removes duplicates, keeping the first pair for each type
+/// Sorts `pairs` (`Survey::is_in_order`) and removes duplicates, keeping the first pair for each type
 /// parameter. Returns the number of pairs kept, which are at the start of `pairs`.
 fn put_in_order(pairs: &mut [(TypeId, TypeId)]) -> usize {
     // The sort must be stable: which of two pairs for the same parameter is kept must not depend on
@@ -2869,7 +2873,7 @@ impl<'s> TypeStore<'s> {
         // First: the flags of a type are those of its mapper too.
         let no_pairs = (Mapping::empty(), ObjectFlags::empty());
         assert_eq!(
-            store.mappers.add(spread_in_window(&Pairs(&[])), no_pairs),
+            store.mappers.add(survey(&[]).spread, no_pairs),
             MapperId::IDENTITY.0
         );
         let arena = session.arena();
@@ -3263,10 +3267,10 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     /// Returns the destination of `record`, a `kind` record the task is about to create. `class` is the same as for
-    /// `TypeStore::next_id`.
+    /// `TypeStore::next_id`. `is_bound`: `record.is_bound(self.own)`.
     #[inline]
-    fn home_of(&self, kind: Kind, class: usize, record: &impl Follow) -> Home<'s> {
-        let is_bound = record.is_bound(self.own);
+    fn home_of(&self, kind: Kind, class: usize, record: &impl Follow, is_bound: bool) -> Home<'s> {
+        debug_assert_eq!(is_bound, record.is_bound(self.own));
         if is_bound || self.own.sharing != Sharing::Publishes {
             return Home::Own { is_bound };
         }
@@ -3279,11 +3283,16 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     /// Calls `new_record` for a type that `intern_record` creates, and returns the record with its destination.
-    /// `own_id` is the type's id if it stays task-local. The summary is stored here, before the record is published,
+    /// `own_id` is the type's id if it stays task-local. `is_bound`: as for `home_of`. The summary is stored here, before the record is published,
     /// because a task that finds the type may read its summary immediately.
-    fn new_record_of_task(&self, created: Made<'s>, own_id: u32) -> (TypeRecord<'s>, Home<'s>) {
+    fn new_record_of_task(
+        &self,
+        created: Made<'s>,
+        own_id: u32,
+        is_bound: bool,
+    ) -> (TypeRecord<'s>, Home<'s>) {
         let class = class_of_type(&created.0);
-        let home = self.home_of(Kind::Type, class, &created);
+        let home = self.home_of(Kind::Type, class, &created, is_bound);
         let record = self.new_record(created, home.id(own_id));
         let summary = record.summary(|member| self.member_flags_and_more(member));
         let is_unresolved_name = matches!(record.created.0, TypeData::UnresolvedName { .. });
@@ -3814,7 +3823,7 @@ impl<'p, 's> Types<'p, 's> {
         Rank {
             height: ranking.height + 1,
             place: ranking.place,
-            content: ranking.lanes.0[0],
+            content: ranking.content.0,
         }
     }
 
@@ -3942,13 +3951,13 @@ impl<'p, 's> Types<'p, 's> {
                         _ => false,
                     }
             },
-            |(data, provenance), id| {
+            |(data, provenance), id, is_bound| {
                 let arena = self.own.arena;
                 let provenance =
                     provenance.map(|it| ArenaBox::new_in(it.to_provenance(arena), arena));
                 let created: Made<'s> = (data.to_data(arena), provenance);
                 debug_assert_eq!(spread_in_window(&created), spread);
-                self.new_record_of_task(created, id)
+                self.new_record_of_task(created, id, is_bound)
             },
         ))
     }
@@ -3980,7 +3989,7 @@ impl<'p, 's> Types<'p, 's> {
             |created| created.is_bound(self.own),
             |created| created.mentions_own(),
             |record, created| record.created == *created,
-            |created, id| self.new_record_of_task(created, id),
+            |created, id, is_bound| self.new_record_of_task(created, id, is_bound),
         ))
     }
 
@@ -4078,8 +4087,8 @@ impl<'p, 's> Types<'p, 's> {
             |data| data.is_bound(self.own),
             |data| data.mentions_own(),
             |record, data| record == data,
-            |data, _| {
-                let home = self.home_of(Kind::Sig, 0, &data);
+            |data, _, is_bound| {
+                let home = self.home_of(Kind::Sig, 0, &data, is_bound);
                 (data, home)
             },
         ))
@@ -4102,9 +4111,9 @@ impl<'p, 's> Types<'p, 's> {
             |list| list.is_bound(self.own),
             |_| false,
             |record, list| **record == **list,
-            |list, _| {
+            |list, _, is_bound| {
                 let list = self.list(list);
-                let home = self.home_of(Kind::Components, 0, &list);
+                let home = self.home_of(Kind::Components, 0, &list, is_bound);
                 (list, home)
             },
         ))
@@ -4116,40 +4125,44 @@ impl<'p, 's> Types<'p, 's> {
         if pairs.is_empty() {
             return MapperId::IDENTITY;
         }
-        let len = match is_in_order(&pairs) {
-            true => pairs.len(),
-            false => put_in_order(&mut pairs),
-        };
-        self.mapper_in_order(&pairs[..len])
+        let found = survey(&pairs);
+        if found.is_in_order {
+            return self.mapper_in_order(&pairs, &found);
+        }
+        let len = put_in_order(&mut pairs);
+        self.mapper_in_order(&pairs[..len], &survey(&pairs[..len]))
     }
 
     /// The same for borrowed pairs. Nothing is allocated for sorted pairs whose mapper already
     /// exists.
     pub fn mapper_of(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
         if pairs.is_empty() {
-            MapperId::IDENTITY
-        } else if is_in_order(pairs) {
-            self.mapper_in_order(pairs)
-        } else {
-            let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::from_slice(pairs);
-            let len = put_in_order(&mut pairs);
-            self.mapper_in_order(&pairs[..len])
+            return MapperId::IDENTITY;
         }
+        let found = survey(pairs);
+        if found.is_in_order {
+            return self.mapper_in_order(pairs, &found);
+        }
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::from_slice(pairs);
+        let len = put_in_order(&mut pairs);
+        self.mapper_in_order(&pairs[..len], &survey(&pairs[..len]))
     }
 
-    fn mapper_in_order(&self, pairs: &[(TypeId, TypeId)]) -> MapperId {
+    /// `found`: `survey(pairs)`.
+    fn mapper_in_order(&self, pairs: &[(TypeId, TypeId)], found: &Survey) -> MapperId {
         MapperId(intern_record(
             (&self.published.mappers, self.own),
             |own| &own.mappers,
-            (spread_in_window(&Pairs(pairs)), pairs),
-            |pairs| pairs.is_bound(self.own),
-            |pairs| pairs.iter().any(MaybeLocal::is_local),
+            (found.spread, pairs),
+            // Only a task-local type can be bound.
+            |pairs| found.mentions_own && pairs.is_bound(self.own),
+            |_| found.mentions_own,
             |record, pairs| *record.0 == **pairs,
-            |pairs, _| {
+            |pairs, _, is_bound| {
                 let flags =
                     (pairs.iter()).fold(ObjectFlags::empty(), |f, p| f | self.object_flags(p.1));
                 let pairs = Mapping::copy_from_slice_in(pairs, self.own.arena);
-                let home = self.home_of(Kind::Mapper, 0, &pairs);
+                let home = self.home_of(Kind::Mapper, 0, &pairs, is_bound);
                 ((pairs, flags), home)
             },
         ))
@@ -5001,12 +5014,9 @@ impl Visitor for MentionsOwn {
     fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
 }
 
-/// A 128-bit hash of the content of a record, independent of the task that created it.
-type ContentHash = [u64; 2];
-
-/// Two lanes of multiply and fold, with different constants.
+/// A hash of the content of a record, independent of the task that created it: multiply and fold.
 #[derive(Copy, Clone)]
-struct Lanes(ContentHash);
+struct ContentHash(u64);
 
 #[inline]
 fn fold(a: u64, b: u64) -> u64 {
@@ -5014,17 +5024,16 @@ fn fold(a: u64, b: u64) -> u64 {
     product as u64 ^ (product >> 64) as u64
 }
 
-impl Lanes {
-    const START: Lanes = Lanes([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344]);
+impl ContentHash {
+    const START: ContentHash = ContentHash(0x243f_6a88_85a3_08d3);
 
     #[inline]
     fn add(&mut self, word: u64) {
-        self.0[0] = fold(self.0[0] ^ word, 0x9e37_79b9_7f4a_7c15);
-        self.0[1] = fold(self.0[1].rotate_left(23) ^ word, 0xc2b2_ae3d_27d4_eb4f);
+        self.0 = fold(self.0 ^ word, 0x9e37_79b9_7f4a_7c15);
     }
 }
 
-impl Hasher for Lanes {
+impl Hasher for ContentHash {
     fn write(&mut self, bytes: &[u8]) {
         let (words, rest) = bytes.as_chunks::<8>();
         for word in words {
@@ -5051,7 +5060,7 @@ impl Hasher for Lanes {
         self.add(i as u64);
     }
     fn finish(&self) -> u64 {
-        self.0[0]
+        self.0
     }
 }
 
@@ -5100,8 +5109,8 @@ fn visit_type_as_content<V: Hashing>(created: &Made, content: &mut V) {
 /// Computes a `Rank`.
 struct Ranking<'p, 's> {
     types: Types<'p, 's>,
-    /// The first lane becomes `Rank::content`.
-    lanes: Lanes,
+    /// Becomes `Rank::content`.
+    content: ContentHash,
     /// Greatest height of any type visited.
     height: u32,
     /// Running maximum for `Rank::place`.
@@ -5114,7 +5123,7 @@ impl<'p, 's> Ranking<'p, 's> {
     fn new(types: Types<'p, 's>) -> Ranking<'p, 's> {
         Ranking {
             types,
-            lanes: Lanes::START,
+            content: ContentHash::START,
             height: 0,
             place: 0,
             file: None,
@@ -5145,12 +5154,12 @@ impl Hashing for Ranking<'_, '_> {
         for item in items {
             let mut one = Ranking::new(self.types);
             item.visit(&mut one);
-            sum = sum.wrapping_add(one.lanes.0[0]);
+            sum = sum.wrapping_add(one.content.0);
             self.height = self.height.max(one.height);
             self.place = self.place.max(one.place);
         }
-        self.lanes.add(items.len() as u64);
-        self.lanes.add(sum);
+        self.content.add(items.len() as u64);
+        self.content.add(sum);
     }
 }
 
@@ -5159,7 +5168,7 @@ impl Visitor for Ranking<'_, '_> {
     #[inline]
     fn atom(&mut self, atom: Atom) {
         let text = crate::atom::hash_of(self.types.text(atom));
-        self.lanes.add(text ^ u64::from(atom.is_none()));
+        self.content.add(text ^ u64::from(atom.is_none()));
     }
     fn components(&mut self, id: ComponentsId) {
         self.types.components(id).visit(self);
@@ -5176,18 +5185,18 @@ impl Visitor for Ranking<'_, '_> {
     #[inline]
     fn ty(&mut self, id: TypeId) {
         let rank = self.types.rank(id);
-        self.lanes.add(rank.content);
+        self.content.add(rank.content);
         self.height = self.height.max(rank.height);
         self.place = self.place.max(rank.place);
     }
     #[inline]
     fn file(&mut self, file: FileId) {
-        self.lanes.add(u64::from(file.0));
+        self.content.add(u64::from(file.0));
         self.file = Some(file);
     }
     #[inline]
     fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
-        value.hash(&mut self.lanes);
+        value.hash(&mut self.content);
         if let Some(file) = self.file.take() {
             let mut number = FirstNumber(None);
             value.hash(&mut number);

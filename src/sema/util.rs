@@ -573,7 +573,13 @@ pub trait Windowed: std::hash::Hash {
 /// Returns the hash that a `WindowedPlaces` finds `value` by: the window in the upper half, the tag in the lower half.
 #[inline]
 pub(crate) fn spread_in_window<T: Windowed + ?Sized>(value: &T) -> u64 {
-    (u64::from(value.window().0) << 32) | (spread_hash(value) & u64::from(u32::MAX))
+    spread_of(value.window(), fx_hash(value))
+}
+
+/// `spread_in_window` of a key that has `window` and the `fx_hash` `hash`.
+#[inline]
+pub(crate) fn spread_of(window: Window, hash: u64) -> u64 {
+    (u64::from(window.0) << 32) | (spread(hash) & u64::from(u32::MAX))
 }
 
 pub(crate) struct InWindow;

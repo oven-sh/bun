@@ -901,7 +901,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInte
     auto& worker = castedThis->wrapped();
     Bun::HeapSampler::Options options;
     options.intervalBytes = callFrame->argument(0).asNumber();
-    options.stackDepth = static_cast<unsigned>(callFrame->argument(1).asNumber());
+    options.stackDepth = static_cast<unsigned>(std::min(callFrame->argument(1).asNumber(), static_cast<double>(std::numeric_limits<unsigned>::max())));
     options.forceGC = callFrame->argument(2).isTrue();
     options.includeObjectsCollectedByMajorGC = callFrame->argument(3).isTrue();
     options.includeObjectsCollectedByMinorGC = callFrame->argument(4).isTrue();
@@ -924,7 +924,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInte
 
 static constexpr ASCIILiteral kEmptyHeapProfileJSON = "{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":0,\"id\":1,\"children\":[]},\"samples\":[]}"_s;
 
-// The profile as JSON, and sampling off. An empty profile when sampling was off or the worker is gone.
+// The profile as JSON, and sampling off. An empty profile when sampling was off; ERR_WORKER_NOT_RUNNING when the
+// worker is gone, as in node.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -948,7 +949,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopHeapProfileInter
     });
     if (!accepted) {
         worker.contextProxy().takeCrossVMRequest(reqId);
-        promise->resolve(globalObject, vm, jsString(vm, String(kEmptyHeapProfileJSON)));
+        rejectWorkerNotRunning(vm, globalObject, promise);
     }
     return JSValue::encode(promise);
 }

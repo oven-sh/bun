@@ -24,7 +24,7 @@ const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
-const startAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startAllocationSampling", 3);
+const startAllocationSampling = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startAllocationSampling", 4);
 const getAllocationSamplingProfile = $newCppFunction(
   "JSInspectorProfiler.cpp",
   "jsFunction_getAllocationSamplingProfile",
@@ -433,8 +433,8 @@ class Session extends EventEmitter {
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
-  #connectedToMainThread = false;
-  // Set by the session that started sampling: only it stops sampling on disable() and disconnect(), as in V8.
+  // Set by every session that posted startSampling: each of them stops sampling on disable() and disconnect(), as
+  // V8's HeapProfiler agent does.
   #startedAllocationSampling = false;
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
@@ -471,7 +471,6 @@ class Session extends EventEmitter {
       throw $ERR_INSPECTOR_NOT_WORKER();
     }
     this.connect();
-    this.#connectedToMainThread = true;
   }
 
   disconnect() {
@@ -487,7 +486,6 @@ class Session extends EventEmitter {
     }
     this.#profilerEnabled = false;
     this.#connected = false;
-    this.#connectedToMainThread = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
@@ -659,7 +657,6 @@ class Session extends EventEmitter {
 
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
-      case "HeapProfiler.collectGarbage":
       case "HeapProfiler.startSampling":
       case "HeapProfiler.getSamplingProfile":
       case "HeapProfiler.stopSampling":
@@ -765,10 +762,6 @@ class Session extends EventEmitter {
   }
 
   #handleHeapProfilerMethod(method: string, params?: Record<string, unknown>): any {
-    // A connectToMainThread() session runs on the worker's VM: sampling through it would profile the wrong heap.
-    if (this.#connectedToMainThread) {
-      return $ERR_INSPECTOR_COMMAND(`-32000: '${method}' is not supported on a session connected to the main thread`);
-    }
     switch (method) {
       case "HeapProfiler.enable":
         return {};
@@ -780,12 +773,9 @@ class Session extends EventEmitter {
         }
         return {};
 
-      case "HeapProfiler.collectGarbage":
-        Bun.gc(true);
-        return {};
-
       case "HeapProfiler.startSampling": {
         const samplingInterval = params?.samplingInterval === undefined ? 32768 : params.samplingInterval;
+        const stackDepth = params?.stackDepth === undefined ? 128 : params.stackDepth;
         const includeMajor =
           params?.includeObjectsCollectedByMajorGC === undefined ? false : params.includeObjectsCollectedByMajorGC;
         const includeMinor =
@@ -793,22 +783,25 @@ class Session extends EventEmitter {
         if (
           typeof samplingInterval !== "number" ||
           !Number.isFinite(samplingInterval) ||
+          typeof stackDepth !== "number" ||
+          !Number.isFinite(stackDepth) ||
           typeof includeMajor !== "boolean" ||
           typeof includeMinor !== "boolean"
         ) {
           return $ERR_INSPECTOR_COMMAND("-32602: Invalid parameters");
         }
         if (samplingInterval < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid sampling interval");
+        if (stackDepth < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid stack depth");
         // A second start keeps the running session and its interval, as V8 does.
-        if (startAllocationSampling(samplingInterval, includeMajor, includeMinor)) {
-          this.#startedAllocationSampling = true;
-        }
+        startAllocationSampling(samplingInterval, stackDepth, includeMajor, includeMinor);
+        this.#startedAllocationSampling = true;
         return {};
       }
 
       case "HeapProfiler.getSamplingProfile":
       case "HeapProfiler.stopSampling": {
-        const json = method === "HeapProfiler.stopSampling" ? stopAllocationSampling() : getAllocationSamplingProfile();
+        const json =
+          method === "HeapProfiler.stopSampling" ? stopAllocationSampling() : getAllocationSamplingProfile();
         if (json === null) return $ERR_INSPECTOR_COMMAND("-32000: V8 sampling heap profiler was not started.");
         if (method === "HeapProfiler.stopSampling") this.#startedAllocationSampling = false;
         return { profile: JSON.parse(json) };

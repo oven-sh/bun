@@ -51,9 +51,11 @@ private:
 
     struct Node {
         WTF::String functionName;
-        RefPtr<JSC::SourceProvider> provider;
+        RefPtr<JSC::SourceProvider> provider; // Null for (root) and the pseudo nodes.
         unsigned line { 0 }; // 1-based, as JSC reports the function's first line; 0 for none.
         unsigned column { 0 };
+        unsigned parent { 0 };
+        unsigned sampleCount { 0 }; // Samples that are not void. A function node with none and no children is pruned.
         WTF::Vector<unsigned> children;
     };
 
@@ -70,16 +72,27 @@ private:
 
     void record(void* cell, size_t bytes);
     unsigned nodeForCurrentStack();
+    unsigned pseudoNode(unsigned& slot, ASCIILiteral name);
     void linkSampleToCell(unsigned index);
-    void relinkSamplesToCells();
     unsigned takeSamplesOfCell(void*);
+    void voidSampleAt(unsigned index);
+    void compactSamples();
+    void pruneNodes();
 
     JSC::VM& m_vm;
     Options m_options;
     WTF::Vector<Node> m_nodes;
     // (parent node + 1, source, first line, start column) of a function that allocated -> its node under that parent.
     WTF::HashMap<std::tuple<unsigned, JSC::SourceProvider*, unsigned, unsigned>, unsigned> m_nodeIndex;
-    WTF::Vector<Sample> m_samples;
+    // Stackless picks go under these children of (root), as V8 puts them under "(JS)" and the like, so (root) itself
+    // never has bytes of its own.
+    unsigned m_jsPseudoNode { noSample };
+    unsigned m_nativePseudoNode { noSample };
+    WTF::Vector<Sample> m_samples; // Append-only between compactions: void entries are tombstones.
+    unsigned m_voidSamples { 0 };
+    // m_samples.size() after the last reconcile. A cell sampled before it survived that collection and is old, so an
+    // eden collection cannot free it; the eden reconcile starts here.
+    unsigned m_reconciledCount { 0 };
     WTF::HashMap<void*, unsigned> m_firstSampleOfCell;
     uint64_t m_lastOrdinal { 0 };
 };

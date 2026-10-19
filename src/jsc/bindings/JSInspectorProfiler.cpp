@@ -58,15 +58,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
 }
 
-// Arguments validated in node/inspector.ts. False when sampling was already on.
+// (samplingInterval, stackDepth, includeObjectsCollectedByMajorGC, includeObjectsCollectedByMinorGC), validated in
+// node/inspector.ts. Does nothing when sampling is already on.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startAllocationSampling);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startAllocationSampling, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     Bun::HeapSampler::Options options;
     options.intervalBytes = callFrame->argument(0).asNumber();
-    options.includeObjectsCollectedByMajorGC = callFrame->argument(1).isTrue();
-    options.includeObjectsCollectedByMinorGC = callFrame->argument(2).isTrue();
-    return JSValue::encode(jsBoolean(Bun::HeapSampler::start(globalObject->vm(), options)));
+    options.stackDepth = static_cast<unsigned>(std::min(callFrame->argument(1).asNumber(), static_cast<double>(std::numeric_limits<unsigned>::max())));
+    options.includeObjectsCollectedByMajorGC = callFrame->argument(2).isTrue();
+    options.includeObjectsCollectedByMinorGC = callFrame->argument(3).isTrue();
+    Bun::HeapSampler::start(globalObject->vm(), options);
+    return JSValue::encode(jsUndefined());
 }
 
 // HeapProfiler.getSamplingProfile: the profile as JSON, or null when sampling is off.

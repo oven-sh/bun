@@ -17,6 +17,7 @@
 #include <JavaScriptCore/VM.h>
 #include <wtf/JSONValues.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <algorithm>
 #include <cmath>
 
 namespace Bun {
@@ -88,6 +89,7 @@ void HeapSampler::record(void* cell, size_t bytes)
     double size = static_cast<double>(bytes) * std::round(scale);
     unsigned index = m_samples.size();
     m_samples.append(Sample { cell, node, noSample, ++m_lastOrdinal, size });
+    m_nodes[node].sampleCount++;
     if (isCellAddress(cell))
         linkSampleToCell(index);
 }
@@ -101,16 +103,6 @@ void HeapSampler::linkSampleToCell(unsigned index)
     }
 }
 
-void HeapSampler::relinkSamplesToCells()
-{
-    m_firstSampleOfCell.clear();
-    for (unsigned index = 0; index < m_samples.size(); ++index) {
-        m_samples[index].nextOfSameCell = noSample;
-        if (isCellAddress(m_samples[index].cell))
-            linkSampleToCell(index);
-    }
-}
-
 // The first of the cell's samples (the rest follow through nextOfSameCell), out of the map.
 unsigned HeapSampler::takeSamplesOfCell(void* cell)
 {
@@ -120,6 +112,48 @@ unsigned HeapSampler::takeSamplesOfCell(void* cell)
     unsigned index = iterator->value;
     m_firstSampleOfCell.remove(iterator);
     return index;
+}
+
+void HeapSampler::voidSampleAt(unsigned index)
+{
+    Sample& sample = m_samples[index];
+    ASSERT(sample.cell != voidSample);
+    sample.cell = voidSample;
+    sample.nextOfSameCell = noSample;
+    m_nodes[sample.node].sampleCount--;
+    m_voidSamples++;
+}
+
+// Drops the tombstones once they are half of the vector, and rebuilds the cell map around the new indices.
+void HeapSampler::compactSamples()
+{
+    if (m_voidSamples < m_samples.size() / 2)
+        return;
+    m_samples.removeAllMatching([](const Sample& sample) { return sample.cell == voidSample; });
+    m_voidSamples = 0;
+    m_firstSampleOfCell.clear();
+    for (unsigned index = 0; index < m_samples.size(); ++index) {
+        m_samples[index].nextOfSameCell = noSample;
+        if (isCellAddress(m_samples[index].cell))
+            linkSampleToCell(index);
+    }
+    m_reconciledCount = m_samples.size();
+}
+
+// A function node whose samples are all gone and that has no children is dropped, as V8 drops its nodes, so a
+// profile of a program that keeps compiling new functions does not grow without bound. Children have higher indices
+// than their parents, so one pass from the end prunes whole subtrees.
+void HeapSampler::pruneNodes()
+{
+    for (unsigned index = m_nodes.size(); index-- > 1;) {
+        Node& node = m_nodes[index];
+        if (!node.provider || node.sampleCount || !node.children.isEmpty())
+            continue;
+        m_nodeIndex.remove(std::make_tuple(node.parent + 1, node.provider.get(), node.line, node.column));
+        m_nodes[node.parent].children.removeFirst(index);
+        node.provider = nullptr;
+        node.functionName = WTF::String();
+    }
 }
 
 // The CodeBlocks of the JS frames on the stack, innermost first, inlined frames expanded. vm.topCallFrame can be a
@@ -154,6 +188,16 @@ SUPPRESS_ASAN static void collectJSFrames(JSC::VM& vm, unsigned depth, WTF::Vect
     }
 }
 
+unsigned HeapSampler::pseudoNode(unsigned& slot, ASCIILiteral name)
+{
+    if (slot == noSample) {
+        slot = m_nodes.size();
+        m_nodes.append(Node { WTF::String(name), nullptr, 0, 0, 0, 0, {} });
+        m_nodes[0].children.append(slot);
+    }
+    return slot;
+}
+
 // The node of the innermost JS frame, created with its ancestors as needed. Nodes are keyed by function, not by line.
 unsigned HeapSampler::nodeForCurrentStack()
 {
@@ -161,6 +205,8 @@ unsigned HeapSampler::nodeForCurrentStack()
     collectJSFrames(m_vm, m_options.stackDepth, frames);
     if (frames.size() > m_options.stackDepth)
         frames.shrink(m_options.stackDepth);
+    if (frames.isEmpty())
+        return m_vm.topEntryFrame ? pseudoNode(m_jsPseudoNode, "(JS)"_s) : pseudoNode(m_nativePseudoNode, "(native)"_s);
 
     unsigned parent = 0;
     for (size_t i = frames.size(); i--;) {
@@ -174,7 +220,7 @@ unsigned HeapSampler::nodeForCurrentStack()
             WTF::String functionName;
             if (codeBlock->codeType() == JSC::FunctionCode)
                 functionName = static_cast<JSC::FunctionExecutable*>(executable)->ecmaName().string();
-            m_nodes.append(Node { WTF::move(functionName), provider, line, column, {} });
+            m_nodes.append(Node { WTF::move(functionName), provider, line, column, parent, 0, {} });
             m_nodes[parent].children.append(result.iterator->value);
         }
         parent = result.iterator->value;
@@ -185,34 +231,51 @@ unsigned HeapSampler::nodeForCurrentStack()
 void HeapSampler::didRelocateCell(JSC::HeapCell* from, JSC::HeapCell* to)
 {
     // The copy may have been picked as an allocation while it was made; that is not one.
-    for (auto index = takeSamplesOfCell(to); index != noSample; index = m_samples[index].nextOfSameCell)
-        m_samples[index].cell = voidSample;
-    auto index = takeSamplesOfCell(from);
-    if (index == noSample)
-        return;
-    for (auto cursor = index; cursor != noSample; cursor = m_samples[cursor].nextOfSameCell)
-        m_samples[cursor].cell = to;
-    m_firstSampleOfCell.add(to, index);
+    for (auto index = takeSamplesOfCell(to); index != noSample;) {
+        auto next = m_samples[index].nextOfSameCell;
+        voidSampleAt(index);
+        index = next;
+    }
+    // The moved cell is a new cell, in the eden: its samples are appended again so the eden reconcile sees them.
+    for (auto index = takeSamplesOfCell(from); index != noSample;) {
+        Sample sample = m_samples[index];
+        auto next = sample.nextOfSameCell;
+        voidSampleAt(index);
+        sample.cell = to;
+        sample.nextOfSameCell = noSample;
+        m_samples.append(sample);
+        m_nodes[sample.node].sampleCount++;
+        linkSampleToCell(m_samples.size() - 1);
+        index = next;
+    }
 }
 
 void HeapSampler::reconcileSampledCells(JSC::CollectionScope scope)
 {
-    bool keepDead = scope == JSC::CollectionScope::Full ? m_options.includeObjectsCollectedByMajorGC : m_options.includeObjectsCollectedByMinorGC;
+    bool full = scope == JSC::CollectionScope::Full;
+    bool keepDead = full ? m_options.includeObjectsCollectedByMajorGC : m_options.includeObjectsCollectedByMinorGC;
     bool changed = false;
-    for (auto& sample : m_samples) {
-        if (sample.cell == voidSample) {
-            changed = true;
-            continue;
-        }
+    for (unsigned index = full ? 0 : m_reconciledCount; index < m_samples.size(); ++index) {
+        Sample& sample = m_samples[index];
         if (!isCellAddress(sample.cell) || m_vm.heap.isMarked(sample.cell))
             continue;
-        sample.cell = keepDead ? deadCell : voidSample;
         changed = true;
+        // Every sample of the cell is on its chain, and they all die together.
+        for (auto cursor = takeSamplesOfCell(sample.cell); cursor != noSample;) {
+            auto next = m_samples[cursor].nextOfSameCell;
+            if (keepDead) {
+                m_samples[cursor].cell = deadCell;
+                m_samples[cursor].nextOfSameCell = noSample;
+            } else
+                voidSampleAt(cursor);
+            cursor = next;
+        }
     }
+    m_reconciledCount = m_samples.size();
     if (!changed)
         return;
-    m_samples.removeAllMatching([](const Sample& sample) { return sample.cell == voidSample; });
-    relinkSamplesToCells();
+    pruneNodes();
+    compactSamples();
 }
 
 WTF::String HeapSampler::profileJSON()
@@ -221,10 +284,16 @@ WTF::String HeapSampler::profileJSON()
         m_vm.heap.collectSync(JSC::CollectionScope::Full);
 
     WTF::Vector<double> selfSizes(m_nodes.size(), [](size_t) { return 0.0; });
-    auto samples = JSON::Array::create();
+    // In the order they were taken: a moved sample is appended again, so the vector is not.
+    WTF::Vector<const Sample*> ordered;
     for (const auto& sample : m_samples) {
-        if (sample.cell == voidSample)
-            continue;
+        if (sample.cell != voidSample)
+            ordered.append(&sample);
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const Sample* a, const Sample* b) { return a->ordinal < b->ordinal; });
+    auto samples = JSON::Array::create();
+    for (const Sample* samplePointer : ordered) {
+        const Sample& sample = *samplePointer;
         selfSizes[sample.node] += sample.size;
         auto object = JSON::Object::create();
         object->setDouble("size"_s, sample.size);

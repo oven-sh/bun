@@ -25,6 +25,7 @@ const {
   validateString,
   validateObject,
   validateInteger,
+  validateInt32,
   validateNumber,
   validateBoolean,
 } = require("internal/validators");
@@ -1164,7 +1165,7 @@ class Worker extends EventEmitter {
         includeObjectsCollectedByMinorGC = includeObjectsCollectedByMinorGC,
       } = options as any);
       validateInteger(sampleInterval, "options.sampleInterval", 1);
-      validateInteger(stackDepth, "options.stackDepth", 0);
+      validateInt32(stackDepth, "options.stackDepth", 0);
       validateBoolean(forceGC, "options.forceGC");
       validateBoolean(includeObjectsCollectedByMajorGC, "options.includeObjectsCollectedByMajorGC");
       validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
@@ -1184,7 +1185,12 @@ class Worker extends EventEmitter {
         if (!started) throw $ERR_HEAP_PROFILE_HAVE_BEEN_STARTED("Heap profile have been started already");
         // stop() is idempotent, as in node: a second call yields the same profile.
         let stopped: Promise<string> | undefined;
-        return { stop: () => (stopped ??= this.#worker.stopHeapProfileInternal()) };
+        return {
+          stop: () =>
+            (stopped ??= this.#exited
+              ? Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"))
+              : this.#worker.stopHeapProfileInternal()),
+        };
       });
   }
 

@@ -1775,22 +1775,80 @@ describe("startHeapProfile", () => {
     }
   });
 
-  test("stop() after the worker exited yields an empty profile", async () => {
+  test("stop() after the worker exited rejects ERR_WORKER_NOT_RUNNING, like node", async () => {
     const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
     await once(worker, "online");
     const handle = await worker.startHeapProfile();
     worker.postMessage("done");
     await once(worker, "exit");
-    expect(JSON.parse(await handle.stop())).toEqual({
-      head: {
-        callFrame: { functionName: "(root)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
-        selfSize: 0,
-        id: 1,
-        children: [],
-      },
-      samples: [],
-    });
+    await expect(handle.stop()).rejects.toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
     await expect(worker.startHeapProfile()).rejects.toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
+  });
+
+  test("stop() racing terminate() settles either way, never hangs", async () => {
+    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+    await once(worker, "online");
+    const handle = await worker.startHeapProfile();
+    const stopped = handle.stop();
+    await worker.terminate();
+    await expect(
+      stopped.then(
+        json => (typeof JSON.parse(json).head === "object" ? "ok" : "bad"),
+        e => e?.code,
+      ),
+    ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
+  });
+
+  test("stackDepth is an int32 and forceGC and the include flags are honoured", async () => {
+    const worker = new Worker(
+      /* js */ `
+        import { parentPort } from "node:worker_threads";
+        import { edenGC } from "bun:jsc";
+        globalThis.kept = [];
+        function keptObjects(count) { for (let i = 0; i < count; i++) globalThis.kept.push({ i, a: 1 }); }
+        function droppedObjects(count) { let sink; for (let i = 0; i < count; i++) sink = { i, a: 1 }; return sink; }
+        parentPort.on("message", ({ count, eden }) => {
+          keptObjects(count);
+          droppedObjects(count);
+          if (eden) edenGC();
+          parentPort.postMessage("done");
+        });
+      `,
+      { eval: true },
+    );
+    const bytesOf = (node: any, name: string): number =>
+      (node.callFrame.functionName === name ? node.selfSize : 0) +
+      node.children.reduce((sum: number, child: any) => sum + bytesOf(child, name), 0);
+    const run = async (options: object, eden = false) => {
+      const handle = await worker.startHeapProfile(options);
+      worker.postMessage({ count: 20000, eden });
+      await once(worker, "message");
+      const profile = JSON.parse(await handle.stop());
+      return { kept: bytesOf(profile.head, "keptObjects"), dropped: bytesOf(profile.head, "droppedObjects") };
+    };
+    try {
+      await once(worker, "online");
+      expect(() => worker.startHeapProfile({ stackDepth: 2 ** 31 })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      // forceGC: the profile comes after a full collection, and the dropped objects are gone from it.
+      let { kept, dropped } = await run({ sampleInterval: 1024, forceGC: true });
+      expect(kept).toBeGreaterThan(400_000);
+      expect(dropped).toBeLessThan(kept / 10);
+      // Kept as collected by a major collection.
+      ({ kept, dropped } = await run({ sampleInterval: 1024, forceGC: true, includeObjectsCollectedByMajorGC: true }));
+      expect(dropped).toBeGreaterThan(kept / 2);
+      expect(dropped).toBeLessThan(kept * 2);
+      // An eden collection in the worker, its dead kept by the minor flag, no forced full collection.
+      ({ kept, dropped } = await run(
+        { sampleInterval: 1024, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true },
+        true,
+      ));
+      expect(dropped).toBeGreaterThan(kept / 2);
+      expect(dropped).toBeLessThan(kept * 2);
+    } finally {
+      await worker.terminate();
+    }
   });
 });
 

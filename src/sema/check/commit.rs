@@ -198,7 +198,6 @@ impl<'s> Commits<'s> {
             pinned: Cell::new(NO_FILE),
             at_rest: Cell::new(self.numbers.stored.load(Ordering::Acquire)),
             compared_with_pinned: Cell::new(0),
-            cycles_compared: Cell::new(0),
             oldest_pin: Cell::new(u32::MAX),
             own: RefCell::default(),
             times_unsettled: Cell::new(0),
@@ -280,9 +279,6 @@ pub(crate) struct View<'s> {
     at_rest: Cell<u32>,
     /// The commits up to this number have stored nothing under `pinned` that the task does not see.
     compared_with_pinned: Cell<u32>,
-    /// The cycle commits up to this number were compared with the first `Task::compared_with_cycles` keys that the task
-    /// has logged since it was last idle.
-    cycles_compared: Cell<u32>,
     /// The lowest number that a file had while it was `pinned`, since the last commit of the task.
     oldest_pin: Cell<u32>,
     /// The numbers of the commits of the task, ascending.
@@ -666,11 +662,7 @@ impl<'s> Checker<'_, 's> {
     /// - See `Task::is_beside_a_ring`. Whoever misses a member evaluates it, and stores it: the task has stored, since it
     ///   was last at rest, under a key that the commit has.
     /// - The file that the task visits does not change during the visit: the commit has a key in that file.
-    ///
-    /// `stop_if_discarded` also calls this in the middle of a statement. Until the task is idle again its log and the list
-    /// of cycle commits only grow, so a task that is discarded there would be discarded at its next idle moment too. Each
-    /// call compares only the pairs of a key and a commit that no earlier call has compared.
-    pub(super) fn lose_what_has_missed_a_ring(&self) {
+    fn lose_what_has_missed_a_ring(&self) {
         let Some(view) = self.task.view() else {
             return;
         };
@@ -679,50 +671,28 @@ impl<'s> Checker<'_, 's> {
         if newest <= at_rest.min(compared) {
             return;
         }
-        let (already, cycles_compared) =
-            (self.task.compared_with_cycles(), view.cycles_compared.get());
-        let rings = self.p.commits.rings.lock();
-        let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
-        // The keys that some cycle commit has not been compared with.
-        let is_any_new = (rings.last()).is_some_and(|ring| ring.number > cycles_compared);
-        let left_out = match is_any_new {
-            true => [0; 2],
-            false => already,
-        };
         // Copies: `identities_of` asks for the task's buffer again.
         let (of_records, of_nodes) = self.task.logged_since_rest();
-        let of_records = of_records.get(left_out[0]..).unwrap_or(&[]).to_vec();
-        let of_nodes = of_nodes.get(left_out[1]..).unwrap_or(&[]).to_vec();
-        let of_records = match of_records.is_empty() {
-            true => Vec::new(),
-            false => identities_of(&tables_of(self.p), &self.task, &of_records),
-        };
+        let (of_records, of_nodes) = (of_records.to_vec(), of_nodes.to_vec());
+        let of_records = identities_of(&tables_of(self.p), &self.task, &of_records);
+        let rings = self.p.commits.rings.lock();
+        let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
         let is_of_later_file = |commit: u32| {
             let rank = self.p.commits.rank_of(commit);
             (self.task.file).is_some_and(|file| rank > Some(self.p.files.rank_of_file(file)))
         };
         let has_missed = rings[from..].iter().any(|ring| {
-            let skipped = match ring.number > cycles_compared {
-                true => [0; 2],
-                false => [already[0] - left_out[0], already[1] - left_out[1]],
-            };
             ring.number > compared
                 && ring.of_nodes.iter().any(|key| key[1] == view.pinned.get())
                 && !is_of_later_file(ring.number)
                 || ring.number > at_rest
                     && (of_records
                         .iter()
-                        .skip(skipped[0])
                         .any(|key| ring.of_records.binary_search(key).is_ok())
                         || of_nodes
                             .iter()
-                            .skip(skipped[1])
                             .any(|key| ring.of_nodes.binary_search(key).is_ok()))
         });
-        let last = rings.last().map_or(0, |ring| ring.number);
-        drop(rings);
-        view.cycles_compared.set(cycles_compared.max(last));
-        self.task.note_compared_with_cycles();
         view.compared_with_pinned.set(compared.max(newest));
         if has_missed && !self.task.is_lost() {
             // That cycle is already committed, so the file can be rechecked right away.

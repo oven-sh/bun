@@ -89,8 +89,6 @@ pub struct Task<'s> {
     logged_at_cycles: RefCell<Vec<[[usize; 2]; 2]>>,
     /// `Buffer::lengths_of_log` when the task was last at rest.
     logged_at_rest: Cell<[usize; 2]>,
-    /// See `compared_with_cycles`.
-    compared_with_cycles: Cell<[usize; 2]>,
     /// How many keys the task had logged at its commits, and how many entries they have stored.
     committed: Cell<[u64; 2]>,
     /// How long the task has waited for the mutex of the commits, has had it, and has waited for claims of variances.
@@ -133,7 +131,6 @@ impl<'s> Task<'s> {
             cycle_since_rest: Cell::new(None),
             logged_at_cycles: RefCell::default(),
             logged_at_rest: Cell::new([0; 2]),
-            compared_with_cycles: Cell::new([0; 2]),
             committed: Cell::new([0; 2]),
             waits: Cell::new([Duration::ZERO; 3]),
             at_once: Cell::new(0),
@@ -347,27 +344,11 @@ impl<'s> Task<'s> {
             self.logged_at_cycles.borrow_mut().push([from, logged]);
         }
         self.logged_at_rest.set(logged);
-        self.compared_with_cycles.set([0; 2]);
     }
 
     /// The keys under which the task has stored since it was last at rest, but for what it has written at once.
     pub(super) fn logged_since_rest(&self) -> (&[[u32; 2]], &[[u32; 3]]) {
         self.buffer().logged_since(self.logged_at_rest.get())
-    }
-
-    /// Returns how many keys of `logged_since_rest`, from the first on, were there at the last call of
-    /// `note_compared_with_cycles`.
-    pub(super) fn compared_with_cycles(&self) -> [usize; 2] {
-        self.compared_with_cycles.get()
-    }
-
-    /// Call after comparing all of `logged_since_rest` with the cycle commits.
-    pub(super) fn note_compared_with_cycles(&self) {
-        let (logged, at_rest) = (self.buffer().lengths_of_log(), self.logged_at_rest.get());
-        self.compared_with_cycles.set([
-            logged[0].saturating_sub(at_rest[0]),
-            logged[1].saturating_sub(at_rest[1]),
-        ]);
     }
 
     pub(super) fn is_believed(&self) -> bool {
@@ -471,7 +452,6 @@ impl<'s> Task<'s> {
             cycle_since_rest,
             logged_at_cycles,
             logged_at_rest,
-            compared_with_cycles,
             committed,
             waits,
             at_once,
@@ -496,7 +476,6 @@ impl<'s> Task<'s> {
         cycle_since_rest.set(None);
         logged_at_cycles.get_mut().clear();
         logged_at_rest.set([0; 2]);
-        compared_with_cycles.set([0; 2]);
         committed.set([0; 2]);
         waits.set([Duration::ZERO; 3]);
         at_once.set(0);

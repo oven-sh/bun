@@ -2977,8 +2977,10 @@ describe("Glob.match", () => {
   });
 
   // For these patterns a debug build checks each answer against a second way to match, and panics if the two differ.
-  test("a group with `?` or a class in a long alternative, after `**/`, `*/` or `?` and as `@(a|b)` or `?(a)`", async () => {
-    const script = `
+  test.concurrent(
+    "a group with `?` or a class in a long alternative, after `**/`, `*/` or `?` and as `@(a|b)` or `?(a)`",
+    async () => {
+      const script = `
       const wrong = [];
       for (const width of [63, 64, 65, 200]) {
         const text = Buffer.alloc(width - 2, "a").toString();
@@ -3006,13 +3008,14 @@ describe("Glob.match", () => {
       }
       console.log(JSON.stringify(wrong));
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr: exitCode === 0 ? "" : stderr }).toEqual({ stdout: "[]\n", stderr: "" });
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: exitCode === 0 ? "" : stderr }).toEqual({ stdout: "[]\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test("scan finds a name of 64 bytes that a group with `?` or a class matches", async () => {
+  test.concurrent("scan finds a name of 64 bytes that a group with `?` or a class matches", async () => {
     const text = Buffer.alloc(62, "a").toString();
     using dir = tempDir("glob-long-alternative", {
       [text + "bc"]: "",

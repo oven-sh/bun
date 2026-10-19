@@ -6048,7 +6048,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `require.main === module` becomes `import.meta.main`, so the `module`
     /// operand (the CommonJS binding, or the unbound global in an ES module)
     /// is no longer used.
-    pub(crate) fn ignore_usage_of_require_main_module(&mut self, module_operand: &js_ast::ExprData) {
+    pub(crate) fn ignore_usage_of_require_main_module(
+        &mut self,
+        module_operand: &js_ast::ExprData,
+    ) {
         if let js_ast::ExprData::EIdentifier(id) = module_operand {
             self.ignore_usage(id.ref_);
         }

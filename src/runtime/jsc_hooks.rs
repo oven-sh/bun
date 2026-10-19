@@ -4052,7 +4052,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let (package_json, package_json_for_module_type) = if is_js_like && bun_paths::is_absolute(dir) {
+    let (package_json, package_json_for_module_type) = if is_js_like && bun_paths::is_absolute(dir)
+    {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {

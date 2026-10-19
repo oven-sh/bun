@@ -34,8 +34,10 @@ const serverIdentity = {
 const tlsOptions = { ca: fs.readFileSync(path.join(keys, "ca1-cert.pem"), "utf8"), servername: "agent1" };
 
 const isBun = typeof Bun !== "undefined";
+// Node.js cannot load the harness of Bun's tests.
+const harness = isBun ? await import("harness") : undefined;
 // A debug build of Bun takes seconds to load node:http2 in a new process, and to run its first session.
-const slowInDebug = isBun && Bun.version.includes("debug") ? { timeout: 60_000 } : {};
+const slowInDebug = harness?.isDebug ? { timeout: 60_000 } : {};
 
 const FRAME_TYPES = ["DATA", "HEADERS", "PRIORITY", "RST_STREAM", "SETTINGS", "PUSH_PROMISE", "PING", "GOAWAY"];
 const isHeaders = (frame: string) => frame.startsWith("HEADERS");
@@ -44,8 +46,9 @@ type PeerOptions = { secure?: boolean | "TLSv1.2"; ackSettings?: boolean; maxCon
 type Peer = Awaited<ReturnType<typeof startPeer>>;
 type Own = <S extends http2.ClientHttp2Session>(session: S) => S;
 
-// A raw HTTP/2 peer for one client. It records the frames that the client sends and answers each HEADERS
-// with a 200. `gone` resolves when the connection of the client ends, which is behind every byte it sent.
+// A raw HTTP/2 peer for one client. It records the frames that the client sends, answers each HEADERS
+// with a 200, and acknowledges a PING. `gone` resolves when the connection of the client ends, which is
+// behind every byte it sent.
 async function startPeer({ secure = false, ackSettings = true, maxConcurrentStreams }: PeerOptions) {
   const frames: string[] = [];
   const { promise: gone, resolve: onGone } = Promise.withResolvers<void>();
@@ -66,7 +69,11 @@ async function startPeer({ secure = false, ackSettings = true, maxConcurrentStre
         const type = received[3];
         const stream = received.readUInt32BE(5) & 0x7fffffff;
         frames.push((FRAME_TYPES[type] ?? `TYPE_${type}`) + (stream ? `#${stream}` : ""));
-        if (type === 4 && !(received[4] & 1) && ackSettings) socket.write(Buffer.from([0, 0, 0, 4, 1, 0, 0, 0, 0]));
+        const isAck = (received[4] & 1) !== 0;
+        if (type === 4 && !isAck && ackSettings) socket.write(Buffer.from([0, 0, 0, 4, 1, 0, 0, 0, 0]));
+        if (type === 6 && !isAck) {
+          socket.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 1, 0, 0, 0, 0]), received.subarray(9, 17)]));
+        }
         if (type === 1) {
           // HEADERS with END_STREAM and END_HEADERS. 0x88 is ":status: 200".
           const response = Buffer.from([0, 0, 1, 1, 5, 0, 0, 0, 0, 0x88]);
@@ -144,13 +151,14 @@ function requestBehindConnect(door: string, listenerDestroys: boolean) {
   });
 }
 
-type ClientRun = { stdout: string[]; output: string; exitCode: number | null; sent: string[] };
+type ClientRun = { stdout: string[]; stderr: string; exitCode: number | null; sent: string[] };
 
 // Runs the fixture, whose listener throws, in another process: the throw can end the process.
 function runThrowingClient(door: string, survive = false): Promise<ClientRun> {
   return withPeer({ secure: doors[door].secure }, async peer => {
     const child = spawn(process.execPath, [fixture, JSON.stringify({ door, target: peer.target, survive })], {
       stdio: ["ignore", "pipe", "pipe"],
+      env: harness ? harness.bunEnv : process.env,
     });
     let stdout = "";
     let stderr = "";
@@ -159,12 +167,7 @@ function runThrowingClient(door: string, survive = false): Promise<ClientRun> {
     const [exitCode] = await once(child, "close");
     // The listener ran, so the client did connect, and the peer sees that connection end.
     if (stdout.startsWith("listener: throws")) await peer.gone;
-    return {
-      stdout: stdout.trim().split("\n"),
-      output: stdout + stderr,
-      exitCode,
-      sent: peer.frames.filter(isHeaders),
-    };
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode, sent: peer.frames.filter(isHeaders) };
   });
 }
 
@@ -202,6 +205,22 @@ describe("a request made before the connect", () => {
       for (const run of runs.values()) run.catch(() => {});
     });
 
+    // node ends the process at the throw. The request never gets a stream id.
+    const inNode = { stdout: ["listener: throws", "at exit: the request is pending"], exitCode: 1, sent: [] };
+    // Bun catches a throw from these listeners and gives it to the session as its 'error'. The process goes on.
+    const caughtInBun = (atExit: string) => ({
+      stdout: ["listener: throws", "session error: PEER REFUSED", `at exit: the request is ${atExit}`],
+      exitCode: 0,
+      sent: [],
+    });
+    const inBun: Record<string, ReturnType<typeof caughtInBun>> = {
+      "http2.connect(url, options, listener)": caughtInBun("pending"),
+      "cleartext http2.connect(url, listener)": caughtInBun("pending"),
+      // The session gets the throw after the queued ticks ran: the request has an id by then, and nothing is written.
+      "createConnection with a net socket that still connects, socket.on('connect', listener)":
+        caughtInBun("submitted"),
+    };
+
     for (const door of doorNames) {
       // Known gap in Bun: a throw from a listener on the socket is reported, and then the ticks that
       // are queued still run. The 'connect' emit of the session is one of them, so the request is
@@ -210,17 +229,10 @@ describe("a request made before the connect", () => {
       const knownGap = isBun && door === "session.socket.on('secureConnect', listener)";
       const expectFailure = knownGap ? "the process does not end at the throw" : false;
       test(door, { ...slowInDebug, expectFailure }, async () => {
-        const { stdout, output, exitCode, sent } = await runs.get(door)!;
-        assert.deepStrictEqual({ listener: stdout[0], sent }, { listener: "listener: throws", sent: [] });
-        // node ends the process at the throw, so the request never gets a stream id. In Bun a throw from a
-        // listener on a net socket reaches the session only after the queued ticks ran: the request has
-        // an id by then, and nothing is written.
-        if (!(isBun && door.includes("net socket"))) {
-          assert.strictEqual(stdout.at(-1), "at exit: the request is pending");
-        }
-        assert.match(output, /PEER REFUSED/);
-        // Bun reports a throw from the connect() listener as the 'error' of the session, and goes on.
-        assert.ok(exitCode === 1 || (isBun && exitCode === 0), `exit code ${exitCode}`);
+        const { stdout, stderr, exitCode, sent } = await runs.get(door)!;
+        const expected = (isBun && inBun[door]) || inNode;
+        assert.deepStrictEqual({ stdout, exitCode, sent }, expected);
+        assert.match(stdout.join("\n") + stderr, /PEER REFUSED/);
       });
     }
 
@@ -302,6 +314,25 @@ describe("a request made before the connect", () => {
       assert.deepStrictEqual({ first: first.id, second: second.id }, { first: 1, second: 3 });
     }));
 
+  // Only in Bun. node keeps the stream of the failed call as a pending stream: it holds a closed session
+  // open, and session.destroy() gives it an 'error' that nothing listens to.
+  test("is not queued when its request() call throws", { skip: !isBun }, () =>
+    withPeer({}, async (peer, own) => {
+      const session = own(http2.connect(peer.target.url));
+      // request() takes any object with `aborted` as a signal. To listen on this one fails, after the stream exists.
+      const signal = { aborted: false } as unknown as AbortSignal;
+      assert.throws(() => session.request({ ":path": "/refused" }, { signal }), TypeError);
+      const req = session.request({ ":path": "/" });
+      const request = await ending(req);
+      session.close();
+      await peer.gone;
+      assert.deepStrictEqual(
+        { request, id: req.id, sent: peer.frames.filter(isHeaders) },
+        { request: ["response 200"], id: 1, sent: ["HEADERS#1"] },
+      );
+    }),
+  );
+
   test("is rejected when a 'connect' listener closes the session", () =>
     // This peer never acknowledges the SETTINGS: nothing that it sends ends the session.
     withPeer({ ackSettings: false }, async (peer, own) => {
@@ -353,6 +384,31 @@ describe("a request made before the connect", () => {
       assert.deepStrictEqual({ late: late.id, sent: peer.frames.filter(isHeaders) }, { late: 1, sent: ["HEADERS#1"] });
     }));
 
+  test("is rejected when a 'connect' listener pings and closes the session", () =>
+    withPeer({}, async (peer, own) => {
+      const { promise: ping, resolve: onPing } = Promise.withResolvers<string>();
+      const session = own(
+        http2.connect(peer.target.url, () => {
+          session.ping(err => onPing(err ? String((err as NodeJS.ErrnoException).code) : "acknowledged"));
+          session.close();
+        }),
+      );
+      const sessionClosed = closed(session);
+      const req = session.request({ ":path": "/", authorization: "Bearer SECRET" });
+      const request = await ending(req);
+      await sessionClosed;
+      await peer.gone;
+      assert.deepStrictEqual(
+        { request, ping: await ping, sent: peer.frames.filter(isHeaders) },
+        {
+          request: ["error ERR_HTTP2_GOAWAY_SESSION"],
+          // Bun waits for an ACK that is due before it ends a closed session, as its close() does. node does not.
+          ping: isBun ? "acknowledged" : "ERR_HTTP2_PING_CANCEL",
+          sent: [],
+        },
+      );
+    }));
+
   test("is not sent when a 'connect' listener destroys it", () =>
     withPeer({}, async (peer, own) => {
       let req!: http2.ClientHttp2Stream;
@@ -362,6 +418,22 @@ describe("a request made before the connect", () => {
       session.close();
       await peer.gone;
       assert.deepStrictEqual({ request, sent: peer.frames.filter(isHeaders) }, { request: [], sent: [] });
+    }));
+
+  test("is cancelled with the request that its 'aborted' listener makes, when a listener destroys the session", () =>
+    withPeer({}, async (peer, own) => {
+      const session = own(http2.connect(peer.target.url, () => session.destroy()));
+      // A request whose writable side is open emits 'aborted' when the session cancels it.
+      const early = session.request({ ":method": "POST", ":path": "/early", authorization: "Bearer SECRET" });
+      let retryEnded!: Promise<string[]>;
+      early.on("aborted", () => (retryEnded = ending(session.request({ ":path": "/retry" }))));
+      const request = await ending(early);
+      const retry = await retryEnded;
+      await peer.gone;
+      assert.deepStrictEqual(
+        { request, retry, sent: peer.frames.filter(isHeaders) },
+        { request: ["error ERR_HTTP2_STREAM_CANCEL"], retry: ["error ERR_HTTP2_STREAM_CANCEL"], sent: [] },
+      );
     }));
 
   test("stays pending without its 'connect' listener, and does not hold back later requests", () =>
@@ -381,6 +453,26 @@ describe("a request made before the connect", () => {
       assert.deepStrictEqual(
         { pending, later: later.map(req => req.id), sent: peer.frames.filter(isHeaders) },
         { pending: true, later: [1, 3], sent: ["HEADERS#1", "HEADERS#3"] },
+      );
+    }));
+
+  test("keeps a closed session open while it is pending without its 'connect' listener", () =>
+    withPeer({}, async (peer, own) => {
+      const session = own(http2.connect(peer.target.url));
+      const early = session.request({ ":path": "/early", authorization: "Bearer SECRET" });
+      early.on("error", () => {});
+      session.removeAllListeners("connect");
+      // With its SETTINGS acknowledged, a closed session waits for nothing but its streams.
+      await once(session, "localSettings");
+      const later = session.request({ ":path": "/later" });
+      session.close();
+      assert.deepStrictEqual(await ending(later), ["response 200"]);
+      // A session that can end does so on the immediate after its last stream. Two are past that.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepStrictEqual(
+        { pending: early.pending, destroyed: session.destroyed, sent: peer.frames.filter(isHeaders) },
+        { pending: true, destroyed: false, sent: ["HEADERS#1"] },
       );
     }));
 
@@ -495,8 +587,8 @@ describe("a request made before the connect", () => {
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
-if (isBun) {
-  const { bunEnv, nodeExe } = await import("harness");
+if (harness) {
+  const { bunEnv, nodeExe } = harness;
   const node = nodeExe();
   // The node of Alpine crashes at a random point of the http2 files (see node-http2-client-close.test.ts).
   const isMusl =

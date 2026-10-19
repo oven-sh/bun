@@ -447,6 +447,14 @@ struct Claim {
     is_given_up: bool,
 }
 
+/// What `Program::claim_variances` does while another thread has the claim.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum IfTaken {
+    Wait,
+    /// Returns `VarianceClaim::Taken`.
+    Return,
+}
+
 /// The result of `Program::claim_variances`.
 pub(super) enum VarianceClaim<'s> {
     /// The variances are already shared, possibly after a wait.
@@ -473,13 +481,12 @@ pub(super) enum NotShared {
 
 impl<'s> Program<'s> {
     /// See `Claims`. The caller is about to start an outermost measurement of `sym`'s variances. It isn't measuring
-    /// yet, so it has no claim. `may_claim` is true if its result has a chance of being shared. `waits`: it waits while
-    /// another thread has the claim.
+    /// yet, so it has no claim. `may_claim` is true if its result has a chance of being shared.
     pub(super) fn claim_variances(
         &self,
         sym: Sym,
         may_claim: bool,
-        waits: bool,
+        if_taken: IfTaken,
     ) -> VarianceClaim<'s> {
         let claims = &self.commits.claims;
         let mut table = claims.table.lock();
@@ -490,7 +497,9 @@ impl<'s> Program<'s> {
             }
             match table.get(&sym) {
                 Some(claim) if claim.is_given_up => return VarianceClaim::Unclaimed,
-                Some(claim) if claim.is_taken && !waits => return VarianceClaim::Taken,
+                Some(claim) if claim.is_taken && if_taken == IfTaken::Return => {
+                    return VarianceClaim::Taken;
+                }
                 Some(claim) if claim.is_taken => {}
                 _ if !may_claim => return VarianceClaim::Unclaimed,
                 _ => {

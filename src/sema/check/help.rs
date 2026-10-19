@@ -27,7 +27,7 @@
 //!   whose task never requests help. The request's cache is dropped, so that task hits none of those entries.
 
 use super::Checker;
-use super::commit::VarianceClaim;
+use super::commit::{IfTaken, VarianceClaim};
 use super::relate::{Key, Relater, Relation};
 use super::task::Stored;
 use crate::program::Sym;
@@ -383,7 +383,7 @@ impl<'s> Checker<'_, 's> {
         may_claim: bool,
     ) -> VarianceClaim<'s> {
         if self.help.exits_after_claim.is_some() {
-            let claim = self.p.claim_variances(sym, false, false);
+            let claim = self.p.claim_variances(sym, false, IfTaken::Return);
             if matches!(claim, VarianceClaim::Taken) && !self.task.was_discarded() {
                 self.make_room_for_another_helper();
                 self.task
@@ -392,12 +392,12 @@ impl<'s> Checker<'_, 's> {
             return claim;
         }
         let Some(board) = self.help.board.clone() else {
-            return self.p.claim_variances(sym, may_claim, true);
+            return self.p.claim_variances(sym, may_claim, IfTaken::Wait);
         };
         // The thread helps with each request at most once, so every turn of the loop that doesn't wait adds to this.
         let mut excluded: Vec<Arc<HelpRequest>> = self.help.request.iter().cloned().collect();
         loop {
-            match self.p.claim_variances(sym, may_claim, false) {
+            match self.p.claim_variances(sym, may_claim, IfTaken::Return) {
                 VarianceClaim::Taken => {}
                 claim => return claim,
             }

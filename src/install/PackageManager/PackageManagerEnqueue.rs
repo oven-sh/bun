@@ -3835,13 +3835,19 @@ fn get_or_put_resolved_package(
                 }
             }
             // package name hash should be used to find workspace path from map
-            let workspace_path: SemverString = this
-                .lockfile
-                .workspace_paths
-                .get(&name_hash)
-                .copied()
-                .unwrap_or_else(|| *version.workspace());
+            let listed = this.lockfile.workspace_paths.get(&name_hash).copied();
+            let workspace_path: SemverString = listed.unwrap_or_else(|| *version.workspace());
+            // A path that is in `workspace_paths` was looked at when a package.json listed it or
+            // when `take_linked_members` ran. The value of an override is not in the map, and
+            // `workspace:*` on a name that no workspace has puts `*` there.
+            let is_listed = listed.is_some() && this.lockfile.str(&workspace_path) != b"*";
             let res = resolve_project_folder(this, version, workspace_path);
+            if !is_listed
+                && let FolderResolutionValue::PackageId(id)
+                | FolderResolutionValue::NewPackageId(id) = res
+            {
+                this.lockfile.look_at_member(id);
+            }
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Symlink => {

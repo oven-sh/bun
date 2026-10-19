@@ -237,6 +237,7 @@ pub(crate) fn perform_security_scan_after_resolution(
         seeds,
         command_ctx,
         original_cwd,
+        true,
     )
 }
 
@@ -256,6 +257,7 @@ pub fn perform_security_scan_for_all(
         &[],
         command_ctx,
         original_cwd,
+        false,
     )
 }
 
@@ -266,6 +268,7 @@ fn scan_installing_scanner_if_needed(
     seeds: &[PackageID],
     command_ctx: CommandContext,
     original_cwd: &[u8],
+    parsed_package_json: bool,
 ) -> Result<Option<SecurityScanResults>, Error> {
     match attempt_security_scan(
         manager,
@@ -278,6 +281,11 @@ fn scan_installing_scanner_if_needed(
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
+            // The linkers ask which workspaces are behind a symlink. `bun pm scan` parses no
+            // package.json, so nothing has looked yet.
+            if !parsed_package_json {
+                manager.lockfile.look_at_members(None);
+            }
             let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");

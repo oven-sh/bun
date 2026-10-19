@@ -28,6 +28,7 @@ import {
 } from "harness";
 import { dirname, join, resolve } from "path";
 import { TestRegistry } from "registry";
+import { SimpleRegistry } from "./simple-dummy-registry";
 
 const { parseLockfile } = install_test_helpers;
 
@@ -4294,6 +4295,143 @@ for (const [link, target] of [
   });
 }
 
+// No package.json that every install reads lists these workspaces. The package.json of `tools/tool` is read once, the
+// value of an override or of a catalog isn't a "workspaces" entry, and `workspace:*` on a name that no workspace has
+// means the folder `*`. Later installs know such a workspace from bun.lock or bun.lockb.
+// Not on Windows: a symlink needs a privilege there, and a folder can't have the name `*`.
+describe.skipIf(isWindows)("isolated: a symlinked workspace that no package.json lists", () => {
+  const s = { name: "s", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } };
+  const byPath = (path: string) => ({ name: "tool", dependencies: { s: `workspace:${path}` } });
+  const reachesTool = { dependencies: { tool: "workspace:tools/tool" } };
+
+  // `link`: the symlink, and the folder that it leads to. `member`: the workspace, through the symlink.
+  const layouts: {
+    by: string;
+    root: object;
+    files?: Record<string, object>;
+    link?: [path: string, target: string];
+    member?: string;
+    lockb?: boolean;
+  }[] = [
+    {
+      by: "a workspace:<path> dependency of another workspace",
+      root: reachesTool,
+      files: { "tools/tool/package.json": byPath("../../link") },
+    },
+    {
+      by: "a workspace:<path> dependency of another workspace, with bun.lockb",
+      root: reachesTool,
+      files: { "tools/tool/package.json": byPath("../../link") },
+      lockb: true,
+    },
+    {
+      by: "a chain of three workspace:<path> dependencies",
+      root: reachesTool,
+      files: {
+        "tools/tool/package.json": { name: "tool", dependencies: { next: "workspace:../next" } },
+        "tools/next/package.json": { name: "next", dependencies: { s: "workspace:../../link" } },
+      },
+    },
+    {
+      by: "a workspace:<path> dependency, below a symlinked folder",
+      root: reachesTool,
+      files: { "tools/tool/package.json": byPath("../../linked/s") },
+      link: ["linked", "real/deeper"],
+      member: "linked/s",
+    },
+    {
+      by: "a workspace:<path> dependency of a symlinked workspace",
+      root: reachesTool,
+      files: {
+        "tools/tool/package.json": { name: "tool", dependencies: { outer: "workspace:../../link" } },
+        "real/deeper/outer/package.json": { name: "outer", dependencies: { s: "workspace:./s" } },
+      },
+      link: ["link", "real/deeper/outer"],
+      member: "link/s",
+    },
+    { by: "an override", root: { dependencies: { s: "^1.0.0" }, overrides: { s: "workspace:link" } } },
+    {
+      by: "a catalog",
+      root: {
+        workspaces: { packages: ["packages/*"], catalog: { s: "workspace:link" } },
+        dependencies: { s: "catalog:" },
+      },
+    },
+    { by: "workspace:* and the folder *", root: { dependencies: { s: "workspace:*" } }, link: ["*", "real/deeper/s"] },
+  ];
+
+  test.concurrent.each(layouts.map(layout => [layout.by, layout] as const))(
+    "named by %s, it finds its dependencies on every install",
+    async (_, { root, files = {}, link = ["link", "real/deeper/s"], member = link[0], lockb = false }) => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      await Promise.all([
+        verdaccio.writeBunfig(packageDir, { saveTextLockfile: !lockb }),
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "mono", workspaces: ["packages/*"], ...root })),
+        write(join(packageDir, "packages", "lib", "package.json"), JSON.stringify({ name: "lib", version: "1.2.3" })),
+        ...Object.entries(files).map(([path, json]) => write(join(packageDir, path), JSON.stringify(json))),
+      ]);
+      await write(join(packageDir, link[1], member.slice(link[0].length), "package.json"), JSON.stringify(s));
+      symlinkSync(link[1], join(packageDir, link[0]));
+      // An install that took the symlink for the folder left this link. It leads nowhere from the real folder.
+      const dependency = join(packageDir, member, "node_modules", "no-deps");
+      mkdirSync(dirname(dependency), { recursive: true });
+      symlinkSync(join("..", "..", "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps"), dependency);
+
+      for (const [install, ...args] of [["first"], ["second"], ["frozen", "--frozen-lockfile"]]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker=isolated", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        const version = await file(join(dependency, "package.json"))
+          .json()
+          .then(
+            pkg => pkg.version,
+            error => error.code,
+          );
+        expect({ install, version }).toEqual({ install, version: "1.0.0" });
+        expect(exitCode).toBe(0);
+      }
+      expect(existsSync(join(packageDir, lockb ? "bun.lockb" : "bun.lock"))).toBe(true);
+    },
+  );
+
+  // The link step reports both, as it does for a workspace that a package.json lists.
+  test.concurrent.each([
+    ["whose folder is gone", (dir: string) => rmSync(join(dir, "link"))],
+    ["whose symlink leads nowhere", (dir: string) => rmSync(join(dir, "real"), { recursive: true })],
+  ])("%s fails the install", async (_, remove) => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "mono", ...reachesTool })),
+      write(join(packageDir, "tools", "tool", "package.json"), JSON.stringify(byPath("../../link"))),
+      write(join(packageDir, "real", "deeper", "s", "package.json"), JSON.stringify(s)),
+    ]);
+    symlinkSync(join("real", "deeper", "s"), join(packageDir, "link"));
+
+    const install = async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker=isolated"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { failed: out.includes("Failed to install 1 package"), exitCode };
+    };
+    expect(await install()).toEqual({ failed: false, exitCode: 0 });
+    remove(packageDir);
+    expect(await install()).toEqual({ failed: true, exitCode: 1 });
+  });
+});
+
 describe("a workspace outside the project", () => {
   const app = {
     name: "app",
@@ -4339,6 +4477,8 @@ describe("a workspace outside the project", () => {
     { entry: "link", path: "link", link: ["link", "../app"] },
     { entry: "up/app", path: "up/app", link: ["up", ".."] },
     { entry: "linked/*", path: "linked/app", link: ["linked/app", "../../app"] },
+    { entry: "../up/app", path: "../up/app", link: ["../up/app", "../app"] },
+    { entry: "../up/*", path: "../up/app", link: ["../up/app", "../app"] },
   ];
 
   describe.each(["hoisted", "isolated"])("%s linker", linker => {
@@ -4436,6 +4576,155 @@ describe("a workspace outside the project", () => {
       });
       const { packages } = Bun.JSON5.parse(await file(join(project, "bun.lock")).text());
       expect(packages["./no-deps/a-dep"][0]).toBe("a-dep@1.0.1");
+    });
+  });
+
+  // `link` leads to `app`. Only the package.json of `tools/tool` names it, and that one isn't read on every install.
+  describe("that no package.json lists", () => {
+    const tool = { name: "tool", dependencies: { app: "workspace:../../link" } };
+    const reachesTool = {
+      workspaces: ["packages/*"],
+      dependencies: { "no-deps": "2.0.0", tool: "workspace:tools/tool" },
+    };
+
+    async function setupUnlisted(dir: string, root: object = reachesTool, lockb = false) {
+      const project = await setup(dir, root, ["link", "../app"]);
+      await Promise.all([
+        verdaccio.writeBunfig(project, { saveTextLockfile: !lockb }),
+        write(join(project, "tools", "tool", "package.json"), JSON.stringify(tool)),
+      ]);
+      return project;
+    }
+
+    /** The version of `no-deps` in `app`, and whether the folder that Bun didn't install is still there. */
+    async function inApp(dir: string) {
+      const path = join(dir, "app", "node_modules", "no-deps", "package.json");
+      const noDeps = await file(path)
+        .json()
+        .then(
+          pkg => pkg.version,
+          error => error.code,
+        );
+      return { "no-deps": noDeps, keptExtra: existsSync(join(dir, "app", "node_modules", "extra")) };
+    }
+
+    test.concurrent("the isolated linker links its dependencies on every install", async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const project = await setupUnlisted(packageDir);
+
+      for (const [install, ...args] of [["first"], ["second"], ["frozen", "--frozen-lockfile"]]) {
+        const { err, exitCode } = await run(project, env, "install", "--linker=isolated", ...args);
+        expect(err).not.toContain("error:");
+        expect({ install, ...(await inApp(packageDir)) }).toEqual({ install, "no-deps": "1.0.0", keptExtra: true });
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    // With the hoisted linker, `app` has its own copy of `no-deps` until the root takes that version too.
+    test.concurrent("its copy of a package stays when the project hoists that version", async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const project = await setupUnlisted(packageDir);
+
+      for (const version of ["2.0.0", "1.0.0"]) {
+        const root = { ...reachesTool, dependencies: { ...reachesTool.dependencies, "no-deps": version } };
+        await write(join(project, "package.json"), JSON.stringify({ name: "project", ...root }));
+        const { err, exitCode } = await run(project, env, "install", "--linker=hoisted");
+        expect(err).not.toContain("error:");
+        expect({ root: version, ...(await inApp(packageDir)) }).toEqual({
+          root: version,
+          "no-deps": "1.0.0",
+          keptExtra: true,
+        });
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test.concurrent('its copy of a package stays when it leaves "workspaces"', async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const dependencies = { "no-deps": "2.0.0" };
+      const project = await setup(packageDir, { workspaces: ["packages/*", "link"], dependencies }, ["link", "../app"]);
+
+      for (const workspaces of [["packages/*", "link"], ["packages/*"]]) {
+        await write(join(project, "package.json"), JSON.stringify({ name: "project", workspaces, dependencies }));
+        const { err, exitCode } = await run(project, env, "install", "--linker=hoisted");
+        expect(err).not.toContain("error:");
+        expect({ workspaces, ...(await inApp(packageDir)) }).toEqual({
+          workspaces,
+          "no-deps": "1.0.0",
+          keptExtra: true,
+        });
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    // With bun.lock these two leave the folder alone anyway: `bun prune` stops with "bun.lock does not match
+    // package.json" at the root's `workspace:<path>` dependency, and the install moves nothing out of it.
+    test.concurrent.each([
+      ["bun prune", ["prune"]],
+      ["an install with the other linker", ["install", "--linker=isolated"]],
+    ])("%s removes nothing from its node_modules, with bun.lockb", async (_, args) => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const project = await setupUnlisted(packageDir, reachesTool, true);
+
+      for (const command of [["install", "--linker=hoisted"], args]) {
+        const { err, exitCode } = await run(project, env, ...command);
+        expect(err).not.toContain("error:");
+        expect({ command, ...(await inApp(packageDir)) }).toEqual({ command, "no-deps": "1.0.0", keptExtra: true });
+        expect(exitCode).toBe(0);
+      }
+      expect(existsSync(join(project, "bun.lockb"))).toBe(true);
+    });
+  });
+
+  // `bun pm scan` parses no package.json, so only bun.lock tells it which workspaces there are. It installs a scanner
+  // that isn't in node_modules yet, and that install moves what another linker left in a workspace aside.
+  describe("bun pm scan", () => {
+    const root = { name: "project", workspaces: ["link"], dependencies: { "test-security-scanner": "1.0.0" } };
+    const member = { name: "app", version: "1.0.0" };
+    let scanners: SimpleRegistry;
+    let lockfile: string;
+    const bunfig = (dir: string, security?: object) =>
+      Bun.TOML.stringify({
+        install: { cache: join(dir, ".bun-cache"), registry: `${scanners.getUrl()}/`, ...(security && { security }) },
+      });
+
+    beforeAll(async () => {
+      scanners = new SimpleRegistry(false);
+      await scanners.start();
+      using dir = tempDir("workspace-outside-scan", {
+        "package.json": JSON.stringify(root),
+        "link/package.json": JSON.stringify(member),
+      });
+      await write(join(String(dir), "bunfig.toml"), bunfig(String(dir)));
+      const { exitCode } = await run(String(dir), baseEnv, "install", "--lockfile-only");
+      expect(exitCode).toBe(0);
+      lockfile = await file(join(String(dir), "bun.lock")).text();
+    });
+    afterAll(() => scanners.stop());
+
+    test.concurrent("moves nothing out of its node_modules when it installs the scanner", async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const project = join(packageDir, "project");
+      await Promise.all([
+        write(join(project, "package.json"), JSON.stringify(root)),
+        write(join(project, "bun.lock"), lockfile),
+        write(join(project, "bunfig.toml"), bunfig(packageDir, { scanner: "test-security-scanner" })),
+        write(join(packageDir, "app", "package.json"), JSON.stringify(member)),
+        write(join(packageDir, "app", "node_modules", "extra", "package.json"), JSON.stringify({ name: "extra" })),
+      ]);
+      // A junction needs no privilege on Windows. Its target is absolute.
+      symlinkSync(isWindows ? join(packageDir, "app") : "../app", join(project, "link"), "junction");
+
+      const { out, err, exitCode } = await run(project, env, "pm", "scan");
+
+      expect(out + err).toContain("Security scanner installed successfully");
+      expect(existsSync(join(packageDir, "app", "node_modules", "extra"))).toBe(true);
+      expect(exitCode).toBe(0);
     });
   });
 

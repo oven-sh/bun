@@ -289,7 +289,7 @@ pub fn install_with_manager(
                 for key in lockfile.self_contained_workspaces.keys() {
                     manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
-                manager.lockfile.linked_members = core::mem::take(&mut lockfile.linked_members);
+                manager.lockfile.take_linked_members(&mut lockfile);
                 // The lockfile's record of `trustedDependencies` doesn't decide either.
                 manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
                 if manager.subcommand == Subcommand::Dedupe {

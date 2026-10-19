@@ -2069,8 +2069,10 @@ impl<'a> Installer<'a> {
         } else {
             None
         };
+        // A link that leads nowhere has no real path. `dest` stays, and writing to it fails.
         if cfg!(not(windows))
             && let Some(member) = linked_member
+            && !member.real_path.is_empty()
         {
             dest = AutoPath::from(&*member.real_path).assume_ok();
             PathLike::append(&mut dest, b"node_modules").map_err(TaskError::SymlinkDependencies)?;

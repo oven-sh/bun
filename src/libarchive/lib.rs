@@ -157,7 +157,7 @@ pub mod lib {
         pub result: Result,
     }
 
-    /// One per extraction: once `pwrite` fails, later entries do not try it again.
+    /// One per extraction. Once `pwrite` fails, later entries don't try it again.
     pub struct WriteStrategy {
         pub pwrite: bool,
     }
@@ -168,7 +168,8 @@ pub mod lib {
         }
     }
 
-    /// Sizes no write or allocation from the entry header or sparse map: nothing proves them.
+    /// Never sizes a write or an allocation from the entry header or the sparse map, because
+    /// nothing verifies them.
     pub struct EntryWriter {
         fd: Fd,
         /// One past the last byte written.
@@ -201,7 +202,8 @@ pub mod lib {
             #[cfg(windows)]
             if !self.marked_sparse {
                 self.marked_sparse = true;
-                // A volume without sparse files refuses the mark; the hole then takes disk.
+                // A volume without sparse file support refuses the mark. The hole then takes up
+                // disk space.
                 let _ = bun_sys::set_sparse(self.fd);
             }
         }
@@ -250,7 +252,8 @@ pub mod lib {
             Ok(())
         }
 
-        /// `end` is the offset libarchive returned with `ARCHIVE_EOF`: the length of the file.
+        /// `end` is the offset that libarchive returned with `ARCHIVE_EOF`, which is the length of
+        /// the file.
         pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
             if end > self.end {
                 self.before_hole();
@@ -312,8 +315,9 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// Reads in steps so an untrusted `size` doesn't drive allocation. `Ok(false)`: read error.
-        pub(crate) fn read_data_to_vec(
+        /// Reads in steps, so that an untrusted `size` doesn't drive the allocation. Returns
+        /// `Ok(false)` on a read error.
+        pub fn read_data_to_vec(
             &self,
             size: usize,
             out: &mut Vec<u8>,
@@ -339,7 +343,8 @@ pub mod lib {
             Ok(true)
         }
 
-        /// `archive_read_data_block` — returns `None` on EOF; `*offset` is then the entry's length.
+        /// Calls `archive_read_data_block`. Returns `None` on EOF, and `*offset` is then the
+        /// entry's length.
         pub fn next(&self, offset: &mut i64) -> Option<Block<'_>> {
             let mut buff: *const c_void = core::ptr::null();
             let mut size: usize = 0;
@@ -409,7 +414,8 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
         }
-        /// Padding unit for the last output block; the default pads it to 10 KiB, 1 disables padding.
+        /// Sets the padding unit for the last output block. The default pads it to 10 KiB, and 1
+        /// disables padding.
         pub fn write_set_bytes_in_last_block(&self, bytes: c_int) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_set_bytes_in_last_block(self.as_mut_ptr(), bytes) }
@@ -845,16 +851,26 @@ pub mod lib {
     }
 
     /// Growing memory buffer for archive writes with libarchive callbacks.
-    pub struct GrowingBuffer {
+    pub struct GrowingBuffer<'a> {
         pub(crate) list: Vec<u8>,
         pub(crate) had_error: bool,
+        /// When set, every write goes to this callback instead of `list`, so `list` stays empty.
+        pub(crate) forward_to: Option<&'a mut dyn FnMut(&[u8])>,
     }
 
-    impl GrowingBuffer {
-        pub fn init() -> GrowingBuffer {
+    impl<'a> GrowingBuffer<'a> {
+        pub fn init() -> Self {
             GrowingBuffer {
                 list: Vec::new(),
                 had_error: false,
+                forward_to: None,
+            }
+        }
+
+        pub fn forward_to(write: &'a mut dyn FnMut(&[u8])) -> Self {
+            GrowingBuffer {
+                forward_to: Some(write),
+                ..Self::init()
             }
         }
 
@@ -870,7 +886,7 @@ pub mod lib {
             client_data: *mut c_void,
         ) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+            let this = unsafe { bun_core::callback_ctx::<Self>(client_data) };
             this.list.clear();
             this.had_error = false;
             0
@@ -883,12 +899,16 @@ pub mod lib {
             length: usize,
         ) -> la_ssize_t {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+            let this = unsafe { bun_core::callback_ctx::<Self>(client_data) };
             if buff.is_null() || length == 0 {
                 return 0;
             }
             // SAFETY: buff[0..length] is valid for reads per libarchive contract.
             let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
+            if let Some(write) = this.forward_to.as_deref_mut() {
+                write(data);
+                return la_ssize_t::try_from(length).expect("int cast");
+            }
             if this.list.try_reserve(length).is_err() {
                 this.had_error = true;
                 // libarchive sets no error of its own for a failed client write.
@@ -964,7 +984,9 @@ impl BufferReadStream {
         unsafe { &*self.buf }
     }
 
-    pub(crate) fn open_read(&mut self) -> lib::Result {
+    /// `npm` makes libarchive read the tarball the way npm's own tar reader does. See
+    /// patches/libarchive/tar-npm-compat.patch.
+    pub(crate) fn open_read(&mut self, npm: bool) -> lib::Result {
         let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
@@ -975,7 +997,11 @@ impl BufferReadStream {
         // have been concatenated together.
         // Without this option, only the contents of
         // the first concatenated archive would be read.
-        let _ = archive.read_set_options(c"read_concatenated_archives");
+        let _ = archive.read_set_options(if npm {
+            c"npm"
+        } else {
+            c"read_concatenated_archives"
+        });
 
         archive.read_open_memory(self.buf())
     }
@@ -1005,6 +1031,34 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
         mode |= 0o1;
     }
     mode
+}
+
+/// Returns the path where node-tar would extract the npm tarball entry `path`, whose leading
+/// `package/` is already removed. The result is empty for an entry that node-tar skips.
+pub fn normalize_npm_entry_path<'a>(
+    path: &[OSPathChar],
+    buf: &'a mut [OSPathChar],
+) -> &'a mut [OSPathChar] {
+    if path
+        .split(|c| bun_paths::is_sep_any_t(*c))
+        .any(|part| part == [b'.' as OSPathChar; 2])
+    {
+        return &mut buf[..0];
+    }
+    #[cfg(windows)]
+    return bun_paths::resolve_path::normalize_buf_t::<u16, bun_paths::platform::Auto>(path, buf);
+    #[cfg(not(windows))]
+    bun_paths::resolve_path::normalize_string_generic_t::<u8, false, false>(path, buf, b'/', |c| {
+        c == b'/'
+    })
+}
+
+/// Returns the first component of an entry's path, which is the archive's root folder.
+pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
+    let sep = b'/' as OSPathChar;
+    let start = path.iter().take_while(|c| **c == sep).count();
+    let rest = &path[start..];
+    &rest[..strings::index_of_scalar(rest, sep).unwrap_or(rest.len())]
 }
 
 /// Validates that a symlink target doesn't escape the extraction directory.
@@ -1141,7 +1195,7 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                     if log {
                         bun_core::warn!(
                             "Skipping symlink whose parent directory changed during extraction: {}\n",
-                            bstr::BStr::new(symlink.path.as_bytes()),
+                            bun_core::fmt::escape_control_chars(symlink.path.as_bytes()),
                         );
                     }
                     continue;
@@ -1154,8 +1208,8 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                 if log {
                     bun_core::warn!(
                         "Skipping symlink that could not be created: {} -> {}\n",
-                        bstr::BStr::new(symlink.path.as_bytes()),
-                        bstr::BStr::new(symlink.target.as_bytes()),
+                        bun_core::fmt::escape_control_chars(symlink.path.as_bytes()),
+                        bun_core::fmt::escape_control_chars(symlink.target.as_bytes()),
                     );
                 }
             }
@@ -1203,7 +1257,8 @@ struct OutputFile {
 impl Drop for OutputFile {
     fn drop(&mut self) {
         if self.close {
-            // Slow under Windows AV; async closing gains nothing, can fail NtSetInformationFile.
+            // Closing is slow under Windows antivirus, but closing asynchronously gains nothing and
+            // can make NtSetInformationFile fail.
             self.fd.close();
         }
     }
@@ -1284,14 +1339,15 @@ impl Archiver {
         root: &[u8],
         ctx: &mut Context,
         appender: &mut A,
-        // Asked about every entry's path below `root`; such an entry is listed whatever its size.
+        // Called with the path of every entry below `root`. If it returns true, the entry is listed
+        // whatever its size.
         leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
+        let _ = stream.open_read(false);
         let archive = stream.archive;
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
@@ -1452,7 +1508,7 @@ impl Archiver {
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
+        let _ = stream.open_read(options.npm);
         let archive = stream.archive;
         let mut count: u32 = 0;
         let dir_fd = dir;
@@ -1497,22 +1553,16 @@ impl Archiver {
 
                     if A::HAS_ON_FIRST_DIRECTORY_NAME {
                         if appender.needs_first_dirname() {
+                            let root = first_path_component(&pathname_z[..]);
                             #[cfg(windows)]
                             {
-                                let result = strings::to_utf8_list_with_type(
-                                    Vec::new(),
-                                    pathname_z.as_slice(),
-                                )?;
+                                let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
-                                appender.on_first_directory_name(strings::without_trailing_slash(
-                                    &result,
-                                ));
+                                appender.on_first_directory_name(&result);
                             }
                             #[cfg(not(windows))]
                             {
-                                appender.on_first_directory_name(strings::without_trailing_slash(
-                                    pathname_z.as_bytes(),
-                                ));
+                                appender.on_first_directory_name(root);
                             }
                         }
                     }
@@ -1545,8 +1595,9 @@ impl Archiver {
                         let sep: OSPathChar = b'/' as OSPathChar;
                         let mut i = 0usize;
                         while i < options.depth_to_skip {
+                            // npm counts the empty name before a leading `/` as a component.
                             while let [first, rest @ ..] = remaining {
-                                if *first == sep {
+                                if *first == sep && !options.npm {
                                     remaining = rest;
                                 } else {
                                     break;
@@ -1556,7 +1607,7 @@ impl Archiver {
                                 continue 'loop_;
                             }
                             match strings::index_of_scalar(remaining, sep) {
-                                Some(j) => remaining = &remaining[j..],
+                                Some(j) => remaining = &remaining[j + 1..],
                                 None => remaining = &remaining[remaining.len()..],
                             }
                             i += 1;
@@ -1578,16 +1629,23 @@ impl Archiver {
                         if options.log {
                             bun_core::warn!(
                                 "Skipping entry with a path longer than the maximum path length: {}\n",
-                                bun_core::fmt::fmt_os_path(pathname, Default::default()),
+                                bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                                    pathname,
+                                    Default::default()
+                                )),
                             );
                         }
                         continue;
                     }
 
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                        OSPathChar,
-                        bun_paths::platform::Auto,
-                    >(pathname, &mut normalized_buf[..]);
+                    let normalized = if options.npm {
+                        normalize_npm_entry_path(pathname, &mut normalized_buf[..])
+                    } else {
+                        bun_paths::resolve_path::normalize_buf_t::<
+                            OSPathChar,
+                            bun_paths::platform::Auto,
+                        >(pathname, &mut normalized_buf[..])
+                    };
                     let normalized_len = normalized.len();
                     normalized_buf[normalized_len] = 0;
                     // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
@@ -1641,7 +1699,10 @@ impl Archiver {
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
-                            bun_core::fmt::fmt_os_path(path_slice, Default::default())
+                            bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                                path_slice,
+                                Default::default()
+                            ))
                         );
                     }
 
@@ -1699,11 +1760,15 @@ impl Archiver {
                                     if options.log {
                                         bun_core::warn!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
-                                            bun_core::fmt::fmt_os_path(
-                                                path_slice,
-                                                Default::default(),
+                                            bun_core::fmt::EscapeControlChars(
+                                                bun_core::fmt::fmt_os_path(
+                                                    path_slice,
+                                                    Default::default(),
+                                                )
                                             ),
-                                            bstr::BStr::new(link_target.as_bytes()),
+                                            bun_core::fmt::escape_control_chars(
+                                                link_target.as_bytes()
+                                            ),
                                         );
                                     }
                                     continue;

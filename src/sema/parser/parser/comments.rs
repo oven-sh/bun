@@ -389,6 +389,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.unfinish_node(NodeData::Expr(ExprId(last as u32)));
             self.comments.last_expr_with_width.truncate(last);
         }
+        if (self.f.far_names.last()).is_some_and(|it| it.0.idx() == last) {
+            self.f.far_names.pop();
+        }
         self.f.exprs.pop()
     }
 

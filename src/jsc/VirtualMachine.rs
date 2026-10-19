@@ -131,6 +131,27 @@ impl Default for InitOptions {
     }
 }
 
+/// What the VM runs as the program.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MainEntryPoint {
+    /// The user's file, through the `bun:main` wrapper.
+    File,
+    /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
+    Html,
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
+    /// entry module, so `main` is `None`.
+    Bake,
+}
+
+/// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
+/// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum BuiltinEntryPoint {
+    Html = 0,
+    Bake = 1,
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -146,18 +167,31 @@ pub struct VirtualMachine {
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<bun_ast::Log>>,
-    /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
+    /// Path of the entry module: the user's module that runs first. `None` when there is none, as
+    /// for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
+    /// borrows process-argv, the resolver's
     /// process-lifetime `dirname_store`/`filename_store`, the standalone module
     /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
     /// every case the storage outlives this VM but is not Rust-`'static`.
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
-    main: bun_ptr::RawSlice<u8>,
-    pub main_is_html_entrypoint: bool,
+    main: Option<bun_ptr::RawSlice<u8>>,
+    pub main_entry_point: MainEntryPoint,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
+    /// `[serve.static] plugins` of bunfig.toml.
+    pub bake_config_plugins: crate::strong::Optional,
+    /// The names of `bake_config_plugins`.
+    pub bake_config_plugin_names: Box<[Box<[u8]>]>,
+    /// `bun bake`: the next `Bun.serve()` (its own) adds the routers of a framework: the one in
+    /// `bake_framework`, or the default React framework. That call clears it.
+    pub bake_pages: bool,
+    /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
+    /// `Bun.serve()`. Empty for the default React framework.
+    pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
@@ -771,10 +805,13 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
+        if !vm.transpiler.options.disable_transpilation
+            && vm.main_entry_point == MainEntryPoint::File
+        {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
-            bun_core::StringView::borrow_utf8(vm.main())
+            // With no entry module there is no root, and no key matches.
+            bun_core::StringView::borrow_utf8(vm.main().unwrap_or_default())
         }
     }
 
@@ -2266,6 +2303,11 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
+        // The loop won't tick again, so flush now. Don't use `uws_loop()`: inside spawnSync it
+        // returns a loop that has no uWS LoopData.
+        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
+        unsafe { (*uws::Loop::get()).flush_pending_writes() };
+
         self.is_shutting_down = true;
 
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the
@@ -3098,7 +3140,10 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
-    safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    safe fn Bun__loadBuiltinEntryPoint(
+        global: &JSGlobalObject,
+        entry_point: BuiltinEntryPoint,
+    ) -> *mut JSInternalPromise;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3202,9 +3247,12 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).main).write(None);
             addr_of_mut!((*vm).main_hash).write(0);
+            addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
+            addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
+            addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -3373,24 +3421,25 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Read the entry-point path (see `main` field doc).
+    /// The path of the entry module, `None` when there is none (see `main` field doc).
     ///
     /// # Safety (callers)
     /// The slice borrows storage that outlives this VM (process-argv,
     /// resolver string store, standalone graph, or the owning `WebWorker`);
     /// see the field doc. Never freed by the VM.
     #[inline]
-    pub fn main(&self) -> &[u8] {
+    pub fn main(&self) -> Option<&[u8]> {
         // `main` is a `RawSlice` whose storage outlives this VM (BACKREF — see
         // field doc); the invariant is encapsulated in `RawSlice::slice`.
-        self.main.slice()
+        self.main.as_ref().map(|main| main.slice())
     }
 
-    /// Set the entry-point path. Caller guarantees `path`'s storage outlives
-    /// this VM (BACKREF — see `main` field doc).
+    /// Set the entry-point path, or `None` for no entry module. Caller guarantees `path`'s storage
+    /// outlives this VM (BACKREF — see `main` field doc).
     #[inline]
-    pub fn set_main(&mut self, path: &[u8]) {
-        self.main = bun_ptr::RawSlice::new(path);
+    pub fn set_main(&mut self, path: Option<&[u8]>) {
+        self.main = path.map(bun_ptr::RawSlice::new);
+        self.main_hash = path.map_or(0, bun_watcher::Watcher::get_hash);
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -3434,14 +3483,14 @@ impl VirtualMachine {
 
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
+    /// `entry_path` is `None` for a built-in entry point with no entry module (`bun bake`).
     pub(crate) fn reload_entry_point(
         &mut self,
-        entry_path: &[u8],
+        entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
-        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
         let hooks = runtime_hooks();
@@ -3483,7 +3532,7 @@ impl VirtualMachine {
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
 
-        if !self.main_is_html_entrypoint {
+        if let (MainEntryPoint::File, Some(entry_path)) = (self.main_entry_point, entry_path) {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -3504,7 +3553,7 @@ impl VirtualMachine {
                 }
 
                 // Check if Module.runMain was patched.
-                if self.has_patched_run_main {
+                if self.has_patched_run_main && self.main_entry_point == MainEntryPoint::File {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
@@ -3545,48 +3594,54 @@ impl VirtualMachine {
                     return Ok(promise);
                 }
             }
-
-            // Preloads (evaluated above, synchronously) are not the entry: only
-            // module evaluations from here on mark the entry graph as executing.
-            self.entry_evaluation_started = false;
-            // Note: reshaped for borrowck — capture raw ptr before &self call.
-            let global = self.global;
-            let global_ref = self.global();
-            let promise = if !self.main_is_html_entrypoint {
-                let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?
-            } else {
-                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
-                    Bun__loadHTMLEntryPoint(global_ref)
-                })?;
-                if p.is_null() {
-                    return Err(crate::CrateError::JSError);
-                }
-                p
-            };
-
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
-        } else {
-            self.entry_evaluation_started = false;
-            let global = self.global;
-            let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
         }
+
+        // Preloads (evaluated above, synchronously) are not the entry: only
+        // module evaluations from here on mark the entry graph as executing.
+        self.entry_evaluation_started = false;
+        let builtin = match self.main_entry_point {
+            MainEntryPoint::File => None,
+            MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
+            MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
+        };
+        // Note: reshaped for borrowck — capture raw ptr before &self call.
+        let global = self.global;
+        let promise = if let Some(builtin) = builtin {
+            // The built-in module is the main module, so what it imports loads as the imports of a
+            // main module do (`has_loaded`): a file of an unknown type is a file, not a script.
+            if !self.transpiler.options.disable_transpilation {
+                self.has_loaded = true;
+            }
+            let global_ref = self.global();
+            let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                Bun__loadBuiltinEntryPoint(global_ref, builtin)
+            })?;
+            if p.is_null() {
+                return Err(crate::CrateError::JSError);
+            }
+            p
+        } else if !self.transpiler.options.disable_transpilation {
+            let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?
+        } else {
+            let main = (self.main()).expect("a file entry point has a path");
+            let main_str = bun_core::String::from_bytes(main);
+            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?
+        };
+
+        self.set_pending_internal_promise(Some(promise));
+        Ok(promise)
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
     /// returned promise settles.
     pub fn load_entry_point(
         &mut self,
-        entry_path: &[u8],
+        entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
 
@@ -4114,15 +4169,6 @@ fn normalize_source(source: &[u8]) -> &[u8] {
     source
 }
 
-// Additional FFI used by the formerly-gated impl.
-// C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
-//
-// safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; `&` is
-// ABI-identical to a non-null `JSGlobalObject*` and C++ mutating VM state
-// through it is interior to the cell.
-crate::jsc_abi_extern! {
-    safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
-}
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
@@ -4149,17 +4195,6 @@ extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c
 }
 
 impl VirtualMachine {
-    /// Returns the dev server's `AsyncLocalStorage` instance, or `None` when unset.
-    pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> {
-        let global_ref = self.global();
-        let jsvalue =
-            jsc::from_js_host_call(global_ref, || Bake__getAsyncLocalStorage(global_ref))?;
-        if jsvalue.is_empty_or_undefined_or_null() {
-            return Ok(None);
-        }
-        Ok(Some(jsvalue))
-    }
-
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
     pub(crate) extern "C" fn allow_addons(this: &VirtualMachine) -> bool {
@@ -4552,7 +4587,9 @@ impl VirtualMachine {
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
     pub fn add_main_to_watcher_if_needed(&mut self) {
-        self.add_to_watcher_if_needed(self.main());
+        if let Some(main) = self.main() {
+            self.add_to_watcher_if_needed(main);
+        }
     }
 
     /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
@@ -4634,22 +4671,29 @@ impl VirtualMachine {
         }
     }
 
+    /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
+    /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
+    /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
+    /// `may_return` is true; the error is printed.
+    pub fn restart_process(&mut self, may_return: bool) {
+        crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+        let should_clear_terminal = !self
+            .env_loader()
+            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+        // execve will not reach on_exit; flush the compile cache here like
+        // node's child does via AtExit(FlushCompileCache) on every restart.
+        crate::node_compile_cache::persist_now();
+        bun_core::Output::flush();
+        bun_core::reload_process(should_clear_terminal, may_return);
+    }
+
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
-            // entry promise (node restarts regardless of child state), and
-            // emit the --watch-kill-signal JS handlers first, like node.
-            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
-            let should_clear_terminal =
-                !self.env_loader().has_set_no_clear_terminal_on_reload(
-                    !bun_core::Output::enable_ansi_colors_stdout(),
-                );
-            // execve will not reach on_exit; flush the compile cache here like
-            // node's child does via AtExit(FlushCompileCache) on every restart.
-            crate::node_compile_cache::persist_now();
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            // entry promise (node restarts regardless of child state).
+            self.restart_process(false);
+            unreachable!("reload_process returns only when may_return is true");
         }
 
         if let Some(p) = self.pending_internal_promise() {
@@ -4694,7 +4738,10 @@ impl VirtualMachine {
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
-        if self.reload_entry_point(main.slice()).is_err() {
+        if self
+            .reload_entry_point(main.as_ref().map(|main| main.slice()))
+            .is_err()
+        {
             panic!("Failed to reload");
         }
     }
@@ -4870,6 +4917,12 @@ impl VirtualMachine {
         let hash = unsafe { &*ref_string }.hash;
         // SAFETY: `get()` is the live per-thread VM.
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);
+    }
+
+    /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
+    /// stored in itself, so to it a file on disk is not part of the program.
+    pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
+        !in_standalone_executable && !path.starts_with(b"data:")
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
@@ -5614,6 +5667,9 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
+        self.bake_config_plugins.deinit();
+        drop(core::mem::take(&mut self.bake_config_plugin_names));
+        self.bake_framework.deinit();
         self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
@@ -5652,7 +5708,7 @@ impl VirtualMachine {
 
     /// Deletes the synthetic main-entry module from the module registry.
     pub fn clear_entry_point(&mut self) -> JsResult<()> {
-        if self.main().is_empty() {
+        if self.main().is_none() {
             return Ok(());
         }
         let str = bun_core::EncodedSlice::latin1(MAIN_FILE_NAME);
@@ -5673,9 +5729,8 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
-        self.set_main(entry_path);
+        self.set_main(Some(entry_path));
         self.main_resolved_path = bun_core::String::EMPTY;
-        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
         self.event_loop_mut().ensure_waker();
@@ -5695,7 +5750,8 @@ impl VirtualMachine {
 
         // Note: reshaped for borrowck.
         let global = self.global;
-        let main_str = bun_core::String::from_bytes(self.main());
+        let main = (self.main()).expect("set to the test file above");
+        let main_str = bun_core::String::from_bytes(main);
         let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
             global, &main_str,
         ) {
@@ -5723,7 +5779,7 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(entry_path)?;
+        let promise = self.reload_entry_point(Some(entry_path))?;
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -5952,8 +6008,7 @@ impl VirtualMachine {
         self.entry_point_result.evaluated_as_cjs = false;
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
-        self.set_main(b"");
-        self.main_hash = 0;
+        self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
 

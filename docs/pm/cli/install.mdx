@@ -174,7 +174,9 @@ For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versi
 bun install --frozen-lockfile
 ```
 
-`package.json` disagrees with `bun.lock` when a dependency would resolve to a different package, and also when a dependency of the root or of a workspace was added, removed, moved to another group or given another range (`^1.0.0` to `>=1.0.0`) while every package stays as locked. The same goes for `overrides` and `catalog`. Run `bun install` and commit the updated `bun.lock` to fix it. Other edits, such as a workspace's `version`, `bin` or `scripts`, `trustedDependencies` and `patchedDependencies`, do not fail the install. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what is locked.
+`package.json` disagrees with `bun.lock` when an edit adds a package, removes one, or changes a version. The error names the first dependency that changed. Run `bun install` and commit the updated `bun.lock` to fix it.
+
+Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, and for `trustedDependencies` and `patchedDependencies`. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
@@ -232,7 +234,7 @@ To perform a dry run, without installing anything:
 bun install --dry-run
 ```
 
-Bun resolves the dependency tree and prints the summary. During a dry run, Bun does not:
+Bun resolves the dependency tree and lists every package in it, installed already or not. During a dry run, Bun does not:
 
 - install packages into `node_modules`
 - change an existing `package.json`
@@ -408,9 +410,9 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
 | `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
-| `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 250)         |
+| `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 50)          |
 
-A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once.
+A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries immediately. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
@@ -496,9 +498,17 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 ## Peer dependencies?
 
-Bun handles peer dependencies like Yarn: `bun install` installs them automatically. If the dependency is marked optional in `peerDependenciesMeta`, Bun uses an existing dependency if possible.
+`bun install` installs peer dependencies automatically, and picks versions much like pnpm does:
 
-If nothing else depends on the peer, Bun installs the newest version that every package asking for it accepts. Otherwise the peer reuses the copy that is already there, which can be outside its range. An install that resolves dependencies then prints which package gets which copy:
+1. If a package above the one with the peer dependency depends on that name, the peer uses that version. "Above" means its parent, its parent's parent, and so on up to your workspace and the root `package.json`. This applies even if the version is out of range: if your app depends on `react@17`, every library that it uses gets `react@17`.
+2. Otherwise, Bun picks one version that satisfies every package with a peer dependency on that name. It prefers a version that's already installed, then the newest matching version in the registry.
+3. If no version satisfies all of them, Bun doesn't install a copy for each one, because packages like `react` or `graphql` break when two copies are loaded. Each package uses an installed version that satisfies its range if there is one. Otherwise, it shares the version that the others use, which is out of its range.
+
+The isolated linker applies these rules everywhere a package is used. The hoisted linker usually installs a package once, and that copy loads whichever version of the peer is nearest to it in `node_modules`. If another version of the peer is at the top of `node_modules`, the packages that need the peer can each get their own copy of it.
+
+If a peer dependency is marked optional in `peerDependenciesMeta`, Bun doesn't install it, but uses a version that's already installed if there is one.
+
+With `--verbose`, an install that resolves dependencies prints every peer dependency that ended up out of range:
 
 ```txt
 warn: incorrect peer dependency "react@17.0.2": "react-dom@18.3.1" requires "react@^18.3.1"
@@ -514,13 +524,15 @@ Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an ol
 
 ## Cache
 
-Bun caches registry metadata (the manifest of each package) for 5 minutes. To fetch fresh metadata before that, for example after you publish a new version, use `--force`. It asks the registry again for every package and rewrites the cached manifests:
+Bun caches registry metadata (the manifest of each package) for 5 minutes. To fetch fresh metadata before that, for example after you publish a new version, use `--force`. For every range or tag that Bun has to resolve, it asks the registry again and rewrites the cached manifest:
 
 ```bash
-bun install --force
-# or, for one package
 bun add <pkg> --force
+# or, in a project without a lockfile
+bun install --force
 ```
+
+Bun does not resolve a version that `bun.lock` already holds, and it takes an exact version such as `1.2.3` from the cached manifest, so `--force` sends no request for those. To move a package in `bun.lock` to the new version, run `bun update <pkg>`, which never reads the manifest cache.
 
 `bun install --no-cache` skips the manifest cache for one run. To turn the manifest cache off for a project, set `disableManifest = true` under `[install.cache]` in `bunfig.toml`. See [Global cache](/pm/global-cache).
 
@@ -572,7 +584,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** symlinks each file instead of copying it. Without the flag, Bun only uses it for a package that depends on itself (`"pkg": "file:."`). Other `file:` folders are hardlinked, so their files resolve their dependencies from the project's `node_modules`. `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
+**`symlink`** symlinks each file instead of copying it. Without the flag, Bun only uses it for a package that depends on itself (`"pkg": "file:."`). Other `file:` folders are hardlinked, so their files resolve their dependencies from the project's `node_modules`. A relative symlink that stays inside such a folder is kept, a symlink to a file elsewhere in the project is installed as that file, and any other symlink is left out with a warning. `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
@@ -589,6 +601,47 @@ Bun uses a binary format for caching npm registry responses. This loads much fas
 These files live in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that Bun doesn’t need to create extra directories for scoped packages.
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes behind the latest package version metadata from npm.
+
+## Flags from npm, Yarn and pnpm
+
+Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` translate these flags:
+
+| Flag                                                           | What Bun does                                   |
+| -------------------------------------------------------------- | ----------------------------------------------- |
+| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`      |
+| `--no-optional`, `--ignore-optional`                           | `--omit=optional`                               |
+| `--only=production`, `--only=prod`                             | `--omit=dev`                                    |
+| `--production=true`                                            | `--production`                                  |
+| `--package-lock-only`                                          | `--lockfile-only`                               |
+| `--immutable`                                                  | `--frozen-lockfile`                             |
+| `--location=global`                                            | `--global`                                      |
+| `--save-catalog`                                               | `--catalog`                                     |
+| `--shamefully-hoist`                                           | `--linker=hoisted`                              |
+| `--node-linker=hoisted`, `--install-strategy=hoisted`          | `--linker=hoisted`                              |
+| `--node-linker=isolated`, `--install-strategy=linked`          | `--linker=isolated`                             |
+| `--progress=false`                                             | `--no-progress`                                 |
+| `--loglevel=silent`                                            | `--silent`                                      |
+| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`: hides the progress bar, not warnings |
+| `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                     |
+| `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                     |
+| `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these          |
+| `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error   |
+| `--ignore-engines`                                             | Nothing: `engines` is not checked               |
+| `--unsafe-perm`                                                | Nothing: scripts run as the current user        |
+| `--non-interactive`                                            | Nothing: an install asks no questions           |
+| `--prefer-frozen-lockfile`                                     | Nothing: the default                            |
+
+`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value is ignored if it has one, like `--legacy-peer-deps=true`. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
+
+`bun remove` doesn't save any dependency, so it ignores the `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
+
+- `--save-exact` is `--exact`. `--save-dev`, `--save-optional`, `--save-peer` and `--save-catalog` do nothing.
+- `--production=true` is an error.
+- `--no-optional` does not update `optionalDependencies`, but it installs them. `--ignore-optional` is `--omit=optional`.
+
+Other flags from those tools that Bun has no equivalent for are ignored, for example `--ci`, `--no-color`, `--no-package-lock`, `--network-timeout=100000` and `--reporter=silent`.
+
+A flag that none of these tools has is an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
 
 ## pnpm migration
 
@@ -674,7 +727,7 @@ Bun preserves dependencies that use pnpm's `catalog:` protocol:
 Bun copies the following pnpm configuration into the root `package.json`:
 
 - **Overrides**: Copied from `pnpm.overrides` to root-level `overrides` in `package.json`
-- **Patched Dependencies**: Copied from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
+- **Patched Dependencies**: Copied from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`. A key that is a bare name (`foo`) or a version range (`foo@^1.0.0`) becomes one `foo@<version>` entry for each version that `pnpm-lock.yaml` patches with it
 - **Package Extensions**: Copied from `pnpm.packageExtensions` to root-level [`packageExtensions`](/pm/package-extensions) in `package.json`
 - **Workspace Overrides**: Copied from `overrides`, `patchedDependencies` and `packageExtensions` in `pnpm-workspace.yaml` to the same root-level fields
 
@@ -704,6 +757,7 @@ A Yarn Berry lockfile is migrated only when Bun can keep everything it pins. If 
 For Yarn Berry lockfiles the migration handles:
 
 - npm packages, including `npm:` aliases, dist-tags, and per-package tarball URLs (`__archiveUrl`). Integrity hashes are taken from the registry, because Berry's `checksum` is a hash of Yarn's own cache archive
+- ranges in `package.json` that spell out Yarn's default protocol: `npm:^1.0.0` and `npm:next` are rewritten to `^1.0.0` and `next`
 - workspaces (from the `workspaces` globs of the root `package.json`) and `workspace:` ranges
 - `patch:` dependencies: patches in your project (for example `.yarn/patches`) are added to `patchedDependencies` in `package.json` for npm, git and tarball packages, and `patch:` ranges in `package.json` are rewritten to the plain range they patch. Yarn's builtin compatibility patches are dropped
 - `file:` folders and tarballs, tarball URLs, and git / `github:` dependencies (pinned to the locked commit)

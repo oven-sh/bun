@@ -2216,14 +2216,35 @@ fn is_in_type(node: Node<'_>) -> bool {
 pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     let file = node.file();
-    let Some(previous) = file.tokens_before(node).next() else {
-        return false;
+    let previous = file.tokens_before(node).next();
+    previous.is_some_and(|it| needs_semicolon_after(file, it, false))
+}
+
+/// True if `next` would continue the statement that ends at `previous` once only whitespace and comments separate them,
+/// like `a()` and `[b].map(c)`. `next` starts a statement on a later line than `previous`.
+pub fn continues_statement<'a>(file: &'a File<'a>, previous: Token<'a>, next: Token<'a>) -> bool {
+    let is_operator = match next.text().first() {
+        Some(b'(' | b'[' | b'`') => false,
+        Some(b'/' | b'+' | b'-' | b'<') => true,
+        _ => return false,
     };
+    !next.is("++") && !next.is("--") && needs_semicolon_after(file, previous, is_operator)
+}
+
+/// [`needs_preceding_semicolon`] for the token after `previous`. ESLint has no `is_before_operator`. A `(` on the next
+/// line doesn't continue `a++` or `a as T`, but a `+`, `-`, `/` or `<` does.
+fn needs_semicolon_after<'a>(
+    file: &'a File<'a>,
+    previous: Token<'a>,
+    is_before_operator: bool,
+) -> bool {
     let kind = previous.kind();
-    if kind == TokenKind::Punctuator
-        && matches!(previous.text(), b":" | b";" | b"{" | b"=>" | b"++" | b"--")
-    {
-        return false;
+    if kind == TokenKind::Punctuator {
+        match previous.text() {
+            b":" | b";" | b"{" | b"=>" => return false,
+            b"++" | b"--" => return is_before_operator,
+            _ => {}
+        }
     }
     let at = get_node_by_range_index(file, previous.start());
 
@@ -2248,7 +2269,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
         _ => false,
     };
     if is_type_syntax || is_in_type(at) {
-        return false;
+        return is_before_operator;
     }
     if is_closing_paren_token(&previous) {
         return !matches!(

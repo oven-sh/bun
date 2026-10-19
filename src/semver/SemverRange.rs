@@ -188,7 +188,7 @@ pub struct Comparator {
 }
 
 impl Comparator {
-    /// `<0.0.0-0`: no version satisfies it. node-semver uses it for the empty set.
+    /// `<0.0.0-0`, which no version satisfies. node-semver uses it for the empty set.
     pub(crate) fn null_set() -> Comparator {
         Comparator {
             op: Op::Lt,
@@ -272,7 +272,8 @@ impl Comparator {
         }
     }
 
-    /// node-semver's `>{major}`: `>= {major+1}.0.0` with the `floor` of `Token::to_range` as `tag`, or nothing on overflow.
+    /// node-semver's `>{major}`: `>= {major+1}.0.0`, with the `floor` of `Token::to_range` as
+    /// `tag`. Matches nothing on overflow.
     pub(crate) fn gte_next_major(major: u64, tag: Tag) -> Comparator {
         match major.checked_add(1) {
             Some(m) => Comparator {
@@ -287,7 +288,8 @@ impl Comparator {
         }
     }
 
-    /// `gte_next_major` for `>{major}.{minor}`: `>= {major}.{minor+1}.0`, on overflow the next major.
+    /// Like `gte_next_major`, but for `>{major}.{minor}`: `>= {major}.{minor+1}.0`, or the next
+    /// major on overflow.
     pub(crate) fn gte_next_minor(major: u64, minor: u64, tag: Tag) -> Comparator {
         match minor.checked_add(1) {
             Some(m) => Comparator {
@@ -326,7 +328,11 @@ impl Comparator {
         match order {
             Ordering::Equal => matches!(self.op, Op::Lte | Op::Gte | Op::Eql),
             Ordering::Greater => matches!(self.op, Op::Gt | Op::Gte),
-            Ordering::Less => matches!(self.op, Op::Lt | Op::Lte),
+            // node-semver treats `>=0.0.0` as matching any version, so `0.0.0-a` satisfies it.
+            Ordering::Less => match self.op {
+                Op::Gte => self.version.is_zero() && !self.version.tag.has_pre(),
+                op => matches!(op, Op::Lt | Op::Lte),
+            },
         }
     }
 }

@@ -11,7 +11,7 @@ use bun_sema::util::FxHashMap;
 use std::io::Write;
 
 /// `:1:2: `
-fn write_place(out: &mut Vec<u8>, line: usize, column: usize) {
+fn write_place(out: &mut Vec<u8>, line: i64, column: i64) {
     out.push(b':');
     out.extend_from_slice(itoa(&mut ItoaBuf::new(), line));
     out.push(b':');
@@ -25,7 +25,8 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
         total += result.messages.len();
         for message in &result.messages {
             out.extend_from_slice(&result.path);
-            write_place(out, message.line as usize, message.column as usize);
+            let (line, column) = (message.line as i32, message.column as i32);
+            write_place(out, line.into(), column.into());
             out.extend_from_slice(&message.message);
             let is_error = message.is_fatal || message.severity == Severity::Error;
             match is_error {
@@ -103,7 +104,7 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
         for message in &result.messages {
             let start = source.start(message);
             out.extend_from_slice(&source.name);
-            write_place(out, start.line, start.column);
+            write_place(out, start.line as i64, start.column as i64);
             out.extend_from_slice(&message.message);
             ends.write(out, message);
         }

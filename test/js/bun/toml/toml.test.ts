@@ -51,6 +51,13 @@ describe("input types", () => {
     expect(TOML.parse(sab)).toEqual(expected);
   });
 
+  test("a Blob whose bytes are not in memory is refused, and does not parse as nothing", () => {
+    const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
+    for (const file of [Bun.file(import.meta.path), s3.file("key")]) {
+      expect(() => TOML.parse(file)).toThrow("File blob cannot be used here");
+    }
+  });
+
   test("Blob parses synchronously", () => {
     expect(TOML.parse(new Blob([doc]))).toEqual(expected);
   });
@@ -60,6 +67,40 @@ describe("input types", () => {
     const sab = new SharedArrayBuffer(bytes.length);
     new Uint8Array(sab).set(bytes);
     expect(TOML.parse(new DataView(sab))).toEqual(expected);
+  });
+
+  test("parses a SharedArrayBuffer that another thread is writing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { Worker } = require("node:worker_threads");
+          const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill("\\n".charCodeAt(0));
+          const writer = new Worker(
+            \`const { workerData: bytes, parentPort } = require("node:worker_threads");
+             parentPort.postMessage("ready");
+             // Each pass over the buffer flips every byte, so that a byte the parser reads twice differs.
+             for (let i = 0; ; i++) bytes[i % bytes.length] = (Math.floor(i / bytes.length) % 2 ? "#" : "\\\\n").charCodeAt(0);\`,
+            { eval: true, workerData: bytes },
+          );
+          writer.once("message", () => {
+            for (let i = 0; i < 4000; i++) {
+              try {
+                Bun.TOML.parse(bytes);
+              } catch {}
+            }
+            console.log("done");
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
   });
 
   test("non-string values are coerced via toString", () => {

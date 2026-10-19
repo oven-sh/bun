@@ -37,7 +37,7 @@ impl Rule for NoAmd {
             return;
         }
         if !cx.language().is_oxlint {
-            if Node::Expr(e).scope().kind() == ScopeKind::Module {
+            if Node::Expr(e).scope().is_top_level_of_module() {
                 cx.report(e, EXPECTED_IMPORTS).data("name", callee.text());
             }
             return;

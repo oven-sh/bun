@@ -6,10 +6,11 @@
  * says it is; an edge takes the files of the tools it runs as inputs.
  */
 import { expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { pins } from "../../scripts/build/ci-images/spec.ts";
 import { cc, cxx, link, nasm } from "../../scripts/build/compile.ts";
 import type { Config } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
@@ -126,4 +127,39 @@ test("an edge takes the identity of the tools it runs, and of no other", () => {
   expect(identitiesOf("cxx")).toEqual([identity("cxx")]);
   expect(identitiesOf("nasm")).toEqual([identity("nasm")]);
   expect(identitiesOf("link")).toEqual([identity("cxx"), identity("ld")]);
+});
+
+// On a Buildkite agent the tools have to be exactly the ones scripts/build/ci-images/spec.ts pins. Each case is a
+// process of its own: BUN_TOOLCHAIN_LLVM is read when tools.ts loads, and the check compares the running Node.js.
+test.skipIf(isWindows).concurrent.each([
+  { clang: pins.llvm.version, env: {}, says: "accepted" },
+  { clang: "23.1.2", env: {}, says: `clang is 23.1.2, and scripts/build/ci-images/spec.ts pins ${pins.llvm.version}` },
+  {
+    clang: undefined,
+    env: {},
+    says: `clang is of no known version, and scripts/build/ci-images/spec.ts pins ${pins.llvm.version}`,
+  },
+  // An explicit LLVM directory is its own pin.
+  { clang: "23.1.2", env: { BUN_TOOLCHAIN_LLVM: "/somewhere" }, says: "accepted" },
+])("a CI machine's clang is compared with the pin: $clang $env", async ({ clang, env, says }) => {
+  using dir = tempDir("image-tools", {
+    "bun": tool(pins.bun.version),
+    "cmake": tool(`cmake version ${pins.cmake.version}`),
+  });
+  for (const name of ["bun", "cmake"]) chmodSync(join(String(dir), name), 0o755);
+  const toolchain = { bun: join(String(dir), "bun"), cmake: join(String(dir), "cmake"), clangVersion: clang };
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { checkImageTools } = require(${JSON.stringify(join(import.meta.dir, "../../scripts/build/tools.ts"))});
+       Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(pins.nodejs.version)} });
+       try { checkImageTools(${JSON.stringify(toolchain)}); console.log("accepted"); } catch (e) { console.log(e.message); }`,
+    ],
+    env: { ...bunEnv, BUN_TOOLCHAIN_LLVM: undefined, ...env },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: says, stderr: "" });
+  expect(exitCode).toBe(0);
 });

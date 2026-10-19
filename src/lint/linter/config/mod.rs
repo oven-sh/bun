@@ -1520,7 +1520,11 @@ impl Config {
                     config.foreign_plugins.push(plugin.clone());
                 }
             }
-            for alias in self.aliases.iter().filter(|it| object.plugins.contains(&it.0)) {
+            for alias in self
+                .aliases
+                .iter()
+                .filter(|it| object.plugins.contains(&it.0))
+            {
                 if !config.aliases.iter().any(|it| it.0 == alias.0) {
                     config.aliases.push(alias.clone());
                 }

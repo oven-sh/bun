@@ -292,7 +292,9 @@ impl Named<'_> {
         match self {
             Named::Native(entry) => RuleId::Known(entry.meta),
             Named::Instance(rule, name) => RuleId::Named(rule.entry.meta, Arc::clone(name)),
-            Named::Aliased(entry, prefix) => RuleId::Named(entry.meta, Self::aliased_id(entry, prefix)),
+            Named::Aliased(entry, prefix) => {
+                RuleId::Named(entry.meta, Self::aliased_id(entry, prefix))
+            }
             Named::Js(rule) => RuleId::Js(Arc::clone(rule)),
         }
     }
@@ -1765,7 +1767,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                     continue;
                 }
             };
-            let name = alias.as_ref().or_else(|| existing.and_then(ConfiguredRule::name));
+            let name = alias
+                .as_ref()
+                .or_else(|| existing.and_then(ConfiguredRule::name));
             let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.ran().name() == name;
             let linter = self.linter;
             let shared = existing

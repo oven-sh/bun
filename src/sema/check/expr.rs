@@ -2500,65 +2500,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Returns the method or constructor whose body contains `e`, and whether an arrow function is in between. Returns
-    /// `None` if anything else between them could have a `this` of its own.
-    fn method_around(&self, file: FileId, e: ExprId) -> Option<(FnId, bool)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (mut parent, mut below, mut is_in_arrow_function) = (bound.parent_of_expr(e), e, false);
-        loop {
-            parent = match parent {
-                Parent::Expr(x) if x.is_some() => {
-                    below = x;
-                    bound.parent_of_expr(x)
-                }
-                Parent::Stmt(s) if s.is_some() => {
-                    below = ExprId::NONE;
-                    bound.parent_of_stmt(s)
-                }
-                Parent::VarInit(d) => Parent::Stmt(bound.var_stmt[d.idx()]),
-                Parent::Prop(p) => Parent::Expr(bound.prop_owner[p.idx()]),
-                Parent::Case(c) => Parent::Stmt(bound.case_stmt[c.idx()]),
-                // An expression inside a type has the function as its parent too.
-                Parent::FnBody(f)
-                    if below.is_some()
-                        && !matches!(hir[f].body, FnBody::Expr(body) if body == below) =>
-                {
-                    return None;
-                }
-                Parent::FnBody(f) => match (hir[f].kind, bound.fns[f.idx()].owner) {
-                    (FnKind::Arrow, FnOwner::Expr(arrow_function)) => {
-                        is_in_arrow_function = true;
-                        Parent::Expr(arrow_function)
-                    }
-                    (FnKind::Method | FnKind::Constructor, FnOwner::Member(_)) => {
-                        return Some((f, is_in_arrow_function));
-                    }
-                    _ => return None,
-                },
-                _ => return None,
-            };
-        }
-    }
-
     /// `checkThisExpression`
     pub(super) fn check_this_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
-        // FOR SPEED: most are in a method of a class that declares no `this` parameter.
-        if let Some((method, is_in_arrow_function)) = self.method_around(file, e)
-            && hir[method].this_param.is_none()
-            && hir.jsdoc_type(JsDocTypeOwner::Fn(method)).is_none()
-            && let Some((class, is_static)) = self.class_of_member_fn(file, method)
-        {
-            if hir[method].kind == FnKind::Constructor && !is_in_arrow_function {
-                self.check_this_before_super(file, e, method, 17009);
-            }
-            let class = self.class_sym(file, class);
-            let this = match is_static {
-                true => self.type_of_symbol(class),
-                false => self.intern(TypeData::ThisParam(class)),
-            };
-            return self.flow_type_of_reference(file, e, this);
-        }
         let (this, node) = (hir.node(e), self.span_of_expr(file, e));
         let mut container = hir.get_this_container(this, true, true);
         let (mut captured_by_arrow_function, mut this_in_computed_property_name) = (false, false);

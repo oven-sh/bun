@@ -2620,7 +2620,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* prototype = RequireFunctionPrototype::create(init.owner);
-             Bun::didCreatePrototype(init.vm, init.owner, prototype);
+             init.owner->didCreateBuiltin(init.vm, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
@@ -2631,7 +2631,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireResolveFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* prototype = RequireResolveFunctionPrototype::create(init.owner);
-             Bun::didCreatePrototype(init.vm, init.owner, prototype);
+             init.owner->didCreateBuiltin(init.vm, prototype);
              init.set(
                  JSFunction::create(
                      init.vm,
@@ -3128,7 +3128,10 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    auto* function = JSC::JSFunction::create(vm, globalObject, 0, "gc"_s, functionJsGc, ImplementationVisibility::Public);
+    globalObject->didCreateBuiltin(vm, function);
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "gc"_s), function, PropertyAttribute::DontEnum | 0);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject)

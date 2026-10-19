@@ -5075,6 +5075,12 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
+// JSC::AllowChangesToImmutableProperties for Rust, which pairs the two calls in a guard.
+extern "C" void JSC__VM__allowChangesToImmutableProperties(JSC::VM* vm, bool allow)
+{
+    vm->allowLazyMaterializationOfImmutablePropertiesCount += allow ? 1 : -1;
+}
+
 // The TerminationException cell itself (what a pending one reads as), not the error object it wraps.
 extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
 {

@@ -416,6 +416,8 @@ interface Map {
 }
 
 declare var $Array: ArrayConstructor;
+declare var $Object: { $defineProperty: ObjectConstructor["defineProperty"] };
+declare function $setPrototypeDirectOrThrow(this: object, prototype: object | null): void;
 declare var $Buffer: {
   byteLength: typeof Buffer.byteLength;
   new (array: Array): Buffer;

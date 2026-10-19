@@ -85,6 +85,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 #define EXPOSED_BUILTIN_ENTRY(id, field) { #id##_s, ExposeNodeModuleGlobalGetters::id },
     static const Entry entries[] = { FOREACH_EXPOSED_BUILTIN_IMR(EXPOSED_BUILTIN_ENTRY) };
 #undef EXPOSED_BUILTIN_ENTRY
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     for (auto& entry : entries) {
         globalObject->putDirectCustomAccessor(
             vm,
@@ -144,6 +145,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
+    JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     globalObject->putDirect(vm, WebCore::builtinNames(vm).requirePublicName(), requireFunction, 0);
     Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
     Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);

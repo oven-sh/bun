@@ -35,6 +35,7 @@ unsafe extern "C" {
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
+    safe fn JSC__VM__allowChangesToImmutableProperties(vm: &VM, allow: bool);
     safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
@@ -137,6 +138,12 @@ impl VM {
         JSC__VM__isEntered(self)
     }
 
+    /// While the guard is alive, what `BUN_JSC_immutableGlobals` covers can be changed. For an API whose job is to add to a built-in.
+    pub fn allow_changes_to_immutable_properties(&self) -> AllowChangesToImmutableProperties<'_> {
+        JSC__VM__allowChangesToImmutableProperties(self, true);
+        AllowChangesToImmutableProperties { vm: self }
+    }
+
     /// The VM's TerminationException cell (created on demand) — what a pending one reads as; inert
     /// until thrown.
     pub fn termination_exception(&self) -> JSValue {
@@ -164,6 +171,16 @@ impl VM {
     /// This is faster than checking the heap size
     pub(crate) fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
+    }
+}
+
+pub struct AllowChangesToImmutableProperties<'a> {
+    vm: &'a VM,
+}
+
+impl Drop for AllowChangesToImmutableProperties<'_> {
+    fn drop(&mut self) {
+        JSC__VM__allowChangesToImmutableProperties(self.vm, false)
     }
 }
 

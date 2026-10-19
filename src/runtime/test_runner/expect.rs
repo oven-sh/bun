@@ -1402,9 +1402,11 @@ impl Expect {
                     )
                 };
 
+                let allow_changes = global_this.vm().allow_changes_to_immutable_properties();
                 expect_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
                 expect_constructor.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
                 expect_static_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                drop(allow_changes);
             }
         }
 

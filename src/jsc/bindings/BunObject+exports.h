@@ -52,7 +52,7 @@ FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
 // The getters above whose value goes through Bun::namespaceObjectOf().
-static constexpr bool isNamespaceObjectGetter(std::string_view name) { return name == "markdown"; }
+static constexpr bool isNamespaceObjectGetter(std::string_view name) { return name == "FFI" || name == "markdown"; }
 
 // definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \

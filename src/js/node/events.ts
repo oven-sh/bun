@@ -1047,7 +1047,10 @@ try {
     processPrototype !== Object.prototype &&
     !(processPrototype instanceof EventEmitter)
   ) {
-    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+    const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
+    changeBuiltin(processPrototype, () => {
+      $setPrototypeDirectOrThrow.$call(processPrototype, EventEmitter.prototype);
+    });
   }
 } catch {
   // If the prototype is not relinkable, process simply keeps its native

@@ -147,33 +147,40 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
 const kClientHttp = Symbol("kClientHttp");
 const kNoteClientHttp = Symbol("kNoteClientHttp");
 
+const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
-Object.defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
+changeBuiltin(SocketAddress.prototype, () => {
+  $Object.$defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
+    __proto__: null,
+    get() {
+      return this;
+    },
+    configurable: true,
+  });
 });
 const kBlockListHandle = Symbol("kBlockListHandle");
-Object.defineProperty(BlockList.prototype, kBlockListHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
+changeBuiltin(BlockList.prototype, () => {
+  $Object.$defineProperty(BlockList.prototype, kBlockListHandle, {
+    __proto__: null,
+    get() {
+      return this;
+    },
+    configurable: true,
+  });
 });
 function InternalSocketAddress(handle): void {
   return handle;
 }
 
 const kBlobHandle = Symbol("kBlobHandle");
-Object.defineProperty(Blob.prototype, kBlobHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
+changeBuiltin(Blob.prototype, () => {
+  $Object.$defineProperty(Blob.prototype, kBlobHandle, {
+    __proto__: null,
+    get() {
+      return this;
+    },
+    configurable: true,
+  });
 });
 function isBlob(value) {
   return value instanceof Blob;

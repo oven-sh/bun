@@ -1,7 +1,6 @@
 #include "JSAsymmetricKeyObjectPrototype.h"
 #include "JSKeyObject.h"
 #include "ZigGlobalObject.h"
-#include "BunClientData.h"
 #include "ErrorCode.h"
 #include "CryptoUtil.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -82,9 +81,7 @@ void setupAsymmetricKeyObjectPrototype(const JSC::LazyProperty<JSC::JSGlobalObje
 {
     auto* globalObject = defaultGlobalObject(init.owner);
     auto* structure = JSAsymmetricKeyObjectPrototype::createStructure(init.vm, globalObject, globalObject->KeyObjectPrototype());
-    auto* prototype = JSAsymmetricKeyObjectPrototype::create(init.vm, globalObject, structure);
-    Bun::didCreatePrototype(init.vm, globalObject, prototype);
-    init.set(prototype);
+    init.set(JSAsymmetricKeyObjectPrototype::create(init.vm, globalObject, structure));
 }
 
 } // namespace Bun

@@ -4,6 +4,8 @@
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
 
+const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
+
 let writeSync: typeof import("node:fs").writeSync;
 let envTracePrintMessage = false;
 let envTracePrintJsStack = false;
@@ -195,11 +197,14 @@ function installEnvTracing(): void {
     },
   };
   const proxy = new Proxy(real, handler);
-  Object.defineProperty(process, "env", {
-    value: proxy,
-    writable: true,
-    enumerable: true,
-    configurable: true,
+  changeBuiltin(process, () => {
+    $Object.$defineProperty(process, "env", {
+      __proto__: null,
+      value: proxy,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
   });
   readStartupEnvVars();
 }
@@ -249,7 +254,9 @@ function installExitTracing(): void {
     writeStderr(out);
     return realExit.$call(process, code);
   }
-  process.exit = exit as typeof process.exit;
+  changeBuiltin(process, () => {
+    process.exit = exit as typeof process.exit;
+  });
 }
 
 {
@@ -296,7 +303,11 @@ function installExitTracing(): void {
 
   if (stackTraceLimit !== null) {
     const limit = Number(stackTraceLimit);
-    if (Number.isFinite(limit)) Error.stackTraceLimit = limit;
+    if (Number.isFinite(limit)) {
+      changeBuiltin(Error, () => {
+        Error.stackTraceLimit = limit;
+      });
+    }
   }
 
   // CLI-driven tracing runs in worker VMs too (workers inherit the parent's

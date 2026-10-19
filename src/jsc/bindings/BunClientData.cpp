@@ -6,7 +6,6 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IsoHeapCellType.h>
@@ -233,122 +232,10 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
 
 namespace Bun {
 
-static bool isGlobalImmutable(JSC::VM& vm, JSC::JSGlobalObject* globalObject, ASCIILiteral name)
-{
-    // The list, not the value: a script can give the global another one.
-    if (JSC::JSGlobalObject::immutableGlobalsOptionLists(name))
-        return true;
-    // An immutable global object covers each function it holds as the property materializes, which may be now.
-    if (!globalObject->hasImmutableProperties())
-        return false;
-    auto propertyName = JSC::Identifier::fromString(vm, name);
-    JSC::PropertySlot slot(globalObject, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (!JSC::JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, propertyName, slot) || !slot.isValue())
-        return false;
-    JSC::JSValue value = slot.getValue(globalObject, propertyName);
-    return value.isObject() && asObject(value)->hasImmutableProperties();
-}
-
-// Not asked of the global object's properties alone: a script can define a global with the name of any class.
-static bool isPrototypeOfGlobal(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype, ASCIILiteral className)
-{
-    // (The name of a plain object made to be the prototype of plain objects.)
-    if (StringView(className) == "Object"_s)
-        return false;
-    auto name = JSC::Identifier::fromString(vm, className);
-    if (globalObject->findPropertyHashEntry(name))
-        return true;
-    JSC::JSValue constructor = globalObject->getDirect(vm, name);
-    return constructor && constructor.isObject() && asObject(constructor)->getDirect(vm, vm.propertyNames->prototype) == prototype;
-}
-
-void didCreatePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
-{
-    didCreatePrototype(vm, globalObject, prototype, prototype->classInfo()->className);
-}
-
-void didCreatePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype, ASCIILiteral className)
-{
-    if (!globalObject->hasImmutableGlobals()) [[likely]]
-        return;
-    if (prototype->hasImmutableProperties() || prototype == globalObject->objectPrototype() || prototype == globalObject->functionPrototype())
-        return;
-
-    // The global that a class with no global name of its own belongs to, if that is not `Bun`.
-    static constexpr std::pair<ASCIILiteral, ASCIILiteral> owners[] = {
-        { "Headers Iterator"_s, "Headers"_s },
-        { "FormData Iterator"_s, "FormData"_s },
-        { "URLSearchParams Iterator"_s, "URLSearchParams"_s },
-        { "ReadableStreamAsyncIterator"_s, "ReadableStream"_s },
-        { "AttributeIterator"_s, "HTMLRewriter"_s },
-        { "Comment"_s, "HTMLRewriter"_s },
-        { "DocEnd"_s, "HTMLRewriter"_s },
-        { "DocType"_s, "HTMLRewriter"_s },
-        { "Element"_s, "HTMLRewriter"_s },
-        { "EndTag"_s, "HTMLRewriter"_s },
-        { "HTMLRewriterTransform"_s, "HTMLRewriter"_s },
-        { "TextChunk"_s, "HTMLRewriter"_s },
-        { "Timeout"_s, "setTimeout"_s },
-        { "Timeout"_s, "setInterval"_s },
-        { "Immediate"_s, "setImmediate"_s },
-        // These modules change the prototype as they load. (EventEmitter is the prototype of `process`.)
-        { "BlockList"_s, "node:quic"_s },
-        { "ECDH"_s, "node:crypto"_s },
-        { "EventEmitter"_s, "node:events"_s },
-        { "NativeZlib"_s, "node:zlib"_s },
-        { "SocketAddress"_s, "node:quic"_s },
-    };
-
-    // Buffer.prototype has that class name for Object.prototype.toString().
-    if (StringView(className) == "Uint8Array"_s)
-        className = "Buffer"_s;
-
-    ASCIILiteral owner;
-    bool ownerIsImmutable = false;
-    if (isPrototypeOfGlobal(vm, globalObject, prototype, className)) {
-        // Its property may be materializing, so this does not read it.
-        owner = className;
-        ownerIsImmutable = JSC::JSGlobalObject::immutableGlobalsOptionLists(owner) || globalObject->hasImmutableProperties();
-    } else {
-        for (auto& [name, ownerOfName] : owners) {
-            if (!ownerIsImmutable && StringView(className) == StringView(name)) {
-                owner = ownerOfName;
-                ownerIsImmutable = isGlobalImmutable(vm, globalObject, owner);
-            }
-        }
-        if (owner.isNull()) {
-            // expect.extend() adds to the prototypes of its classes.
-            owner = StringView(className).startsWith("Expect"_s) ? "expect"_s : "Bun"_s;
-            ownerIsImmutable = isGlobalImmutable(vm, globalObject, owner);
-        }
-    }
-
-    if (ownerIsImmutable)
-        globalObject->makeObjectAndItsFunctionsImmutable(vm, prototype);
-    else
-        dataLogLnIf(JSC::Options::logImmutableGlobals(), "immutableGlobals: left mutable: the prototype of ", className, ", which belongs to ", owner);
-}
-
-void didCreateConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* constructor)
-{
-    if (!globalObject->hasImmutableGlobals()) [[likely]]
-        return;
-    JSC::JSValue prototype = constructor->getDirect(vm, vm.propertyNames->prototype);
-    if (prototype && prototype.isObject() && asObject(prototype)->hasImmutableProperties())
-        globalObject->makeObjectAndItsFunctionsImmutable(vm, constructor);
-}
-
 JSC::Structure* createClassStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype, JSC::TypeInfo typeInfo, const JSC::ClassInfo* classInfo, JSC::IndexingType indexingType, unsigned inlineCapacity)
 {
-    if (globalObject->hasImmutableGlobals() && prototype.isObject()) [[unlikely]] {
-        // The structure of a class's instances: its prototype has the class's name, unless the one or the other is a plain object.
-        auto* plainObject = JSC::JSFinalObject::info();
-        auto* prototypeClassInfo = asObject(prototype)->classInfo();
-        if (prototypeClassInfo == plainObject)
-            didCreatePrototype(vm, globalObject, asObject(prototype), classInfo->className);
-        else if (classInfo == plainObject || StringView(prototypeClassInfo->className) == StringView(classInfo->className))
-            didCreatePrototype(vm, globalObject, asObject(prototype));
-    }
+    if (prototype.isObject())
+        globalObject->didCreateBuiltin(vm, asObject(prototype));
     return JSC::Structure::create(vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);
 }
 
@@ -357,6 +244,27 @@ JSC::JSValue namespaceObjectOf(JSC::VM& vm, JSC::JSObject* owner, JSC::JSValue n
     if (owner->hasImmutableProperties() && namespaceObject && namespaceObject.isObject()) [[unlikely]]
         owner->globalObject()->makeObjectAndItsFunctionsImmutable(vm, asObject(namespaceObject));
     return namespaceObject;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionChangeBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* builtin = asObject(callFrame->uncheckedArgument(0));
+    {
+        JSC::AllowChangesToImmutableProperties allowChanges(vm);
+        JSC::call(globalObject, callFrame->uncheckedArgument(1), JSC::ArgList(), "changeBuiltin() takes a function"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (builtin->hasImmutableProperties())
+        globalObject->makeObjectAndItsFunctionsImmutable(vm, builtin);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    globalObject->didCreateBuiltin(JSC::getVM(globalObject), asObject(callFrame->uncheckedArgument(0)));
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 void reifyStaticPropertyTable(JSC::VM& vm, const JSC::ClassInfo* classInfo, std::span<const JSC::HashTableValue> values, JSC::JSObject& object)

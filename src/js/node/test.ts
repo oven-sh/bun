@@ -1402,8 +1402,7 @@ class TestPlan {
   actual = 0;
   wait: boolean | number;
   #pending:
-    | { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | undefined }
-    | undefined;
+    { resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | undefined } | undefined;
 
   constructor(count: number, options: { wait?: boolean | number } = kEmptyObject) {
     validateUint32(count, "count");
@@ -1634,11 +1633,11 @@ class TestNode {
 
 // Bumped by the runner's enter_file. Bound privately rather than read off the
 // bun:test module object, which is public API.
-const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
+const fileGeneration = $bindgen("jest.bind.ts", "fileGeneration");
 // Overrides the running bun:test sequence result: `false` → skip, `true` → todo.
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
-const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+const markCurrentResult = $bindgen("jest.bind.ts", "nodeTestMarkResult");
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;

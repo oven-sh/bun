@@ -235,9 +235,12 @@ mod _impl {
                 // `=strict` is the process's and no Worker runs without it, so a Worker reads it
                 // here whatever `execArgv` it was given (which cannot contain it: the Worker
                 // constructor throws). Node.js's flag is not added: in Node.js a Worker's
-                // `process.execArgv` is what it was given.
-                if bun_core::code_generation_from_strings()
-                    == bun_core::CodeGenerationFromStrings::Disallowed
+                // `process.execArgv` is what it was given. Nor is it added in a build that has
+                // the level as a constant: there nobody gave the flag, and a list that names it
+                // cannot be handed on to another Worker.
+                if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
+                    && bun_core::code_generation_from_strings()
+                        == bun_core::CodeGenerationFromStrings::Strict
                 {
                     array.push(
                         global_object,
@@ -396,14 +399,14 @@ mod _impl {
         } else {
             b"/[stdin]"
         };
-        if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-            && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+        if let Some(main) = vm.main()
+            && !strings::ends_with(main, EVAL_SUFFIX)
+            && !strings::ends_with(main, STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::borrow_utf8(main));
             }
         }
 

@@ -124,7 +124,7 @@ const rejectedBeforeBegin = [
   {
     name: "beginDistributed() with an invalid name",
     begin: (reserved: Bun.ReservedSQL) => reserved.beginDistributed("bad'name", async () => "unreachable"),
-    message: "This adapter doesn't support distributed transactions.",
+    message: "Distributed transaction name cannot contain single quotes.",
   },
 ];
 

@@ -1024,19 +1024,22 @@ test(
         for (let i = 0; i < N; i++) {
           const w = new Worker(\`
             const keep = [];
+            const fetches = 8;
             let touched = 0;
-            for (let j = 0; j < 8; j++) {
+            for (let j = 0; j < fetches; j++) {
               let ctrl;
               const body = new ReadableStream({ start(c) { ctrl = c; c.enqueue(new Uint8Array(1024)); } });
               const p = fetch("\${server.url}", { method: "POST", body, duplex: "half" })
-                .then((r) => { keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd); touched++; })
-                .catch(() => {});
+                .then((r) => {
+                  keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd);
+                  // Every fetch has that state. The streams then run on, for a different time in each
+                  // worker, so the exits land at arbitrary points of a transfer: no event marks those.
+                  if (++touched === fetches) setTimeout(() => process.exit(0), 150 + \${(i * 13) % 60});
+                })
+                .catch((e) => { console.error(e); process.exit(3); });
               keep.push(p, ctrl);
               setInterval(() => { try { ctrl.enqueue(new Uint8Array(512)); } catch {} }, 5);
             }
-            // Exit with that state alive; exit code 3 if no fetch ever reached it (the test would
-            // then not be exercising what it claims to).
-            setTimeout(() => process.exit(touched > 0 ? 0 : 3), 150 + \${(i * 13) % 60});
           \`, { eval: true });
           w.on("error", (e) => { console.error(e); process.exit(1); });
           w.on("exit", (code) => {

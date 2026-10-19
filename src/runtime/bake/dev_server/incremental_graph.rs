@@ -1018,6 +1018,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 } else if mode == EdgeAttachmentMode::Css {
                     let index = self.insert_empty(key, kind)?.index;
                     ctx.gts.resize(SIDE, index.get() as usize + 1)?;
+                    if kind == FileKind::Css {
+                        self.receive_css_child(index);
+                    }
                     break 'brk (index, kind);
                 }
             }
@@ -1079,6 +1082,42 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             };
         }
         Ok(EdgeAttachmentResult::Continue)
+    }
+
+    /// An `@import`ed stylesheet gets no `receive_chunk`, so the pass over its root's imports
+    /// keeps it a css child and clears a failure that this bundle did not repeat.
+    fn receive_css_child(&mut self, index: FileIndex<SIDE>) {
+        let file = &mut self.bundled_files.values_mut()[index.get() as usize];
+        match file.content {
+            Content::Unknown => {
+                file.kind = FileKind::Css;
+                file.content = Content::CssChild;
+            }
+            Content::CssChild => {}
+            _ => return,
+        }
+        if !file.failed {
+            return;
+        }
+        let failed_in_this_bundle = |failure: &SerializedFailure| {
+            matches!(
+                failure.get_owner(),
+                serialized_failure::Owner::Client(owner) if owner.get() == index.get()
+            )
+        };
+        if self
+            .dev_incremental_result()
+            .failures_added
+            .iter()
+            .any(failed_in_this_bundle)
+        {
+            return;
+        }
+        self.bundled_files.values_mut()[index.get() as usize].failed = false;
+        let owner = serialized_failure::OwnerPacked::new(Side::Client, index.get());
+        if let Some(kv) = self.dev_bundling_failures().fetch_swap_remove(&owner) {
+            self.dev_incremental_result().failures_removed.push(kv.1);
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────────

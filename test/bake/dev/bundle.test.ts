@@ -1516,7 +1516,7 @@ devTest("editing an @imported stylesheet recovers from a failed CSS print", {
   },
 });
 
-devTest("a page request reports a parse error in an @imported stylesheet", {
+devTest("an @imported stylesheet recovers from a parse error", {
   files: {
     "index.html": emptyHtmlFile({
       styles: ["main.css"],
@@ -1529,6 +1529,14 @@ devTest("a page request reports a parse error in an @imported stylesheet", {
     expect((await dev.fetch("/")).status).toBe(200);
     await dev.write("child.css", `.fine {\n color`, { dedent: false });
     expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("child.css", `.fine { color: blue; }\n`, { dedent: false });
+    await using c = await dev.client("/");
+    await c.style(".fine").color.expect.toBe("#00f");
+    // Every later save must rebuild main.css too, not only the first one.
+    for (const color of ["green", "tan", "red"]) {
+      await dev.write("child.css", `.fine { color: ${color}; }\n`, { dedent: false });
+      await c.style(".fine").color.expect.toBe(color);
+    }
   },
 });
 

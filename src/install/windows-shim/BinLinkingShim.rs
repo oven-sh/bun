@@ -115,7 +115,8 @@ impl Flags {
     }
 }
 
-// Older launchers check `bits >> 3 == 5478`: they are to take a relative shim, not an absolute one.
+// Older launchers check `bits >> 3 == 5478`, so they accept a relative shim but not an absolute
+// one.
 const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
 const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 
@@ -327,7 +328,7 @@ mod host {
                 while idx < line.len() && line[idx] == b' ' {
                     idx += 1;
                 }
-                // `env -S prog args`, `env -Sprog args`: the launcher is split at spaces anyway.
+                // `env -S prog args` and `env -Sprog args`. The launcher is split at spaces anyway.
                 if line[idx..].starts_with(b"-S") {
                     idx += b"-S".len();
                     while idx < line.len() && line[idx] == b' ' {

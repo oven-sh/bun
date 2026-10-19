@@ -10,7 +10,7 @@
  * whose 1.0.0 installs cleanly and whose 2.0.0 (the `latest` tag) depends on a
  * dist-tag that does not exist; every tarball carries a poisoned bin name.
  */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -183,7 +183,7 @@ test.concurrent("resolution errors escape the dist-tag", async () => {
 test.concurrent("resolution errors escape a file: path", async () => {
   using dir = project("file-path", { dependencies: { dep: `file:./missing-${C1}` } });
   const { stdout, stderr, exitCode } = await run(String(dir), "install");
-  expect(stderr).toContain(`Could not find package.json for "file:missing-${C1_ESCAPED}" dependency "dep"`);
+  expect(stderr).toContain(`package.json not found for "file:missing-${C1_ESCAPED}" dependency "dep"`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
 });
@@ -310,6 +310,179 @@ test.concurrent("registry error responses are escaped", async () => {
   const { stdout, stderr, exitCode } = await run(String(dir), "pm", "view", "forbidden");
   expect(stderr).toContain(`403 Nope${C1_ESCAPED}: http://127.0.0.1:${rawRegistry.port}/forbidden`);
   expect(stderr).toContain(` - denied${ESC_ESCAPED}`);
+  expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(1);
+});
+
+type Message = {
+  /** The files of the project, with `value` somewhere in them. */
+  files: (value: string) => Record<string, string>;
+  command: string[];
+  /** Part of the message, with `value` as it is printed. */
+  printed: (value: string) => string;
+  exitCode: number;
+  except?: string;
+};
+
+const app = { name: "app", version: "1.0.0" };
+
+const messages: Record<string, Message> = {
+  "a patch file that is not there": {
+    files: value => ({
+      "package.json": JSON.stringify({
+        ...app,
+        dependencies: { dep: "1.0.0" },
+        patchedDependencies: { "dep@1.0.0": `patches/${value}.patch` },
+      }),
+    }),
+    command: ["install"],
+    printed: value => `error: patch file not found: 'patches/${value}.patch'\n`,
+    exitCode: 1,
+  },
+  "a CA file that is not there": {
+    files: value => ({
+      "package.json": JSON.stringify({ ...app, dependencies: { dep: "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "${registryUrl}"\ncafile = ${JSON.stringify(value)}\n`,
+    }),
+    command: ["install"],
+    printed: value => `${value}'\n`,
+    exitCode: 1,
+  },
+  "an entry of package-lock.json that nothing depends on": {
+    files: value => ({
+      "package.json": JSON.stringify(app),
+      "package-lock.json": JSON.stringify({
+        ...app,
+        lockfileVersion: 3,
+        packages: {
+          "": app,
+          [`node_modules/${value}`]: { version: "1.0.0", resolved: `${registryUrl}/a/-/a-1.0.0.tgz` },
+        },
+      }),
+    }),
+    command: ["pm", "migrate", "--verbose"],
+    printed: value => `unused package-lock.json entry: "node_modules/${value}"\n`,
+    exitCode: 0,
+  },
+  "a version in yarn.lock that is not one": {
+    files: value => ({
+      "package.json": JSON.stringify({ ...app, dependencies: { dep: "^1.0.0" } }),
+      "yarn.lock": `# yarn lockfile v1\n\n\ndep@^1.0.0:\n  version "1.0.0_${value}"\n  resolved "${registryUrl}/dep.tgz#aa"\n`,
+    }),
+    command: ["pm", "migrate", "--verbose"],
+    printed: value => `warn: skipping "dep@^1.0.0" from yarn.lock: invalid version "1.0.0_${value}"\n`,
+    exitCode: 0,
+  },
+  "the version that `bun pm version` starts from": {
+    files: value => ({ "package.json": JSON.stringify({ ...app, version: `1.0.0-${value}` }) }),
+    command: ["pm", "version"],
+    printed: value => `1.0.0-${value}`,
+    exitCode: 1,
+  },
+  "a key that package.json has twice": {
+    files: value => ({ "package.json": `{ "name": "app", ${JSON.stringify(value)}: 1, ${JSON.stringify(value)}: 2 }` }),
+    command: ["install"],
+    printed: value => `warn: Duplicate key "${value}" in object literal\n`,
+    exitCode: 0,
+  },
+  "the line of package.json that does not parse": {
+    files: value => ({ "package.json": `{ "name": "app", ${value} }` }),
+    command: ["install"],
+    printed: value => `1 | { "name": "app", ${value} }\n`,
+    exitCode: 1,
+    // It ends the line.
+    except: "CR",
+  },
+  "a workspace that is not there": {
+    files: value => ({ "package.json": JSON.stringify({ ...app, workspaces: [value] }) }),
+    command: ["install"],
+    printed: value => `error: Workspace not found "${value}"\n`,
+    exitCode: 1,
+    // With a `[` it is a pattern, and one that matches nothing is no error.
+    except: "ESC [ 2 K",
+  },
+  "an override that is not a string": {
+    files: value => ({ "package.json": JSON.stringify({ ...app, overrides: { [value]: 1 } }) }),
+    command: ["install"],
+    printed: value => `warn: Invalid override value for "${value}"\n`,
+    exitCode: 0,
+  },
+};
+
+const characters = [
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+];
+
+describe.concurrent.each(Object.entries(messages))(
+  "%s",
+  (_, { files, command, printed, exitCode: expected, except }) => {
+    test.each(characters.filter(([name]) => name !== except))("%s", async (_, raw, spelled) => {
+      using dir = tempDir("escape-controls-message", {
+        "bunfig.toml": `[install]\nregistry = "${registryUrl}"\n`,
+        ...files(`a${raw}b`),
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ...command);
+      expect(stdout + stderr).toContain(printed(`a${spelled}b`));
+      expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+      expect(exitCode).toBe(expected);
+    });
+  },
+);
+
+// Windows has no such file names.
+test.concurrent.skipIf(isWindows).each(characters)("--verbose, a file of a package: %s", async (_, raw, spelled) => {
+  using dir = tempDir("escape-controls-file-name", {
+    "package.json": JSON.stringify({ ...app, dependencies: { dep: "./dep.tgz" } }),
+  });
+  await Bun.Archive.write(
+    join(String(dir), "dep.tgz"),
+    { "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }), [`package/a${raw}b.js`]: "" },
+    { compress: "gzip" },
+  );
+  const { stdout, exitCode } = await run(String(dir), "install", "--verbose");
+  expect(stdout).toContain(`\n a${spelled}b.js\n`);
+  expect(stdout).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("the marker under a source line points at the right column", async () => {
+  using dir = tempDir("escape-controls-mark", { "package.json": `{ "a${C1}b": 1, oops }` });
+  const { stdout, stderr, exitCode } = await run(String(dir), "install");
+  const before = `1 | { "a${C1_ESCAPED}b": 1, `;
+  expect(stderr).toStartWith(`${before}oops }\n${Buffer.alloc(before.length, " ")}^\nerror: Expected string`);
+  expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(1);
+});
+
+// It does nothing on a terminal.
+test.concurrent("a NUL is kept in the source line, and is escaped in the message", async () => {
+  using dir = tempDir("escape-controls-nul", { "package.json": `{ "name": "app", /*\0*/ a\0b }` });
+  const { stderr, exitCode } = await run(String(dir), "install");
+  const before = `1 | { "name": "app", /*\0*/ `;
+  expect(stderr).toStartWith(
+    `${before}a\0b }\n${Buffer.alloc(before.length, " ")}^\nerror: Expected string but found "a\\x00b"\n`,
+  );
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("an invalid name", async () => {
+  using dir = tempDir("escape-controls-name", { "package.json": JSON.stringify({ ...app, name: `a${C1}b` }) });
+  const { stdout, stderr, exitCode } = await run(String(dir), "link");
+  expect(stderr).toContain(`error: invalid package name "a${C1_ESCAPED}b"\n`);
+  expect(stdout + stderr).not.toMatch(RAW_CONTROL);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("git's output about a repository that it can't read", async () => {
+  using dir = project("git", {});
+  const repository = `git+file://${join(String(dir), `missing-${C1}.git`).replaceAll("\\", "/")}`;
+  await Bun.write(join(String(dir), "package.json"), JSON.stringify({ ...app, dependencies: { dep: repository } }));
+  const { stdout, stderr, exitCode } = await run(String(dir), "install");
+  expect(stderr).toContain(`missing-${C1_ESCAPED}.git' does not appear to be a git repository`);
   expect(stdout + stderr).not.toMatch(RAW_CONTROL);
   expect(exitCode).toBe(1);
 });

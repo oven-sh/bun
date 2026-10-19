@@ -1823,6 +1823,9 @@ const testRules: Record<string, Case[]> = {
     `«test»("a", 1000, () => {});`,
     `«test.if(a)»("b", () => {});`,
     `«test.each([1])»("a", () => {});`,
+    // The fix doesn't delete a comment either. It's often the test body, commented out.
+    `«test»("a", () => {\n  // expect(b()).toBe(1);\n});`,
+    `«test»("a", /* later */ () => {});`,
     `test(() => {});`,
     `test("a", { retry: 1 }, () => {\n  b();\n});`,
     `test.todoIf(a)("b");`,
@@ -1924,6 +1927,16 @@ const testRules: Record<string, Case[]> = {
     `import { it } from "bun:test";\n«it»("a", () => {});`,
     `import { test, xit } from "bun:test";\n«xit»("a", () => {});`,
     `import { describe, test } from "bun:test";\ndescribe("a", () => {\n  «test»("b", () => {});\n});`,
+    {
+      code: `const { it, test } = require("bun:test");\n«it»("a", () => {});`,
+      output: `const { it, test } = require("bun:test");\ntest("a", () => {});`,
+    },
+    // At the call site, `test` isn't the `test` that "bun:test" exports.
+    `import { it } from "bun:test";\n«it».concurrent("a", () => {});\nfunction test(name: string) {\n  «it»(name, () => {});\n}`,
+    `import { it } from "bun:test";\nimport { test } from "./helpers";\n«it»("a", () => {});`,
+    `import { it, expect as test } from "bun:test";\n«it»("a", () => {});`,
+    inBunTest(`for (const test of cases) {\n  «it»(test.name, () => {});\n}`),
+    inBunTest(`function each(test: { name: string }) {\n  «it»(test.name, () => {});\n}`),
   ],
 
   "no-test-prefixes": [
@@ -1935,6 +1948,9 @@ const testRules: Record<string, Case[]> = {
     ].map(inBunTest),
     `import { xtest } from "bun:test";\n«xtest»("a", () => {});`,
     `import { xdescribe } from "bun:test";\n«xdescribe»("a", () => {});`,
+    `import { xit } from "bun:test";\n«xit»("a", () => {});\nfunction it() {}`,
+    inBunTest(`for (const it of cases) {\n  «xit»(it.name, () => {});\n}`),
+    inBunTest(`function each(test: string) {\n  «xtest»(test, () => {});\n}`),
   ],
 
   "no-export": [
@@ -2070,6 +2086,9 @@ const testRules: Record<string, Case[]> = {
       suggestions: [`import { mock as fake, spyOn } from "bun:test";\nspyOn(a, 'b').mockImplementation();`],
     },
     `import { test } from "bun:test";\nimport { mock } from "./mock";\na.b = mock();`,
+    `import { mock } from "bun:test";\nfunction spyOn() {}\na.b = «mock»();`,
+    `import { mock, spyOn } from "bun:test";\nfor (const spyOn of c) {\n  a.b = «mock»(spyOn);\n}`,
+    `import { mock, spyOn } from "bun:test";\nfunction f(spyOn) {\n  a.b = «mock»();\n}`,
   ],
 
   "prefer-describe-function-title": [
@@ -2142,6 +2161,37 @@ const testRules: Record<string, Case[]> = {
     `jest.setTimeout(1000);\ntest("a", () => {});`,
     `test.todo("a", () => {});`,
     `xtest("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-unneeded-async-expect-function": [
+    {
+      code: inTest(`await expect(«async () => {\n    await load("a");\n  }»).rejects.toThrow();`),
+      output: inTest(`await expect(load("a")).rejects.toThrow();`),
+    },
+    {
+      code: inTest(`await expect(«async () => await load("a")»).resolves.toBe(1);`),
+      output: inTest(`await expect(load("a")).resolves.toBe(1);`),
+    },
+    {
+      code: inTest(`await expect(«async function () {\n    await load("a");\n  }»).rejects.not.toThrow("b");`),
+      output: inTest(`await expect(load("a")).rejects.not.toThrow("b");`),
+    },
+    // A comment inside the call is kept.
+    {
+      code: inTest(`await expect(«async () => {\n    await load(/* no name */);\n  }»).rejects.toThrow();`),
+      output: inTest(`await expect(load(/* no name */)).rejects.toThrow();`),
+    },
+    // Any other comment would be deleted, so these have no fix.
+    inTest(`await expect(«async () => {\n    // @ts-expect-error\n    await load(1);\n  }»).rejects.toThrow();`),
+    inTest(`await expect(«async () => {\n    await load(1); // not a name\n  }»).rejects.toThrow();`),
+    inTest(`await expect(«async (/* nothing */) => await load(1)»).rejects.toThrow();`),
+
+    // Without `.rejects` or `.resolves`, `bun test` needs the function: `expect(promise).toThrow()` fails.
+    inTest(`await expect(async () => {\n    await load("a");\n  }).toThrow();`),
+    inTest(`expect(async () => await load("a")).toThrow("b");`),
+    inTest(`expect(async () => await load("a")).not.toThrow();`),
+    inTest(`await expect(load("a")).rejects.toThrow();`),
+    inTest(`await expect(async () => {\n    await load("a");\n    await load("b");\n  }).rejects.toThrow();`),
   ].map(inBunTest),
 };
 
@@ -2843,6 +2893,91 @@ describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () =>
               twinsOf(rule),
       ),
     );
+  });
+
+  // Jest and Vitest accept a promise with or without `.rejects`. `bun test` only accepts one with `.rejects`.
+  test.each([
+    ["bun:test", "bun:test", []],
+    ["jest", "@jest/globals", ["10 load(3)"]],
+    ["vitest", "vitest", ["10 load(3)"]],
+  ])("%s/no-unneeded-async-expect-function: comments and `.rejects`", async (plugin, source, withoutRejects) => {
+    const rule = `${plugin}/no-unneeded-async-expect-function`;
+    const code = `import { expect, test } from "${source}";
+test("a", async () => {
+  await expect(async () => {
+    // @ts-expect-error
+    await load(1);
+  }).rejects.toThrow();
+  await expect(async () => {
+    await load(2);
+  }).rejects.toThrow();
+  await expect(async () => {
+    await load(3);
+  }).toThrow();
+});
+`;
+    const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    // The fix would delete the comment, so the first report has no fix.
+    expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      "3 undefined",
+      "7 load(2)",
+      ...withoutRejects,
+    ]);
+  });
+
+  // For Jest and Vitest, `test` is a global, and a local variable in scope at the call shadows it.
+  test.each([
+    ["jest", "@jest/globals"],
+    ["vitest", "vitest"],
+  ])("%s/consistent-test-it doesn't rename to `test` where `test` is a local variable", async (plugin, source) => {
+    const rule = `${plugin}/consistent-test-it`;
+    const code = `import { it } from "${source}";
+for (const test of cases) {
+  it(test.name, () => {});
+}
+it("a", () => {});
+`;
+    const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      "3 undefined",
+      "5 test",
+    ]);
+  });
+
+  // Only calls to globals are reported. oxlint 1.87 writes the names regardless of what they refer to.
+  test.each([
+    ["jest", `const { it, describe } = require("@jest/globals");`, true],
+    ["vitest", `const { it, describe } = require("vitest");`, true],
+    ["vitest", `const { it, describe } = require("vite-plus/test");`, true],
+    ["vitest", `const { it, describe } = require("@effect/vitest");`, true],
+    ["vitest", `const { it, describe } = await import("vitest");`, true],
+    ["jest", `const { it, describe } = require("./helpers");`, false],
+    ["jest", `const { test: it, suite: describe } = require("@jest/globals");`, false],
+    ["jest", `const [it, describe] = require("@jest/globals");`, false],
+    ["jest", `const it = require("@jest/globals"), describe = it;`, false],
+  ])("%s: a fix uses the names from `%s`: %p", async (plugin, declaration, isWritten) => {
+    const code = `${declaration}
+xdescribe("a", () => {
+  test("b", () => {});
+});
+function inner() {
+  const { describe } = require("@jest/globals");
+  xdescribe("c", () => {});
+}
+`;
+    const rules = ["consistent-test-it", "no-test-prefixes"].map(rule => `"${plugin}/${rule}" = "error"\n`);
+    const files = { "bunfig.toml": `[lint.rules]\n${rules.join("")}`, "a.test.mjs": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId.startsWith(plugin)).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      `2 ${isWritten ? "describe.skip" : undefined}`,
+      `3 ${isWritten ? "it" : undefined}`,
+      "7 undefined",
+    ]);
   });
 });
 

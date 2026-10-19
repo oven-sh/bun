@@ -40,7 +40,7 @@ async function silentServer() {
 
 // By default that is 5 minutes per attempt and 6 attempts, which looked like a hang: only --verbose mentioned the
 // retries, and only once the last one had failed.
-describe.concurrent("each retry after a timeout is announced", () => {
+describe.concurrent("a retry after a timeout is announced immediately", () => {
   async function install(registry: string, dependencies: Record<string, string>, ...flags: string[]) {
     using dir = tempDir("install-silent-host", {
       "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies }),
@@ -61,7 +61,7 @@ describe.concurrent("each retry after a timeout is announced", () => {
     await using silent = await silentServer();
     expect(await install(`http://127.0.0.1:${silent.port}/`, { "any-pkg": "1.0.0" })).toEqual({
       messages: [
-        "warn: Timeout downloading package manifest any-pkg. Retrying 1/1...",
+        "warn: registry requests failed, retrying",
         "error: Timeout downloading package manifest any-pkg",
         "error: any-pkg@1.0.0 failed to resolve",
       ],
@@ -88,12 +88,16 @@ describe.concurrent("each retry after a timeout is announced", () => {
         }),
     });
     expect(await install(registry.url.href, { BaR: "0.0.2" })).toEqual({
-      messages: [
-        "warn: Timeout downloading tarball BaR@0.0.2. Retrying 1/1...",
-        "error: Timeout downloading tarball BaR@0.0.2",
-      ],
+      messages: ["warn: registry requests failed, retrying", "error: Timeout downloading tarball BaR@0.0.2"],
       exitCode: 1,
     });
+  }, 60_000);
+
+  // The lines of --verbose about each request are only printed once everything is resolved.
+  test("also with --verbose", async () => {
+    await using silent = await silentServer();
+    const { messages } = await install(`http://127.0.0.1:${silent.port}/`, { "any-pkg": "1.0.0" }, "--verbose");
+    expect(messages[0]).toBe("warn: registry requests failed, retrying");
   }, 60_000);
 
   test("not with --silent", async () => {

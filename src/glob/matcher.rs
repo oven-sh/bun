@@ -2079,6 +2079,8 @@ pub(crate) fn token_at(glob: &[u8], at: usize, shape: &Shape) -> (Token, usize) 
         b'?' => (Token::Any, at + 1),
         b'*' if next == Some(b'*') && glob.get(at + 2) != Some(&b'(') => (Token::Globstar, at + 2),
         b'*' => (Token::Star, at + 1),
+        // Finding out that a `[` isn't closed takes a look at the rest of the pattern, so it's done once.
+        b'[' if at >= shape.parsed(glob).no_class_from as usize => (Token::Literal, at + 1),
         b'[' => match class_end(glob, at) {
             Some(end) => (Token::Class, end),
             None => (Token::Literal, at + 1),
@@ -3629,6 +3631,8 @@ struct Parsed {
     front_end: u32,
     /// Index in `alternatives` of the group that starts there, if one does.
     first_group: u32,
+    /// No `[` at or after this index is closed.
+    no_class_from: u32,
     /// Made when it's first needed.
     program: Once<Box<Program>>,
 }
@@ -3678,6 +3682,7 @@ impl Parsed {
             top: 0,
             front_end: 0,
             first_group: u32::MAX,
+            no_class_from: u32::MAX,
             program: Once::new(),
         }
     }
@@ -3927,6 +3932,7 @@ impl Parsed {
         }
         self.front_end = front_end as u32;
         self.top = top as u32;
+        self.no_class_from = u32::try_from(no_class_from).unwrap_or(u32::MAX);
     }
 
     /// Returns the index of the path after what the front of the pattern takes.
@@ -4778,6 +4784,7 @@ impl Program {
             first,
             is_windows,
             dots,
+            is_start_of_path: false,
         }
     }
 
@@ -4855,6 +4862,8 @@ struct On<'a> {
     is_windows: bool,
     /// `Dots::Match` unless the path has a closed segment.
     dots: Dots,
+    /// `path` is only the start of a path. See [`Below`].
+    is_start_of_path: bool,
 }
 
 impl On<'_> {
@@ -5150,7 +5159,8 @@ impl<S: Set> Walk<S> {
                         let any = on.pattern.len()
                             + 1
                             + (masks.nots_before + before(masks.nots)) as usize;
-                        if set[any / 64] & 1 << (any % 64) != 0 {
+                        // What follows the start of a path may keep the alternatives from matching, so there the `!(a)` stays.
+                        if !on.is_start_of_path && set[any / 64] & 1 << (any % 64) != 0 {
                             now ^= bit;
                             continue;
                         }
@@ -5641,5 +5651,51 @@ impl Cache {
             self.add_character(state, character, found.0);
         }
         Ok(found)
+    }
+}
+
+/// Says which directories can have a match below them: a walk from every node of the pattern, not only from its end.
+pub(crate) struct Below {
+    program: Program,
+    /// Every node.
+    all: SmallVec<[u64; 4]>,
+}
+
+impl Below {
+    /// `None` for a negated pattern, and for one that only the loop matches: it isn't regular and has no group.
+    pub(crate) fn of(glob: &[u8], shape: &Shape) -> Option<Below> {
+        let parsed = shape.parsed(glob);
+        if parsed.top > 0 || !(parsed.is_regular || parsed.has_group) {
+            return None;
+        }
+        let mut program = Program::new();
+        program.read(glob, parsed, 0);
+        let words = program.masks.len();
+        let last = program.masks[words - 1];
+        let nodes = glob.len() + 1 + (last.nots_before + last.nots.count_ones()) as usize;
+        let mut all: SmallVec<[u64; 4]> = SmallVec::from_elem(0, words);
+        for node in 0..nodes {
+            all[node / 64] |= 1 << (node % 64);
+        }
+        Some(Below { program, all })
+    }
+
+    /// Returns false only if no path that starts with `directory` matches. `directory` ends with a separator, or is empty.
+    pub(crate) fn may_match<const WINDOWS: bool>(
+        &self,
+        glob: &[u8],
+        directory: &[u8],
+        dots: Dots,
+    ) -> bool {
+        let dots = match dots != Dots::Match && has_closed_segment_on(directory, dots, WINDOWS) {
+            true => dots,
+            false => Dots::Match,
+        };
+        let on = On {
+            is_start_of_path: true,
+            ..self.program.on(glob, directory, 0, WINDOWS, dots)
+        };
+        on.go(Some((directory.len(), &self.all)), None)
+            .is_err_and(|it| it)
     }
 }

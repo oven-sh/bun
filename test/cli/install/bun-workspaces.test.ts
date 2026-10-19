@@ -505,6 +505,210 @@ test.concurrent("extglob and brace sequence workspace patterns", async () => {
   expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
 });
 
+test.concurrent("workspace patterns with a group that crosses a separator", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const good = ["apps/web", "packages/pkg1", "packages/pkg2", "tools/cli", "libs/a/core"];
+  // Installing any of these would fail. A pattern does not take `node_modules` or `CMakeFiles`, also in a group.
+  const excluded = [
+    "apps/other",
+    "tools/internal",
+    "libs/b/core",
+    "packages/node_modules",
+    "packages/CMakeFiles",
+    "libs/a/node_modules",
+    "libs/a/CMakeFiles",
+  ];
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["{apps/web,packages/*}", "@(tools/cli|libs/a/*)"],
+      }),
+    ),
+    ...good.map(dir =>
+      write(join(packageDir, dir, "package.json"), JSON.stringify({ name: dir.replaceAll("/", "-") })),
+    ),
+    ...excluded.map(dir =>
+      write(
+        join(packageDir, dir, "package.json"),
+        JSON.stringify({ name: dir.replaceAll("/", "-"), dependencies: { "doesnt-exist-oops": "1.2.3" } }),
+      ),
+    ),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
+});
+
+// symlinkSync to a directory needs Developer Mode or elevation on Windows.
+test.concurrent.skipIf(isWindows)("a group that crosses a separator takes a member that is a link", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const script = (name: string) => ({ name, version: "1.0.0", scripts: { present: `echo script-${name}` } });
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["{apps/web,packages/*}"] })),
+    write(join(packageDir, "apps", "web", "package.json"), JSON.stringify(script("web"))),
+    write(join(packageDir, "packages", "one", "package.json"), JSON.stringify(script("one"))),
+    write(join(packageDir, "real", "s", "package.json"), JSON.stringify(script("s"))),
+  ]);
+  symlinkSync(join("..", "real", "s"), join(packageDir, "packages", "s"));
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", "apps/web", "packages/one", "packages/s"]);
+
+  // `bun run --filter` reads the same patterns.
+  await using proc = spawn({
+    cmd: [bunExe(), "run", "--filter", "*", "present"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(["script-web", "script-one", "script-s"].filter(line => out.includes(line))).toEqual([
+    "script-web",
+    "script-one",
+    "script-s",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("bun install in a member that only a group with a separator lists", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const web = { name: "web", version: "1.0.0", dependencies: { one: "workspace:*" } };
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["{apps/web,packages/*}"] })),
+    write(join(packageDir, "apps", "web", "package.json"), JSON.stringify(web)),
+    write(join(packageDir, "packages", "one", "package.json"), JSON.stringify({ name: "one", version: "1.0.0" })),
+  ]);
+
+  // The member finds its root, so `workspace:*` is its sibling and the root has the lockfile.
+  await runBunInstall(env, join(packageDir, "apps", "web"));
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", "apps/web", "packages/one"]);
+  expect(await exists(join(packageDir, "apps", "web", "bun.lock"))).toBe(false);
+});
+
+// A bun that cut the pattern inside the group found no member for it, and wrote a lockfile without them.
+test.concurrent("a lockfile without the members of a group that crosses a separator is not frozen", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const members = ["apps/web", "packages/one", "tools/cli"];
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*", "{apps/web,tools/cli}"] }),
+    ),
+    ...members.map(dir =>
+      write(
+        join(packageDir, dir, "package.json"),
+        JSON.stringify({ name: dir.replaceAll("/", "-"), version: "1.0.0" }),
+      ),
+    ),
+  ]);
+  await runBunInstall(env, packageDir);
+  const lockPath = join(packageDir, "bun.lock");
+  const lock = Bun.JSONC.parse(await file(lockPath).text()) as Record<
+    "workspaces" | "packages",
+    Record<string, unknown>
+  >;
+  expect(Object.keys(lock.workspaces).sort()).toEqual(["", ...members]);
+  for (const dir of ["apps/web", "tools/cli"]) {
+    delete lock.workspaces[dir];
+    delete lock.packages[dir.replaceAll("/", "-")];
+  }
+  await write(lockPath, JSON.stringify(lock, null, 2));
+
+  const frozen = await runBunInstall(env, packageDir, { frozenLockfile: true, allowErrors: true, expectedExitCode: 1 });
+  expect(frozen.err).toContain("error: lockfile had changes, but lockfile is frozen");
+
+  // An install without the flag writes the members, and then the lockfile is frozen again.
+  await runBunInstall(env, packageDir);
+  const repaired = Bun.JSONC.parse(await file(lockPath).text()) as { workspaces: object };
+  expect(Object.keys(repaired.workspaces).sort()).toEqual(["", ...members]);
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+});
+
+// One group is one pattern: with a `**` in it, or with a group that repeats, no member is taken through a link.
+test.concurrent.skipIf(isWindows)(
+  "a group that crosses a separator and repeats takes no member that is a link",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const named = (name: string) => JSON.stringify({ name, version: "1.0.0" });
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["+(packages/)*"] })),
+      write(join(packageDir, "packages", "one", "package.json"), named("one")),
+      write(join(packageDir, "real", "s", "package.json"), named("s")),
+    ]);
+    symlinkSync(join("..", "real", "s"), join(packageDir, "packages", "s"));
+
+    await runBunInstall(env, packageDir);
+    const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+    expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", "packages/one"]);
+  },
+);
+
+// npm, and the two entries `["apps/**", "packages/*"]`, take the link `packages/s`, which `packages/*` matches. The group does not yet.
+(isWindows ? test.skip : test.failing)("a group with a `**` takes the members that its alternatives take", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const named = (name: string) => JSON.stringify({ name, version: "1.0.0" });
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["{apps/**,packages/*}"] })),
+    write(join(packageDir, "apps", "web", "package.json"), named("web")),
+    write(join(packageDir, "packages", "one", "package.json"), named("one")),
+    write(join(packageDir, "real", "s", "package.json"), named("s")),
+    write(join(packageDir, "real", "deep", "package.json"), named("deep")),
+  ]);
+  symlinkSync(join("..", "real", "s"), join(packageDir, "packages", "s"));
+  symlinkSync(join("..", "..", "real", "deep"), join(packageDir, "apps", "web", "linked"));
+
+  await runBunInstall(env, packageDir);
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", "apps/web", "packages/one", "packages/s"]);
+});
+
+// `"../shared"` as an entry of its own is a member. In a group it is a pattern for the names below the root, and none is `..`.
+test.failing("a group with an alternative that goes out of the root takes that member", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const named = (name: string) => JSON.stringify({ name, version: "1.0.0" });
+  const root = join(packageDir, "root");
+  await Promise.all([
+    write(join(root, "package.json"), JSON.stringify({ name: "root", workspaces: ["{../shared,packages/*}"] })),
+    write(join(root, "packages", "one", "package.json"), named("one")),
+    write(join(packageDir, "shared", "package.json"), named("shared")),
+  ]);
+
+  await runBunInstall(env, root);
+  const lockfile = Bun.JSONC.parse(await file(join(root, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", "../shared", "packages/one"]);
+});
+
+// A byte that is not UTF-8 hides the `}` after it from the matcher. The entry has no member, as before.
+test.concurrent("a workspace pattern with a byte that is not UTF-8 in a group", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const json = Buffer.concat([
+    Buffer.from('{"name":"root","version":"1.0.0","workspaces":["{a'),
+    Buffer.from([0xc3]),
+    Buffer.from('}/b}/x{/y"]}'),
+  ]);
+  await write(join(packageDir, "package.json"), json);
+
+  const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(err).toContain("No packages!");
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

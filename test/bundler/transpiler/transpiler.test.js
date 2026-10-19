@@ -2269,6 +2269,205 @@ export default class {
       ts.expectPrinted_(input6, output6);
     });
 
+    it("namespace argument renamed when a binding in a nested scope shadows it", () => {
+      // `v` inside `f` prints as a property access on the closure argument,
+      // which the parameter `N` would otherwise capture (tsc emits `N_1`).
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export function f(N) { return v }
+}`,
+        `var N;
+((_N) => {
+  _N.v = 1;
+  function f(N) {
+    return _N.v;
+  }
+  _N.f = f;
+})(N ||= {})`,
+      );
+
+      // A write to the exported variable goes to the closure argument too.
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export function f(N) { v = 2 }
+}`,
+        `var N;
+((_N) => {
+  _N.v = 1;
+  function f(N) {
+    _N.v = 2;
+  }
+  _N.f = f;
+})(N ||= {})`,
+      );
+
+      // The new name must not capture a reference made inside the body.
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export const f = (N) => v + _N;
+}`,
+        `var N;
+((__N) => {
+  __N.v = 1;
+  __N.f = (N) => __N.v + _N;
+})(N ||= {})`,
+      );
+
+      ts.expectPrinted_(
+        `enum E { A = a, B = ((E) => A)(0) }`,
+        `var E;
+((_E) => {
+  _E[_E["A"] = a] = "A";
+  _E[_E["B"] = ((E) => _E.A)(0)] = "B";
+})(E ||= {})`,
+      );
+
+      // A value named like the enum (tsc keeps `foo` here, esbuild prints `_foo`).
+      ts.expectPrinted_(
+        `enum foo { foo = 123, bar = foo }`,
+        `var foo;
+((_foo) => {
+  _foo[_foo["foo"] = 123] = "foo";
+  _foo[_foo["bar"] = 123] = "bar";
+})(foo ||= {})`,
+      );
+
+      // A renamed inner argument takes `_E`, so the outer one takes `__E`.
+      ts.expectPrinted_(
+        `namespace E {
+  export let v = a;
+  export enum E { A = v, B = ((E) => E + 4)(1) }
+}`,
+        `var E;
+((__E) => {
+  __E.v = a;
+  let E;
+  ((_E) => {
+    _E[_E["A"] = __E.v] = "A";
+    _E[_E["B"] = ((E) => E + 4)(1)] = "B";
+  })(E = __E.E ||= {});
+})(E ||= {})`,
+      );
+
+      // No shadowing binding: the argument keeps the namespace's name.
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export function f(M) { return v + N.v }
+}`,
+        `var N;
+((N) => {
+  N.v = 1;
+  function f(M) {
+    return N.v + N.v;
+  }
+  N.f = f;
+})(N ||= {})`,
+      );
+    });
+
+    it("namespace closure argument is not captured by a nested binding at runtime", async () => {
+      // Each function writes the exported `v`, then reads it, under a binding
+      // named like the namespace. A line is: [value read, N.v after, decoy.v after].
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `namespace N {
+            export let v = 0;
+            export function param(N: any) { v = 1; return v; }
+            export const arrow = (N: any) => { v = 2; return v; };
+            export class C {
+              method(N: any) { v = 3; return v; }
+              static staticMethod(N: any) { v = 4; return v; }
+            }
+            export function destructuredParam({ N }: any) { v = 5; return v; }
+            export function destructuredLocal(o: any) { const { N } = o; v = 6; return v; }
+            export function constLocal(o: any) { const N = o; v = 7; return v; }
+            export function letLocal(o: any) { let N = o; v = 8; return v; }
+            export function varLocal(o: any) { var N = o; v = 9; return v; }
+            export function caught(o: any) { try { throw o; } catch (N) { v = 10; return v; } }
+            export function forOf(o: any) { for (const N of [o]) { v = 11; return v; } }
+            export function innerFunction(o: any) { function N() {} N.v = "decoy"; v = 12; return v; }
+            export function innerFunctionParam(o: any) { function g(N: any) { v = 13; return v; } return g(o); }
+            export function innerClass(o: any) { class N { static v: any = "decoy"; } v = 14; return v; }
+            export function functionExpressionName(o: any) { const f: any = function N() { v = 15; return v; }; f.v = "decoy"; return f(); }
+            export function defaultParam(o: any, N: any = o) { v = 16; return v; }
+            export function restParam(...N: any[]) { (N as any).v = "decoy"; v = 17; return v; }
+            export const setter = { set x(N: any) { v = 18; } };
+            export function label(o: any) { N: for (;;) { v = 19; break N; } return v; }
+            export function compound(N: any) { v += 1; v++; return v; }
+          }
+          function one() { return 1; }
+          enum E { A = one(), B = ((E: any) => A + 1)({ A: 100 }) }
+          namespace O { export let v = one(); export enum O { A = v, B = ((O: any) => O + 4)(1) } }
+
+          const c = new N.C();
+          const run = (name: string, f: (decoy: any) => unknown) => {
+            const decoy = { v: "decoy" };
+            console.log(name, JSON.stringify([f(decoy), N.v, decoy.v]));
+          };
+          run("param", d => N.param(d));
+          run("arrow", d => N.arrow(d));
+          run("method", d => c.method(d));
+          run("staticMethod", d => N.C.staticMethod(d));
+          run("destructuredParam", d => N.destructuredParam({ N: d }));
+          run("destructuredLocal", d => N.destructuredLocal({ N: d }));
+          run("constLocal", d => N.constLocal(d));
+          run("letLocal", d => N.letLocal(d));
+          run("varLocal", d => N.varLocal(d));
+          run("caught", d => N.caught(d));
+          run("forOf", d => N.forOf(d));
+          run("innerFunction", d => N.innerFunction(d));
+          run("innerFunctionParam", d => N.innerFunctionParam(d));
+          run("innerClass", d => N.innerClass(d));
+          run("functionExpressionName", d => N.functionExpressionName(d));
+          run("defaultParam", d => N.defaultParam(d));
+          run("restParam", d => N.restParam(d));
+          run("setter", d => { N.setter.x = d; return N.v; });
+          run("label", d => N.label(d));
+          run("compound", d => N.compound(d));
+          console.log("enum", JSON.stringify([E.B, O.O.A, O.O.B]));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ lines: stdout.trim().split("\n"), exitCode }).toEqual({
+        lines: [
+          `param [1,1,"decoy"]`,
+          `arrow [2,2,"decoy"]`,
+          `method [3,3,"decoy"]`,
+          `staticMethod [4,4,"decoy"]`,
+          `destructuredParam [5,5,"decoy"]`,
+          `destructuredLocal [6,6,"decoy"]`,
+          `constLocal [7,7,"decoy"]`,
+          `letLocal [8,8,"decoy"]`,
+          `varLocal [9,9,"decoy"]`,
+          `caught [10,10,"decoy"]`,
+          `forOf [11,11,"decoy"]`,
+          `innerFunction [12,12,"decoy"]`,
+          `innerFunctionParam [13,13,"decoy"]`,
+          `innerClass [14,14,"decoy"]`,
+          `functionExpressionName [15,15,"decoy"]`,
+          `defaultParam [16,16,"decoy"]`,
+          `restParam [17,17,"decoy"]`,
+          `setter [18,18,"decoy"]`,
+          `label [19,19,"decoy"]`,
+          `compound [21,21,"decoy"]`,
+          `enum [2,1,5]`,
+        ],
+        exitCode: 0,
+      });
+      void stderr;
+    });
+
     // The runtime transpiler does not run a renamer, so the generated closure
     // argument must not shadow declarations inside the namespace body.
     it("namespace closure argument does not redeclare members at runtime", async () => {

@@ -70,10 +70,41 @@ impl BorderRadius {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    /// The declaration of a `-webkit-border-radius` whose value is `self`, from `start` to where `input` is.
+    pub(crate) fn into_webkit_property(
+        self,
+        input: &mut css::Parser,
+        start: &css::ParserState,
+    ) -> Property {
+        // Only a value that starts with two different radii can be the pair.
+        if self.top_left.a != self.top_right.a {
+            let end = input.state();
+            input.reset(start);
+            if let Ok(pair) = Self::parse_webkit_pair(input) {
+                return Property::WebKitBorderRadiusPair(pair);
+            }
+            input.reset(&end);
+        }
+        Property::BorderRadius((self, VendorPrefix::WEBKIT))
+    }
+
+    fn parse_webkit_pair(input: &mut css::Parser) -> css::Result<Size2D<LengthPercentage>> {
+        let a = LengthPercentage::parse(input)?;
+        let b = LengthPercentage::parse(input)?;
+        input.expect_exhausted()?;
+        Ok(Size2D { a, b })
+    }
+
+    /// Under `-webkit-`, `a b` is the legacy pair, so a prefix set with `-webkit-` gets `a b a`.
+    pub(crate) fn to_css_for(
+        &self,
+        dest: &mut Printer,
+        prefixes: VendorPrefix,
+    ) -> Result<(), PrintErr> {
         // `Rect::<&T>::to_css` would need `&T: ToCss + PartialEq`;
         // inline the 4-side serialization to avoid that bound (logic is identical
         // to `values::rect::Rect::to_css`).
+        // Returns whether it wrote exactly two values.
         #[inline]
         fn write_rect(
             top: &LengthPercentage,
@@ -81,25 +112,26 @@ impl BorderRadius {
             bottom: &LengthPercentage,
             left: &LengthPercentage,
             dest: &mut Printer,
-        ) -> Result<(), PrintErr> {
+        ) -> Result<bool, PrintErr> {
             top.to_css(dest)?;
             let same_vertical = top == bottom;
             let same_horizontal = right == left;
             if same_vertical && same_horizontal && top == right {
-                return Ok(());
+                return Ok(false);
             }
             dest.write_str(b" ")?;
             right.to_css(dest)?;
             if same_vertical && same_horizontal {
-                return Ok(());
+                return Ok(true);
             }
             dest.write_str(b" ")?;
             bottom.to_css(dest)?;
             if same_horizontal {
-                return Ok(());
+                return Ok(false);
             }
             dest.write_str(b" ")?;
-            left.to_css(dest)
+            left.to_css(dest)?;
+            Ok(false)
         }
 
         let (wt, wr, wb, wl) = (
@@ -115,11 +147,14 @@ impl BorderRadius {
             &self.bottom_left.b,
         );
 
-        write_rect(wt, wr, wb, wl, dest)?;
+        let wrote_two = write_rect(wt, wr, wb, wl, dest)?;
 
         if !(wt == ht && wr == hr && wb == hb && wl == hl) {
             dest.delim(b'/', true)?;
             write_rect(ht, hr, hb, hl, dest)?;
+        } else if wrote_two && prefixes.contains(VendorPrefix::WEBKIT) {
+            dest.write_str(b" ")?;
+            wb.to_css(dest)?;
         }
         Ok(())
     }
@@ -349,6 +384,34 @@ impl BorderRadiusHandler {
                     &val.bottom_left,
                     *vp
                 );
+            }
+            Property::WebKitBorderRadiusPair(pair) => {
+                self.start_start = None;
+                self.start_end = None;
+                self.end_end = None;
+                self.end_start = None;
+
+                // The pair overrides the `-webkit-` radii before it, unless a target needs them as a fallback.
+                let is_fallback_needed = context
+                    .targets
+                    .browsers
+                    .is_some_and(|browsers| !size2d_lp_is_compatible(pair, &browsers));
+                if !is_fallback_needed {
+                    for corner in [
+                        &mut self.top_left,
+                        &mut self.top_right,
+                        &mut self.bottom_right,
+                        &mut self.bottom_left,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        corner.1.remove(VendorPrefix::WEBKIT);
+                    }
+                }
+
+                self.flush(dest, context);
+                dest.push(Property::WebKitBorderRadiusPair(pair.deep_clone(bump)));
             }
             Property::Unparsed(unparsed) => {
                 if is_border_radius_property(unparsed.property_id.tag()) {

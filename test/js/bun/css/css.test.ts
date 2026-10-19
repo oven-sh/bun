@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  attrTest,
   cssTest,
   cssTestTodo,
   indoc,
@@ -474,11 +475,12 @@ describe("css tests", () => {
         border-radius: 10px 100px 10px 100px;
       }
     `,
+      // lightningcss 1.33.0 prints `10px 100px` here, which Chrome and Safari read as `10px / 100px` under `-webkit-`.
       `
       .foo {
-        -webkit-border-radius: 10px 100px;
-        -moz-border-radius: 10px 100px;
-        border-radius: 10px 100px;
+        -webkit-border-radius: 10px 100px 10px;
+        -moz-border-radius: 10px 100px 10px;
+        border-radius: 10px 100px 10px;
       }
     `,
     );
@@ -491,9 +493,10 @@ describe("css tests", () => {
         border-radius: 30px;
       }
     `,
+      // lightningcss 1.33.0 prints `10px 100px` here too.
       `
       .foo {
-        -webkit-border-radius: 10px 100px;
+        -webkit-border-radius: 10px 100px 10px;
         -moz-border-radius: 20px;
         border-radius: 30px;
       }
@@ -924,6 +927,208 @@ describe("css tests", () => {
         opera: 67 << 16,
       },
     );
+
+    // In Chrome and Safari, `-webkit-border-radius: a b` means `a / b` on every corner.
+    // In Firefox it means `border-radius: a b`. Each other form has the standard grammar.
+    const modern = { chrome: 87 << 16, edge: 88 << 16, firefox: 78 << 16, safari: 14 << 16 };
+
+    describe("a -webkit- radius that is not the legacy pair is not printed as two values", () => {
+      for (const [source, expected] of [
+        [`.a{-webkit-border-radius:10px 100px 10px 100px}`, `.a{-webkit-border-radius:10px 100px 10px}`],
+        [`.a{-webkit-border-radius:10px 100px 10px}`, `.a{-webkit-border-radius:10px 100px 10px}`],
+        [`.a{-webkit-border-radius:10px 100px/10px 100px}`, `.a{-webkit-border-radius:10px 100px 10px}`],
+        [
+          `.a{-webkit-border-radius:10px 100px 10px 100px!important}`,
+          `.a{-webkit-border-radius:10px 100px 10px!important}`,
+        ],
+        // The handler builds this shorthand. The source has none.
+        [
+          `.a{-webkit-border-top-left-radius:1px;-webkit-border-top-right-radius:2px;-webkit-border-bottom-right-radius:1px;-webkit-border-bottom-left-radius:2px}`,
+          `.a{-webkit-border-radius:1px 2px 1px}`,
+        ],
+        // These two rules are not equal, so they stay two rules.
+        [
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:1px 2px 1px 2px}`,
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:1px 2px 1px}`,
+        ],
+        // No handler sees these declarations.
+        [
+          `@keyframes k{from{-webkit-border-radius:1px 2px 1px 2px}to{-webkit-border-radius:3px 4px}}`,
+          `@keyframes k{0%{-webkit-border-radius:1px 2px 1px}to{-webkit-border-radius:3px 4px}}`,
+        ],
+        [
+          `@container style(-webkit-border-radius:1px 2px 1px 2px){.a{color:red}}`,
+          `@container style(-webkit-border-radius:1px 2px 1px){.a{color:red}}`,
+        ],
+      ]) {
+        minify_test(source, expected);
+      }
+
+      test("style attribute", () => {
+        expect(attrTest(`-webkit-border-radius: 1px 2px 1px 2px`, "", true)).toBe(`-webkit-border-radius:1px 2px 1px`);
+        expect(attrTest(`-webkit-border-radius: 1px 2px`, "", true)).toBe(`-webkit-border-radius:1px 2px`);
+      });
+
+      // A target that needs `-webkit-` gets one value text for both copies.
+      prefix_test(
+        `.a { border-radius: 1px 2px }`,
+        `.a { -webkit-border-radius: 1px 2px 1px; border-radius: 1px 2px 1px; }`,
+        { safari: 4 << 16 },
+      );
+      prefix_test(`.a { border-radius: 1px 2px 1px 2px }`, `.a { border-radius: 1px 2px; }`, modern);
+
+      // These have one meaning in each engine and do not change.
+      for (const [source, expected] of [
+        [`.a{border-radius:10px 100px 10px 100px}`, `.a{border-radius:10px 100px}`],
+        [`.a{-moz-border-radius:10px 100px 10px 100px}`, `.a{-moz-border-radius:10px 100px}`],
+        [`.a{-webkit-border-radius:1px 2px 3px 4px}`, `.a{-webkit-border-radius:1px 2px 3px 4px}`],
+        [`.a{-webkit-border-radius:1px 2px/3px}`, `.a{-webkit-border-radius:1px 2px/3px}`],
+        [`.a{-webkit-border-radius:1px/2px}`, `.a{-webkit-border-radius:1px/2px}`],
+        [`.a{-webkit-border-radius:1px 1px}`, `.a{-webkit-border-radius:1px}`],
+      ]) {
+        minify_test(source, expected);
+      }
+    });
+
+    // web-platform-tests css/css-backgrounds/parsing/webkit-border-radius-valid.html (blob cdf570b4e9).
+    describe("the -webkit-border-radius values of web-platform-tests", () => {
+      for (const [value, expected = value] of [
+        ["initial"],
+        ["inherit"],
+        ["unset"],
+        ["revert"],
+        ["1px"],
+        ["1px 5%"],
+        ["1px 2% 3px"],
+        ["1px 2% 3px 4%"],
+        ["1px / 2px", "1px/2px"],
+        ["5em / 1px 2% 3px 4%", "5em/1px 2% 3px 4%"],
+        ["1px 2% / 3px 4px", "1px 2%/3px 4px"],
+        ["1px 2px 3em / 1px 2px 3%", "1px 2px 3em/1px 2px 3%"],
+        ["1px 2% / 2px 3em 4px 5em", "1px 2%/2px 3em 4px 5em"],
+        ["1px 2% 3px 4% / 5em", "1px 2% 3px 4%/5em"],
+        ["1px 1px 1px 2% / 1px 2% 1px 2%", "1px 1px 1px 2%/1px 2%"],
+        ["1px 1px 1px 1px / 1px 1px 2% 1px", "1px/1px 1px 2%"],
+        ["1px 1px 2% 2%"],
+        ["1px 2% 1px 1px"],
+        ["1px 2% 2% 2% / 1px 2% 3px 2%", "1px 2% 2%/1px 2% 3px"],
+      ]) {
+        minify_test(`.a{-webkit-border-radius:${value}}`, `.a{-webkit-border-radius:${expected}}`);
+      }
+      for (const declaration of [
+        "-webkit-border-top-left-radius:10px",
+        "-webkit-border-top-right-radius:20%",
+        "-webkit-border-bottom-right-radius:30px 40%",
+        "-webkit-border-bottom-left-radius:50% 60px",
+      ]) {
+        minify_test(`.a{${declaration}}`, `.a{${declaration}}`);
+      }
+
+      // The printed value must read back as the declaration it came from. The two rules are then one rule.
+      test("each list of one to four values reads back as the same declaration", () => {
+        let lists: string[][] = [[]];
+        for (let count = 1; count <= 4; count++) {
+          lists = lists.flatMap(list => ["1px", "2px", "3px"].map(length => [...list, length]));
+          for (const list of lists) {
+            const source = `.a{-webkit-border-radius:${list.join(" ")}}`;
+            const body = minify_test_with_options(source, "").slice(2);
+            expect(minify_test_with_options(`${source}.b${body}`, "")).toBe(`.a,.b${body}`);
+          }
+        }
+      });
+    });
+
+    describe("the legacy pair keeps its two values and its place", () => {
+      for (const [source, expected] of [
+        [`.a{-webkit-border-radius:10px 100px}`, `.a{-webkit-border-radius:10px 100px}`],
+        [`.a{-webkit-border-radius:calc(1px + 1px) 0px}`, `.a{-webkit-border-radius:2px 0}`],
+        [`.a{-webkit-border-radius:1px/**/2px}`, `.a{-webkit-border-radius:1px 2px}`],
+        [`.a{-webkit-border-radius:1px+2px}`, `.a{-webkit-border-radius:1px 2px}`],
+        // A NaN value is not equal to itself. It is still a pair.
+        [`.a{-webkit-border-radius:calc(NaN * 1px) 2px}`, `.a{-webkit-border-radius:0px 2px}`],
+        // A longhand after the pair changes one corner. The other three stay `1px / 2px`.
+        [
+          `.a{-webkit-border-radius:1px 2px;-webkit-border-top-left-radius:3px}`,
+          `.a{-webkit-border-radius:1px 2px;-webkit-border-top-left-radius:3px}`,
+        ],
+        [
+          `.a{-webkit-border-radius:1px 2px!important;-webkit-border-top-left-radius:3px!important}`,
+          `.a{-webkit-border-radius:1px 2px!important;-webkit-border-top-left-radius:3px!important}`,
+        ],
+        [
+          `.a{-webkit-border-radius:1px 2px}.a{-webkit-border-top-left-radius:3px}`,
+          `.a{-webkit-border-radius:1px 2px;-webkit-border-top-left-radius:3px}`,
+        ],
+        // The pair overrides the `-webkit-` radii before it.
+        [`.a{-webkit-border-top-left-radius:3px;-webkit-border-radius:1px 2px}`, `.a{-webkit-border-radius:1px 2px}`],
+        [`.a{-webkit-border-radius:4px;-webkit-border-radius:1px 2px}`, `.a{-webkit-border-radius:1px 2px}`],
+        [
+          `.a{-webkit-border-radius:1px 2px 1px 2px;-webkit-border-radius:1px 2px}`,
+          `.a{-webkit-border-radius:1px 2px}`,
+        ],
+        [`.a{-webkit-border-radius:4px;-webkit-border-radius:1cqw 2cqw}`, `.a{-webkit-border-radius:1cqw 2cqw}`],
+        // An unprefixed radius is a different declaration. It stays, in source order.
+        [
+          `.a{border-top-left-radius:3px;-webkit-border-radius:1px 2px}`,
+          `.a{border-top-left-radius:3px;-webkit-border-radius:1px 2px}`,
+        ],
+        [
+          `.a{border-radius:1px 2px;-webkit-border-radius:1px 2px}`,
+          `.a{border-radius:1px 2px;-webkit-border-radius:1px 2px}`,
+        ],
+        [
+          `.a{-webkit-border-radius:1px 2px;border-radius:1px 2px}`,
+          `.a{-webkit-border-radius:1px 2px;border-radius:1px 2px}`,
+        ],
+        // A later `-webkit-` shorthand makes the pair dead in each engine. The pair stays.
+        [
+          `.a{-webkit-border-radius:1px 2px;-webkit-border-radius:1px 2px 1px 2px}`,
+          `.a{-webkit-border-radius:1px 2px;-webkit-border-radius:1px 2px 1px}`,
+        ],
+        // Equal pairs are equal declarations. `1px 2px` and `2px 1px` are not.
+        [`.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:1px 2px}`, `.a,.b{-webkit-border-radius:1px 2px}`],
+        [
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:2px 1px}`,
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:2px 1px}`,
+        ],
+        [
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:1px 3px}`,
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:1px 3px}`,
+        ],
+        [
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:3px 2px}`,
+          `.a{-webkit-border-radius:1px 2px}.b{-webkit-border-radius:3px 2px}`,
+        ],
+        [
+          `@keyframes k{from{-webkit-border-radius:1px 2px}to{-webkit-border-radius:3px 4px}}`,
+          `@keyframes k{0%{-webkit-border-radius:1px 2px}to{-webkit-border-radius:3px 4px}}`,
+        ],
+        [
+          `@container style(-webkit-border-radius:1px 2px){.a{color:red}}`,
+          `@container style(-webkit-border-radius:1px 2px){.a{color:red}}`,
+        ],
+      ]) {
+        minify_test(source, expected);
+      }
+
+      prefix_test(
+        `.a { -webkit-border-radius: 1px 2px; border-radius: 1px 2px }`,
+        `.a { -webkit-border-radius: 1px 2px; border-radius: 1px 2px; }`,
+        modern,
+      );
+      // The pair overrides a logical longhand before it.
+      prefix_test(
+        `.a { border-start-start-radius: 3px; -webkit-border-radius: 1px 2px }`,
+        `.a { -webkit-border-radius: 1px 2px; }`,
+        modern,
+      );
+      // These targets cannot read `cqw`, so the radius before the pair stays as the fallback.
+      prefix_test(
+        `.a { -webkit-border-radius: 4px; -webkit-border-radius: 1cqw 2cqw }`,
+        `.a { -webkit-border-radius: 4px; -webkit-border-radius: 1cqw 2cqw; }`,
+        modern,
+      );
+    });
   });
 
   describe("border", () => {

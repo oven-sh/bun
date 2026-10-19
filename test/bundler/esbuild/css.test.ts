@@ -38,6 +38,28 @@ describe("bundler", () => {
     },
   });
 
+  // In Chrome and Safari, `-webkit-border-radius: a b` means `a / b` on every corner.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`css/WebKitBorderRadiusLegacyPair/${backend}`, {
+      files: {
+        "/entry.css": /* css */ `
+          .four { -webkit-border-radius: 10px 100px 10px 100px }
+          .pair { -webkit-border-radius: 10px 100px; -webkit-border-top-left-radius: 5px }
+        `,
+      },
+      backend,
+      minifyWhitespace: true,
+      outdir: "/out",
+      onAfterBundle(api) {
+        api
+          .expectFile("/out/entry.css")
+          .toEqualIgnoringWhitespace(
+            `.four{-webkit-border-radius:10px 100px 10px}.pair{-webkit-border-radius:10px 100px;-webkit-border-top-left-radius:5px}`,
+          );
+      },
+    });
+  }
+
   itBundled("css/CSSNesting", {
     target: "bun",
     files: {

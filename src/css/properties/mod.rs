@@ -213,6 +213,16 @@ mod generic_registrations {
             css_values::color::CssColor::parse(input)
         }
     }
+    // `BorderRadius` has no `generics::ToCss`: its text depends on the prefix set (`to_css_for`).
+    impl crate::generics::ParseWithOptions for border_radius::BorderRadius {
+        #[inline]
+        fn parse_with_options(
+            input: &mut crate::css_parser::Parser,
+            _o: &crate::css_parser::ParserOptions,
+        ) -> crate::css_parser::CssResult<Self> {
+            border_radius::BorderRadius::parse(input)
+        }
+    }
 
     // ── crate::properties::* leaves with REAL inherent parse/to_css ──
     // NOTE: types deriving `css::DefineEnumProperty` / `Parse` / `ToCss` already
@@ -238,8 +248,6 @@ mod generic_registrations {
         border_image::BorderImageRepeat,
         border_image::BorderImageSlice,
         border_image::BorderImageSideWidth,
-        // border_radius
-        border_radius::BorderRadius,
         // box_shadow
         box_shadow::BoxShadow,
         // css_modules

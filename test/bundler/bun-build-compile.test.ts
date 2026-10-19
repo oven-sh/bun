@@ -3297,12 +3297,15 @@ console.log(JSON.stringify(FeatureSetDefaults.last));\n`,
     expect(existsSync(join(String(dir), "out", "index.js.jsc"))).toBe(true);
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "out", "index.js")],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    // The run must come out of the optimized bytecode, not out of a parse of the source.
+    const lines = stderr.split(/\r?\n/).filter(Boolean);
+    expect(lines.filter(line => !line.startsWith("[Disk Cache] "))).toEqual([]);
+    expect(lines).toContain("[Disk Cache] Cache hit for sourceCode");
     expect(stdout).toBe(
       '{"defaults":[],"minimumEdition":1000,"maximumEdition":9999}\n{"defaults":[],"minimumEdition":5,"maximumEdition":999}\n',
     );

@@ -1057,6 +1057,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
+            // With useDefineForClassFields: false an instance field becomes `this.x = init` in the ctor.
+            let use_define = !Self::IS_TYPESCRIPT_ENABLED
+                || self.options.use_define_for_class_fields
+                || class.should_lower_standard_decorators;
+            let is_instance_field = |p: &G::Property| {
+                p.kind == PropertyKind::Normal
+                    && !p.flags.contains(flags::Property::IsMethod)
+                    && !p.flags.contains(flags::Property::IsStatic)
+                    && p.value.is_none()
+                    && p.key.is_some()
+            };
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -1065,7 +1076,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        ..Default::default()
+                        is_new_target_undefined: true,
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
                     let csb = property.class_static_block_mut().unwrap();
@@ -1196,6 +1207,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(val) = property.initializer {
                     let class_body = self.current_scope;
                     self.field_init_class_bodies.push(class_body);
+                    let old_is_new_target_undefined =
+                        self.fn_only_data_visit.is_new_target_undefined;
+                    // An initializer that can move into the constructor keeps `new.target`.
+                    self.fn_only_data_visit.is_new_target_undefined =
+                        use_define || !is_instance_field(property);
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1214,6 +1230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.fn_only_data_visit.is_new_target_undefined = old_is_new_target_undefined;
                     self.field_init_class_bodies.pop();
                 }
 
@@ -1223,10 +1240,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                // Standard decorator lowering wraps field initializers where they are.
-                let use_define = self.options.use_define_for_class_fields
-                    || class.should_lower_standard_decorators;
-
                 let (func_args, param_props): (bun_ast::StoreSlice<G::Arg>, usize) =
                     match constructor_function {
                         Some(cf) => {
@@ -1243,14 +1256,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None => (bun_ast::StoreSlice::EMPTY, 0),
                     };
 
-                // useDefineForClassFields: false => instance field -> `this.x = init` in ctor.
-                let is_instance_field = |p: &G::Property| {
-                    p.kind == PropertyKind::Normal
-                        && !p.flags.contains(flags::Property::IsMethod)
-                        && !p.flags.contains(flags::Property::IsStatic)
-                        && p.value.is_none()
-                        && p.key.is_some()
-                };
                 // A `[K]` / `[K] = init` field can't be lowered without hoisting the key.
                 let lower_fields = !use_define
                     && !class.properties.slice().iter().any(|p| {
@@ -1261,7 +1266,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(ExprData::EString(_) | ExprData::ENumber(_))
                             )
                     });
-
                 let fields_to_lower = if lower_fields {
                     class
                         .properties

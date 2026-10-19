@@ -84,14 +84,12 @@ private:
     WTF::Vector<Node> m_nodes;
     // (parent node + 1, source, first line, start column) of a function that allocated -> its node under that parent.
     WTF::HashMap<std::tuple<unsigned, JSC::SourceProvider*, unsigned, unsigned>, unsigned> m_nodeIndex;
-    // Stackless picks go under these children of (root), as V8 puts them under "(JS)" and the like, so (root) itself
-    // never has bytes of its own.
+    // Children of (root) for stackless picks, like V8's "(JS)", so (root) never has bytes of its own.
     unsigned m_jsPseudoNode { noSample };
     unsigned m_nativePseudoNode { noSample };
     WTF::Vector<Sample> m_samples; // Append-only between compactions: void entries are tombstones.
     unsigned m_voidSamples { 0 };
-    // m_samples.size() after the last reconcile. A cell sampled before it survived that collection and is old, so an
-    // eden collection cannot free it; the eden reconcile starts here.
+    // m_samples.size() after the last reconcile: an older sample is of an old cell, which an eden collection keeps.
     unsigned m_reconciledCount { 0 };
     WTF::HashMap<void*, unsigned> m_firstSampleOfCell;
     uint64_t m_lastOrdinal { 0 };

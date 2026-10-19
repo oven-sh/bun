@@ -924,8 +924,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startHeapProfileInte
 
 static constexpr ASCIILiteral kEmptyHeapProfileJSON = "{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":0,\"id\":1,\"children\":[]},\"samples\":[]}"_s;
 
-// The profile as JSON, and sampling off. An empty profile when sampling was off; ERR_WORKER_NOT_RUNNING when the
-// worker is gone, as in node.
+// The profile as JSON, and sampling off; ERR_WORKER_NOT_RUNNING when the worker is gone, as in node.
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopHeapProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

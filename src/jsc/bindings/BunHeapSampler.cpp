@@ -140,9 +140,7 @@ void HeapSampler::compactSamples()
     m_reconciledCount = m_samples.size();
 }
 
-// A function node whose samples are all gone and that has no children is dropped, as V8 drops its nodes, so a
-// profile of a program that keeps compiling new functions does not grow without bound. Children have higher indices
-// than their parents, so one pass from the end prunes whole subtrees.
+// Drops function nodes with no samples and no children, as V8 does; children have higher indices than parents.
 void HeapSampler::pruneNodes()
 {
     for (unsigned index = m_nodes.size(); index-- > 1;) {

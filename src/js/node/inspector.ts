@@ -433,8 +433,7 @@ class Session extends EventEmitter {
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
   #forwardedDebugger = false;
-  // Set by every session that posted startSampling: each of them stops sampling on disable() and disconnect(), as
-  // V8's HeapProfiler agent does.
+  // Every session that posted startSampling stops sampling on disable() and disconnect(), as V8's agent does.
   #startedAllocationSampling = false;
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.

@@ -770,6 +770,12 @@ impl<'p, 's> Checker<'p, 's> {
             // set, only the task of the declaring file knows, which reports 2310 if not. `checkClassLikeDeclaration` begins here: it
             // checks the type arguments of the heritage clause first. So this is taken for a recursive query.
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
+            // That file's task may not have got there yet. Then it would find what this task stores, and never report 2310.
+            if is_repeated
+                && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
+            {
+                self.close_ring(from);
+            }
             let bases = if is_repeated {
                 List::default()
             } else {

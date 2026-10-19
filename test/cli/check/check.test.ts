@@ -1110,6 +1110,54 @@ module.exports = Base;
     }
   });
 
+  // `Folder`'s base type mentions `Folder` in a conditional type, and comparing `Folder` asks for its base types again.
+  // TypeScript reports that if the base types are what was asked for first, as `root.size` does, and not if the class
+  // declaration's own check gets there first. `model.ts` comes first in program order, because `util.ts` imports it.
+  // `util.ts` asks too, and its check must not answer for `model.ts` if it happens to run first. Checking the default library
+  // changes which files are checked together.
+  test.each([
+    [true, true],
+    [false, true],
+    [true, false],
+    [false, false],
+  ])(
+    "reports a class that is its own base type, when a later file gets there first (import cycle: %p, skipLibCheck: %p)",
+    async (importsEachOther, skipLibCheck) => {
+      const functions = Array.from(
+        { length: 50 },
+        (_, i) =>
+          `export function join${i}(parts: string[]) {\n  return parts.map(p => p.trim() + "${i}").join(",");\n}\n`,
+      ).join("");
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck },
+          files: ["util.ts", "model.ts"],
+        }),
+        "util.ts": `import type { Folder } from "./model";\n${functions}export function last(f: Folder) {\n  return f.size;\n}\n`,
+        "model.ts": `${importsEachOther ? `import { join0 } from "./util";` : ""}
+export const joined = ${importsEachOther ? `join0(["a"])` : `"a"`};
+type Wire<V> = V extends boolean | bigint ? { raw: V } : { boxed: V };
+class Store<V> {
+  kept!: V;
+}
+declare const root: Folder;
+root.size;
+export class Folder extends Store<Wire<Folder>> {
+  size = 0;
+}
+`,
+      });
+      const runs = skipLibCheck ? 6 : 2;
+      const threads = [1, ...Array(runs).fill(2), ...Array(runs).fill(8)];
+      for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe(
+          "model.ts(9,14): error TS2310: Type 'Folder' recursively references itself as a base type.",
+        );
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
+
   // The same for a name that doesn't resolve. `caller.ts` is larger, so it's checked first, but it comes later in program
   // order, because the two import each other. An unresolved name in another file is left to that file's own check, which first
   // gets to it two error messages deep, where TypeScript discards the error.

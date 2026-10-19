@@ -7578,6 +7578,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `getPropertiesOfUnionOrIntersectionType` asks each member for its properties. For an
         // instantiable member that is `getReducedApparentType`: its base constraint is resolved
         // here, with the errors and the cycles of that.
+        let (mut listed_now, mut unions_now) = (
+            SmallVec::<[TypeId; 4]>::new(),
+            SmallVec::<[TypeId; 4]>::new(),
+        );
         if let TypeData::Intersection(members) = self.data(ty) {
             let members: SmallVec<[TypeId; 4]> = members.iter().copied().collect();
             let mut has_union = false;
@@ -7595,6 +7599,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let apparent: SmallVec<[TypeId; 4]> =
                     members.iter().map(|&it| self.apparent_type(it)).collect();
                 let mut checked = crate::util::FxHashSet::<Atom>::default();
+                let mut has_resolved_the_others = false;
                 for &current in &apparent {
                     let listed = match self.is_union(current) {
                         true => self.union_as_object(current),
@@ -7603,20 +7608,35 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(of_current) = self.members(listed) else {
                         continue;
                     };
-                    for prop in &of_current.shape().props {
-                        let is_first = checked.is_empty();
+                    let props = &of_current.shape().props;
+                    // FOR SPEED. Thousands of intersections have the same few unions among their constraints.
+                    let is_listed_in_all = apparent.iter().all(|&other| {
+                        !self.is_union(other) || self.listed_in_unions.contains(&(listed, other))
+                    });
+                    listed_now.push(listed);
+                    if !has_resolved_the_others && !props.is_empty() {
+                        has_resolved_the_others = true;
+                        for &other in &apparent {
+                            if !self.is_union(other) {
+                                self.members(other);
+                            }
+                        }
+                    }
+                    if is_listed_in_all {
+                        continue;
+                    }
+                    for prop in props {
                         if !checked.insert(prop.name) {
                             continue;
                         }
                         for &other in &apparent {
                             if self.is_union(other) {
                                 self.union_property(other, prop.name);
-                            } else if is_first {
-                                self.members(other);
                             }
                         }
                     }
                 }
+                unions_now.extend(apparent.iter().copied().filter(|&it| self.is_union(it)));
             }
         }
         // `isNeverReducedProperty`
@@ -7629,10 +7649,13 @@ impl<'p, 's> Checker<'p, 's> {
         self.never_in_progress.pop();
         self.never_in_progress_from.pop();
         match self.end_scope_by_counters(scope) {
-            Ok(stored) => self
-                .p
-                .never_intersections
-                .insert(&self.task, ty, is_never, stored),
+            Ok(stored) => {
+                // Every property that was asked for is stored.
+                for &listed in &listed_now {
+                    (self.listed_in_unions).extend(unions_now.iter().map(|&union| (listed, union)));
+                }
+                (self.p.never_intersections).insert(&self.task, ty, is_never, stored)
+            }
             Err(_) => is_never,
         }
     }

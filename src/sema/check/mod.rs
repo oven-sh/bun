@@ -855,6 +855,7 @@ impl<'s> Program<'s> {
             resolved_parameter_types: Default::default(),
             partial_sig_params: Default::default(),
             declared_parameters: Default::default(),
+            listed_in_unions: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -2027,6 +2028,9 @@ pub struct Checker<'p, 's> {
     /// The lists of `sig_params_with_first` that lack a type, each with the number of parameters
     /// before the first that does.
     partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
+    /// A type and a union: `is_empty_intersection` has asked the union for a property of each name that the type has, and
+    /// the answers are stored.
+    listed_in_unions: crate::util::FxHashSet<(TypeId, TypeId)>,
     /// The results of `declared_parameter` for all parameters of a function, once `is_declared_parameter_settled`.
     declared_parameters: FxHashMap<(FileId, FnId), &'p [SigParam]>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer

@@ -605,6 +605,35 @@ error: Hello World`,
       expect(out).not.toMatch(/^import /m);
     },
   });
+  // \`--reject-unresolved\` is about \`require()\` and \`import()\`. A call that stays as Bun wrote it is neither.
+  itBundled("bun/RequireWrittenByBunRejectUnresolved", {
+    files: {
+      "/entry.js": /* js */ `// @bun
+        var __require = import.meta.require;
+        const name = "./run-time" + Math.random().toString().slice(0, 0) + ".cjs";
+        console.log(__require("./lib/dep.cjs").x, __require(name).x, import.meta.require(name).x);
+      `,
+      "/lib/dep.cjs": `exports.x = "bundled";`,
+      "/run-time.cjs": `exports.x = "at run time";`,
+    },
+    target: "bun",
+    allowUnresolved: [],
+    run: { stdout: "bundled at run time at run time" },
+  });
+  // Where the output has no \`import.meta.require\`, the call is a \`require()\`, and is rejected like one.
+  itBundled("bun/ImportMetaRequireRejectUnresolved-node", {
+    files: {
+      "/entry.js": /* js */ `
+        const name = "./run-time" + Math.random().toString().slice(0, 0) + ".cjs";
+        console.log(import.meta.require(name).x);
+      `,
+    },
+    target: "node",
+    allowUnresolved: [],
+    bundleErrors: {
+      "/entry.js": ["This require() expression will not be bundled because the argument is not a string literal"],
+    },
+  });
   itBundled("bun/RequireWrittenByBunDefineWins", {
     files: {
       "/entry.js": `// @bun\nvar __require = import.meta.require;\nconsole.log(__require("./lib/dep.cjs"), import.meta.require("./lib/dep.cjs"));`,

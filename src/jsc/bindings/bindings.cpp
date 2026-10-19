@@ -6743,7 +6743,19 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    std::span<const unsigned char> sourceBytes { sourcePtr, sourceLen };
+    // fromUTF8 aborts on a length that is no Vector<char16_t> capacity, and returns a null string for ill-formed UTF-8.
+    WTF::String source = WTF::isValidCapacityForVector<char16_t>(sourceLen) ? WTF::String::fromUTF8(sourceBytes) : WTF::String();
+    if (source.isNull() && sourceLen > 0) [[unlikely]] {
+        // A null source would evaluate as the empty program. Ill-formed bytes become U+FFFD instead.
+        source = Zig::convertUTF8ToString(sourceBytes);
+        if (source.isNull()) {
+            JSC::JSValue error = JSC::createError(globalObject, "Cannot evaluate source text that is too long or is not valid UTF-8"_s);
+            *exception = JSC::JSValue::encode(error);
+            Bun::putDirectNamed(vm, globalObject, "_error"_s, error);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+    }
     WTF::String filename = filenameLen > 0
         ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
         : "[repl]"_s;

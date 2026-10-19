@@ -215,7 +215,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
+    home?: string;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -226,7 +231,8 @@ async function withTerminalRepl(
   const decoder = new TextDecoder();
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
-  using home = tempDir("repl-home", {});
+  using tempHome = tempDir("repl-home", {});
+  const home = options.home ?? String(tempHome);
   await using terminal = new Bun.Terminal({
     cols,
     rows,
@@ -247,8 +253,8 @@ async function withTerminalRepl(
       ...bunEnv,
       TERM: "xterm-256color",
       ...options.env,
-      HOME: String(home),
-      USERPROFILE: String(home),
+      HOME: home,
+      USERPROFILE: home,
     },
   });
 
@@ -444,6 +450,51 @@ describe.concurrent("Bun REPL", () => {
           /^ENOENT: (definitely-does-not-exist-repl-test\.js: )?No such file or directory \(open\(\)\)$/,
         ),
         "2",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load reads a UTF-16 file and a file with a byte order mark as `bun run` reads them", async () => {
+      using dir = tempDir("repl-load-bom", {
+        // What PowerShell's `>` writes.
+        "utf16.js": Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("var fromUtf16 = 'ran';\n", "utf16le")]),
+        "utf8-bom.js": Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("var fromUtf8Bom = 'ran';\n")]),
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [".load utf16.js", ".load utf8-bom.js", "fromUtf16 + fromUtf8Bom", ".exit"],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual(['Loading utf16.js...\n"ran"', 'Loading utf8-bom.js...\n"ran"', '"ranran"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load of a file with a byte that is not UTF-8 runs it, or reports its syntax error", async () => {
+      using dir = tempDir("repl-load-latin1", {
+        // The transpiler keeps a `/*!` comment, and with it the byte.
+        "kept-comment.js": Buffer.from("function keptComment() { /*! \xe9 */ return 1 }\n", "latin1"),
+        "syntax-error.js": Buffer.from('"\xe9")\n', "latin1"),
+        // Bun's parser reads the byte as Latin-1, as it does for `bun run`.
+        "string.js": Buffer.from('"f\xfcr".charCodeAt(1)\n', "latin1"),
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          ".load kept-comment.js",
+          "keptComment()",
+          ".load syntax-error.js",
+          "_error instanceof SyntaxError",
+          ".load string.js",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual([
+        "Loading kept-comment.js...\nundefined",
+        "1",
+        "Loading syntax-error.js...\nSyntaxError: Unexpected token ')'",
+        "true",
+        "Loading string.js...\n252",
       ]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
@@ -928,6 +979,32 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(1);
     });
 
+    // The shell passes the byte on as it is. An argument of Bun.spawn is a string, which is UTF-8.
+    test.skipIf(isWindows)("-p and -e evaluate a script with a byte that is not UTF-8", async () => {
+      async function runShell(script: string) {
+        await using proc = Bun.spawn({
+          cmd: ["sh", "-c", script],
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...bunEnv, NO_COLOR: "1", BUN_UNDER_TEST: bunExe() },
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      // \351 is the byte 0xE9. The transpiler keeps a `/*!` comment, and with it the byte.
+      expect(await runShell(`"$BUN_UNDER_TEST" repl -p "$(printf '/*! \\351 */ 1 + 1')"`)).toEqual({
+        stdout: "2\n",
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const syntaxError = await runShell(`"$BUN_UNDER_TEST" repl -e "$(printf '"\\351")')"`);
+      expect(syntaxError.stderr).toStartWith("SyntaxError: Unexpected token ')'");
+      expect(syntaxError.stdout).toBe("");
+      expect(syntaxError.exitCode).toBe(1);
+    });
+
     test("-e with rejected top-level await writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "await Promise.reject(new Error('async fail'))"]);
       expect(stdout).toBe("");
@@ -1138,6 +1215,24 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       // Should evaluate the same expression again
       await waitFor("333");
     });
+  });
+
+  test("evaluates a recalled history line with a byte that is not UTF-8", async () => {
+    using home = tempDir("repl-history-latin1", {
+      // The transpiler keeps a `/*!` comment, and with it the byte 0xE9.
+      ".bun_repl_history": Buffer.from("(function () { /*! \xe9 */ return 40 + 2 })()\n", "latin1"),
+    });
+    await withTerminalRepl(
+      async ({ send, waitFor, allOutput }) => {
+        send("\x1b[A");
+        await waitFor("return 40 + 2");
+        send("\n");
+        send('"second" + "Input"\n');
+        await waitFor("secondInput");
+        expect(allOutput()).toMatch(/^42\r?$/m);
+      },
+      { home: String(home) },
+    );
   });
 
   test("down arrow restores temp line after history", async () => {

@@ -732,8 +732,12 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
 
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let path_z = path::resolve_path::z(filename, &mut path_buf);
-    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
-        sys::Result::Ok(bytes) => bytes.into(),
+    let content: Vec<u8> = match sys::File::read_from(Fd::cwd(), path_z) {
+        // As `bun run` reads it: a UTF-16 file is text, not bytes that do not parse.
+        sys::Result::Ok(bytes) => match strings::BOM::detect(&bytes) {
+            Some(bom) => bom.remove_and_convert_to_utf8_and_free(bytes),
+            None => bytes,
+        },
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
             return ReplResult::SkipEval;

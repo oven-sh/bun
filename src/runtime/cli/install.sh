@@ -191,8 +191,11 @@ append_shell_config() {
     local config=$1
     shift
 
-    local prefix=${1%%"$install_env"*}$install_env
-    local line last=''
+    # `export BUN_INSTALL=` or `set --export BUN_INSTALL `: the delimiter keeps
+    # a line for BUN_INSTALL_CACHE_DIR or another sibling variable out.
+    local rest=${1#*"$install_env"}
+    local prefix=${1%%"$install_env"*}$install_env${rest:0:1}
+    local line='' last=''
     while IFS= read -r line || [[ -n $line ]]; do
         if [[ $line = "$prefix"* ]]; then
             last=$line

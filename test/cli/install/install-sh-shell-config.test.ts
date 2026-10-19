@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeZipStored, restrictedPathDir } from "./fake-release";
 
@@ -191,6 +191,33 @@ describe.concurrent("install.sh shell config", () => {
     expect(existsSync(join(h, ".bash_profile"))).toBe(false);
     expect(await bunOnPath(h, "-ic")).toBe(bin);
     expect(await bunOnPath(h, "-lic")).toBe(bin);
+  });
+
+  test.skipIf(!pathDir)("bash: a sibling BUN_INSTALL_CACHE_DIR line does not hide the block", async () => {
+    using home = tempDir("install-sh-home", bashHome);
+    const h = String(home);
+    const config = join(h, isMacOS ? ".bash_profile" : ".bashrc");
+
+    const first = await runInstaller(h, "/bin/bash");
+    expect(first.exitCode).toBe(0);
+    appendFileSync(config, 'export BUN_INSTALL_CACHE_DIR="$HOME/cache"\n');
+
+    const second = await runInstaller(h, "/bin/bash");
+    expect(second.stdout).toContain(`already adds "~/.bun/bin" to $PATH`);
+    expect(second.exitCode).toBe(0);
+    expect(countBunBlocks(config)).toBe(1);
+  });
+
+  test.skipIf(!pathDir)("bash: a failed write aborts instead of reporting success", async () => {
+    // The startup file is a directory: `-w` passes, the append fails.
+    const config = isMacOS ? ".bash_profile" : ".bashrc";
+    using home = tempDir("install-sh-home", { [`${config}/.keep`]: "" });
+    const h = String(home);
+
+    const { stdout, stderr, exitCode } = await runInstaller(h, "/bin/bash");
+    expect(stderr).toContain(`error: Failed to write to "${join(h, config)}"`);
+    expect(stdout).not.toContain("already adds");
+    expect(exitCode).toBe(1);
   });
 
   test.skipIf(!pathDir)("zsh: a second run does not append a second block", async () => {

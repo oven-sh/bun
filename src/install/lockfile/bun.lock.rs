@@ -2989,35 +2989,36 @@ fn load(
                 let dep = &dependencies[dep_id as usize];
 
                 let named = pkg_map.get(dep.name.slice(string_buf)).copied();
-                let named_member = named.filter(|placed| members.contains(&placed.pkg));
+                let named_pkg = named.map(|placed| placed.pkg);
                 let ranged = version_based_peer_range(dep, catalogs, overrides, string_buf);
                 let member = ranged.and_then(|(range, name_hash)| workspace_in(range, name_hash));
-                // The key with a workspace's name can belong to a root dependency of the same name.
-                // The workspace is then found by name among the workspace packages.
-                let named_pkg = named.map(|placed| placed.pkg);
-                let bound = if dep.behavior.is_workspace() && named_member.is_none() {
-                    (members.clone())
-                        .find(|&id| pkg_name_hashes[id as usize] == dep.name_hash)
-                        .or(named_pkg)
-                } else {
-                    member
-                        .or_else(|| {
-                            ranged.and_then(|(range, name_hash)| highest_in(range, name_hash))
-                        })
-                        .or(named_pkg)
-                };
+                let reaches = !is_unresolved(dep_id);
 
-                if !is_unresolved(dep_id) {
-                    if dep.behavior.is_workspace() {
-                        // The workspace's own row, not a root dependency's row at that key.
-                        if let Some(row) = named_member {
-                            reached.mark(row);
-                        }
-                    } else if let Some(member) = member {
-                        if let Some(row) = own_row(member) {
-                            reached.mark(row);
-                        }
-                    } else if let Some(named) = named {
+                let bound = if dep.behavior.is_workspace() {
+                    // (the workspace, the row it is bound from)
+                    let (bound, row) = match named.filter(|placed| members.contains(&placed.pkg)) {
+                        Some(own) => (Some(own.pkg), Some(own)),
+                        // The key with a workspace's name can belong to a root dependency of the
+                        // same name. The workspace is then found by name among the workspace
+                        // packages, and that row is the root dependency's.
+                        None => match (members.clone())
+                            .find(|&id| pkg_name_hashes[id as usize] == dep.name_hash)
+                        {
+                            Some(member) => (Some(member), None),
+                            None => (named_pkg, named),
+                        },
+                    };
+                    if reaches && let Some(row) = row {
+                        reached.mark(row);
+                    }
+                    bound
+                } else if let Some(member) = member {
+                    if reaches && let Some(row) = own_row(member) {
+                        reached.mark(row);
+                    }
+                    Some(member)
+                } else {
+                    if reaches && let Some(named) = named {
                         match ranged {
                             Some((range, name_hash)) if !in_range(named, range, name_hash) => {
                                 out_of_range.push((dep_id, named));
@@ -3025,7 +3026,10 @@ fn load(
                             _ => reached.mark(named),
                         }
                     }
-                }
+                    ranged
+                        .and_then(|(range, name_hash)| highest_in(range, name_hash))
+                        .or(named_pkg)
+                };
 
                 let Some(res_id) = bound else {
                     if may_stay_unresolved(dep) {

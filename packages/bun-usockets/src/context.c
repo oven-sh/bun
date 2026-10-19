@@ -72,8 +72,11 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
  * close listen sockets too. Process-exit callers pass 0: a us_listen_socket_t
  * is 1:1 owned by a Zig Listener / uWS App that holds a raw pointer to it and
  * closes it in finalize(), so closing+freeing it here turns that into a UAF
- * (the original LSAN was only the *accepted* sockets, not the listener). */
-void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners) {
+ * (the original LSAN was only the *accepted* sockets, not the listener).
+ * `close_code`, when given, picks the code each socket closes with, from the
+ * state that socket has at its own close: a handler that an earlier close of
+ * this walk ran can have changed it. */
+void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_listeners, int (*close_code)(struct us_socket_t *s)) {
     if (also_listeners) {
         /* Listeners first — stops new sockets from being accepted into
          * head_sockets while we're draining it. */
@@ -102,7 +105,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        us_socket_close(s, close_code ? close_code(s) : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
          * reply. Callers (e.g. Listener.deinit) free the embedding storage
@@ -137,14 +140,14 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
             if (!q) {
                 break;
             }
-            us_socket_close(q, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            us_socket_close(q, close_code ? close_code(q) : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
         US_ASSERT(group->low_prio_count == 0);
     }
 }
 
 void us_socket_group_close_all(struct us_socket_group_t *group) {
-    us_socket_group_close_all_ex(group, 1);
+    us_socket_group_close_all_ex(group, 1, NULL);
 }
 
 unsigned short us_socket_group_timestamp(struct us_socket_group_t *group) {

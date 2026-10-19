@@ -145,6 +145,35 @@ describe("bundler", () => {
     },
   });
 
+  // node:net reads this flag from process.execArgv, and its value is the next argument. Read as
+  // the entry point, the value ended the parse, and the flags after it did nothing.
+  itBundled("compile/CompileExecArgvNodeNetFlagWithSeparateValue", {
+    compile: {
+      execArgv: ["--network-family-autoselection-attempt-timeout", "700", "--title=CompileExecArgvNodeNetFlag"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import net from "node:net";
+        console.log(JSON.stringify({
+          execArgv: process.execArgv,
+          argv: process.argv.slice(2),
+          attemptTimeout: net.getDefaultAutoSelectFamilyAttemptTimeout(),
+          title: process.title,
+        }));
+      `,
+    },
+    run: {
+      args: ["user-arg"],
+      stdout: JSON.stringify({
+        execArgv: ["--network-family-autoselection-attempt-timeout", "700", "--title=CompileExecArgvNodeNetFlag"],
+        argv: ["user-arg"],
+        attemptTimeout: 700,
+        title: "CompileExecArgvNodeNetFlag",
+      }),
+    },
+  });
+
   // Test that exec argv options don't leak into process.argv when no user arguments are provided
   itBundled("compile/CompileExecArgvNoLeak", {
     compile: {

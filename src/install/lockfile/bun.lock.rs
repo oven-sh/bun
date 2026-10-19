@@ -1545,16 +1545,6 @@ impl<T> PkgMap<T> {
         }
     }
 
-    fn get_or_put(
-        &mut self,
-        name: &[u8],
-    ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
-    where
-        T: Default,
-    {
-        self.map.get_or_put(name)
-    }
-
     fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
         self.map.put_assume_capacity(name.as_ref(), value);
     }
@@ -2474,7 +2464,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if lockfile_version != Version::V0 {
                 if res.tag == ResolutionTag::Workspace {
-                    let entry = pkg_map.get_or_put(pkg_path)?;
+                    let entry = pkg_map.map.get_or_put(pkg_path)?;
                     if entry.found_existing {
                         // this workspace package is already in the package map, because
                         // it was added as a workspaceOnly package earlier
@@ -2737,7 +2727,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 lockfile.packages.items_bin_mut()[0] = pkg.bin;
             }
 
-            let entry = pkg_map.get_or_put(pkg_path)?;
+            let entry = pkg_map.map.get_or_put(pkg_path)?;
             // Each workspace was registered under its name above. A root dependency of the same
             // name replaces it at that key, unless that dependency is a folder.
             if entry.found_existing

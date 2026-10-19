@@ -98,7 +98,6 @@ enum IsComputedName {
 }
 
 /// What a run of the binder leaves for the next one on the thread: lists that are empty and have room.
-#[derive(Default)]
 pub(super) struct Room {
     pub(super) b: BoundBuilder,
     tables: Vec<Table>,
@@ -110,6 +109,23 @@ pub(super) struct Room {
     containing_classes: Vec<ClassId>,
     returns: Vec<u32>,
     yields: Vec<u32>,
+}
+
+impl Default for Room {
+    fn default() -> Self {
+        Room {
+            b: BoundBuilder::new(),
+            tables: Vec::new(),
+            spare_names: Vec::new(),
+            statement_lists: Vec::new(),
+            idents: Vec::new(),
+            assigned: Vec::new(),
+            expando_assignments: Vec::new(),
+            containing_classes: Vec::new(),
+            returns: Vec::new(),
+            yields: Vec::new(),
+        }
+    }
 }
 
 thread_local! {
@@ -267,7 +283,7 @@ impl<'f, 's> Binder<'f, 's> {
         room: &mut Room,
     ) -> BoundBuilder {
         room.b.clear();
-        let old = std::mem::take(&mut room.b);
+        let old = std::mem::replace(&mut room.b, BoundBuilder::new());
         let mut b = BoundBuilder {
             expr_kinds: filled(old.expr_kinds, 0, NOT_REACHED),
             expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
@@ -400,7 +416,7 @@ impl<'f, 's> Binder<'f, 's> {
         if this.b.ran_out_of_stack {
             return BoundBuilder {
                 ran_out_of_stack: true,
-                ..Default::default()
+                ..BoundBuilder::new()
             };
         }
         this.finish();

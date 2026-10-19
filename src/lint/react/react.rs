@@ -579,21 +579,22 @@ impl<S, T> Default for AncestorWalk<'_, S, T> {
     }
 }
 
-impl<'a, S: Copy + Eq + Hash, T: Copy + Default> AncestorWalk<'a, S, T> {
+impl<'a, S: Copy + Eq + Hash, T: Copy> AncestorWalk<'a, S, T> {
     /// `step(child, parent, state)` is called with `node` and its parent, then with the parent and its parent, and so
-    /// on, up to the file as `parent`. It says the answer, or the state to go on with. Without an answer it is the
-    /// default. What it says may depend on nothing but its arguments.
+    /// on, up to the file as `parent`. It says the answer, or the state to go on with. Without an answer it is
+    /// `otherwise`. What it says may depend on nothing but its arguments.
     pub(crate) fn run(
         &mut self,
         node: Node<'a>,
         start: S,
+        otherwise: T,
         mut step: impl FnMut(Node<'a>, Node<'a>, S) -> ControlFlow<T, S>,
     ) -> T {
         let (mut child, mut state, mut steps) = (node, start, 0);
         let mut passed = Vec::new();
         let answer = loop {
             if matches!(child, Node::File(_)) {
-                break T::default();
+                break otherwise;
             }
             if steps >= PLAIN_STEPS {
                 if let Some(&known) = self.known.get(&(child, state)) {

@@ -1869,7 +1869,8 @@ pub mod io {
 
     /// Integers that can be written little-endian via [`Write::write_int_le`].
     pub trait IntLe: Copy {
-        type Bytes: AsRef<[u8]> + AsMut<[u8]> + Default;
+        type Bytes: AsRef<[u8]> + AsMut<[u8]>;
+        const ZERO_BYTES: Self::Bytes;
         fn to_le_bytes(self) -> Self::Bytes;
         fn from_le_bytes(bytes: Self::Bytes) -> Self;
     }
@@ -1878,6 +1879,7 @@ pub mod io {
         ($($t:ty),* $(,)?) => {$(
             impl IntLe for $t {
                 type Bytes = [u8; core::mem::size_of::<$t>()];
+                const ZERO_BYTES: Self::Bytes = [0; core::mem::size_of::<$t>()];
                 #[inline]
                 fn to_le_bytes(self) -> Self::Bytes { <$t>::to_le_bytes(self) }
                 #[inline]
@@ -3393,7 +3395,7 @@ generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
 /// (JSGlobalObject). Provides the small surface those callers need:
 /// range as `i128`, and lossy/wrapping casts from the JSC numeric
 /// carriers (i32 / f64).
-pub trait Integer: Copy + Default {
+pub trait Integer: Copy {
     const MIN_I128: i128;
     const MAX_I128: i128;
     const ZERO: Self;

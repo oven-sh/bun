@@ -27,7 +27,6 @@ pub(super) enum UntypedProperty {
 /// Hash index from name to position in a property list. Used for more than `FEW` properties:
 /// shorter lists are scanned linearly. `P`: in the arena for the index that is stored with a shape,
 /// a box for that of a `Builder`.
-#[derive(Default)]
 struct Names<P> {
     /// 0, or the position of a property plus one. The length is a power of two, at least twice the
     /// number of properties.
@@ -36,10 +35,16 @@ struct Names<P> {
 
 const FEW: usize = 8;
 
+impl<P> Names<P> {
+    fn new(places: P) -> Self {
+        Names { places }
+    }
+}
+
 impl<'s> Names<ArenaBox<'s, [u32]>> {
     fn of(props: &ArenaVec<'s, Prop<'s>>) -> Self {
         if props.len() <= FEW {
-            return Names::default();
+            return Names::new(ArenaBox::default());
         }
         let places = std::iter::repeat_n(0, (props.len() * 2).next_power_of_two());
         let mut names = Self {
@@ -395,7 +400,7 @@ impl<'s> Builder<'s> {
     fn new_in(arena: &'s Arena) -> Builder<'s> {
         Builder {
             shape: Shape::new_in(arena),
-            names: Names::default(),
+            names: Names::new(Box::new([])),
             computed_names: Vec::new(),
             holds_more: false,
             declaring: None,

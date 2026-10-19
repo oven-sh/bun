@@ -531,8 +531,7 @@ impl ReadableStream {
             webcore::blob::store::Data::Bytes(_) => {
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                    context: ByteBlobLoader::default(),
-                    ..Default::default()
+                    ..NewSource::with_context(ByteBlobLoader::default())
                 });
                 reader.context.setup(blob, recommended_chunk_size);
                 reader.to_readable_stream(cx)
@@ -540,7 +539,7 @@ impl ReadableStream {
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                    context: FileReader {
+                    ..NewSource::with_context(FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             cx.vm().as_mut().event_loop().cast(),
                         )),
@@ -552,8 +551,7 @@ impl ReadableStream {
                         },
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
-                    },
-                    ..Default::default()
+                    })
                 });
                 reader.to_readable_stream(cx)
             }
@@ -583,13 +581,12 @@ impl ReadableStream {
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(cx.global())),
-            context: FileReader {
+            ..NewSource::with_context(FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     cx.vm().as_mut().event_loop().cast(),
                 )),
                 ..Default::default()
-            },
-            ..Default::default()
+            })
         });
         let ctx_ptr: *mut FileReader = &raw mut source.context;
         source
@@ -618,7 +615,7 @@ impl ReadableStream {
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(cx.global())),
-            context: FileReader {
+            ..NewSource::with_context(FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     cx.vm().as_mut().event_loop().cast(),
                 )),
@@ -627,8 +624,7 @@ impl ReadableStream {
                 // The reader never starts: a sink attached later ends with the error.
                 done: Cell::new(true),
                 ..Default::default()
-            },
-            ..Default::default()
+            })
         });
         source.to_readable_stream(cx)
     }
@@ -913,10 +909,10 @@ jsc::impl_abort_handle_owner!(
     }
 );
 
-impl<C: SourceContext + Default> Default for NewSource<C> {
-    fn default() -> Self {
+impl<C: SourceContext> NewSource<C> {
+    pub fn with_context(context: C) -> Self {
         Self {
-            context: C::default(),
+            context,
             cancelled: false,
             ref_count: 1,
             pending_err: None,

@@ -373,11 +373,13 @@ impl PackedValue {
 }
 
 /// What a [`ChunkedVec`] holds: a number, so that a stretch of them is compared at once.
-trait Packed: Copy + Default {
+trait Packed: Copy {
+    const ZERO: Self;
     fn bits(self) -> u32;
 }
 
 impl Packed for PackedValue {
+    const ZERO: Self = PackedValue(0);
     #[inline]
     fn bits(self) -> u32 {
         self.0
@@ -385,6 +387,7 @@ impl Packed for PackedValue {
 }
 
 impl Packed for ValueSet {
+    const ZERO: Self = ValueSet(0);
     #[inline]
     fn bits(self) -> u32 {
         self.0
@@ -523,17 +526,17 @@ impl<T: Packed> ChunkedVec<T> {
 
     #[cold]
     fn grow(&mut self, chunks_of_chunks: usize) {
-        let empty = Rc::new([T::default(); CHUNK]);
+        let empty = Rc::new([T::ZERO; CHUNK]);
         let empty = Rc::new(std::array::from_fn(|_| Rc::clone(&empty)));
         self.0.resize(chunks_of_chunks, empty);
     }
 
-    /// The default where nothing was written.
+    /// Zero where nothing was written.
     #[inline]
     fn get(&self, i: usize) -> T {
         match self.0.get(i / (CHUNK * CHUNKS)) {
             Some(chunks) => chunks[i / CHUNK % CHUNKS][i % CHUNK],
-            None => T::default(),
+            None => T::ZERO,
         }
     }
 

@@ -33,6 +33,10 @@ impl Listens for NoMultipleH1 {
     /// `h1Count`
     type Seen<'d> = u32;
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {
+        0
+    }
+
     fn on<'d>(
         &self,
         listener: usize,

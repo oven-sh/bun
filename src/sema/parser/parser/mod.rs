@@ -139,7 +139,7 @@ macro_rules! file_lists {
 
         /// An empty file with the capacity of the lists of `old`, which is left without them.
         fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
-            let mut file = FileBuilder::default();
+            let mut file = FileBuilder::new();
             $(
                 old.$field.clear();
                 file.$field = std::mem::take(&mut old.$field);
@@ -349,7 +349,7 @@ pub(crate) fn run<'a>(
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
-    let mut f = scratch.recycled.take().unwrap_or_default();
+    let mut f = (scratch.recycled.take()).unwrap_or_else(|| Box::new(FileBuilder::new()));
     let mut file = recycled_file(&mut f);
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();

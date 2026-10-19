@@ -46,12 +46,12 @@ pub trait HeapNode: Sized {
 
 impl<T: HeapNode, Context: HeapContext<T>> Default for Intrusive<T, Context>
 where
-    Context: Default,
+    Context: bun_alloc::Stateless,
 {
     fn default() -> Self {
         Self {
             root: ptr::null_mut(),
-            context: Context::default(),
+            context: Context::INSTANCE,
         }
     }
 }

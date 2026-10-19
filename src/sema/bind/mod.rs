@@ -1124,7 +1124,6 @@ pub struct Redeclaration {
 }
 
 /// Side tables parallel to the vectors of a [`File`].
-#[derive(Default)]
 pub struct BoundIn<S: Storage> {
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
@@ -1363,6 +1362,105 @@ pub const NOT_REACHED: u8 = u8::MAX;
 pub type Bound<'s> = BoundIn<InArena<'s>>;
 /// The side tables of a file that is being bound.
 pub type BoundBuilder = BoundIn<Growable>;
+
+impl BoundBuilder {
+    pub fn new() -> Self {
+        BoundBuilder {
+            ran_out_of_stack: false,
+            symbols: Vec::new(),
+            scopes: Vec::new(),
+            tables: Vec::new(),
+            entries: Vec::new(),
+            large_tables: FxHashMap::default(),
+            nested_names: Vec::new(),
+            ids: Vec::new(),
+            file_symbol: SymbolId::default(),
+            export_stars: Vec::new(),
+            ambient_modules: Vec::new(),
+            pattern_ambient_modules: Vec::new(),
+            global_augmentations: Vec::new(),
+            redeclarations: Vec::new(),
+            umd_globals: Vec::new(),
+            specifiers: Vec::new(),
+            module_augmentations: Vec::new(),
+            ambient_specifiers: Vec::new(),
+            commonjs_indicator: None,
+            module_exports_property: SymbolId::default(),
+            expr_symbol: Vec::new(),
+            expr_parent: Vec::new(),
+            expr_flow: Vec::new(),
+            stmt_parent: Vec::new(),
+            stmt_scope: Vec::new(),
+            type_scope: Vec::new(),
+            type_by_alias: Vec::new(),
+            this_in_type_literal: FxHashSet::default(),
+            pat_parent: Vec::new(),
+            pat_symbol: Vec::new(),
+            prop_owner: Vec::new(),
+            member_symbol: Vec::new(),
+            property_symbol: FxHashMap::default(),
+            member_owner: Vec::new(),
+            member_scope: Vec::new(),
+            param_fn: Vec::new(),
+            type_param_symbol: Vec::new(),
+            type_param_scope: Vec::new(),
+            fns: Vec::new(),
+            requires_scope_change: Vec::new(),
+            fn_symbol: Vec::new(),
+            class_symbol: Vec::new(),
+            class_owner: Vec::new(),
+            class_scope: Vec::new(),
+            interface_symbol: Vec::new(),
+            interface_scope: Vec::new(),
+            interface_contains_this: Vec::new(),
+            enum_scope: Vec::new(),
+            module_scope: Vec::new(),
+            alias_symbol: Vec::new(),
+            alias_scope: Vec::new(),
+            enum_symbol: Vec::new(),
+            enum_member_symbol: Vec::new(),
+            enum_member_owner: Vec::new(),
+            module_symbol: Vec::new(),
+            module_instance_state: Vec::new(),
+            var_stmt: Vec::new(),
+            assignments: Vec::new(),
+            unchecked_assignment_targets: Vec::new(),
+            type_query_operands: Vec::new(),
+            unchecked_exprs: Vec::new(),
+            unchecked_types: Vec::new(),
+            infer_positions: Vec::new(),
+            expando_declarations: Vec::new(),
+            computed_symbols: Vec::new(),
+            case_stmt: Vec::new(),
+            stmt_flow: Vec::new(),
+            case_fallthrough: Vec::new(),
+            hoisted_vars: Vec::new(),
+            refused_decorators: Vec::new(),
+            unused_labels: Vec::new(),
+            import_scope: Vec::new(),
+            import_equals_scope: Vec::new(),
+            export_scope: Vec::new(),
+            expr_scope: FxHashMap::default(),
+            private_class: FxHashMap::default(),
+            private_names_outside_class_bodies: Vec::new(),
+            classes_of_private_names: Vec::new(),
+            free_idents: Vec::new(),
+            alias_idents: Vec::new(),
+            arguments_objects: Vec::new(),
+            identifiers_in_parameters: Vec::new(),
+            jsdoc_param_errors: Vec::new(),
+            names_resolved_for_arguments: Vec::new(),
+            flow: Vec::new(),
+            flow_edges: Vec::new(),
+            flow_shared: Vec::new(),
+            flow_depth: 0,
+            has_loop_types_that_depend_on_order: false,
+            expr_kinds: Vec::new(),
+            expr_kind_counts: Vec::new(),
+            kind_counts: Vec::new(),
+        }
+    }
+}
 
 pub const UNREACHABLE: FlowId = FlowId(0);
 
@@ -2115,7 +2213,7 @@ impl BoundBuilder {
         self.move_to_arena(arena)
     }
 
-    /// Makes it what `BoundBuilder::default()` is, but for the room that its lists keep.
+    /// Makes it what `BoundBuilder::new()` is, but for the room that its lists keep.
     fn clear(&mut self) {
         // Every field, so that one that is added cannot be left out.
         let BoundIn {
@@ -2635,7 +2733,7 @@ fn copy_of_set<'s, K: Copy + Eq + std::hash::Hash>(
 impl<'s> Bound<'s> {
     /// The side tables of a file without nodes.
     pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
-        BoundBuilder::default().into_arena(arena)
+        BoundBuilder::new().into_arena(arena)
     }
 }
 

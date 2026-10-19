@@ -169,7 +169,7 @@ fn file_of(
                 error_pos: at,
                 source_len: text.len() as u32,
                 diagnostics: vec![error],
-                ..Default::default()
+                ..FileBuilder::new()
             };
         }
         return file;
@@ -288,7 +288,8 @@ fn file_read_as(
                 Some(error) => error.clone(),
                 None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
             };
-            let mut file = scratch.recycled.take().unwrap_or_default();
+            let mut file =
+                (scratch.recycled.take()).unwrap_or_else(|| Box::new(FileBuilder::new()));
             *file = FileBuilder {
                 kind: FileKind::Tsx,
                 is_js,
@@ -304,7 +305,7 @@ fn file_read_as(
                 },
                 // Those that the lexer got past. oxlint looks for `@flow` in the first.
                 comments: std::mem::take(&mut file.comments),
-                ..Default::default()
+                ..FileBuilder::new()
             };
             return file;
         }
@@ -329,7 +330,7 @@ fn parse_into_arena<'s>(
     }
     // A very large file would leave its capacity to every later file.
     if text.len() >= 4 << 20 {
-        *file = FileBuilder::default();
+        *file = FileBuilder::new();
     }
     scratch.recycle(file);
     in_arena
@@ -426,7 +427,8 @@ impl<'s> Summary<'_, 's> {
         match self {
             Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
-                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
+                let (mut in_arena, emptied) =
+                    core::mem::replace(file, FileBuilder::new()).into_arena(arena, session);
                 *file = emptied;
                 in_arena.finish_nodes();
                 in_arena
@@ -511,7 +513,7 @@ pub fn with_summary_in_place<'s, R>(
     let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
     // A very large file would leave its capacity to every later file.
     if text.len() >= 4 << 20 {
-        *file = FileBuilder::default();
+        *file = FileBuilder::new();
     }
     scratch.recycle(file);
     give_back_scratch(scratch);

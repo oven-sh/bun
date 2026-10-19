@@ -74,7 +74,7 @@ impl Rule for NoThisInSfc {
         }
         if is_oxlint {
             if let Some((component, false)) =
-                cx.state.parent_component.run(Node::Expr(this), false, get_parent_component)
+                cx.state.parent_component.run(Node::Expr(this), false, None, get_parent_component)
                 && get_parent_class_component(component, &mut cx.state.parent_class_component).is_none()
             {
                 cx.report(this, OXLINT);

@@ -14,6 +14,7 @@
 //! runs the task frees it when the task ends.
 
 use crate::util::{LocalVec, Placement, Places};
+use bun_core::Integer;
 use std::alloc::Global;
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
@@ -210,10 +211,10 @@ pub fn spread_word(word: u64) -> u64 {
 }
 
 #[inline]
-fn cell_mut<C: Copy + Default>(cells: &mut Vec<C>, index: u32) -> &mut C {
+fn cell_mut<C: Integer>(cells: &mut Vec<C>, index: u32) -> &mut C {
     let index = index as usize;
     if index >= cells.len() {
-        cells.resize(index + 1, C::default());
+        cells.resize(index + 1, C::ZERO);
     }
     &mut cells[index]
 }
@@ -221,10 +222,10 @@ fn cell_mut<C: Copy + Default>(cells: &mut Vec<C>, index: u32) -> &mut C {
 #[inline]
 fn put_in_if_empty<C>(cells: &mut Vec<C>, index: u32, raw: C) -> C
 where
-    C: Copy + Default + PartialEq,
+    C: Integer + PartialEq,
 {
     let cell = cell_mut(cells, index);
-    if *cell == C::default() {
+    if *cell == C::ZERO {
         *cell = raw;
     }
     *cell

@@ -1483,9 +1483,8 @@ pub(crate) fn readable_stream(
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
     let reader: *mut crate::webcore::byte_stream::Source =
         crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
-            context: ByteStream::default(),
             global_this: Some(bun_ptr::BackRef::new(cx.global())),
-            ..Default::default()
+            ..crate::webcore::readable_stream::NewSource::with_context(ByteStream::default())
         });
     // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
     let reader_mut = unsafe { &mut *reader };

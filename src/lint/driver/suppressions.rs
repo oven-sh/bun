@@ -55,12 +55,12 @@ fn count_violations(messages: &[LintMessage], is_oxlint: bool) -> ByRule {
     counts
 }
 
-fn entry<'e, T: Default>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8]) -> &'e mut T {
+fn entry<'e, T>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8], initial: T) -> &'e mut T {
     let at = entries
         .iter()
         .position(|it| it.0 == key)
         .unwrap_or_else(|| {
-            entries.push((key.to_vec(), T::default()));
+            entries.push((key.to_vec(), initial));
             entries.len() - 1
         });
     &mut entries[at].1
@@ -135,7 +135,7 @@ impl Suppressions {
             let relative = paths::relative(cwd, &paths::from_native(&result.path));
             for (rule, count) in count_violations(&result.messages, is_oxlint) {
                 if rules.is_none_or(|rules| rules.contains(&rule)) {
-                    *entry(entry(&mut self.0, &relative), &rule) = count;
+                    *entry(entry(&mut self.0, &relative, Vec::new()), &rule, 0) = count;
                 }
             }
         }
@@ -174,14 +174,15 @@ impl Suppressions {
                     was_suppressed = true;
                 }
                 if *count < tolerated {
-                    *entry(entry(&mut unused.0, &relative), rule) = tolerated - count;
+                    *entry(entry(&mut unused.0, &relative, Vec::new()), rule, 0) =
+                        tolerated - count;
                 }
             }
             for (rule, tolerated) in suppressed
                 .iter()
                 .filter(|it| !violations.iter().any(|violation| violation.0 == it.0))
             {
-                *entry(entry(&mut unused.0, &relative), rule) = *tolerated;
+                *entry(entry(&mut unused.0, &relative, Vec::new()), rule, 0) = *tolerated;
             }
             if was_suppressed {
                 result.counts = Counts::of(&result.messages);

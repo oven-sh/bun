@@ -58,11 +58,14 @@ pub struct GenericBorder<S, const P: u8> {
     pub(crate) color: CssColor,
 }
 
-impl<S, const P: u8> super::GenericBorderImpl for GenericBorder<S, P>
+impl<S, const P: u8> GenericBorder<S, P>
 where
-    S: css::generic::Parse + css::generic::ToCss + Default + PartialEq,
+    S: css::generic::Parse + css::generic::ToCss + PartialEq,
 {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse_with_default_style(
+        input: &mut Parser,
+        default_style: S,
+    ) -> CssResult<Self> {
         // Order doesn't matter
         let mut color: Option<CssColor> = None;
         let mut style: Option<S> = None;
@@ -98,7 +101,7 @@ where
         if any {
             return Ok(Self {
                 width: width.unwrap_or(BorderSideWidth::Medium),
-                style: style.unwrap_or_default(),
+                style: style.unwrap_or(default_style),
                 color: color.unwrap_or(CssColor::CurrentColor),
             });
         }
@@ -106,10 +109,13 @@ where
         Err(input.new_custom_error(css::ParserError::invalid_declaration))
     }
 
-    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let default_style = S::default();
+    pub(crate) fn to_css_with_default_style(
+        &self,
+        dest: &mut Printer,
+        default_style: &S,
+    ) -> Result<(), PrintErr> {
         if self.width == BorderSideWidth::Medium
-            && self.style == default_style
+            && self.style == *default_style
             && self.color == CssColor::CurrentColor
         {
             return self.style.to_css(dest);
@@ -120,7 +126,7 @@ where
             self.width.to_css(dest)?;
             needs_space = true;
         }
-        if self.style != default_style {
+        if self.style != *default_style {
             if needs_space {
                 dest.write_str(b" ")?;
             }
@@ -137,11 +143,20 @@ where
     }
 }
 
+impl<const P: u8> super::GenericBorderImpl for GenericBorder<LineStyle, P> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        Self::parse_with_default_style(input, LineStyle::default())
+    }
+
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_with_default_style(dest, &LineStyle::default())
+    }
+}
+
 impl<S, const P: u8> GenericBorder<S, P>
 where
     S: css::generic::Parse
         + css::generic::ToCss
-        + Default
         + PartialEq
         + for<'b> css::generics::DeepClone<'b>
         + css::generics::CssEql,

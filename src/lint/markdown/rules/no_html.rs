@@ -42,6 +42,8 @@ impl Listens for NoHtml {
     const LISTENERS: &'static [Listener] = &[Listener::new("html", Kinds::of(&[Kind::Html]))];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         _: usize,

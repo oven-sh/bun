@@ -681,14 +681,15 @@ pub mod parse_worker {
         Ok(ast)
     }
 
-    fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
+    fn get_empty_ast<RootType: bun_ast::expr::IntoExprData>(
+        root: RootType,
         log: &mut Log,
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         source: &'static Source,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(RootType::default(), Loc::EMPTY);
+        let root = Expr::init(root, Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
@@ -853,9 +854,23 @@ pub mod parse_worker {
                         }
                     }
                 } else if module_type == options::ModuleType::Esm {
-                    get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
+                    get_empty_ast(
+                        E::Undefined {},
+                        log,
+                        transpiler,
+                        fallback_opts,
+                        bump,
+                        source,
+                    )
                 } else {
-                    get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
+                    get_empty_ast(
+                        E::Object::default(),
+                        log,
+                        transpiler,
+                        fallback_opts,
+                        bump,
+                        source,
+                    )
                 };
             }
             Loader::Json | Loader::Jsonc => {
@@ -1358,7 +1373,7 @@ pub mod parse_worker {
             }
             // TODO:
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
-                return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
+                return get_empty_ast(E::String::default(), log, transpiler, opts, bump, source);
             }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
@@ -2709,9 +2724,9 @@ pub mod parse_worker {
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+                get_empty_ast(E::Undefined {}, log, transpiler, opts, bump, source)
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+                get_empty_ast(E::Object::default(), log, transpiler, opts, bump, source)
             };
         let mut ast = match ast_result {
             Ok(a) => a,

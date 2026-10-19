@@ -18,6 +18,8 @@ impl Listens for NoEmptyImages {
     const LISTENERS: &'static [Listener] = &[Listener::new("image", Kinds::of(&[Kind::Image]))];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         _: usize,

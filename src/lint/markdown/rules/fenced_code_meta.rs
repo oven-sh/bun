@@ -26,6 +26,8 @@ impl Listens for FencedCodeMeta {
     const LISTENERS: &'static [Listener] = &[Listener::new("code", Kinds::of(&[Kind::Code]))];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         _: usize,

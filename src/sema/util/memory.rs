@@ -165,7 +165,8 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Drop for Chunks<E, FIRST, A> {
 ///
 /// # Safety
 /// `Stable::push` relies on `add` for an index of its own: no two calls return overlapping ranges.
-pub unsafe trait Length: Default {
+pub unsafe trait Length {
+    const ZERO: Self;
     /// Whether `Stable::get` compares the index with the length.
     const IS_CHECKED: bool;
     fn get(&self) -> u32;
@@ -177,6 +178,7 @@ pub unsafe trait Length: Default {
 
 // SAFETY: `fetch_add` is atomic.
 unsafe impl Length for AtomicU32 {
+    const ZERO: Self = AtomicU32::new(0);
     const IS_CHECKED: bool = false;
     #[inline]
     fn get(&self) -> u32 {
@@ -193,6 +195,7 @@ unsafe impl Length for AtomicU32 {
 
 // SAFETY: it is not `Sync`, so all calls come from one thread at a time.
 unsafe impl Length for Cell<u32> {
+    const ZERO: Self = Cell::new(0);
     const IS_CHECKED: bool = true;
     #[inline]
     fn get(&self) -> u32 {
@@ -225,24 +228,23 @@ pub type AppendVec<T, A = Global> = Stable<T, AtomicU32, A>;
 /// For one thread. It can be emptied and used again.
 pub type LocalVec<T, A = Global> = Stable<T, Cell<u32>, A>;
 
-impl<T, L: Length, A: Allocator + Clone + Default> Default for Stable<T, L, A> {
+impl<T, L: Length> Default for Stable<T, L, Global> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(Global)
+    }
+}
+
+impl<T, L: Length> Stable<T, L, Global> {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
 impl<T, L: Length, A: Allocator + Clone> Stable<T, L, A> {
-    pub fn new() -> Self
-    where
-        A: Default,
-    {
-        Self::default()
-    }
-
     pub fn new_in(alloc: A) -> Self {
         Stable {
             chunks: Chunks::new_in(alloc),
-            len: L::default(),
+            len: L::ZERO,
         }
     }
 
@@ -356,9 +358,9 @@ pub struct Cells<C, A: Allocator + Clone = Global> {
     chunks: Chunks<C, FIRST_CELLS_BITS, A>,
 }
 
-impl<C: Zeroed + Sync, A: Allocator + Clone + Default> Default for Cells<C, A> {
+impl<C: Zeroed + Sync> Default for Cells<C, Global> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(Global)
     }
 }
 
@@ -423,9 +425,9 @@ pub struct Newest<C, A: Allocator + Clone = Global> {
     owns: Owns<C>,
 }
 
-impl<C: Zeroed, A: Allocator + Clone + Default> Default for Newest<C, A> {
+impl<C: Zeroed> Default for Newest<C, Global> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(Global)
     }
 }
 

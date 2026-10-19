@@ -48,6 +48,10 @@ impl Listens for NoDuplicateHeadings {
     ];
     type Seen<'d> = Seen;
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {
+        Seen::default()
+    }
+
     fn on<'d>(
         &self,
         listener: usize,

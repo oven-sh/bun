@@ -15,12 +15,13 @@ pub type Version = VersionType<u64>;
 // from its integer parameter. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
+pub trait VersionInt: Copy + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
     /// Explicit zeroed
     /// padding so lockfile byte-serialization is deterministic.
-    type TagPadding: Copy + Default + 'static;
+    type TagPadding: Copy + 'static;
+    const TAG_PADDING: Self::TagPadding;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
 }
 
@@ -28,6 +29,7 @@ impl VersionInt for u64 {
     const ZERO: Self = 0;
     const MAX: Self = u64::MAX;
     type TagPadding = [u8; 0];
+    const TAG_PADDING: Self::TagPadding = [];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
         // None for empty, any non-[0-9] byte, or overflow. Callers rely on
@@ -41,6 +43,7 @@ impl VersionInt for u32 {
     const ZERO: Self = 0;
     const MAX: Self = u32::MAX;
     type TagPadding = [u8; 4];
+    const TAG_PADDING: Self::TagPadding = [0; 4];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
         bun_core::parse_unsigned::<u32>(s, 10).ok()
@@ -80,7 +83,7 @@ impl<T: VersionInt> Default for VersionType<T> {
             major: T::ZERO,
             minor: T::ZERO,
             patch: T::ZERO,
-            _tag_padding: Default::default(),
+            _tag_padding: T::TAG_PADDING,
             tag: Tag::default(),
         }
     }
@@ -175,7 +178,7 @@ impl<T: VersionInt> VersionType<T> {
             major: self.major,
             minor: self.minor,
             patch: self.patch,
-            _tag_padding: Default::default(),
+            _tag_padding: T::TAG_PADDING,
             tag: self.tag.clone_into(slice, buf, offset),
         }
     }
@@ -962,7 +965,7 @@ impl<T: VersionInt> Partial<T> {
             major: self.major.unwrap_or(T::ZERO),
             minor: self.minor.unwrap_or(T::ZERO),
             patch: self.patch.unwrap_or(T::ZERO),
-            _tag_padding: Default::default(),
+            _tag_padding: T::TAG_PADDING,
             tag: self.tag,
         }
     }
@@ -972,7 +975,7 @@ impl<T: VersionInt> Partial<T> {
             major: self.major.unwrap_or(T::MAX),
             minor: self.minor.unwrap_or(T::MAX),
             patch: self.patch.unwrap_or(T::MAX),
-            _tag_padding: Default::default(),
+            _tag_padding: T::TAG_PADDING,
             tag: self.tag,
         }
     }

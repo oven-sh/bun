@@ -4,6 +4,7 @@ pub mod memory;
 
 pub use memory::{AppendVec, LocalVec};
 
+use bun_alloc::Stateless;
 use bun_collections::index_sort;
 use bun_threading::Guarded;
 use memory::Newest;
@@ -379,9 +380,9 @@ pub(crate) struct GrowingPlaces<A: Allocator + Clone = Global> {
     len: Guarded<usize>,
 }
 
-impl<A: Allocator + Clone + Default> Default for GrowingPlaces<A> {
+impl<A: Allocator + Stateless> Default for GrowingPlaces<A> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(A::INSTANCE)
     }
 }
 
@@ -473,9 +474,9 @@ pub struct ShardedMap<K, V, A: Allocator + Clone = Global> {
     shards: Box<[MapShard<K, V, A>; MAP_SHARDS], A>,
 }
 
-impl<K, V, A: Allocator + Clone + Default> Default for ShardedMap<K, V, A> {
+impl<K, V, A: Allocator + Stateless> Default for ShardedMap<K, V, A> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(A::INSTANCE)
     }
 }
 

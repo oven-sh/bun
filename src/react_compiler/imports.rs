@@ -163,7 +163,7 @@ impl ProgramContext {
 
         self.imports
             .entry(module)
-            .or_default()
+            .or_insert_with(IndexMap::new)
             .insert(specifier, binding);
 
         binding

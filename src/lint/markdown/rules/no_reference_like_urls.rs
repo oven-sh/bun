@@ -49,6 +49,10 @@ impl Listens for NoReferenceLikeUrls {
     ];
     type Seen<'d> = Seen<'d>;
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {
+        Seen::default()
+    }
+
     fn on<'d>(
         &self,
         listener: usize,

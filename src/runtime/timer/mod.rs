@@ -252,8 +252,12 @@ mod event_loop_delay_monitor_draft;
 // (`All::insert/remove/next/get_timeout`).
 
 /// Stateless context for the heap comparator.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub(crate) struct TimerHeapCtx;
+
+impl bun_alloc::Stateless for TimerHeapCtx {
+    const INSTANCE: Self = TimerHeapCtx;
+}
 
 impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     #[inline]

@@ -1896,8 +1896,11 @@ impl Lockfile {
 
             let extern_strings_list = &mut self.buffers.extern_strings;
             let start = extern_strings_list.len();
-            let extern_strings_slice =
-                bun_core::vec::grow_default(extern_strings_list, bin_extern_strings_count as usize);
+            let extern_strings_slice = bun_core::vec::grow_fill(
+                extern_strings_list,
+                bin_extern_strings_count as usize,
+                ExternalString::default(),
+            );
 
             *pkg_bin = pkg.package.bin.clone_with_buffers(
                 &manifest.string_buf,

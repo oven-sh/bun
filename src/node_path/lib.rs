@@ -13,10 +13,10 @@ const PATH_MIN_WIDE: usize = 4096; // 4 KB
 pub use bun_paths::PathChar;
 
 /// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
-/// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
+/// per-width `get_cwd` plus the `bytemuck::Pod` bound this module
 /// needs for `PathScratch`'s `cast_slice` and zero-init. Every generic `_t`
 /// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
-pub trait PathCharCwd: PathChar + Default + bytemuck::Pod {
+pub trait PathCharCwd: PathChar + bytemuck::Pod {
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
     fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
 }
@@ -1079,7 +1079,7 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
     let mut last_slash: Option<usize> = None;
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut dots: Option<usize> = Some(0);
-    let mut byte: T = T::default();
+    let mut byte: T = T::from_u8(0);
 
     for i in 0..=len {
         if i < len {
@@ -1167,7 +1167,7 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
         }
     }
 
-    buf[buf_size] = T::default();
+    buf[buf_size] = T::from_u8(0);
     buf_size
 }
 
@@ -1212,7 +1212,7 @@ pub fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'
         buf_offset = buf_size;
         buf_size += 1;
         buf[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
     }
 
     // Translated from the following JS code:
@@ -1226,7 +1226,7 @@ pub fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'
         buf.copy_within(0..old_size, buf_offset);
         // Prepend the separator.
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
     }
     &buf[0..buf_size]
 }
@@ -1409,7 +1409,13 @@ pub fn parse_posix_t<T: PathCharCwd>(path: &[T]) -> PathParsed<'_, T> {
     // validateString of `path` is performed in pub fn parse.
     let len = path.len();
     if len == 0 {
-        return PathParsed::default();
+        return PathParsed {
+            root: &[],
+            dir: &[],
+            base: &[],
+            ext: &[],
+            name: &[],
+        };
     }
 
     let mut root: &[T] = &[];
@@ -1865,7 +1871,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     if out_len > 0 {
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
     }
-    buf[buf_size] = T::default();
+    buf[buf_size] = T::from_u8(0);
     Ok(&buf[0..buf_size])
 }
 
@@ -2049,7 +2055,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
             buf.copy_within(to_start..to_start + slice_size, buf_offset);
         }
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
         return Ok(&buf[0..buf_size]);
     }
 
@@ -2089,7 +2095,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
             paths[usize::try_from(i_i64).expect("int cast")]
         } else {
             // cwd is limited to MAX_PATH_BYTES.
-            tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
+            tmp_buf = [T::from_u8(0); MAX_PATH_SIZE_UPPER];
             &*posix_cwd_t(&mut tmp_buf)?
         };
         // validateString of `path` is performed in pub fn resolve.
@@ -2115,7 +2121,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         buf2[len] = T::from_u8(CHAR_FORWARD_SLASH);
         buf_size += resolved_path_len;
 
-        buf2[buf_size] = T::default();
+        buf2[buf_size] = T::from_u8(0);
         resolved_path_len = buf_size;
         resolved_absolute = path[0] == T::from_u8(CHAR_FORWARD_SLASH);
 
@@ -2149,7 +2155,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         // Use copy_within because resolvedPath and buf overlap.
         buf.copy_within(0..resolved_path_len, 1);
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
         return Ok(&buf[0..buf_size]);
     }
     // Translated from the following JS code:
@@ -2170,7 +2176,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 ) -> MaybeSlice<'a, T> {
     let is_sep_t = is_sep_windows_t::<T>;
     // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    let mut tmp_buf = [T::from_u8(0); MAX_PATH_SIZE_UPPER + 1];
 
     // Backed by tmpBuf.
     // Borrowck: track resolved_device length into tmp_buf.
@@ -2351,7 +2357,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         let mut device_in_tmp = false;
         // Prefix with _ to avoid shadowing the identifier in the outer scope.
         let mut _is_absolute: bool = false;
-        let byte0 = if len > 0 { path!()[0] } else { T::default() };
+        let byte0 = if len > 0 { path!()[0] } else { T::from_u8(0) };
 
         // Try to match a root
         if len == 1 {
@@ -2565,7 +2571,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             &mut buf[0..resolved_device_len],
             &tmp_buf[0..resolved_device_len],
         );
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
         return Ok(&buf[0..buf_size]);
     }
     // Translated from the following JS code:
@@ -2579,7 +2585,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             &mut buf[0..resolved_device_len],
             &tmp_buf[0..resolved_device_len],
         );
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
         return Ok(&buf[0..buf_size]);
     }
     Ok(l::<T>(CHAR_STR_DOT))
@@ -2600,7 +2606,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     let len = resolved_len;
     if len <= 2 {
         buf[0..path.len()].copy_from_slice(path);
-        buf[path.len()] = T::default();
+        buf[path.len()] = T::from_u8(0);
         return Ok(&buf[0..path.len()]);
     }
 
@@ -2631,7 +2637,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
                 buf[5] = T::from_u8(b'N');
                 buf[6] = T::from_u8(b'C');
                 buf[7] = T::from_u8(CHAR_BACKWARD_SLASH);
-                buf[buf_size] = T::default();
+                buf[buf_size] = T::from_u8(0);
                 return Ok(&buf[0..buf_size]);
             }
         }
@@ -2652,7 +2658,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
         buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
         buf[2] = T::from_u8(CHAR_QUESTION_MARK);
         buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
-        buf[buf_size] = T::default();
+        buf[buf_size] = T::from_u8(0);
         return Ok(&buf[0..buf_size]);
     }
     Ok(&buf[0..resolved_len])

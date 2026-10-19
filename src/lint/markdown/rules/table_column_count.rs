@@ -29,6 +29,8 @@ impl Listens for TableColumnCount {
     const LISTENERS: &'static [Listener] = &[Listener::new("table", Kinds::of(&[Kind::Table]))];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         _: usize,

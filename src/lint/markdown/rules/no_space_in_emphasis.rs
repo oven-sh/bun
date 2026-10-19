@@ -66,6 +66,10 @@ impl Listens for NoSpaceInEmphasis {
     /// The `text` nodes that are direct children of the current node.
     type Seen<'d> = Vec<Span>;
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {
+        Vec::new()
+    }
+
     fn on<'d>(
         &self,
         listener: usize,

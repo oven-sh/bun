@@ -24,6 +24,8 @@ impl Listens for NoInvalidLabelRefs {
     const LISTENERS: &'static [Listener] = &[Listener::new("text", Kinds::of(&[Kind::Text]))];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         _: usize,

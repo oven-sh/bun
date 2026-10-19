@@ -467,7 +467,11 @@ impl Package<u64> {
         debug_assert_eq!(new.buffers.resolutions.len(), end as usize);
 
         let new_extern_strings_start = new.buffers.extern_strings.len();
-        bun_core::vec::grow_default(&mut new.buffers.extern_strings, new_extern_string_count);
+        bun_core::vec::grow_fill(
+            &mut new.buffers.extern_strings,
+            new_extern_string_count,
+            ExternalString::default(),
+        );
 
         let id = new.packages.len() as PackageID;
 
@@ -621,8 +625,11 @@ impl Package<u64> {
         dependencies_list.reserve(total_dependencies_count as usize);
         resolutions_list.reserve(total_dependencies_count as usize);
         let extern_old_len = extern_strings_list.len();
-        let extern_strings_slice =
-            bun_core::vec::grow_default(extern_strings_list, bin_extern_strings_count as usize);
+        let extern_strings_slice = bun_core::vec::grow_fill(
+            extern_strings_list,
+            bin_extern_strings_count as usize,
+            ExternalString::default(),
+        );
 
         // -- Cloning
         {
@@ -2766,9 +2773,10 @@ impl Package<u64> {
                             let current_len = lockfile.buffers.extern_strings.len();
                             let count = n * 2;
                             lockfile.buffers.extern_strings.reserve_exact(count);
-                            let extern_strings = bun_core::vec::grow_default(
+                            let extern_strings = bun_core::vec::grow_fill(
                                 &mut lockfile.buffers.extern_strings,
                                 count,
+                                ExternalString::default(),
                             );
 
                             let mut i: usize = 0;

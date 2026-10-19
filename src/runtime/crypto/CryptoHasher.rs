@@ -476,13 +476,11 @@ pub(crate) struct CryptoHasherZig {
 
 /// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
-trait ZigHashAlgo: Default + Clone + 'static {
+trait ZigHashAlgo: Clone + 'static {
     const ALGORITHM: evp::Algorithm;
     /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
-    fn init() -> Self {
-        Self::default()
-    }
+    fn init() -> Self;
     fn update(&mut self, bytes: &[u8]);
     fn final_(&mut self, out: &mut [u8]);
 }
@@ -509,6 +507,9 @@ mod zig_crypto_algos {
             impl ZigHashAlgo for $ty {
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
+                fn init() -> Self {
+                    <$ty>::default()
+                }
                 fn update(&mut self, bytes: &[u8]) {
                     Update::update(self, bytes);
                 }
@@ -530,6 +531,9 @@ mod zig_crypto_algos {
             impl ZigHashAlgo for $ty {
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
+                fn init() -> Self {
+                    <$ty>::default()
+                }
                 fn update(&mut self, bytes: &[u8]) {
                     Update::update(self, bytes);
                 }

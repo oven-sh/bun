@@ -149,7 +149,7 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
     /// Read a little-endian integer.
     #[inline]
     pub fn read_int_le<I: IntLe>(&mut self) -> Result<I> {
-        let mut bytes = I::Bytes::default();
+        let mut bytes = I::ZERO_BYTES;
         self.read_exact(bytes.as_mut())?;
         Ok(I::from_le_bytes(bytes))
     }

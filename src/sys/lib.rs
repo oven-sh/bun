@@ -1063,10 +1063,10 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// for the NTSTATUS → `E` mapping.
 pub trait MaybeExt: Sized {
     type T;
-    /// `Maybe(T).success` — `Ok(default())`.
-    fn success() -> Self
+    /// `Maybe(void).success` — `Ok(())`.
+    fn success() -> Result<()>
     where
-        Self::T: Default;
+        Self: MaybeExt<T = ()>;
     /// `Maybe(T).errno(e, syscall)` — `Err` from any errno-ish code.
     fn errno<C: error::IntoErrnoInt>(e: C, tag: Tag) -> Self;
     /// `Maybe(T).errnoSys(rc, syscall)` — `Some(Err(..))` if `rc` maps to an
@@ -1077,11 +1077,11 @@ pub trait MaybeExt: Sized {
 impl<T> MaybeExt for Result<T> {
     type T = T;
     #[inline]
-    fn success() -> Self
+    fn success() -> Result<()>
     where
-        T: Default,
+        Self: MaybeExt<T = ()>,
     {
-        Ok(T::default())
+        Ok(())
     }
     #[inline]
     fn errno<C: error::IntoErrnoInt>(e: C, tag: Tag) -> Self {

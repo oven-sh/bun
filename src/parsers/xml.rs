@@ -161,7 +161,7 @@ const MAX_ENTITY_DEPTH: usize = 256;
 /// The parser runs over UTF-8 / Latin-1 bytes or UTF-16 code units alike:
 /// it only ever dispatches on ASCII units and hands anything else to
 /// `decode`, so a code unit type just has to say how it maps to those.
-pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
+pub trait Unit: Copy + Eq + Ord + core::hash::Hash + 'static {
     /// Two bytes per unit.
     const WIDE: bool;
     /// The unit if it is below U+0100, else 0xFF: what byte-oriented
@@ -2866,8 +2866,10 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
             Some(key) if name_eq(&key.slice()[unit..], U::bytes(name)) => key,
             _ => {
                 // `@name`, in the tape's encoding.
-                let joined = self.tape.bump.alloc_slice_fill_default::<U>(name.len() + 1);
-                joined[0] = U::ascii(b'@');
+                let joined = self
+                    .tape
+                    .bump
+                    .alloc_slice_fill_copy(name.len() + 1, U::ascii(b'@'));
                 joined[1..].copy_from_slice(name);
                 let key = E::Str::new(U::bytes(joined));
                 self.key_cache[slot] = Some(key);
@@ -3828,11 +3830,17 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             };
 
             if self.processing_declarations() {
-                self.attlists.entry(element).or_default().declare(AttDef {
-                    name,
-                    cdata,
-                    default,
-                });
+                self.attlists
+                    .entry(element)
+                    .or_insert_with(|| AttList {
+                        defs: Vec::new(),
+                        by_name: HashMap::default(),
+                    })
+                    .declare(AttDef {
+                        name,
+                        cdata,
+                        default,
+                    });
             }
         }
     }

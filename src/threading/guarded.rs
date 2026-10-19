@@ -27,17 +27,17 @@ pub struct GuardedBy<Value, M: RawMutex> {
 // the same bounds a `std::sync::Mutex<Value>` would require.
 unsafe impl<Value: Send, M: RawMutex + Sync> Sync for GuardedBy<Value, M> {}
 
-impl<Value, M: RawMutex + Default> GuardedBy<Value, M> {
-    /// Creates a guarded value with a default-initialized mutex.
+impl<Value, M: RawMutex> GuardedBy<Value, M> {
+    /// Creates a guarded value with an unlocked mutex.
     pub fn init(value: Value) -> Self {
         Self {
             unsynchronized_value: UnsafeCell::new(value),
-            mutex: M::default(),
+            mutex: M::INIT,
         }
     }
 }
 
-impl<Value: Default, M: RawMutex + Default> Default for GuardedBy<Value, M> {
+impl<Value: Default, M: RawMutex> Default for GuardedBy<Value, M> {
     fn default() -> Self {
         Self::init(Value::default())
     }
@@ -45,7 +45,7 @@ impl<Value: Default, M: RawMutex + Default> Default for GuardedBy<Value, M> {
 
 impl<Value> GuardedBy<Value, Mutex> {
     /// `const` constructor for `static` initializers (`Mutex::new()` is `const`;
-    /// `M::default()` in [`init`](Self::init) is not).
+    /// [`init`](Self::init) is not).
     ///
     /// Parity with `parking_lot::Mutex::new` / `parking_lot::const_mutex`.
     pub const fn new(value: Value) -> Self {
@@ -120,11 +120,14 @@ impl<'a, Value, M: RawMutex> Drop for GuardedLock<'a, Value, M> {
 
 /// Trait for the `M` parameter of `GuardedBy`: a raw mutex with `lock`/`unlock`.
 pub trait RawMutex {
+    /// An unlocked mutex.
+    const INIT: Self;
     fn lock(&self);
     fn unlock(&self);
 }
 
 impl RawMutex for Mutex {
+    const INIT: Self = Mutex::new();
     #[inline]
     fn lock(&self) {
         Mutex::lock(self)

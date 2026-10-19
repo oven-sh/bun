@@ -572,8 +572,7 @@ pub trait NegatableEnum: Copy + Eq {
         + Eq
         + core::ops::BitOr<Output = Self::Int>
         + core::ops::BitAnd<Output = Self::Int>
-        + core::ops::Not<Output = Self::Int>
-        + Default;
+        + core::ops::Not<Output = Self::Int>;
     const NONE: Self;
     const ALL: Self;
     const ALL_VALUE: Self::Int;
@@ -617,7 +616,7 @@ impl<T: NegatableEnum> Negatable<T> {
             self.added.to_raw()
         };
         let removed = self.removed.to_raw();
-        let zero = T::Int::default();
+        let zero = T::NONE.to_raw();
 
         // If none were added or removed, all are allowed
         if added == zero && removed == zero {

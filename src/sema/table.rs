@@ -21,6 +21,8 @@ use crate::session::Session;
 use crate::types::{ComponentsId, Follow, Link, MapperId, Marks, OwnStore, SigId, TypeId, Visitor};
 use crate::util::memory::{Cells, Zeroed};
 use crate::util::{AppendVec, FxHasher, SHARDS, ShardedMap, shard_of, spread_hash};
+use bun_alloc::Stateless;
+use bun_core::Integer;
 use std::alloc::{Allocator, Global};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -52,7 +54,7 @@ impl<'s> Alloc for &'s Session {
 
 /// An atomic integer.
 pub trait Cell: Zeroed + Sync + Send {
-    type Raw: Copy + PartialEq + Default;
+    type Raw: Integer + PartialEq;
     fn widen(raw: Self::Raw) -> u64;
     fn narrow(raw: u64) -> Self::Raw;
     /// A plain load. No cell is written while tasks run, and a barrier has ordered the earlier
@@ -428,7 +430,7 @@ impl Footprint {
             ..Footprint::default()
         };
         for page in cells.chunks(Footprint::PAGE / size_of::<C>()) {
-            let entries = (page.iter().filter(|cell| cell.load() != Default::default())).count();
+            let entries = (page.iter().filter(|cell| cell.load() != Integer::ZERO)).count();
             all.entries += entries;
             all.touched += if entries != 0 { size_of_val(page) } else { 0 };
         }
@@ -588,9 +590,9 @@ pub struct ById<I, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
     key: PhantomData<fn(I, P)>,
 }
 
-impl<I: Id, V: Packed, P: Policy, A: Alloc + Default> Default for ById<I, V, P, A> {
+impl<I: Id, V: Packed, P: Policy, A: Alloc + Stateless> Default for ById<I, V, P, A> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(A::INSTANCE)
     }
 }
 
@@ -621,9 +623,9 @@ pub struct ByIdIndirect<I, T, P: Policy = Frozen, A: Alloc = Global> {
     holding: Holding<T>,
 }
 
-impl<I: Id, T, P: Policy, A: Alloc + Default> Default for ByIdIndirect<I, T, P, A> {
+impl<I: Id, T, P: Policy, A: Alloc + Stateless> Default for ByIdIndirect<I, T, P, A> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(A::INSTANCE)
     }
 }
 
@@ -682,9 +684,9 @@ impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
     }
 }
 
-impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc + Default> Default for ByKey<K, V, P, A> {
+impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc + Stateless> Default for ByKey<K, V, P, A> {
     fn default() -> Self {
-        Self::new_in(A::default())
+        Self::new_in(A::INSTANCE)
     }
 }
 
@@ -695,7 +697,7 @@ impl<K: NodeKey, V: Packed, A: Alloc> ByNode<K, V, Frozen, A> {
     pub fn get(&self, key: &K) -> Option<V> {
         let (cell, shift) = self.field(*key)?;
         let raw = V::Cell::narrow(V::Cell::widen(cell.load()) >> shift & Self::MASK);
-        (raw != Default::default()).then(|| V::unpack(raw))
+        (raw != Integer::ZERO).then(|| V::unpack(raw))
     }
 
     /// Does not overwrite an existing value. Returns the stored value.
@@ -746,7 +748,7 @@ impl<I: Id, V: Packed, A: Alloc> ById<I, V, Frozen, A> {
     #[inline]
     pub fn get(&self, key: &I) -> Option<V> {
         let raw = self.cells.existing(key.number())?.load();
-        (raw != Default::default()).then(|| V::unpack(raw))
+        (raw != Integer::ZERO).then(|| V::unpack(raw))
     }
 
     /// Does not overwrite an existing value. Returns the stored value.

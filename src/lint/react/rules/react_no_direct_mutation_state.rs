@@ -112,7 +112,7 @@ fn state_of(target: Expr<'_>, is_oxlint: bool) -> Option<Expr<'_>> {
 }
 
 fn should_ignore_component<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoDirectMutationState>) -> bool {
-    let found = cx.state.around.run(Node::Expr(e), 0, |_, parent, found| match parent {
+    let found = cx.state.around.run(Node::Expr(e), 0, 0, |_, parent, found| match parent {
         Node::Member(_) if as_method_definition(parent).is_some_and(Member::is_constructor) => {
             ControlFlow::Continue(found | IN_CONSTRUCTOR)
         }

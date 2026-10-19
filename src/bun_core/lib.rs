@@ -374,15 +374,15 @@ pub mod vec {
         unsafe { v.set_len(prev + n) };
     }
 
-    /// Extend `v` by `n` `T::default()` elements and return a mutable slice
+    /// Extend `v` by `n` copies of `value` and return a mutable slice
     /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
     ///
-    /// The default-fill keeps every exposed `T` valid even if the
+    /// The fill keeps every exposed `T` valid even if the
     /// caller bails partway through writing.
     #[inline]
-    pub fn grow_default<T: Default>(v: &mut Vec<T>, n: usize) -> &mut [T] {
+    pub fn grow_fill<T: Copy>(v: &mut Vec<T>, n: usize, value: T) -> &mut [T] {
         let prev = v.len();
-        extend_from_fn(v, n, |_| T::default());
+        extend_from_fn(v, n, |_| value);
         &mut v[prev..]
     }
 

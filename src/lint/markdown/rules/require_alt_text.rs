@@ -32,6 +32,8 @@ impl Listens for RequireAltText {
     ];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         listener: usize,

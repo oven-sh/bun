@@ -18,6 +18,8 @@ impl Listens for NoEmptyLinks {
     const LISTENERS: &'static [Listener] = &[Listener::new("link", Kinds::of(&[Kind::Link]))];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         _: usize,

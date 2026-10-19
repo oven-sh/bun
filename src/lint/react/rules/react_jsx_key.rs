@@ -210,7 +210,7 @@ fn is_key(attribute: Prop) -> bool {
 /// The array or the iterator that `e` is an element of, unless that is within `Children.toArray(..)`.
 fn array_or_iterator_of<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) -> Option<InsideArrayOrIterator> {
     if !cx.state.is_oxlint {
-        let outer = cx.state.in_array_or_iter.run(Node::Expr(e), ELEMENT, is_element_of_array_or_iter)?;
+        let outer = cx.state.in_array_or_iter.run(Node::Expr(e), ELEMENT, None, is_element_of_array_or_iter)?;
         // Upstream listens for arrays, calls and fragments.
         let listened = match outer {
             InsideArrayOrIterator::Array(_) if jsx.is_fragment() => e.span(),
@@ -218,7 +218,7 @@ fn array_or_iterator_of<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) 
         };
         return (!cx.state.is_within_children_to_array(cx.file(), listened)).then_some(outer);
     }
-    let outer = cx.state.in_array_or_iter.run(Node::Expr(e), 0, is_in_array_or_iter)?;
+    let outer = cx.state.in_array_or_iter.run(Node::Expr(e), 0, None, is_in_array_or_iter)?;
     if cx.state.mentions_to_array {
         let State { within_children_to_array, imports, .. } = &mut cx.state;
         if within_children_to_array.find(Node::Expr(e), |_, parent| is_children_to_array(parent, imports)).is_some() {

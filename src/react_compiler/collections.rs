@@ -41,7 +41,8 @@ pub trait Key: Sized {
 }
 
 /// Keys and values in insertion order, and a way to find a key.
-pub trait Entries<K, V>: Default {
+pub trait Entries<K, V> {
+    fn new() -> Self;
     fn keys(&self) -> &[K];
     fn values(&self) -> &[V];
     fn values_mut(&mut self) -> &mut [V];
@@ -67,6 +68,10 @@ pub trait Entries<K, V>: Default {
 type Hashed<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
 
 impl<K: Hash + Eq, V> Entries<K, V> for Hashed<K, V> {
+    #[inline]
+    fn new() -> Self {
+        ArrayHashMap::new()
+    }
     #[inline]
     fn keys(&self) -> &[K] {
         self.keys()
@@ -123,6 +128,10 @@ impl<K: Hash + Eq, V> Entries<K, V> for Hashed<K, V> {
 }
 
 impl<K: Copy + Into<u32>, V> Entries<K, V> for IdMap<K, V, AstAlloc> {
+    #[inline]
+    fn new() -> Self {
+        IdMap::new()
+    }
     #[inline]
     fn keys(&self) -> &[K] {
         self.as_slices().0
@@ -212,7 +221,7 @@ pub struct IndexMap<K: Key, V>(K::Map<V>);
 impl<K: Key, V> IndexMap<K, V> {
     #[inline]
     pub(crate) fn new() -> Self {
-        Self(Default::default())
+        Self(Entries::new())
     }
 
     #[inline]
@@ -291,13 +300,6 @@ impl<'a, K: Key, V> Entry<'a, K, V> {
     #[inline]
     pub(crate) fn or_insert_with<F: FnOnce() -> V>(self, f: F) -> &'a mut V {
         self.map.0.get_or_insert_with(self.key, f)
-    }
-    #[inline]
-    pub(crate) fn or_default(self) -> &'a mut V
-    where
-        V: Default,
-    {
-        self.or_insert_with(V::default)
     }
 }
 
@@ -409,7 +411,7 @@ pub struct IndexSet<K: Key>(K::Map<()>);
 impl<K: Key> IndexSet<K> {
     #[inline]
     pub(crate) fn new() -> Self {
-        Self(Default::default())
+        Self(Entries::new())
     }
 
     #[inline]

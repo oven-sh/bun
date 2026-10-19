@@ -48,6 +48,10 @@ impl Listens for NoReversedMediaSyntax {
     /// The spans to mask in the current node, in source order.
     type Seen<'d> = Vec<Span>;
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {
+        Vec::new()
+    }
+
     fn on<'d>(
         &self,
         listener: usize,

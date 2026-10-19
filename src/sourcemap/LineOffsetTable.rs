@@ -1,7 +1,7 @@
 use core::alloc::Allocator;
 use std::alloc::Global;
 
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Stateless};
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::strings;
@@ -158,11 +158,11 @@ impl LineOffsetTable {
     // allocator in code coverage): the bundler routes `A = AstAlloc` so the
     // table bulk-frees with the per-worker AST heap, everyone else uses
     // [`generate`] (`A = Global`).
-    pub fn generate_in<A: Allocator + Copy + Default + 'static>(
+    pub fn generate_in<A: Allocator + Stateless + 'static>(
         contents: &[u8],
         approximate_line_count: i32,
     ) -> Result<List<A>, AllocError> {
-        let alloc = A::default();
+        let alloc = A::INSTANCE;
         let empty_box = || Vec::new_in(alloc).into_boxed_slice();
         let mut list = List::<A>::new_in(alloc);
         // Preallocate the top-level table using the approximate line count from the lexer

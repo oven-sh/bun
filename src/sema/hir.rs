@@ -254,7 +254,7 @@ pub trait Storage {
     /// A list whose elements own memory on the regular heap.
     type Kept<T: Clone + 'static>: Deref<Target = [T]>;
     /// `FileIn::text`
-    type Text: Deref<Target = [u8]> + Default;
+    type Text: Deref<Target = [u8]>;
     /// `FileIn::lazy`
     type Lazy;
 }
@@ -2069,7 +2069,6 @@ pub enum CommentDirectiveKind {
 }
 
 /// The parser's output for one source file.
-#[derive(Default)]
 pub struct FileIn<S: Storage> {
     pub kind: FileKind,
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted, and
@@ -2253,6 +2252,98 @@ pub struct FileIn<S: Storage> {
 pub type File<'s> = FileIn<InArena<'s>>;
 /// The HIR of a file that is being parsed.
 pub type FileBuilder = FileIn<Growable>;
+
+impl FileBuilder {
+    pub fn new() -> Self {
+        FileBuilder {
+            kind: FileKind::default(),
+            is_js: false,
+            is_flow: false,
+            check_directive: None,
+            is_module_by_decree: false,
+            has_module_syntax: false,
+            has_errors: false,
+            ran_out_of_stack: false,
+            decorators: Vec::new(),
+            legacy_decorators: false,
+            may_bind_a_parameter_twice: false,
+            rare_syntax: 0,
+            diagnostics: Vec::new(),
+            has_parse_diagnostics: false,
+            syntax_errors: 0,
+            error_pos: 0,
+            source_len: 0,
+            text: Cow::Owned(Vec::new()),
+            body: IdList::default(),
+            references: Vec::new(),
+            comment_directives: Vec::new(),
+            comments: Vec::new(),
+            mentioned: Vec::new(),
+            with_bodies: Vec::new(),
+            detached_semicolons: Vec::new(),
+            body_starts: Vec::new(),
+            after_skipped: Vec::new(),
+            modifiers_of_params: Vec::new(),
+            modifiers_of_props: Vec::new(),
+            unclosed_literals: Vec::new(),
+            stray_decorators: Vec::new(),
+            specifier_uses: Vec::new(),
+            deferred_import_calls: Vec::new(),
+            import_call_type_args: Vec::new(),
+            import_attributes: Vec::new(),
+            specifier_expressions: Vec::new(),
+            exports_from_expressions: Vec::new(),
+            parens: Vec::new(),
+            non_null_ends: Vec::new(),
+            jsx_expressions: Vec::new(),
+            jsx_pragmas: JsxPragmas::default(),
+            jsdoc_comments: Vec::new(),
+            jsdoc_asterisks: Vec::new(),
+            jsdoc_hosts: Vec::new(),
+            jsdoc_types: Vec::new(),
+            jsdoc_modifiers: Vec::new(),
+            jsdoc_member_comments: Vec::new(),
+            jsdoc_param_errors: Vec::new(),
+            functions_with_param_tags: Vec::new(),
+            unmatched_augments_tags: Vec::new(),
+            ids: Vec::new(),
+            numbers: Vec::new(),
+            exprs: Vec::new(),
+            stmts: Vec::new(),
+            types: Vec::new(),
+            pats: Vec::new(),
+            pat_props: Vec::new(),
+            pat_elems: Vec::new(),
+            fns: Vec::new(),
+            params: Vec::new(),
+            type_params: Vec::new(),
+            classes: Vec::new(),
+            interfaces: Vec::new(),
+            aliases: Vec::new(),
+            enums: Vec::new(),
+            enum_members: Vec::new(),
+            modules: Vec::new(),
+            members: Vec::new(),
+            props: Vec::new(),
+            var_decls: Vec::new(),
+            calls: Vec::new(),
+            cases: Vec::new(),
+            jsx: Vec::new(),
+            imports: Vec::new(),
+            import_specs: Vec::new(),
+            import_equals: Vec::new(),
+            exports: Vec::new(),
+            export_specs: Vec::new(),
+            tuple_elems: Vec::new(),
+            mapped: Vec::new(),
+            modifiers: Vec::new(),
+            names: Vec::new(),
+            bases: NodeBases::default(),
+            lazy: LazyCells::default(),
+            keyword_identifier_positions: Vec::new(),
+        }
+    }
+}
 
 macro_rules! arenas {
     ($($field:ident: $node:ident => $id:ident, $add:ident, $add_all:ident;)*) => {
@@ -2773,7 +2864,7 @@ impl FileBuilder {
         }
         moved_lists!(arena);
         let file = file_in_arena!(self, arena, session, cells, copied, few, kept, taken);
-        let mut emptied = FileBuilder::default();
+        let mut emptied = FileBuilder::new();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
         }
@@ -2836,7 +2927,7 @@ impl<'s> File<'s> {
     /// A file without nodes. It allocates nothing, so any thread can make one for the arena of
     /// another (`Files::free_tree`): only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
-        let no_nodes = FileBuilder::default();
+        let no_nodes = FileBuilder::new();
         no_nodes
             .into_arena_with(arena, session, &CELLS_OF_NO_NODES)
             .0

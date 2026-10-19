@@ -913,10 +913,9 @@ impl Value {
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
-                // `ByteStream::default()` is the post-setup state.
-                context: ByteStream::default(),
                 global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                ..Default::default()
+                // `ByteStream::default()` is the post-setup state.
+                ..webcore::readable_stream::NewSource::with_context(ByteStream::default())
             },
         );
 
@@ -1506,9 +1505,8 @@ impl Value {
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
-                context: ByteStream::default(),
                 global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                ..Default::default()
+                ..webcore::readable_stream::NewSource::with_context(ByteStream::default())
             },
         );
 

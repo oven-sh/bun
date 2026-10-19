@@ -421,19 +421,19 @@ pub enum EncodingKind {
 /// All call sites in this file pass ≤4-byte ASCII; the
 /// cap of 8 leaves headroom for new literals.
 #[derive(Clone, Copy)]
-pub struct EncLit<U: Copy + Default> {
+pub struct EncLit<U: Copy> {
     buf: [U; 8],
     len: u8,
 }
 
-impl<U: Copy + Default> EncLit<U> {
+impl<U: Copy> EncLit<U> {
     #[inline]
     fn as_slice(&self) -> &[U] {
         &self.buf[..self.len as usize]
     }
 }
 
-impl<U: Copy + Default> core::ops::Deref for EncLit<U> {
+impl<U: Copy> core::ops::Deref for EncLit<U> {
     type Target = [U];
     #[inline]
     fn deref(&self) -> &[U] {
@@ -441,7 +441,7 @@ impl<U: Copy + Default> core::ops::Deref for EncLit<U> {
     }
 }
 
-impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
+impl<U: Copy> AsRef<[U]> for EncLit<U> {
     #[inline]
     fn as_ref(&self) -> &[U] {
         self.as_slice()
@@ -450,7 +450,7 @@ impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
 
 /// Code-unit encoding of the parser input; `Unit` is `u8` or `u16`.
 pub trait Encoding: Copy + 'static {
-    type Unit: Copy + Eq + Ord + Default + fmt::Debug + Into<u32> + 'static;
+    type Unit: Copy + Eq + Ord + fmt::Debug + Into<u32> + 'static;
 
     const KIND: EncodingKind;
 

@@ -37,6 +37,8 @@ impl Listens for NoEmptyDefinitions {
     ];
     type Seen<'d> = ();
 
+    fn seen<'d>(&self) -> Self::Seen<'d> {}
+
     fn on<'d>(
         &self,
         listener: usize,

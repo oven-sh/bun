@@ -29,7 +29,7 @@ pub type CowSlice<T> = CowSliceZ<T, false>;
 ///
 /// `Z = true` means the backing storage has a sentinel element at `[len]`
 /// (the sentinel value is assumed to be the zero value of `T`, produced via
-/// `T::default()`).
+/// `T::ZERO`).
 ///
 /// For `Z = true`, owned allocations are physically `len + 1` elements
 /// (logical `len` plus the sentinel).
@@ -143,10 +143,10 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// Create a new Cow that copies `data` into a new allocation.
     ///
     /// For `Z = true`, the new allocation holds `data.len() + 1` elements
-    /// with a trailing zero (`T::default()`) sentinel.
+    /// with a trailing zero (`T::ZERO`) sentinel.
     pub fn init_dupe(data: &[T]) -> Result<Self, AllocError>
     where
-        T: Clone + Default,
+        T: bun_core::Integer,
     {
         Ok(Self::init_owned(Self::dupe_maybe_z(data)))
     }
@@ -156,12 +156,12 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// sentinel is part of the box (physical `len + 1`), never spare capacity.
     fn dupe_maybe_z(data: &[T]) -> Box<[T]>
     where
-        T: Clone + Default,
+        T: bun_core::Integer,
     {
         let mut vec = Vec::with_capacity(Self::physical_len(data.len()));
         vec.extend_from_slice(data);
         if Z {
-            vec.push(T::default());
+            vec.push(T::ZERO);
         }
         vec.into_boxed_slice()
     }
@@ -207,7 +207,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// (its length is the logical length plus one).
     pub fn take_slice(&mut self) -> Result<Box<[T]>, AllocError>
     where
-        T: Clone + Default,
+        T: bun_core::Integer,
     {
         if !self.is_owned() {
             self.into_owned()?;
@@ -264,8 +264,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     pub fn borrow_subslice(&self, start: usize, end: Option<usize>) -> Self {
         let end_ = end.unwrap_or(self.flags.len());
         // Asserting the sentinel is present at `end_` would force a
-        // `PartialEq + Default` bound on every caller, so the `Z = true` path
-        // skips that debug assertion.
+        // `PartialEq + bun_core::Integer` bound on every caller, so the
+        // `Z = true` path skips that debug assertion.
         let mut result = self.borrow();
         // SAFETY: const semantics are enforced by is_owned flag; `start <= end_ <= len`.
         result.ptr = unsafe { self.ptr.add(start) };
@@ -278,7 +278,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     #[inline(always)]
     fn into_owned(&mut self) -> Result<(), AllocError>
     where
-        T: Clone + Default,
+        T: bun_core::Integer,
     {
         debug_assert!(!self.is_owned());
 

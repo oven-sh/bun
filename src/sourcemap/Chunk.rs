@@ -386,12 +386,12 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 }
 
-impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
+impl<T: SourceMapFormatCtx> Default for NewBuilder<'_, T> {
     /// `get_source_map_builder` returns this when source maps are disabled, so
     /// it only needs to be inert (never read) — but we zero everything for sanity.
     fn default() -> Self {
         Self {
-            source_map: SourceMapFormat { ctx: T::default() },
+            source_map: SourceMapFormat::init(false),
             line_offset_tables: LineOffsetTables::None,
             prev_state: SourceMapState::default(),
             last_generated_update: 0,

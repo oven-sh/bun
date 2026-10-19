@@ -18,6 +18,8 @@
 //!     const LISTENERS: &'static [Listener] = &[Listener::new("link", Kinds::of(&[Kind::Link]))];
 //!     type Seen<'d> = ();
 //!
+//!     fn seen<'d>(&self) -> Self::Seen<'d> {}
+//!
 //!     fn on<'d>(&self, _: usize, node: Node<'d>, (): &mut (), cx: &mut Context<'d>) -> Result<(), OutOfRange> {
 //!         if matches!(node.url(), b"" | b"#") {
 //!             cx.report_node(node, EMPTY_LINK, &[]);
@@ -194,7 +196,10 @@ pub(crate) trait Listens: Sized {
     const LISTENERS: &'static [Listener];
 
     /// The rule's state while it lints one file.
-    type Seen<'d>: Default;
+    type Seen<'d>;
+
+    /// The state at the start of a file.
+    fn seen<'d>(&self) -> Self::Seen<'d>;
 
     /// Called when `LISTENERS[listener]` matches `node`. Returns `Err` where upstream throws.
     fn on<'d>(
@@ -238,7 +243,7 @@ where
     R: Listens + for<'s> Rule<State<'s> = Document<'s>>,
 {
     let document: &'c Document<'c> = &cx.state;
-    let mut seen = R::Seen::<'c>::default();
+    let mut seen = rule.seen();
     let mut context = Context {
         document,
         reports: Vec::new(),

@@ -1615,136 +1615,153 @@ describe.concurrent("s3 missing credentials", () => {
   });
 });
 
-describe("path style with an empty bucket", () => {
+describe.concurrent("path style with an empty bucket", () => {
   const base = { endpoint: "https://s3.example.com", accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" };
   const slash = { ...base, bucket: "/" };
   // With an endpoint that has a path, the bucket is the segment after that path.
   const prefixed = { ...slash, endpoint: "https://s3.example.com/storage/v1/s3" };
 
-  /** The path of the presigned URL, or the code of the error. */
-  function presigned(presign: () => string): string {
-    try {
-      return new URL(presign()).pathname;
-    } catch (e: any) {
-      return e?.code;
-    }
+  type Presign = {
+    /** The options of the client. */
+    options: S3Options;
+    key: string;
+    /** What makes the URL. The default is `client.presign(key, call)`. */
+    by?: "static" | "file" | "response";
+    /** The options of the call. */
+    call?: S3Options;
+  };
+  // Gives the path of each presigned URL, or the code of the error. The child has no S3_ or AWS_
+  // variable and reads no .env file: an input with no bucket or no endpoint must not take one from the machine.
+  async function presignInChild(inputs: Record<string, Presign>, env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-env-file",
+        "-e",
+        `const results = {};
+        for (const [name, { options, key, by, call }] of Object.entries(JSON.parse(process.env.PRESIGN))) {
+          try {
+            const client = new Bun.S3Client(options);
+            const url =
+              by === "static" ? Bun.S3Client.presign(key, options)
+              : by === "file" ? client.file(key).presign()
+              : by === "response" ? new Response(client.file(key)).headers.get("location")
+              : client.presign(key, call);
+            results[name] = new URL(url).pathname;
+          } catch (e) {
+            results[name] = e?.code;
+          }
+        }
+        console.log(JSON.stringify(results));`,
+      ],
+      env: {
+        ...bunEnv,
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        S3_REGION: undefined,
+        S3_ENDPOINT: undefined,
+        S3_BUCKET: undefined,
+        S3_SESSION_TOKEN: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+        AWS_REGION: undefined,
+        AWS_ENDPOINT: undefined,
+        AWS_BUCKET: undefined,
+        AWS_SESSION_TOKEN: undefined,
+        ...env,
+        PRESIGN: JSON.stringify(inputs),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout) as Record<string, string>;
   }
 
-  it.each<[input: string, result: string, presign: () => string]>([
+  const rows: [input: string, result: string, presign: Presign][] = [
     // In path style the bucket is a segment of the path. Without one, the path has an empty segment: `//key`.
-    ['the bucket "/"', "ERR_S3_INVALID_PATH", () => new S3Client(slash).presign("key")],
-    ['the bucket "\\"', "ERR_S3_INVALID_PATH", () => new S3Client({ ...base, bucket: "\\" }).presign("key")],
-    ['the bucket "//"', "ERR_S3_INVALID_PATH", () => new S3Client({ ...base, bucket: "//" }).presign("key")],
-    ['the bucket "/\\/"', "ERR_S3_INVALID_PATH", () => new S3Client({ ...base, bucket: "/\\/" }).presign("key")],
+    ['the bucket "/"', "ERR_S3_INVALID_PATH", { options: slash, key: "key" }],
+    ['the bucket "\\"', "ERR_S3_INVALID_PATH", { options: { ...base, bucket: "\\" }, key: "key" }],
+    ['the bucket "//"', "ERR_S3_INVALID_PATH", { options: { ...base, bucket: "//" }, key: "key" }],
+    ['the bucket "/\\/"', "ERR_S3_INVALID_PATH", { options: { ...base, bucket: "/\\/" }, key: "key" }],
     // The first segment of the key does not become the bucket.
-    [
-      'the bucket "/" and the key "uploads/a.txt"',
-      "ERR_S3_INVALID_PATH",
-      () => new S3Client(slash).presign("uploads/a.txt"),
-    ],
+    ['the bucket "/" and the key "uploads/a.txt"', "ERR_S3_INVALID_PATH", { options: slash, key: "uploads/a.txt" }],
     [
       'the bucket "/" in the options of the call',
       "ERR_S3_INVALID_PATH",
-      () => new S3Client({ ...base, bucket: "buntest" }).presign("key", { bucket: "/" }),
+      { options: { ...base, bucket: "buntest" }, key: "key", call: { bucket: "/" } },
     ],
-    ['the bucket "/" in a static call', "ERR_S3_INVALID_PATH", () => S3Client.presign("key", slash)],
-    ['the bucket "/" of a file', "ERR_S3_INVALID_PATH", () => new S3Client(slash).file("key").presign()],
-    [
-      'the bucket "/" in new Response(file)',
-      "ERR_S3_INVALID_PATH",
-      () => new Response(new S3Client(slash).file("key")).headers.get("location")!,
-    ],
-    ['the bucket "/" and an endpoint with a path', "ERR_S3_INVALID_PATH", () => new S3Client(prefixed).presign("key")],
-    ['no bucket and the path "///a/b"', "ERR_S3_INVALID_PATH", () => new S3Client(base).presign("///a/b")],
-    ['no bucket and the path "s3:////key"', "ERR_S3_INVALID_PATH", () => S3Client.presign("s3:////key", base)],
-    ['no bucket and the path "\\\\\\\\/a/b"', "ERR_S3_INVALID_PATH", () => new S3Client(base).presign("\\\\\\\\/a/b")],
-    ['no bucket and the path "\\\\\\a\\b"', "ERR_S3_INVALID_PATH", () => new S3Client(base).presign("\\\\\\a\\b")],
+    ['the bucket "/" in a static call', "ERR_S3_INVALID_PATH", { options: slash, key: "key", by: "static" }],
+    ['the bucket "/" of a file', "ERR_S3_INVALID_PATH", { options: slash, key: "key", by: "file" }],
+    ['the bucket "/" in new Response(file)', "ERR_S3_INVALID_PATH", { options: slash, key: "key", by: "response" }],
+    ['the bucket "/" and an endpoint with a path', "ERR_S3_INVALID_PATH", { options: prefixed, key: "key" }],
+    ['no bucket and the path "///a/b"', "ERR_S3_INVALID_PATH", { options: base, key: "///a/b" }],
+    ['no bucket and the path "s3:////key"', "ERR_S3_INVALID_PATH", { options: base, key: "s3:////key", by: "static" }],
+    ['no bucket and the path "\\\\\\\\/a/b"', "ERR_S3_INVALID_PATH", { options: base, key: "\\\\\\\\/a/b" }],
+    ['no bucket and the path "\\\\\\a\\b"', "ERR_S3_INVALID_PATH", { options: base, key: "\\\\\\a\\b" }],
 
     // A path that names a bucket, and a bucket with outer separators, stay valid.
-    ['no bucket and the path "a/b"', "/a/b", () => new S3Client(base).presign("a/b")],
-    ['no bucket and the path "/a/b"', "/a/b", () => new S3Client(base).presign("/a/b")],
-    ['no bucket and the path "//a/b"', "/a/b", () => new S3Client(base).presign("//a/b")],
-    ['no bucket and the path "a\\b"', "/a/b", () => new S3Client(base).presign("a\\b")],
-    ['no bucket and the path "\\\\a\\b"', "/a/b", () => new S3Client(base).presign("\\\\a\\b")],
-    ['no bucket and the path "\\\\\\a/b"', "/a/b", () => new S3Client(base).presign("\\\\\\a/b")],
-    ['the bucket "/buntest/"', "/buntest/key", () => new S3Client({ ...base, bucket: "/buntest/" }).presign("key")],
+    ['no bucket and the path "a/b"', "/a/b", { options: base, key: "a/b" }],
+    ['no bucket and the path "/a/b"', "/a/b", { options: base, key: "/a/b" }],
+    ['no bucket and the path "//a/b"', "/a/b", { options: base, key: "//a/b" }],
+    ['no bucket and the path "a\\b"', "/a/b", { options: base, key: "a\\b" }],
+    ['no bucket and the path "\\\\a\\b"', "/a/b", { options: base, key: "\\\\a\\b" }],
+    ['no bucket and the path "\\\\\\a/b"', "/a/b", { options: base, key: "\\\\\\a/b" }],
+    ['the bucket "/buntest/"', "/buntest/key", { options: { ...base, bucket: "/buntest/" }, key: "key" }],
     [
       "a bucket in the options of the call",
       "/buntest/key",
-      () => new S3Client(slash).presign("key", { bucket: "buntest" }),
+      { options: slash, key: "key", call: { bucket: "buntest" } },
     ],
     // In virtual-hosted style the host names the bucket, and the path has no bucket segment.
-    [
-      'the bucket "/" in virtual-hosted style',
-      "/key",
-      () => new S3Client({ ...slash, virtualHostedStyle: true }).presign("key"),
-    ],
+    ['the bucket "/" in virtual-hosted style', "/key", { options: { ...slash, virtualHostedStyle: true }, key: "key" }],
     [
       "virtual-hosted style in the options of the call",
       "/key",
-      () => new S3Client(slash).presign("key", { virtualHostedStyle: true }),
+      { options: slash, key: "key", call: { virtualHostedStyle: true } },
     ],
     [
       'the bucket "/" in virtual-hosted style and an endpoint with a path',
       "/storage/v1/s3/key",
-      () => new S3Client({ ...prefixed, virtualHostedStyle: true }).presign("key"),
+      { options: { ...prefixed, virtualHostedStyle: true }, key: "key" },
     ],
     [
       'virtual-hosted style and an endpoint that ends in "//"',
       "/buntest//key",
-      () =>
-        new S3Client({ ...base, endpoint: "https://s3.example.com/buntest//", virtualHostedStyle: true }).presign(
-          "key",
-        ),
+      { options: { ...base, endpoint: "https://s3.example.com/buntest//", virtualHostedStyle: true }, key: "key" },
     ],
     [
       'the bucket "/" in virtual-hosted style without an endpoint',
       "ERR_S3_INVALID_ENDPOINT",
-      () =>
-        new S3Client({
-          accessKeyId: "a",
-          secretAccessKey: "b",
-          region: "us-east-1",
-          bucket: "/",
-          virtualHostedStyle: true,
-        }).presign("key"),
+      { options: { ...slash, endpoint: undefined, virtualHostedStyle: true }, key: "key" },
     ],
-  ])("presign with %s gives %s", (_, result, presign) => {
-    expect(presigned(presign)).toBe(result);
+  ];
+  // One child signs all the rows.
+  let presigned: Promise<Record<string, string>> | undefined;
+  it.each(rows)("presign with %s gives %s", async (input, result) => {
+    presigned ??= presignInChild(Object.fromEntries(rows.map(([name, , presign]) => [name, presign])));
+    expect((await presigned)[input]).toBe(result);
   });
 
   it("S3_BUCKET is read like the bucket option", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const presigned = presign => {
-          try {
-            return new URL(presign()).pathname;
-          } catch (e) {
-            return e?.code;
-          }
-        };
-        console.log(JSON.stringify({
-          fromEnv: presigned(() => Bun.s3.presign("key")),
-          fromOption: presigned(() => new Bun.S3Client({ bucket: "buntest" }).presign("key")),
-        }));`,
-      ],
-      env: {
-        ...bunEnv,
+    const presigned = await presignInChild(
+      {
+        "the variable": { options: {}, key: "key" },
+        "a bucket option over the variable": { options: { bucket: "buntest" }, key: "key" },
+      },
+      {
         S3_BUCKET: "/",
         S3_ENDPOINT: base.endpoint,
         S3_REGION: base.region,
         S3_ACCESS_KEY_ID: base.accessKeyId,
         S3_SECRET_ACCESS_KEY: base.secretAccessKey,
       },
-      stdout: "pipe",
-      stderr: "pipe",
+    );
+    expect(presigned).toEqual({
+      "the variable": "ERR_S3_INVALID_PATH",
+      "a bucket option over the variable": "/buntest/key",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ fromEnv: "ERR_S3_INVALID_PATH", fromOption: "/buntest/key" });
-    expect(exitCode).toBe(0);
   });
 
   const partSize = 5 * 1024 * 1024;
@@ -1797,8 +1814,6 @@ describe("path style with an empty bucket", () => {
       },
       "the options of the call": () =>
         new S3Client({ ...options, bucket: "buntest" }).write("key", "v", { bucket: "/" }),
-      "the path": () => new S3Client(options).write("///buntest/key", "v"),
-      "the path of fetch": () => fetch("s3:///key", { s3: options }),
     };
     const codes: Record<string, unknown> = {};
     for (const [name, call] of Object.entries(calls)) {

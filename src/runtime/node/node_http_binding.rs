@@ -1,48 +1,13 @@
-//! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `getBunServerOpenCount`, and the `ws` package's native server
+//! `node:http` native binding — `getBunServerOpenCount`, and the `ws` package's native server
 //! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams, UpgradeResponse};
-use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket};
-
-pub(crate) fn get_bun_server_all_closed_promise(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
-    if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments(
-            "getBunServerAllClosePromise",
-            1,
-            arguments.len(),
-        ));
-    }
-
-    let value = arguments[0];
-
-    // Try each heterogeneous server type in turn.
-    macro_rules! try_server {
-        ($ty:ty) => {
-            if let Some(server) = value.as_::<$ty>() {
-                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
-                // JS-owned server instance; we hold the JS thread for the duration
-                // of this call so the GC cannot collect it under us.
-                return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
-            }
-        };
-    }
-    try_server!(HTTPServer);
-    try_server!(HTTPSServer);
-    try_server!(DebugHTTPServer);
-    try_server!(DebugHTTPSServer);
-
-    Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
-}
+use crate::server::ServerWebSocket;
 
 /// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.
 pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {

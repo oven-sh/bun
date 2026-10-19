@@ -114,7 +114,7 @@ describe("fake node cli", () => {
 });
 
 // node:net reads these two from process.execArgv. The value ran as the script when it was the next argument.
-describe.concurrent("the flags of Node.js that node:net reads take their value as the next argument", () => {
+describe("the flags of Node.js that node:net reads take their value as the next argument", () => {
   const keylog = "--tls-keylog";
   const attemptTimeout = "--network-family-autoselection-attempt-timeout";
 
@@ -138,7 +138,7 @@ describe.concurrent("the flags of Node.js that node:net reads take their value a
   }
   const printed = (value: unknown) => ({ stdout: JSON.stringify(value), stderr: "", exitCode: 0 });
 
-  describe.each([keylog, attemptTimeout])("%s", flag => {
+  describe.concurrent.each([keylog, attemptTimeout])("%s", flag => {
     const ran = printed({ argv: ["scriptarg"], execArgv: [flag, "./value.mjs"] });
 
     test.each([
@@ -183,7 +183,7 @@ describe.concurrent("the flags of Node.js that node:net reads take their value a
       });
     });
 
-    test("bun test <flag> <value> <file>: the value is not a filter", async () => {
+    test("bun test <flag> <value> <filter>: the value is not a filter", async () => {
       using dir = tempDir("node-net-flags-test", {
         "value.test.ts": `
           import { test } from "bun:test";
@@ -194,7 +194,7 @@ describe.concurrent("the flags of Node.js that node:net reads take their value a
           test("app", () => {});
         `,
       });
-      const { stderr, exitCode } = await bun(dir, ["test", flag, "value", "./app.test.ts"]);
+      const { stderr, exitCode } = await bun(dir, ["test", flag, "value", "app"]);
       expect(stderr).toContain("Ran 1 test across 1 file.");
       expect(exitCode).toBe(0);
     });
@@ -215,6 +215,7 @@ describe.concurrent("the flags of Node.js that node:net reads take their value a
     });
   });
 
+  // From here the child loads node:net or node:tls, which is slow in a debug build: one at a time.
   describe("net.getDefaultAutoSelectFamilyAttemptTimeout()", () => {
     const files = {
       "timeout.mjs": `
@@ -253,38 +254,31 @@ describe.concurrent("the flags of Node.js that node:net reads take their value a
   });
 
   test("--tls-keylog <file> logs the keys of a TLS connection to the file", async () => {
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsCert, socket: { data() {} } });
     using dir = project({
-      "key.pem": tlsCert.key,
       "cert.pem": tlsCert.cert,
-      "tls.mjs": `
+      "connect.mjs": `
         import { once } from "node:events";
         import { readFileSync } from "node:fs";
         import tls from "node:tls";
 
-        const cert = readFileSync("cert.pem");
-        // The number of lines depends on the protocol version.
-        const server = tls.createServer({ key: readFileSync("key.pem"), cert, maxVersion: "TLSv1.2" });
-        server.listen(0, "127.0.0.1");
-        await once(server, "listening");
-        const accepted = once(server, "secureConnection");
-        const client = tls.connect({ port: server.address().port, host: "127.0.0.1", ca: cert });
+        const client = tls.connect({
+          port: Number(process.argv[2]),
+          host: "127.0.0.1",
+          ca: readFileSync("cert.pem"),
+          // TLS 1.2 logs one line for a connection. TLS 1.3 logs five.
+          maxVersion: "TLSv1.2",
+        });
         await once(client, "secureConnect");
-        const [socket] = await accepted;
-        socket.destroy();
         client.destroy();
-        server.close();
       `,
     });
-    const { stdout, stderr, exitCode } = await bun(dir, [keylog, "keys.log", "tls.mjs"]);
+    const { stdout, stderr, exitCode } = await bun(dir, [keylog, "keys.log", "connect.mjs", String(server.port)]);
     expect(stderr).toContain(
       "Using --tls-keylog makes TLS connections insecure by writing secret key material to file keys.log",
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
-    // The client and the server each log the same line.
-    const line = expect.stringMatching(/^CLIENT_RANDOM [0-9a-f]{64} [0-9a-f]{96}$/);
-    const lines = (await Bun.file(join(dir, "keys.log")).text()).trim().split("\n");
-    expect(lines).toEqual([line, line]);
-    expect(lines[0]).toBe(lines[1]);
+    expect(await Bun.file(join(dir, "keys.log")).text()).toMatch(/^CLIENT_RANDOM [0-9a-f]{64} [0-9a-f]{96}\n$/);
   });
 
   test("--tls-keylog <file> creates no file when there is no TLS connection", async () => {

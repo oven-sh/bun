@@ -19,8 +19,8 @@ use std::cell::{Cell, UnsafeCell};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr::{NonNull, null_mut, slice_from_raw_parts_mut};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Once, OnceLock};
 
 /// Makes its owner `Send` if `E` is, and `Sync` if `E` is both: through a shared reference one
 /// thread adds an element that another thread reads or drops. Those are the bounds of `OnceLock`.
@@ -812,43 +812,76 @@ fn note_first_write<C: Zeroed>(word: &AtomicU64, bit: u64, cell: &C) {
 }
 
 /// Cells for a fixed range of indices, initially all zero.
+///
+/// The memory starts out uninitialized. The first thread that writes to a page of cells zeroes that page, so creating
+/// the cells costs nothing, and a page that's never written is never resident. The allocator's zeroed memory is no
+/// substitute: it clears a block that has any reused memory in it, all of it, on the thread that asks.
 pub struct FixedCells<C, A: Allocator = Global> {
-    cells: Box<[C], A>,
-    written: Box<[AtomicU64], A>,
-}
-
-impl<C: Zeroed, A: Allocator> Written<C> for FixedCells<C, A> {
-    #[inline(always)]
-    fn words(&self) -> &[AtomicU64] {
-        &self.written
-    }
+    cells: Box<[MaybeUninit<C>], A>,
+    /// One bit per page of `cells`, set once the page is zeroed.
+    zeroed: Box<[AtomicU64], A>,
+    /// One per page of `cells`, for the threads that find the bit clear: one of them zeroes the page, and the others wait.
+    zeroing: Box<[Once], A>,
 }
 
 impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
+    const PER_PAGE: usize = SMALLEST_PAGE / size_of::<C>();
+
     pub fn new_in(len: usize, alloc: A) -> Self {
-        let pages = (len * size_of::<C>()).div_ceil(SMALLEST_PAGE);
+        let pages = len.div_ceil(Self::PER_PAGE);
+        let mut zeroing = Vec::with_capacity_in(pages, alloc.clone());
+        zeroing.resize_with(pages, Once::new);
         FixedCells {
-            cells: C::zeroed_slice_in(len, alloc.clone()),
-            written: AtomicU64::zeroed_slice_in(pages.div_ceil(64), alloc),
+            cells: Box::new_uninit_slice_in(len, alloc.clone()),
+            zeroed: AtomicU64::zeroed_slice_in(pages.div_ceil(64), alloc),
+            zeroing: zeroing.into_boxed_slice(),
         }
+    }
+
+    /// `Acquire`: whoever finds the bit set also finds the zeros.
+    #[inline(always)]
+    fn is_zeroed(&self, page: usize) -> bool {
+        let word = self.zeroed.get(page / 64);
+        word.is_some_and(|word| word.load(Ordering::Acquire) & (1 << (page % 64)) != 0)
+    }
+
+    #[cold]
+    fn zero(&self, page: usize) {
+        self.zeroing[page].call_once(|| {
+            let cells = &self.cells[page * Self::PER_PAGE..];
+            let cells = &cells[..cells.len().min(Self::PER_PAGE)];
+            // SAFETY: the cells are inside the allocation. Only this thread accesses them: nothing else does before the
+            // bit is set. A cell is written through a shared reference, like any atomic.
+            unsafe { cells.as_ptr().cast_mut().write_bytes(0, cells.len()) };
+            self.zeroed[page / 64].fetch_or(1 << (page % 64), Ordering::Release);
+        });
     }
 
     /// Returns the cell at `index`, or `None` if the cell is known to be zero.
     #[inline]
     pub fn existing(&self, index: usize) -> Option<&C> {
-        self.may_be_written(index).then(|| &self.cells[index])
+        // SAFETY: its page is zeroed, and all zero bytes are a valid `C`.
+        (self.is_zeroed(index / Self::PER_PAGE))
+            .then(|| unsafe { self.cells[index].assume_init_ref() })
     }
 
     /// Returns the cell at `index` for writing.
     #[inline]
     pub fn cell(&self, index: usize) -> &C {
-        let cell = &self.cells[index];
-        self.note_write(index, cell);
-        cell
+        let (cell, page) = (&self.cells[index], index / Self::PER_PAGE);
+        if !self.is_zeroed(page) {
+            self.zero(page);
+        }
+        // SAFETY: as in `existing`.
+        unsafe { cell.assume_init_ref() }
     }
 
-    pub fn all(&self) -> &[C] {
-        &self.cells
+    /// The pages that have been written.
+    pub fn written(&self) -> impl Iterator<Item = &[C]> {
+        let pages = self.cells.chunks(Self::PER_PAGE).enumerate();
+        let written = pages.filter(|&(page, _)| self.is_zeroed(page));
+        // SAFETY: as in `existing`.
+        written.map(|(_, cells)| unsafe { cells.assume_init_ref() })
     }
 }
 
@@ -1470,6 +1503,53 @@ mod tests {
         assert_eq!(lengths, [1 << (FIRST_CELLS_BITS + 1)]);
         let all = cells.allocated().flatten();
         assert_eq!(all.map(|it| it.load(Ordering::Relaxed)).sum::<u64>(), 9);
+    }
+
+    #[test]
+    fn fixed_cells_start_at_zero_and_exist_once_their_page_is_written() {
+        const PER_PAGE: usize = SMALLEST_PAGE / size_of::<AtomicU32>();
+        const LEN: usize = 2 * PER_PAGE + 3;
+        let cells = FixedCells::<AtomicU32>::new_in(LEN, Global);
+        assert!((0..LEN).all(|index| cells.existing(index).is_none()));
+        assert_eq!(cells.written().count(), 0);
+        cells.cell(2 * PER_PAGE + 1).store(9, Ordering::Relaxed);
+        assert!(cells.existing(2 * PER_PAGE - 1).is_none());
+        let last: Vec<u32> = (2 * PER_PAGE..LEN)
+            .map(|index| cells.existing(index).unwrap().load(Ordering::Relaxed))
+            .collect();
+        assert_eq!(last, [0, 9, 0]);
+        assert_eq!(cells.cell(0).load(Ordering::Relaxed), 0);
+        let lengths: Vec<usize> = cells.written().map(<[_]>::len).collect();
+        assert_eq!(lengths, [PER_PAGE, 3]);
+        assert_eq!(
+            FixedCells::<AtomicU64>::new_in(0, Global).written().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn threads_race_to_write_to_a_page_first() {
+        const THREADS: usize = 4;
+        const ROUNDS: u32 = if cfg!(miri) { 2 } else { 200 };
+        for _ in 0..ROUNDS {
+            let cells = FixedCells::<AtomicU64>::new_in(1_000, Global);
+            let start = Barrier::new(THREADS);
+            std::thread::scope(|scope| {
+                for thread in 0..THREADS {
+                    let (cells, start) = (&cells, &start);
+                    scope.spawn(move || {
+                        start.wait();
+                        for index in [thread, 600 + thread, 7, 999] {
+                            cells.cell(index).fetch_add(1, Ordering::Relaxed);
+                        }
+                    });
+                }
+            });
+            let all = cells.written().flatten();
+            let sum: u64 = all.map(|it| it.load(Ordering::Relaxed)).sum();
+            assert_eq!(sum, 4 * THREADS as u64);
+            assert_eq!(cells.cell(7).load(Ordering::Relaxed), THREADS as u64);
+        }
     }
 
     #[test]

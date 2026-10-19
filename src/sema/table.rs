@@ -604,7 +604,11 @@ impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
     }
 
     pub fn footprint(&self) -> Footprint {
-        Footprint::of_cells(self.cells.all())
+        let pages = self.cells.written().map(Footprint::of_cells);
+        Footprint {
+            allocated: self.bases.total().div_ceil(Self::PER_CELL) * size_of::<V::Cell>(),
+            ..pages.fold(Footprint::default(), Footprint::plus)
+        }
     }
 }
 

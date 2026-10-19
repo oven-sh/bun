@@ -547,21 +547,40 @@ impl<'s> Program<'s> {
     pub fn new(session: &'s Session, files: &'s Files<'s>) -> Program<'s> {
         // Nothing that mentions a node of a leaf file is published, so the shared part has no
         // capacity for them. `Bases::at` returns `None` for its nodes.
-        let bases = |len: fn(&crate::program::Module) -> usize| {
-            let count = |m: &crate::program::ModuleCell| if m.is_leaf { 0 } else { len(m) };
-            Bases::new_in(files.modules.iter().map(count), &session)
-                .with_counts(files.modules.iter().map(|m| len(m)), &session)
+        // Read in one walk: the modules are far apart in memory.
+        let counts = files.modules.iter().map(|m| {
+            let counts = [
+                m.hir.exprs.len(),
+                m.hir.types.len(),
+                m.hir.fns.len(),
+                m.hir.pats.len(),
+                m.hir.props.len(),
+                m.hir.params.len(),
+                m.hir.enum_members.len(),
+                m.bound.scopes.len(),
+                m.hir.type_params.len(),
+                m.bound.symbols.len(),
+            ];
+            (m.is_leaf, counts)
+        });
+        let counts: Vec<(bool, [usize; 10])> = counts.collect();
+        let bases = |kind: usize| {
+            let shared = counts.iter().map(|it| if it.0 { 0 } else { it.1[kind] });
+            Bases::new_in(shared, &session)
+                .with_counts(counts.iter().map(|it| it.1[kind]), &session)
         };
-        let exprs = bases(|m| m.hir.exprs.len());
-        let type_nodes = bases(|m| m.hir.types.len());
-        let fns = bases(|m| m.hir.fns.len());
-        let pats = bases(|m| m.hir.pats.len());
-        let props = bases(|m| m.hir.props.len());
-        let params = bases(|m| m.hir.params.len());
-        let enum_members = bases(|m| m.hir.enum_members.len());
-        let scopes = bases(|m| m.bound.scopes.len());
-        let type_params = bases(|m| m.hir.type_params.len());
-        let symbols = bases(|m| m.bound.symbols.len());
+        let [
+            exprs,
+            type_nodes,
+            fns,
+            pats,
+            props,
+            params,
+            enum_members,
+            scopes,
+            type_params,
+            symbols,
+        ] = std::array::from_fn(bases);
         let mut types = TypeStore::new_in(session, files.atoms);
         let arena = session.arena();
         let auto_array_type =

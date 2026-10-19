@@ -9,8 +9,8 @@ use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
 use bun_css::selector::serialize;
 use bun_css::{
-    CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList,
-    Token, TokenList,
+    CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, RawTokens,
+    RawTokensContext, SmallList, Token,
 };
 use bun_wyhash::Wyhash;
 
@@ -866,7 +866,7 @@ pub use css::css_properties::text::Direction;
 
 /// A pseudo class.
 // `PartialEq` derive dropped — `Local`/`Global` carry
-// `Box<Selector>` and `CustomFunction` carries `TokenList`, neither of which
+// `Box<Selector>` and `CustomFunction` carries `RawTokens`, neither of which
 // implements `PartialEq`. Equality goes through `eql()` (CssEql protocol).
 #[derive(Clone, CssEql, CssHash)]
 pub enum PseudoClass {
@@ -1016,7 +1016,7 @@ pub enum PseudoClass {
         /// The pseudo class name.
         name: Str,
         /// The arguments of the pseudo class function.
-        arguments: TokenList,
+        arguments: RawTokens,
     },
 }
 
@@ -1285,11 +1285,9 @@ impl<'a> SelectorParser<'a> {
             );
         }
 
-        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-        TokenList::parse_raw(input, &mut args, self.options, 0)?;
         Ok(PseudoElement::CustomFunction {
             name,
-            arguments: TokenList { v: args },
+            arguments: RawTokens::parse(input, RawTokensContext::SelectorArguments)?,
         })
     }
 
@@ -1378,11 +1376,9 @@ impl<'a> SelectorParser<'a> {
                         ),
                     );
                 }
-                let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-                css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
                 PseudoClass::CustomFunction {
                     name,
-                    arguments: TokenList { v: args },
+                    arguments: RawTokens::parse(parser, RawTokensContext::SelectorArguments)?,
                 }
             },
         }};
@@ -2875,7 +2871,7 @@ pub(crate) enum SimpleSelectorParseResult<Impl: SelectorImpl> {
 }
 
 /// A pseudo element.
-// See PseudoClass — `PartialEq` derive dropped (Box<Selector>/TokenList).
+// See PseudoClass — `PartialEq` derive dropped (Box<Selector>/RawTokens).
 #[derive(Clone, CssEql, CssHash)]
 pub enum PseudoElement {
     /// The [::after](https://drafts.csswg.org/css-pseudo-4/#selectordef-after) pseudo element.
@@ -2960,7 +2956,7 @@ pub enum PseudoElement {
         /// The name of the pseudo element.
         name: Str,
         /// The arguments of the pseudo element function.
-        arguments: TokenList,
+        arguments: RawTokens,
     },
 }
 

@@ -1142,7 +1142,7 @@ pub(crate) mod serialize {
                 dest.write_char(b':')?;
                 dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
-                arguments.to_css_raw(dest)?;
+                arguments.to_css(dest, css::RawTokensContext::SelectorArguments)?;
                 dest.write_char(b')')?;
             }
         }
@@ -1276,7 +1276,7 @@ pub(crate) mod serialize {
                 dest.write_str(b"::")?;
                 dest.serialize_identifier(name)?;
                 dest.write_char(b'(')?;
-                arguments.to_css_raw(dest)?;
+                arguments.to_css(dest, css::RawTokensContext::SelectorArguments)?;
                 dest.write_char(b')')?;
             }
         }

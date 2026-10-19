@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7954,6 +7955,223 @@ describe("css tests", () => {
     minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
     // Fuzzer-minimized input: unterminated block with an overflowing index.
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
+  // The prelude and the block of an unknown at-rule have no known grammar, so no token
+  // in them is read as a value.
+  describe("unknown at-rule", () => {
+    function pretty_test(source: string, expected: string) {
+      test(`not minified: ${source}`, () => {
+        expect(cssInternals._test(source, expected)).toBe(expected);
+      });
+    }
+
+    describe("a hash stays a hash", () => {
+      minify_test("@foo { a#f00:hover { color: red } }", "@foo{a#f00:hover { color: red }}");
+      pretty_test("@foo { a#f00:hover { color: red } }", "@foo {\n  a#f00:hover { color: red }\n}\n");
+      minify_test("@x{#f00{}}", "@x{#f00{}}");
+      minify_test(
+        "@foo { a#ff0000, a#aabbcc, #FACADE, #000000 { color: red } }",
+        "@foo{a#ff0000, a#aabbcc, #FACADE, #000000 { color: red }}",
+      );
+      minify_test("@foo { #ffffff00 .x { color: red } }", "@foo{#ffffff00 .x { color: red }}");
+      // An ID that starts with an escaped digit.
+      minify_test("@foo { #\\31 2345 { color: red } }", "@foo{#\\31 2345 { color: red }}");
+      minify_test(
+        "@foo { a:not(#f00), :is(#FACADE) b { color: red } }",
+        "@foo{a:not(#f00), :is(#FACADE) b { color: red }}",
+      );
+      // Chrome 40 has no `#rrggbbaa`: as a color this hash prints as `rgba()`.
+      prefix_test("@foo { a#ff000080:hover { color: red } }", "@foo { a#ff000080:hover { color: red } }", {
+        chrome: 40 << 16,
+      });
+
+      minify_test("@media print { @foo { a#f00 { color: red } } }", "@media print{@foo{a#f00 { color: red }}}");
+      pretty_test(
+        "@media print { @foo { a#f00 { color: red } } }",
+        "@media print {\n  @foo {\n    a#f00 { color: red }\n  }\n}\n",
+      );
+      minify_test(".a { @foo { &#f00 { color: red } } }", ".a{@foo{&#f00 { color: red }}}");
+      minify_test("@foo { @bar { a#f00 { color: red } } }", "@foo{@bar { a#f00 { color: red } }}");
+
+      minify_test("@x #f00;", "@x #f00;");
+      minify_test("@custom-selector :--heading a#f00, #FACADE;", "@custom-selector :--heading a#f00, #FACADE;");
+      minify_test("@custom-variant dark (&:where(#f00, #f00 *));", "@custom-variant dark (&:where(#f00, #f00 *));");
+      minify_test("@apply bg-[#FF0000] text-[#AbCdEf];", "@apply bg-[#FF0000] text-[#AbCdEf];");
+      pretty_test("@apply bg-[#FF0000] text-[#AbCdEf];", "@apply bg-[#FF0000] text-[#AbCdEf];\n");
+
+      // A hash in a declaration value is still a color.
+      minify_test("@foo{#f00{}} a{--x:#FF0000;color:var(--y,#ff0000)}", "@foo{#f00{}}a{--x:red;color:var(--y,red)}");
+    });
+
+    describe("a number stays as written", () => {
+      minify_test(
+        "@apply bg-[rgb(255,0,0)] p-2.5 z-[9999999] -mt-0.5;",
+        "@apply bg-[rgb(255,0,0)] p-2.5 z-[9999999] -mt-0.5;",
+      );
+      minify_test("@foo { a:nth-child(2n+1) { width: 10PX } }", "@foo{a:nth-child(2n+1) { width: 10PX }}");
+      minify_test(
+        "@foo { height: 1.50em; margin: +.5e1px 0.0 -0 50% }",
+        "@foo{height: 1.50em; margin: +.5e1px 0.0 -0 50%}",
+      );
+      minify_test("@foo { unicode-range: U+1E00-1EFF }", "@foo{unicode-range: U+1E00-1EFF}");
+
+      // A unit that is written with an escape is written again. Only the number is kept as
+      // written: the text of such a unit can end inside its escape.
+      minify_test("@foo 1p\\78/**/ y; .k{color:red}", "@foo 1px y;.k{color:red}");
+      minify_test("@foo 1a\\%/**/b;", "@foo 1a\\%/**/b;");
+      minify_test("@foo 1px\\", "@foo 1px\uFFFD;");
+      minify_test("@foo { p-2.5x\\", "@foo{p-2.5x\uFFFD}");
+      test("a NUL in a unit", () => {
+        expect(cssInternals.minifyTest("@foo p-2.5x\0y;", "")).toBe("@foo p-2.5x\uFFFDy;");
+      });
+      // After a number, `e` can start an exponent.
+      minify_test("@foo 1e\\2d/**/ y 1\\65 3 1E\\2b 3 +.5e1\\65m;", "@foo 1\\65 - y 1\\65 3 1\\45 \\+3 +.5e1\\65 m;");
+      minify_test("@foo 1\\31 x .5\\2d x;", "@foo 1\\31 x .5-x;");
+    });
+
+    describe("a value stays as written", () => {
+      minify_test("@theme { --color-x: #ff0000; --ratio: 16 / 9 }", "@theme{--color-x: #ff0000; --ratio: 16 / 9}");
+      minify_test(
+        "@foo { color: rgb(255, 0, 0); width: calc(1px + 2px) }",
+        "@foo{color: rgb(255, 0, 0); width: calc(1px + 2px)}",
+      );
+      minify_test(
+        "@foo { x: var(--y, 1px); y: env(safe-area-inset-top) }",
+        "@foo{x: var(--y, 1px); y: env(safe-area-inset-top)}",
+      );
+      // A `var()` that is not a value was a parse error for the whole style sheet. In a
+      // declaration it still is. The second form is in the source of Tailwind 4.
+      minify_test("@foo { x: var() }", "@foo{x: var()}");
+      minify_test(
+        "@utility opacity-* { opacity: var(--value([*]), 0%) }",
+        "@utility opacity-*{opacity: var(--value([*]), 0%)}",
+      );
+      minify_test("@foo { \"a\" 'b' }", '@foo{"a" "b"}');
+      minify_test("@foo { <!-- a --> b ~= c }", "@foo{<!-- a --> b ~= c}");
+    });
+
+    describe("a url() in the block is still an import", () => {
+      minify_test("@foo { background: url(x.png) }", "@foo{background: url(x.png)}");
+      pretty_test("@foo { background: url(x.png) }", '@foo {\n  background: url("x.png")\n}\n');
+      minify_test('@foo { background: url("x.png") }', "@foo{background: url(x.png)}");
+    });
+
+    describe("a run of whitespace is one space", () => {
+      minify_test("@foo;", "@foo;");
+      pretty_test("@foo;", "@foo;\n");
+      minify_test("@foo bar;", "@foo bar;");
+      minify_test("@foo  bar  ;", "@foo bar;");
+      minify_test("@foo (bar: baz);", "@foo (bar: baz);");
+      minify_test("@foo test {\n  div {\n    color: red;\n  }\n}", "@foo test{div { color: red; }}");
+      pretty_test("@foo test {\n  div {\n    color: red;\n  }\n}", "@foo test {\n  div { color: red; }\n}\n");
+      minify_test("@foo test {\n  foo: bar;\n}", "@foo test{foo: bar;}");
+      minify_test("@foo {\n  foo: bar;\n}", "@foo{foo: bar;}");
+      pretty_test("@foo {\n  foo: bar;\n}", "@foo {\n  foo: bar;\n}\n");
+      minify_test("@foo { }", "@foo{}");
+
+      // A space before a delimiter is not dropped: `.a .b` is not `.a.b`.
+      minify_test("@foo { .a .b > .c, [x] .d { } }", "@foo{.a .b > .c, [x] .d { }}");
+      pretty_test("@foo { .a .b > .c, [x] .d { } }", "@foo {\n  .a .b > .c, [x] .d { }\n}\n");
+      minify_test("@foo { a{b:c}d{e:f} }", "@foo{a{b:c}d{e:f}}");
+      pretty_test("@foo { a{b:c}d{e:f} }", "@foo {\n  a{b:c}d{e:f}\n}\n");
+      // No space is added either.
+      pretty_test("@apply something/80;", "@apply something/80;\n");
+      // `bun pm diff` calls a change "formatting only" when both sides print the same text.
+      pretty_test("@foo { .a .b {\n    color: #f00\n  } }", "@foo {\n  .a .b { color: #f00 }\n}\n");
+      pretty_test("@foo {\n\t.a\t.b { color: #f00 }\n}", "@foo {\n  .a .b { color: #f00 }\n}\n");
+
+      // `\` is a token only before a newline. Before a space it is an escape.
+      minify_test("@foo { \\\n a }", "@foo{\\\na}");
+      minify_test("@foo \\\n;", "@foo \\\n;");
+    });
+
+    describe("a comment", () => {
+      minify_test("@foo /* a */ bar /* b */ ;", "@foo bar;");
+      minify_test("@foo { a /* x */ b { } }", "@foo{a b { }}");
+      minify_test("@foo{/* c */}", "@foo{}");
+      minify_test("@foo /*a*/b/*c*/;", "@foo b;");
+      // A comment that is all of the text between two tokens stays: `a/**/b` is not `ab`.
+      minify_test("@foo { a/**/b { } }", "@foo{a/**/b { }}");
+      pretty_test("@foo { a/* x *//* y */b { } }", "@foo {\n  a/**/b { }\n}\n");
+      // Without the comment, `/` and `*=` open a comment that hides the rule after it.
+      minify_test("@foo a//**/*=b; .k{color:red}", "@foo a//**/*=b;.k{color:red}");
+      pretty_test("@foo { a//**/*=b } .k{color:red}", "@foo {\n  a//**/*=b\n}\n\n.k {\n  color: red;\n}\n");
+      minify_test("@foo </**/!-- a $/**/= b --/**/>;", "@foo </**/!-- a $/**/= b --/**/>;");
+
+      // One token of each kind. No two of them join when a comment is all that is between
+      // them, in an at-rule or in a pseudo-class.
+      const samples = [
+        ...["a", "f(b)", "@a", "#a", "#1", '"s"', "url(u)", "1", "1%", "1px", "(b)", "[b]", "<!--", "-->"],
+        ...["~=", "|=", "^=", "$=", "*=", ":", ",", "#", "-", "@", ".", "+", "/", "*", "%", "<", ">", "!", "=", "$"],
+      ];
+      describe.each([
+        ["an at-rule", (text: string) => `@foo ${text};`],
+        ["a pseudo-class", (text: string) => `a:x(${text}){color:red}`],
+      ])("in %s", (_, frame) => {
+        test.each(samples)("after %s", first => {
+          const sources = samples.map(second => frame(`${first}/**/${second}`));
+          expect(sources.map(source => cssInternals.minifyTest(source, ""))).toEqual(sources);
+        });
+      });
+    });
+
+    // The arguments of an unknown pseudo-class or pseudo-element are the same kind of text.
+    describe("unknown pseudo-class arguments", () => {
+      minify_test("a:unknown(p-2.5) { color: red }", "a:unknown(p-2.5){color:red}");
+      minify_test("a:unknown(1.50 +2 1e3 10PX 50%) { color: red }", "a:unknown(1.50 +2 1e3 10PX 50%){color:red}");
+      minify_test("a::unknown(2n+1) { color: red }", "a::unknown(2n+1){color:red}");
+      minify_test("a:unknown(a/**/b, /*c*/d/*e*/) { color: red }", "a:unknown(a/**/b, d){color:red}");
+      minify_test("a::unknown(a//**/*=b) { color: red }", "a::unknown(a//**/*=b){color:red}");
+      minify_test("a:unknown(#FF0000 #f00) { color: red }", "a:unknown(#FF0000 #f00){color:red}");
+      // Whitespace and `url()` stay as they are on this path.
+      minify_test("a:unknown( a   b\n c ) { color: red }", "a:unknown( a   b\n c ){color:red}");
+      pretty_test("a:unknown(url(x.png)) { color: red }", "a:unknown(url(x.png)) {\n  color: red;\n}\n");
+
+      // Arguments are compared as written: `.5` is not `0.5`.
+      minify_test("a:x(.5){color:red}a:x(.5){color:red}", "a:x(.5){color:red}");
+      minify_test("a:x(.5){color:red}a:x(0.5){color:red}", "a:x(.5){color:red}a:x(0.5){color:red}");
+    });
+
+    describe("a token that cannot be in a style sheet is an error", () => {
+      test.each([
+        ["@foo (a]b);", "Unexpected token: ]"],
+        ["@foo { a: 'bad\n }", 'Unexpected token: "bad'],
+        ["@foo { a: url(bad url) }", "Unexpected token: url(bad url)"],
+        ["a:unknown(a]b){color:red}", "Unexpected token: ]"],
+        ["a::unknown('x\n){color:red}", 'Unexpected token: "x'],
+      ])("%s", (source, message) => {
+        expect(() => cssInternals.minifyTest(source, "")).toThrow(message);
+      });
+    });
+
+    // Safari 13 has no `:focus-visible`, so the rule is printed once for each selector.
+    describe("a copy of a rule prints the same text", () => {
+      test("an at-rule", () => {
+        const text = '&#f00{x:url("a.png") url("b.png") 1.50em 1\\65 m}';
+        const source = ".a, .b:focus-visible{color:red;@foo{&#f00{x:url(a.png) url(b.png) 1.50em 1\\65 m}}}";
+        const printed = cssInternals.prefixTest(source, "", { safari: 13 << 16 });
+        expect(printed.split(text).length - 1).toBe(2);
+      });
+      test("a pseudo-class", () => {
+        const source = ".a:focus-visible, .b:unknown(1.50 1\\65 m url(x.png)){color:red}";
+        expect(cssInternals.prefixTest(source, "", { safari: 13 << 16 })).toBe(
+          ".a:focus-visible {\n  color: red;\n}\n\n.b:unknown(1.50 1\\65 m url(x.png)) {\n  color: red;\n}\n",
+        );
+      });
+    });
+
+    describe("nesting is limited to 500 blocks", () => {
+      const open = (n: number) => Buffer.alloc(n, "(").toString();
+      const close = (n: number) => Buffer.alloc(n, ")").toString();
+      test.each([
+        ["an at-rule", (n: number) => `@foo ${open(n)}${close(n)};`],
+        ["a pseudo-class", (n: number) => `a:unknown(${open(n)}${close(n)}){color:red}`],
+      ])("in %s", (_, source) => {
+        expect(cssInternals.minifyTest(source(500), "")).toBe(source(500));
+        expect(() => cssInternals.minifyTest(source(501), "")).toThrow("Maximum CSS nesting depth exceeded");
+      });
+    });
   });
 
   describe("grid-template-areas", () => {

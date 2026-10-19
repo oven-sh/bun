@@ -100,10 +100,9 @@ impl SyntaxString {
     /// Parses a value according to the syntax grammar.
     pub(crate) fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
         match self {
-            SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse(
+            SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse_value(
                 input,
                 &ParserOptions::default(None),
-                0,
             )?)),
             SyntaxString::Components(components) => {
                 // Loop through each component, and return the first one that parses successfully.

@@ -1,6 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //
-// `TokenList::{parse, parse_into, to_css, to_css_raw}`,
+// `TokenList::{parse, parse_into, to_css}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
@@ -432,17 +432,6 @@ impl TokenList {
         Ok(())
     }
 
-    pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
-        for token_or_value in self.v.iter() {
-            if let TokenOrValue::Token(token) = token_or_value {
-                token.to_css(dest)?;
-            } else {
-                return Err(dest.add_fmt_error());
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn write_whitespace_if_needed(
         &self,
         i: usize,
@@ -463,7 +452,12 @@ impl TokenList {
         }
     }
 
-    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
+    /// Parses a declaration value. Text with no known grammar is a [`RawTokens`].
+    pub(crate) fn parse_value(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
+        Self::parse(input, options, 0)
+    }
+
+    fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
         let mut tokens: Vec<TokenOrValue> = Vec::new();
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
@@ -481,61 +475,7 @@ impl TokenList {
         Ok(TokenList { v: tokens })
     }
 
-    pub(crate) fn parse_raw(
-        input: &mut Parser,
-        tokens: &mut Vec<TokenOrValue>,
-        options: &ParserOptions,
-        depth: usize,
-    ) -> Result<()> {
-        if depth > 500 {
-            return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
-        }
-
-        loop {
-            let state = input.state();
-            let Ok(token) = input.next_including_whitespace() else {
-                break;
-            };
-            match token {
-                Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
-                    let tok = *token;
-                    let closing_delimiter = match tok {
-                        Token::OpenParen => Token::CloseParen,
-                        Token::OpenSquare => Token::CloseSquare,
-                        Token::OpenCurly => Token::CloseCurly,
-                        _ => unreachable!(),
-                    };
-                    tokens.push(TokenOrValue::Token(tok));
-                    input.parse_nested_block(|input2| {
-                        TokenListFns::parse_raw(input2, tokens, options, depth + 1)
-                    })?;
-                    tokens.push(TokenOrValue::Token(closing_delimiter));
-                }
-                Token::Function(_) => {
-                    tokens.push(TokenOrValue::Token(*token));
-                    input.parse_nested_block(|input2| {
-                        TokenListFns::parse_raw(input2, tokens, options, depth + 1)
-                    })?;
-                    tokens.push(TokenOrValue::Token(Token::CloseParen));
-                }
-                _ => {
-                    if token.is_parse_error() {
-                        return Err(ParseError {
-                            kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(
-                                *token,
-                            )),
-                            location: state.source_location(),
-                        });
-                    }
-                    tokens.push(TokenOrValue::Token(*token));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn parse_into(
+    fn parse_into(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
         options: &ParserOptions,
@@ -840,6 +780,220 @@ impl TokenList {
 pub type TokenListFns = TokenList;
 
 pub(crate) type Fallbacks = (SupportsCondition, TokenList);
+
+/// Text with no known grammar. Unlike in lightningcss, no token is a value: `#f00` can be an ID.
+#[derive(Clone, CssEql, CssHash, DeepClone)]
+pub struct RawTokens {
+    pub(crate) v: Vec<RawToken>,
+}
+
+#[derive(CssEql, CssHash)]
+pub enum RawToken {
+    /// A token that is not a number, a percentage or a dimension.
+    Token(Token),
+    /// The source text of a number, percentage or dimension. Only the number if a `Unit` follows.
+    Number(&'static [u8]),
+    /// The unit of a dimension that wrote it with an escape or a NUL. It is decoded.
+    Unit(&'static [u8]),
+    /// A `url()` in an at-rule. The bundler resolves it.
+    Url(Url),
+}
+
+// The list stores one entry per token. A `TokenOrValue` is 72 bytes.
+const _: () = assert!(size_of::<RawToken>() == size_of::<Token>());
+
+/// Where the text of a [`RawTokens`] is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RawTokensContext {
+    /// In an unknown at-rule: `url()` is an import and a whitespace run prints as one space.
+    AtRule,
+    /// In the arguments of an unknown pseudo-class: `url()` and whitespace stay as written.
+    SelectorArguments,
+}
+
+impl RawTokens {
+    pub(crate) fn parse(input: &mut Parser, context: RawTokensContext) -> Result<RawTokens> {
+        let mut tokens: Vec<RawToken> = Vec::new();
+        Self::parse_into(input, &mut tokens, context, 0)?;
+        Ok(RawTokens { v: tokens })
+    }
+
+    fn parse_into(
+        input: &mut Parser,
+        tokens: &mut Vec<RawToken>,
+        context: RawTokensContext,
+        depth: usize,
+    ) -> Result<()> {
+        if depth > 500 {
+            return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
+        }
+
+        loop {
+            let state = input.state();
+            let Ok(&token) = input.next_including_whitespace_and_comments() else {
+                break;
+            };
+            match token {
+                Token::UnquotedUrl(_) | Token::Function(b"url")
+                    if context == RawTokensContext::AtRule =>
+                {
+                    input.reset(&state);
+                    tokens.push(RawToken::Url(ext::url_parse(input)?));
+                }
+                Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
+                    tokens.push(RawToken::Token(token));
+                    input.parse_nested_block(|input2| {
+                        Self::parse_into(input2, tokens, context, depth + 1)
+                    })?;
+                    tokens.push(RawToken::Token(match token {
+                        Token::OpenSquare => Token::CloseSquare,
+                        Token::OpenCurly => Token::CloseCurly,
+                        _ => Token::CloseParen,
+                    }));
+                }
+                Token::Number(_) | Token::Percentage { .. } | Token::Dimension(_) => {
+                    let text = input.slice_from_cloned(state.position);
+                    match token {
+                        // Such a unit can end inside an escape: keep the source of the number only.
+                        Token::Dimension(dimension)
+                            if strings::index_of_any(text, b"\\\0").is_some() =>
+                        {
+                            tokens.push(RawToken::Number(&text[..number_len(text)]));
+                            tokens.push(RawToken::Unit(dimension.unit));
+                        }
+                        _ => tokens.push(RawToken::Number(text)),
+                    }
+                }
+                _ if token.is_parse_error() => {
+                    return Err(ParseError {
+                        kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(token)),
+                        location: state.source_location(),
+                    });
+                }
+                _ => tokens.push(RawToken::Token(token)),
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn to_css(&self, dest: &mut Printer, context: RawTokensContext) -> PrintResult<()> {
+        let collapse = context == RawTokensContext::AtRule;
+        let mut i = 0;
+        while let Some(token) = self.v.get(i) {
+            if token.is_gap() {
+                let end = i + self.v[i..].iter().take_while(|t| t.is_gap()).count();
+                self.write_gap(i..end, collapse, dest)?;
+                i = end;
+                continue;
+            }
+            match token {
+                // `\` is a token only before a newline. Before a space it is an escape.
+                RawToken::Token(Token::Delim(d)) if collapse && *d == u32::from(b'\\') => {
+                    dest.write_char(b'\\')?;
+                    dest.write_char(b'\n')?;
+                }
+                RawToken::Token(token) => token.to_css(dest)?,
+                RawToken::Number(text) => dest.write_str(text)?,
+                // After a number, `e` can start an exponent.
+                RawToken::Unit([e @ (b'e' | b'E'), rest @ ..]) => {
+                    dest.write_str(if *e == b'e' { "\\65 " } else { "\\45 " })?;
+                    dest.serialize_name(rest)?;
+                }
+                RawToken::Unit(unit) => dest.serialize_identifier(unit)?,
+                RawToken::Url(url) => ext::url_to_css(url, dest)?,
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// Prints `self.v[gap]`, a run of whitespace and comments.
+    fn write_gap(
+        &self,
+        gap: core::ops::Range<usize>,
+        collapse: bool,
+        dest: &mut Printer,
+    ) -> PrintResult<()> {
+        let inside = gap.start > 0 && gap.end < self.v.len();
+        let run = &self.v[gap.clone()];
+        if !run.iter().any(RawToken::is_whitespace) {
+            // `a/**/b` is not `ab`.
+            if inside {
+                dest.write_str("/**/")?;
+            }
+        } else if !collapse {
+            for token in run {
+                if let RawToken::Token(whitespace @ Token::Whitespace(_)) = token {
+                    whitespace.to_css(dest)?;
+                }
+            }
+        } else if inside && !self.v[gap.start - 1].is_backslash() {
+            dest.write_char(b' ')?;
+        }
+        Ok(())
+    }
+}
+
+impl RawToken {
+    fn is_whitespace(&self) -> bool {
+        matches!(self, RawToken::Token(Token::Whitespace(_)))
+    }
+
+    fn is_gap(&self) -> bool {
+        matches!(
+            self,
+            RawToken::Token(Token::Whitespace(_) | Token::Comment(_))
+        )
+    }
+
+    fn is_backslash(&self) -> bool {
+        matches!(self, RawToken::Token(Token::Delim(d)) if *d == u32::from(b'\\'))
+    }
+}
+
+/// The length of the number that the source text of a dimension starts with.
+fn number_len(text: &[u8]) -> usize {
+    let digits = |mut i: usize| {
+        while text.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        i
+    };
+    let mut end = digits(usize::from(matches!(text.first(), Some(b'+' | b'-'))));
+    if text.get(end) == Some(&b'.') && text.get(end + 1).is_some_and(u8::is_ascii_digit) {
+        end = digits(end + 1);
+    }
+    if matches!(text.get(end), Some(b'e' | b'E')) {
+        let exponent = end + 1 + usize::from(matches!(text.get(end + 1), Some(b'+' | b'-')));
+        if text.get(exponent).is_some_and(u8::is_ascii_digit) {
+            end = digits(exponent);
+        }
+    }
+    end
+}
+
+impl Clone for RawToken {
+    fn clone(&self) -> Self {
+        match self {
+            RawToken::Token(token) => RawToken::Token(*token),
+            RawToken::Number(text) => RawToken::Number(*text),
+            RawToken::Unit(unit) => RawToken::Unit(*unit),
+            RawToken::Url(url) => RawToken::Url(Url {
+                import_record_idx: url.import_record_idx,
+                loc: url.loc,
+            }),
+        }
+    }
+}
+
+impl<'bump> DeepClone<'bump> for RawToken {
+    #[inline]
+    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
+        // Every payload is a scalar or borrows the parser source or arena.
+        self.clone()
+    }
+}
 
 /// A color value with an unresolved alpha value (e.g. a variable).
 /// These can be converted from the modern slash syntax to older comma syntax.
@@ -1358,8 +1512,7 @@ impl TokenOrValue {
 }
 
 // ─── Clone / Debug shims ───────────────────────────────────────────────────
-// `selectors::parser::PseudoElement` / `PseudoClass` derive `Clone` over a
-// `TokenList` payload, and `media_query::MediaFeatureValue` derives
+// `media_query::MediaFeatureValue` derives
 // `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
 // (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
 // the structural clone here. Arena-slice payloads (`*const [u8]`) are

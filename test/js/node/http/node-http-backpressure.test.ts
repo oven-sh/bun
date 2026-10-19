@@ -3441,6 +3441,10 @@ describe("backpressure", () => {
       release() {
         while (this.releaseOne());
       }
+      // Fails the oldest write that the socket holds.
+      fail(err: Error) {
+        this.#held.shift()?.callback(err);
+      }
       // Like net.Socket: destroy() fails the write that the socket holds.
       _destroy(err: Error | null, callback: (err?: Error | null) => void) {
         for (const held of this.#held.splice(0)) held.callback(err ?? new Error("canceled"));
@@ -3925,6 +3929,93 @@ describe("backpressure", () => {
       await closed.promise;
       await turn();
       expect(events).toEqual(["the write callback: error", "close"]);
+    });
+
+    it("the callback of a write() gets an error when the socket fails the write of the chunk", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const socket = onBudgetSocket((req, res, socket) => {
+        const size = socket.writableHighWaterMark / 2;
+        res.setHeader("Content-Length", size);
+        // The head goes out at once. The chunk waits, under the high water mark of the socket.
+        socket.budget = 1024;
+        res.on("close", () => {
+          events.push("close");
+          closed.resolve();
+        });
+        res.write(Buffer.alloc(size, "a"), writeCallback(events, "the"));
+        wrote.resolve();
+      });
+      await wrote.promise;
+      await turn();
+      socket.fail(new Error("the socket failed the write"));
+      await closed.promise;
+      await turn();
+      expect(events).toEqual(["the write callback: error", "close"]);
+    });
+
+    // An ended socket emits no 'drain'. It still writes what it holds, so the callbacks of those writes run.
+    it.each([
+      ["in the turn of the writes", false],
+      ["in a later turn", true],
+    ] as const)(
+      "a socket that the handler ended %s brings the write() callbacks, no 'drain' and no error",
+      async (_when, later) => {
+        const events: string[] = [];
+        const wrote = Promise.withResolvers<void>();
+        const socket = onBudgetSocket((req, res, socket) => {
+          const mark = socket.writableHighWaterMark;
+          res.setHeader("Content-Length", 1.5 * mark);
+          // The head and two chunks go out at once. The third chunk waits, under the high water mark of the socket.
+          socket.budget = mark + 1024;
+          socket.on("error", (err: NodeJS.ErrnoException) => events.push(`socket error: ${err.code}`));
+          res.on("drain", () => events.push("drain"));
+          for (let i = 0; i < 3; i++) res.write(Buffer.alloc(mark / 2, "a"), writeCallback(events, `${i}`));
+          if (!later) socket.end();
+          wrote.resolve();
+        });
+        try {
+          await wrote.promise;
+          await turn();
+          if (later) socket.end();
+          await turn();
+          expect(events).toEqual(["0 write callback: done", "1 write callback: done"]);
+
+          socket.release();
+          await turn();
+          expect(events).toEqual(["0 write callback: done", "1 write callback: done", "2 write callback: done"]);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+
+    it("a response that ended while a write() callback waited for the socket runs the callback, then 'finish'", async () => {
+      const events: string[] = [];
+      const wrote = Promise.withResolvers<http.ServerResponse>();
+      const socket = onBudgetSocket((req, res, socket) => {
+        const size = socket.writableHighWaterMark / 2;
+        res.setHeader("Content-Length", size);
+        // The head goes out at once. The chunk waits, under the high water mark of the socket.
+        socket.budget = 1024;
+        res.on("finish", () => events.push("finish"));
+        res.write(Buffer.alloc(size, "a"), writeCallback(events, "the"));
+        wrote.resolve(res);
+      });
+      try {
+        const res = await wrote.promise;
+        await turn();
+        res.end();
+        await turn();
+        expect(events).toEqual([]);
+
+        socket.release();
+        await turn();
+        expect(events).toEqual(["the write callback: done", "finish"]);
+      } finally {
+        socket.destroy();
+      }
     });
 
     it.each(["write", "_send"] as const)(

@@ -5414,6 +5414,102 @@ test("a write() callback that throws on a socket from server.emit('connection') 
   expect(exitCode).toBe(0);
 });
 
+describe("a response on a socket from server.emit('connection') that waits for the socket", () => {
+  // Holds every write until release(). `lengths` has the byte length of each write that the socket got.
+  class HeldSocket extends Duplex {
+    lengths: number[] = [];
+    #held: (() => void)[] = [];
+    _read() {}
+    _write(chunk: Buffer, _encoding: string, callback: () => void) {
+      this.lengths.push(chunk.length);
+      this.#held.push(callback);
+    }
+    release() {
+      for (let callback; (callback = this.#held.shift());) callback();
+    }
+  }
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  async function run(handler: (res: ServerResponse, socket: HeldSocket, events: string[]) => void) {
+    const events: string[] = [];
+    const socket = new HeldSocket();
+    http.createServer((req, res) => handler(res, socket, events)).emit("connection", socket);
+    socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await turn();
+    socket.release();
+    await turn();
+    socket.destroy();
+    // Without the head.
+    return { events, lengths: socket.lengths.slice(1) };
+  }
+
+  // An empty write asks the socket to call back behind the bytes that it holds. The response needs it only for a
+  // callback or a 'drain' that waits for a socket under its high water mark. Over the mark the socket emits 'drain',
+  // an ended response has the callback of its last write, and with nothing that waits there is nothing to ask.
+  test.each([
+    {
+      name: "writes that nothing waits for",
+      handler: (res: ServerResponse) => {
+        res.setHeader("Content-Length", 200);
+        res.write(Buffer.alloc(100, "a"));
+        res.write(Buffer.alloc(100, "a"));
+      },
+      expected: { events: [], lengths: [100, 100] },
+    },
+    {
+      name: "a write() callback over the high water mark of the socket",
+      handler: (res: ServerResponse, socket: HeldSocket, events: string[]) => {
+        const size = socket.writableHighWaterMark + 1;
+        res.setHeader("Content-Length", size);
+        res.on("drain", () => events.push("drain"));
+        res.write(Buffer.alloc(size, "a"), () => events.push("callback"));
+      },
+      expected: { events: ["drain", "callback"], lengths: [new HeldSocket().writableHighWaterMark + 1] },
+    },
+    {
+      name: "an end() with a chunk",
+      handler: (res: ServerResponse, _socket: HeldSocket, events: string[]) => {
+        res.on("finish", () => events.push("finish"));
+        res.end(Buffer.alloc(100, "a"));
+      },
+      expected: { events: ["finish"], lengths: [100] },
+    },
+    {
+      name: "a write() callback under the high water mark of the socket",
+      handler: (res: ServerResponse, _socket: HeldSocket, events: string[]) => {
+        res.setHeader("Content-Length", 100);
+        res.write(Buffer.alloc(100, "a"), () => events.push("callback"));
+      },
+      expected: { events: ["callback"], lengths: [100, 0] },
+    },
+  ])("writes an empty chunk to the socket only to ask a socket under its high water mark: $name", async scenario => {
+    expect(await run(scenario.handler)).toEqual(scenario.expected);
+  });
+
+  // The server hears the 'drain' of the socket while the socket holds bytes again, under its high water mark, so no
+  // second 'drain' of the socket comes. (Node.js v26.3.0 emits no 'drain' on the response here.)
+  test("gets its 'drain' when a 'drain' listener of the socket, ahead of the one of the server, writes to the socket", async () => {
+    const events: string[] = [];
+    const socket = new HeldSocket();
+    socket.once("drain", () => socket.write(Buffer.alloc(100, "z")));
+    http
+      .createServer((req, res) => {
+        const size = socket.writableHighWaterMark + 1;
+        res.setHeader("Content-Length", size);
+        res.on("drain", () => events.push(`drain with ${socket.writableLength} bytes in the socket`));
+        events.push(`write() returned ${res.write(Buffer.alloc(size, "a"))}`);
+      })
+      .emit("connection", socket);
+    socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await turn();
+    expect(events).toEqual(["write() returned false"]);
+    socket.release();
+    await turn();
+    socket.destroy();
+    expect(events).toEqual(["write() returned false", "drain with 0 bytes in the socket"]);
+  });
+});
+
 // A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
 // belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
 // (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the

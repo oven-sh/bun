@@ -56,10 +56,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   // The drain callback of a write() that reported backpressure, and its async context (native's onwritable slot).
   let onwritable: ((...args: unknown[]) => void) | null | undefined = null;
   let onwritableFrame;
-  // The socket writes of this handle that carry onPieceFlushed and have not called it yet.
-  let piecesOut = 0;
 
-  function writeHeadToSocket(contentLength, callback?) {
+  function writeHeadToSocket(contentLength) {
     if (headWritten) return;
     headWritten = true;
     const statusCode = head?.statusCode ?? 200;
@@ -167,7 +165,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       out += "Transfer-Encoding: chunked\r\n";
     }
     out += "\r\n";
-    writeToSocket(out, callback);
+    writeToSocket(out);
   }
 
   function toBuffer(chunk, encoding) {
@@ -178,31 +176,18 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 
   // Like the `conn.writable` gate of Node's _writeRaw: a write to a socket that was ended (after the client's FIN) would destroy it.
   function writeToSocket(data, callback?) {
-    if (socket.writableEnded) return;
-    if (callback === onPieceFlushed) piecesOut++;
-    socket.write(data, callback);
+    if (!socket.writableEnded) socket.write(data, callback);
   }
 
-  // A socket under its high water mark emits no 'drain': the callback of the last write tells that it is empty.
-  function onPieceFlushed(err?) {
-    piecesOut--;
-    if (err || !onwritable || handle.ended || socket.writableEnded || socket.destroyed) return;
-    if (socket.writableLength === 0) settleWaiting(onwritable);
-    else askSocketWhenEmpty();
-  }
-
-  // The waiting callback needs a signal when the socket is empty. No write of this handle is left to give it when another
-  // writer queued bytes behind them (a raw socket.write(), a 1xx block), and the socket owes no 'drain' under its high water mark.
+  // The waiting callback needs a signal when the socket is empty. Over its high water mark the socket emits 'drain'.
+  // Under it, an empty write calls back behind every byte that the socket holds, like the one of end() below.
   function askSocketWhenEmpty() {
-    if (
-      !handle.ended &&
-      piecesOut === 0 &&
-      socket.writableLength > 0 &&
-      !socket.writableNeedDrain &&
-      !socket.destroyed
-    ) {
-      writeToSocket("", onPieceFlushed);
-    }
+    if (!socket.writableNeedDrain && !socket.writableEnded) socket.write("", "latin1", onSocketAnswered);
+  }
+
+  // An ended socket emits no 'drain': its 'finish' runs the write callbacks that wait.
+  function onSocketAnswered(err?) {
+    if (!err && onwritable && !socket.writableEnded) settleWaiting(onwritable);
   }
 
   function writeBody(buf, callback?) {
@@ -261,19 +246,19 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       return onwritable ?? undefined;
     },
     set onwritable(callback) {
-      onwritable = callback;
       onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
+      // An ended response waits for flushed(). Of the callback that ServerResponse#end() arms it keeps the async context.
+      if (this.ended) return;
+      onwritable = callback;
       if (callback) askSocketWhenEmpty();
     },
-    // The socket's bytes from the head of this response on, until the bytes of end() have left. Before the head they belong to the response ahead.
+    // What the socket holds: the response has the socket to itself until the bytes of end() have left.
     get bufferedAmount() {
-      return onwritable || (headWritten && !this.finished) ? socket.writableLength : 0;
+      return socket.writableLength;
     },
-    // Native on_drain: the socket drained, so the waiting callback runs. A stream that passes on the 'drain' of a transport under it can emit it while it still holds bytes.
+    // Native on_drain: the socket drained, so the waiting callback runs. Like the native one, it is armed again while the handle holds bytes.
     socketDrained() {
-      if (!onwritable) return;
-      if (socket.writableLength === 0) settleWaiting(onwritable);
-      else askSocketWhenEmpty();
+      if (onwritable) settleWaiting(onwritable);
     },
     // The socket finished or closed, so no 'drain' comes: `fn` runs, and the waiting callback never does.
     socketEnded(fn) {
@@ -304,7 +289,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
     },
     flushHeaders() {
-      writeHeadToSocket(null, onPieceFlushed);
+      writeHeadToSocket(null);
     },
     writeHeadAndEnd(
       statusCode,
@@ -323,9 +308,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     write(chunk, encoding, callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);
-      // The last socket write of this call reports when the socket has taken it.
-      writeHeadToSocket(null, buf && (buf.byteLength ?? buf.length) ? undefined : onPieceFlushed);
-      const length = writeBody(buf, onPieceFlushed);
+      writeHeadToSocket(null);
+      const length = writeBody(buf);
       // Node's rule: the socket's own write() reports the backpressure. A discarded chunk (HEAD, 204, 304) is null.
       if (buf === null || !socket.writableNeedDrain) return length;
       // Like native write_or_end: a negative result, and the callback waits for the drain.

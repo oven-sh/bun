@@ -18,8 +18,8 @@ import { join } from "node:path";
 const SIZE = 2 ** 31;
 const FIRST_LINE = "%\n";
 
-async function run(cmd: string[], env = bunEnv) {
-  await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
+async function run(cmd: string[]) {
+  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr, exitCode };
 }
@@ -67,34 +67,27 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
 
 // The text loader parses nothing, so it has no 2 GiB limit. Its text is one AST
 // string, and the length of an AST string is a u32: the text of 2**32 bytes was
-// an empty string, with no error. The array is never written or read, so this
-// takes no memory. A runner that cannot reserve the address space prints SKIP;
-// under ASAN the allocator has to return null for that, and not abort.
-test("Bun.Transpiler reports the limit of the text loader", async () => {
-  const { stdout, stderr, exitCode } = await run(
-    [
-      bunExe(),
-      "-e",
-      `
-        let input;
-        try {
-          input = new Uint8Array(2 ** 32);
-        } catch {
-          console.log("SKIP");
-          process.exit(0);
-        }
-        try {
-          console.log("no error: " + JSON.stringify(new Bun.Transpiler().transformSync(input, "text")));
-        } catch (e) {
-          console.log(e.name + ": " + e.message);
-        }
-      `,
-    ],
-    { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":") },
-  );
-  expect(["SKIP", "BuildMessage: File is too large (4294967296 bytes, 4 GiB maximum)"]).toContain(stdout);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-}, 30_000);
+// an empty string, with no error. The array is never written or read, so it
+// takes address space and no memory. A small machine can refuse to reserve it.
+test.skipIf(totalmem() < 8 * 1024 ** 3)("Bun.Transpiler reports the limit of the text loader", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      try {
+        const text = new Bun.Transpiler().transformSync(new Uint8Array(2 ** 32), "text");
+        console.log("no error: " + JSON.stringify(text));
+      } catch (e) {
+        console.log(e.name + ": " + e.message);
+      }
+    `,
+  ]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "BuildMessage: File is too large (4294967296 bytes, 4 GiB maximum)",
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 // Each file is sparse: everything past the first line is a hole, so it takes no
 // disk space and reads back as NUL bytes. Reading it costs the child process

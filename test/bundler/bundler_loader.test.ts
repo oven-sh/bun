@@ -813,7 +813,7 @@ describe("bundler", async () => {
         console.log(JSON.stringify(results));
       `;
 
-      test("is a build error unless a loader copies it as-is", async () => {
+      test.concurrent("is a build error unless a loader copies it as-is", async () => {
         using dir = tempDir("loader-four-gib-error", {
           "build-fixture.ts": buildFixture,
           "entry-txt.js": `import text from "./big.txt"; console.log(text.length);`,

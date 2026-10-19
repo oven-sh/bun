@@ -2442,9 +2442,11 @@ pub mod parse_worker {
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // SAFETY: `entry.contents` is owned by `task.stage` (written back by the
-            // caller after parse — see `ParseTask::run`), and the task lives in the
-            // arena of the bundle whose graph this `Source` ends up in.
+            // SAFETY: the bytes outlive this `Source`, which goes into `graph.input_files` on
+            // `Ok` and dies here on `Err`. A file read is in the worker arena. Plugin and
+            // in-memory contents are in `graph.input_files` or `BundleV2.free_list`. A native
+            // plugin's buffer is freed by `BundleV2.finalizers`. Each of them lasts until
+            // `deinit_without_freeing_arena`.
             contents: std::borrow::Cow::Borrowed(unsafe {
                 bun_ptr::detach_lifetime(entry_contents)
             }),

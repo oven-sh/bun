@@ -818,13 +818,14 @@ describe("bunshell", () => {
       // The program closes both pipes, tells the test, and exits when the test
       // closes the connection. The command is done when the program exits, not
       // when its pipes reach EOF.
-      test("waits for a command that closes its stdout and stderr early", async () => {
+      test.concurrent("waits for a command that closes its stdout and stderr early", async () => {
         using dir = tempDir("shell-cmd-subst-closer", {
           "closer.js": `
-            const fs = require("fs");
-            const socket = require("net").connect(Number(process.argv[2]), "127.0.0.1", () => {
-              fs.closeSync(1);
-              fs.closeSync(2);
+            import { closeSync } from "node:fs";
+            import { connect } from "node:net";
+            const socket = connect(Number(process.argv[2]), "127.0.0.1", () => {
+              closeSync(1);
+              closeSync(2);
               socket.write("closed");
             });
             socket.on("close", () => process.exit(7));`,

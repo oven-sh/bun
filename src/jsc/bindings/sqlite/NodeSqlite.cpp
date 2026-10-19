@@ -397,21 +397,13 @@ static JSValue sqliteValueToJS(JSGlobalObject* globalObject, TopExceptionScope& 
     (void)outer;
 }
 
-// The bytes of a value node:sqlite stores as a BLOB: an ArrayBufferView, an
-// ArrayBuffer or a SharedArrayBuffer (Node's IsArrayBufferView() ||
-// IsArrayBuffer() || IsSharedArrayBuffer(), nodejs/node#62061). std::nullopt
-// for anything else.
-//
-// sqlite3_bind_blob64(nullptr, 0) and sqlite3_result_blob64(nullptr, 0) set
-// NULL, not an empty BLOB (sqlite3.c:bindText's `if(zData!=0)` guard). Node's
-// ArrayBufferViewContents (src/util-inl.h) gives a view whose buffer data is
-// null non-null stack storage, so an empty or detached view is a zero-length
-// BLOB. For an ArrayBuffer it passes V8's ArrayBuffer::Data() through
-// unchanged. That is nullptr for a detached buffer and for a fixed-length
-// buffer of byteLength 0 (V8 allocates no backing store for it), so those
-// bind NULL. A resizable, growable or WebAssembly.Memory buffer reserves its
-// maximum up front, so it is a zero-length BLOB even at byteLength 0. The
-// returned span's data pointer reproduces that.
+// The bytes node:sqlite stores as a BLOB: an ArrayBufferView, an ArrayBuffer
+// or a SharedArrayBuffer (nodejs/node#62061). std::nullopt for anything else.
+// A null data pointer makes sqlite3_bind_blob64 / sqlite3_result_blob64 bind
+// NULL. Node (src/util-inl.h, ArrayBufferViewContents) gives a view with null
+// data stack storage, and passes V8's ArrayBuffer::Data() through for a
+// buffer: nullptr when detached or fixed-length at byteLength 0, non-null for
+// a resizable, growable or WebAssembly.Memory buffer.
 static std::optional<std::span<const uint8_t>> sqliteBlobSpan(JSGlobalObject* globalObject, JSValue value)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
@@ -2682,13 +2674,10 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
     size_t argc = callFrame->argumentCount();
     int paramCount = sqlite3_bind_parameter_count(m_stmt);
 
-    // Named parameters: Node treats any object in the first slot that is not
-    // a BLOB source as a named-params bag (V8's IsObject() &&
-    // !IsArrayBufferView() && !IsArrayBuffer() && !IsSharedArrayBuffer()).
-    // The same predicate as bindValue's BLOB arm, so a value bindValue stores
-    // as a BLOB is never read as an empty bag. Arrays are NOT special-cased:
-    // Node walks their own-enumerable keys ("0", "1", …) through the
-    // named-param path.
+    // Named parameters: Node treats a first argument that is an object and
+    // not a BLOB source (sqliteBlobSpan, the same predicate bindValue uses)
+    // as a named-params bag. Arrays are not special-cased: their
+    // own-enumerable keys ("0", "1", …) go through the named-param path.
     if (argc > 0) {
         JSValue arg0 = callFrame->argument(0);
         if (arg0.isObject() && !sqliteBlobSpan(globalObject, arg0)) {

@@ -459,7 +459,8 @@ async function runPlan(
     } else if (step.op === "releaseNow") {
       // The transport takes a held write in the turn of the writes. Node runs the callback of a write that
       // completed inside write() a tick later than this one, so the order of the callbacks is not checked.
-      if (T.release()) inOrder = false;
+      if (T.held() !== null && T.pending(res)) inOrder = false;
+      T.release();
     } else if (step.op === "release") {
       await turn();
       T.release();

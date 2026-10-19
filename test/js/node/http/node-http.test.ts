@@ -5430,12 +5430,18 @@ describe("a response on a socket from server.emit('connection') that waits for t
   }
   const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 
-  async function run(handler: (res: ServerResponse, socket: HeldSocket, events: string[]) => void) {
+  // `handler` can return what the response does in the next turn.
+  async function run(handler: (res: ServerResponse, socket: HeldSocket, events: string[]) => void | (() => void)) {
     const events: string[] = [];
     const socket = new HeldSocket();
-    http.createServer((req, res) => handler(res, socket, events)).emit("connection", socket);
+    let later: void | (() => void);
+    http.createServer((req, res) => void (later = handler(res, socket, events))).emit("connection", socket);
     socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
     await turn();
+    if (later) {
+      later();
+      await turn();
+    }
     socket.release();
     await turn();
     socket.destroy();
@@ -5481,6 +5487,16 @@ describe("a response on a socket from server.emit('connection') that waits for t
         res.write(Buffer.alloc(100, "a"), () => events.push("callback"));
       },
       expected: { events: ["callback"], lengths: [100, 0] },
+    },
+    {
+      // The second chunk comes behind the empty chunk, so the response asks again behind it, once.
+      name: "a write() callback in each of two turns",
+      handler: (res: ServerResponse, _socket: HeldSocket, events: string[]) => {
+        res.setHeader("Content-Length", 200);
+        res.write(Buffer.alloc(100, "a"), () => events.push("callback 1"));
+        return () => void res.write(Buffer.alloc(100, "a"), () => events.push("callback 2"));
+      },
+      expected: { events: ["callback 1", "callback 2"], lengths: [100, 0, 100, 0] },
     },
   ])("writes an empty chunk to the socket only to ask a socket under its high water mark: $name", async scenario => {
     expect(await run(scenario.handler)).toEqual(scenario.expected);

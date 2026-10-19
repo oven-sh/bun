@@ -4251,6 +4251,58 @@ describe("backpressure", () => {
   // A server that accepted the connection itself has no stream to ask. Its
   // response still owes one 'drain' for one backlog, when none of its bytes is
   // left to send.
+  // The tunnel socket is a stream: after a write() that returned false it emits 'drain' once, when it holds no bytes.
+  describe.each(["connect", "upgrade"] as const)(
+    "the socket of '%s' with more written than the kernel takes",
+    event => {
+      const TOTAL = 16 * 1024 * 1024;
+      const CHUNK = Buffer.alloc(64 * 1024, "b");
+      const answer =
+        event === "connect"
+          ? "HTTP/1.1 200 Connection Established\r\n\r\n"
+          : "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+      const request =
+        event === "connect"
+          ? "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+          : "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+
+      it("gets one 'drain', and a listener that destroys the socket there loses no byte", async () => {
+        const drains: number[] = [];
+        const wrote = Promise.withResolvers<boolean>();
+        const server = http.createServer();
+        server.on(event, (req, socket: Duplex) => {
+          socket.on("error", () => {});
+          socket.write(answer);
+          let returned = true;
+          for (let written = 0; written < TOTAL; written += CHUNK.length) returned = socket.write(CHUNK);
+          socket.on("drain", () => {
+            drains.push(socket.writableLength);
+            socket.destroy();
+          });
+          wrote.resolve(returned);
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        try {
+          await once(client, "connect");
+          client.pause();
+          client.on("error", () => {});
+          client.write(request);
+          expect(await wrote.promise).toBe(false);
+          let received = 0;
+          client.on("data", (chunk: Buffer) => (received += chunk.length));
+          client.resume();
+          await once(client, "close");
+          expect({ drains, body: received - answer.length }).toEqual({ drains: [0], body: TOTAL });
+        } finally {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        }
+      });
+    },
+  );
+
   describe.each(["http", "https"] as const)("a burst of writes in one turn on an %s server", protocol => {
     const TOTAL = 16 * 1024 * 1024;
     const CHUNK = Buffer.alloc(64 * 1024, "a");

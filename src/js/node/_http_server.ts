@@ -3003,7 +3003,6 @@ function advanceResponsePipeline(server, socket) {
   res.outputSize = 0;
   const ops = queued.ops;
   const opsLength = ops.length;
-  let hitBackpressure = false;
   if (opsLength) {
     // `finished` was set when the user called end() on the queued response;
     // clear it for the replay so the real write()/end() (end re-sets it) do
@@ -3024,7 +3023,7 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          if (ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]) === false) hitBackpressure = true;
+          ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]);
         } else {
           ServerResponsePrototypeEnd.$call(res, op[1], op[2], op[3]);
         }
@@ -3034,12 +3033,9 @@ function advanceResponsePipeline(server, socket) {
       res[kNeedDrain] = needDrain;
     }
   }
-  // What waited for the turn: the 'drain' that a write() owes, and the callbacks of res._send(). The drain callback of the handle brings them when the replay met backpressure.
-  if ((res[kNeedDrain] || res[kPendingCallbacks].length !== 0) && !queued.ended && !hitBackpressure) {
-    // With nothing left to send they come here, like the 'drain' of _flush(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1194-L1197
-    if (res.writableLength === 0) settleWhenEmpty(res);
-    else process.nextTick(settleWhenEmpty, res);
-  }
+  // What waited for the turn: the 'drain' that a write() owes, and the callbacks of res._send(). With nothing left
+  // to send they come here, like the 'drain' of _flush(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1194-L1197
+  settleWhenEmpty(res);
 }
 
 // The assignSocket() of a response that was queued. Its write() and end() calls are replayed after it.
@@ -3063,14 +3059,14 @@ function settleWhenEmpty(res) {
   // The handle of a queued response still answers for the response ahead of it.
   if (res.finished || res[kPipelinedQueuedState] !== undefined) return;
   const held = res[kPendingCallbacks].length;
-  const owed = res[kNeedDrain] && !res.destroyed;
+  const owed = res[kNeedDrain];
   if (held === 0 && !owed) return;
   const handle = res[kHandle];
   const socket = res[kSocket];
   // The handle still holds bytes, or its socket is gone and the close path fails the callbacks: the drain callback of the handle stays armed.
   if (
     handle.bufferedAmount > 0 ||
-    (owed ? handle.flags & NodeHTTPResponseFlags.closed_or_completed : res.destroyed || socket?.destroyed)
+    (owed ? handle.flags & NodeHTTPResponseFlags.closed_or_completed : socket?.destroyed)
   ) {
     if (handle.onwritable === undefined) handle.onwritable = allowWritesToContinue.bind(res);
     return;

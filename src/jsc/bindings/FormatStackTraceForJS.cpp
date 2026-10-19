@@ -833,6 +833,50 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+// Port of node's IsInsideNodeModules (src/node_util.cc). It reads V8's CurrentStackTrace, which does not list
+// engine builtins, so here they take none of the `limit` frames.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsInsideNodeModules, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSValue limitArgument = callFrame->argument(0);
+    int32_t limit = limitArgument.isInt32() ? limitArgument.asInt32() : 10;
+    int32_t listed = 0;
+    bool isInside = false;
+
+    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        using CodeType = JSC::StackVisitor::Frame::CodeType;
+        switch (visitor->codeType()) {
+        case CodeType::Native:
+            return WTF::IterationStatus::Continue;
+        case CodeType::Wasm:
+            // V8 names it wasm://wasm/<hash>, so it decides.
+            return WTF::IterationStatus::Done;
+        case CodeType::Function:
+            if (uncheckedDowncast<JSC::FunctionExecutable>(visitor->codeBlock()->ownerExecutable())->isPrivateBuiltinFunction())
+                return WTF::IterationStatus::Continue;
+            break;
+        case CodeType::Eval:
+        case CodeType::Module:
+        case CodeType::Global:
+            break;
+        }
+
+        if (listed++ >= limit)
+            return WTF::IterationStatus::Done;
+
+        // A built-in module: what a "node:" script name is to node.
+        if (visitor->codeBlock()->ownerExecutable()->sourceOrigin().url().protocolIs("builtin"_s))
+            return WTF::IterationStatus::Continue;
+
+        String sourceURL = Zig::sourceURL(visitor);
+        isInside = sourceURL.contains("/node_modules/"_s) || sourceURL.contains("\\node_modules\\"_s)
+            || sourceURL.contains("/node_modules\\"_s) || sourceURL.contains("\\node_modules/"_s);
+        return WTF::IterationStatus::Done;
+    });
+
+    return JSValue::encode(jsBoolean(isInside));
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);

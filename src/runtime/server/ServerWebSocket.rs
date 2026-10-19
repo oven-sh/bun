@@ -916,15 +916,8 @@ impl ServerWebSocket {
 
             let _loop_guard = vm.enter_event_loop_scope();
 
-            if let Some(sig) = signal {
-                // `sig` is held alive by the +1 ref released in `_cleanup`;
-                // BackRef invariant (pointee outlives the temporary) holds.
-                let sig = bun_ptr::BackRef::from(sig);
-                if !sig.aborted() {
-                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
-                }
-            }
-
+            // Before the abort listeners run: `message` can point into the loop's receive
+            // buffer, and a listener that ticks the event loop lets a read overwrite it.
             let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
@@ -937,6 +930,15 @@ impl ServerWebSocket {
                     return handler.run_error_callback(on_error, global_object, cached_this, err);
                 }
             };
+
+            if let Some(sig) = signal {
+                // `sig` is held alive by the +1 ref released in `_cleanup`;
+                // BackRef invariant (pointee outlives the temporary) holds.
+                let sig = bun_ptr::BackRef::from(sig);
+                if !sig.aborted() {
+                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
+                }
+            }
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {

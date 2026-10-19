@@ -118,19 +118,6 @@ private:
         return true;
     }
 
-    /* The parser state a handler must see: no frame open except the data message a control frame
-     * interrupts, and nothing of the current frame left in the socket's buffers. A handler can tick
-     * the event loop, and that tick reads the next frame on this socket through this parser. */
-    static bool betweenFrames(WebSocketState<isServer> *webSocketState, WebSocketData *webSocketData) {
-        if (!webSocketState->state.wantsHead || webSocketState->state.spillLength != 0 || webSocketData->controlTipLength != 0) {
-            return false;
-        }
-        if (webSocketState->state.opStack == -1) {
-            return webSocketData->fragmentBuffer.empty();
-        }
-        return webSocketState->state.opStack == 0 && webSocketState->state.opCode[0] < 3;
-    }
-
     /* Returns true on breakage */
     static bool handleFragment(char *data, size_t length, unsigned int remainingBytes, int opCode, bool fin, WebSocketState<isServer> *webSocketState, void *s) {
         /* WebSocketData and WebSocketContextData */
@@ -159,7 +146,6 @@ private:
 
                 /* Emit message event & break if we are closed or shut down when returning */
                 if (webSocketContextData->messageHandler) {
-                    ASSERT(betweenFrames(webSocketState, webSocketData) && webSocketState->state.opStack == -1);
                     webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
                     if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                         return true;
@@ -213,7 +199,6 @@ private:
 
                     /* Emit message and check for shutdown or close */
                     if (webSocketContextData->messageHandler) {
-                        ASSERT(betweenFrames(webSocketState, webSocketData) && webSocketState->state.opStack == -1);
                         webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
                         if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                             return true;
@@ -240,7 +225,6 @@ private:
                     if (opCode == PING) {
                         sendAutomaticPong(webSocket, std::string_view(data, length));
                         if (webSocketContextData->pingHandler) {
-                            ASSERT(betweenFrames(webSocketState, webSocketData));
                             webSocketContextData->pingHandler(webSocket, {data, length});
                             if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                 return true;
@@ -248,7 +232,6 @@ private:
                         }
                     } else if (opCode == PONG) {
                         if (webSocketContextData->pongHandler) {
-                            ASSERT(betweenFrames(webSocketState, webSocketData));
                             webSocketContextData->pongHandler(webSocket, {data, length});
                             if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                 return true;
@@ -275,7 +258,6 @@ private:
                         if (opCode == PING) {
                             sendAutomaticPong(webSocket, controlTip);
                             if (webSocketContextData->pingHandler) {
-                                ASSERT(betweenFrames(webSocketState, webSocketData));
                                 webSocketContextData->pingHandler(webSocket, controlTip);
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;
@@ -283,7 +265,6 @@ private:
                             }
                         } else if (opCode == PONG) {
                             if (webSocketContextData->pongHandler) {
-                                ASSERT(betweenFrames(webSocketState, webSocketData));
                                 webSocketContextData->pongHandler(webSocket, controlTip);
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
                                     return true;

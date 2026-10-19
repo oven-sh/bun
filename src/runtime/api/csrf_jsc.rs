@@ -67,7 +67,7 @@ fn default_secret<'a>() -> &'a [u8] {
 pub(crate) fn generate<'a>(
     cx: &mut JsScope<'a>,
     secret: Option<&'a [u8]>,
-    options: CSRFGenerateOptions<'a>,
+    options: &CSRFGenerateOptions<'a>,
 ) -> bindgen::Result<'a, JSValue> {
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -111,11 +111,10 @@ pub(crate) fn generate<'a>(
     )?)
 }
 
-#[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
 pub(crate) fn verify<'a>(
     heap: &JsHeap<'a>,
     token: &'a [u8],
-    options: CSRFVerifyOptions<'a>,
+    options: &CSRFVerifyOptions<'a>,
 ) -> bindgen::Result<'a, bool> {
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 

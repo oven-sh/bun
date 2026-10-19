@@ -244,6 +244,10 @@ describe.concurrent("--rules", () => {
         .slice(9 + id.length)
         .trim();
     expect(described("no-var")).toBe(frontmatter("eslint/no-var").description.replaceAll("`", ""));
+    // bunfig.toml can't turn these on.
+    const note = "These need an ESLint config that says which files are in the language.";
+    const noted = lines.flatMap((line, i) => (line === note ? [lines[i - 1].split(" ")[0]] : []));
+    expect(noted).toEqual(["json", "markdown"]);
     expect(lines.slice(-3)).toEqual([
       `${rules.length} rules. The ones marked error or warn are on by default.`,
       "Run bun lint --explain <rule> to read about a rule.",

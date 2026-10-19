@@ -1,7 +1,8 @@
-use crate::unicorn::statements_around;
+use crate::unicorn::{may_have_side_effects, statements_around};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::{is_global, is_visibly_array};
 
 /// Enforce combining multiple `Array#push()`, `Element#classList.{add,remove}()`, and `importScripts()` into one call.
 pub struct PreferSingleCall {
@@ -48,7 +49,22 @@ impl Rule for PreferSingleCall {
         if prev_info.description != curr_info.description || prev_info.receiver_text != curr_info.receiver_text {
             return;
         }
-        cx.report(curr_info.diagnostic_span, PREFER_SINGLE_CALL).data("description", curr_info.description).fix(|fixer| {
+        // oxlint treats every `.push` as `Array#push`, but `Readable#push(chunk, encoding)` is a different method.
+        // Merging also evaluates the second call's arguments before the first call runs, so they must not depend on it:
+        // `rows.push(nextId()); rows.push(nextId())`.
+        let is_plain = |call: Call<'a>| !call.args().iter().any(may_have_side_effects);
+        let is_safe = || match curr_info.description {
+            "Array#push()" => is_visibly_array(curr_info.receiver) && is_plain(curr_call.1),
+            "Array#unshift()" => is_visibly_array(curr_info.receiver) && is_plain(curr_call.1) && is_plain(prev_call.1),
+            // The first script can define a variable that the second call's argument reads, so only string literals are
+            // safe.
+            "importScripts()" => {
+                is_global(curr_info.receiver, "importScripts") && curr_call.1.args().iter().all(|it| it.tag() == ExprTag::String)
+            }
+            _ => false,
+        };
+        let report = cx.report(curr_info.diagnostic_span, PREFER_SINGLE_CALL).data("description", curr_info.description);
+        report.fix_where_safe(is_safe, |fixer| {
             let file = fixer.file();
             let text_of = |it: Expr<'a>| file.slice(it.outer_span());
             let (first, second) = (prev_es.span(), curr_es.span());
@@ -108,6 +124,8 @@ const DEFAULT_ARRAY_MUTATION_IGNORE: [&str; 12] = [
 
 struct CallInfo<'a> {
     description: &'static str,
+    /// The array, the element, or `importScripts`.
+    receiver: Expr<'a>,
     receiver_text: &'a [u8],
     diagnostic_span: Span,
     keep_second_call: bool,
@@ -142,6 +160,7 @@ impl PreferSingleCall {
             ExprKind::Ident(name) if name.is("importScripts") => {
                 return Some(CallInfo {
                     description: "importScripts()",
+                    receiver: callee,
                     receiver_text: b"importScripts",
                     diagnostic_span: callee.span(),
                     keep_second_call: false,
@@ -175,6 +194,7 @@ impl PreferSingleCall {
         };
         is_stable_receiver(receiver).then(|| CallInfo {
             description,
+            receiver,
             receiver_text: receiver.text(),
             diagnostic_span: property.span(),
             keep_second_call,

@@ -3940,6 +3940,107 @@ class Foo {
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/32167
+  describe("top-level this", () => {
+    it("is undefined in an ES module", () => {
+      // [source, output, output with minify.syntax]
+      const cases = [
+        // each kind of syntax that makes a file an ES module
+        ["export {}; console.log(this)", "export {};\nconsole.log(undefined)", "export {};\nconsole.log(void 0)"],
+        [
+          'import "foo"; console.log(this)',
+          'import"foo";\nconsole.log(undefined)',
+          'import"foo";\nconsole.log(void 0)',
+        ],
+        [
+          'console.log(this); import "foo"',
+          'console.log(undefined);\nimport"foo"',
+          'console.log(void 0);\nimport"foo"',
+        ],
+        ["import.meta.url; console.log(this)", "console.log(undefined)", "console.log(void 0)"],
+        ["await 0; console.log(this)", "await 0;\nconsole.log(undefined)", "await 0;\nconsole.log(void 0)"],
+        // each place where `this` is the `this` of the module
+        [
+          "export {}; const f = () => [this]",
+          "export {};\nconst f = () => [undefined]",
+          "export {};\nconst f = () => [void 0]",
+        ],
+        [
+          "export {}; const f = (x = this) => x",
+          "export {};\nconst f = (x = undefined) => x",
+          "export {};\nconst f = (x = void 0) => x",
+        ],
+        [
+          "export {}; class A { [this] = 1 }",
+          "export {};\n\nclass A {\n  [undefined] = 1;\n}",
+          "export {};\n\nclass A {\n  [void 0] = 1;\n}",
+        ],
+        [
+          "export {}; class X extends this {}",
+          "export {};\n\nclass X extends undefined {\n}",
+          "export {};\n\nclass X extends (void 0) {\n}",
+        ],
+        // a bare `delete undefined` is a SyntaxError in strict mode code
+        ["export {}; delete this", "export {};\ndelete (0, undefined)", "export {};\ndelete (0, void 0)"],
+        // folds that read the substituted value
+        [
+          "export {}; console.log(typeof this)",
+          'export {};\nconsole.log("undefined")',
+          'export {};\nconsole.log("undefined")',
+        ],
+        [
+          "export {}; console.log(this === undefined, this === null)",
+          "export {};\nconsole.log(true, false)",
+          "export {};\nconsole.log(!0, !1)",
+        ],
+        [
+          'export {}; var g = typeof this !== "undefined" ? this : globalThis',
+          "export {};\nvar g = globalThis",
+          "export {};\nvar g = globalThis",
+        ],
+      ];
+      for (const [code, out, min] of cases) {
+        expectPrinted_(code, out);
+        expectPrintedMin_(code, min);
+        ts.expectPrinted_(code, out);
+        ts.expectPrintedMin_(code, min);
+      }
+
+      // a type-only import or export makes a TypeScript file an ES module
+      ts.expectPrinted_('import type { T } from "foo"; console.log(this)', "console.log(undefined)");
+      ts.expectPrinted_("export type T = number; console.log(this)", "console.log(undefined)");
+    });
+
+    it("is not replaced in a function, a method, a field initializer or a static block", () => {
+      for (const [code, out] of [
+        ["export {}; function f() { return this }", "export {};\nfunction f() {\n  return this;\n}"],
+        ["export {}; class A { m() { return this } }", "export {};\n\nclass A {\n  m() {\n    return this;\n  }\n}"],
+        ["export {}; class A { x = this }", "export {};\n\nclass A {\n  x = this;\n}"],
+        [
+          "export {}; class A { static { this.y = 1 } }",
+          "export {};\n\nclass A {\n  static {\n    this.y = 1;\n  }\n}",
+        ],
+      ]) {
+        expectPrinted_(code, out);
+        expectPrintedMin_(code, out);
+        ts.expectPrinted_(code, out);
+        ts.expectPrintedMin_(code, out);
+      }
+    });
+
+    it("is exports in a file with no ES module syntax", () => {
+      for (const [code, out] of [
+        ["console.log(this)", "console.log(exports)"],
+        ["console.log(typeof this)", "console.log(typeof exports)"],
+      ]) {
+        expectPrinted_(code, out);
+        expectPrintedMin_(code, out);
+        ts.expectPrinted_(code, out);
+        ts.expectPrintedMin_(code, out);
+      }
+    });
+  });
+
   it("declarations named eval or arguments, and reserved words, in strict mode", () => {
     expectParseError(
       '"use strict"; var arguments = 1',

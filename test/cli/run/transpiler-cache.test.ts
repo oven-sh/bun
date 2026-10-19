@@ -123,6 +123,17 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("a cached ES module replays top-level this as undefined", async () => {
+    // https://github.com/oven-sh/bun/issues/32167
+    // The cache stores the printed module, with top-level `this` already replaced.
+    const source =
+      dummyFile(8 * 1024, "1", { code: "typeof this, this === undefined, this === null" }) + "\nexport {};\n";
+    writeFileSync(join(temp_dir, "a.mjs"), source);
+    expect(await bunRun(join(temp_dir, "a.mjs"), env)).toSpawn("undefined true false");
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "a.mjs"), env)).toSpawn("undefined true false");
+    expect(newCacheCount()).toBe(0);
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

@@ -1126,8 +1126,11 @@ impl<'s, T, A: Allocator> BlockList<'s, T, A> {
 
     /// Returns the list if it was created by `shared`.
     pub fn as_shared(&self) -> Option<&'s [T]> {
+        if self.block != Self::SHARED {
+            return None;
+        }
         // SAFETY: `shared` got it as a `&'s [T]`.
-        (self.block == Self::SHARED).then(|| unsafe { self.list.as_ref() })
+        Some(unsafe { self.list.as_ref() })
     }
 }
 

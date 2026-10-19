@@ -628,7 +628,7 @@ describe("--no-macros", () => {
 
 // Each parse-worker thread creates its own macro VM at its first macro call. The VM's transpiler
 // loads the `.env` files of the cwd into the VM's env loader, so the macro's `process.env` sees
-// them. That loader used to be the build's own loader, shared by every worker thread.
+// them. That loader is a copy of the build's, which every worker thread shares.
 describe("the macro VM's env loader is its own", () => {
   const macroModules = 8;
   const files: Record<string, string> = {
@@ -669,10 +669,10 @@ describe("the macro VM's env loader is its own", () => {
     }
   }, 60_000);
 
-  // `bun build` without `--env` does not read `.env`. The macro VM reads it for its own
-  // `process.env`, and that read must not change what the build's resolver sees.
-  test.concurrent("a macro's .env load does not reach the build's resolver", async () => {
-    using dir = tempDir("macro-env-loader-isolated", {
+  // `bun build` without `--env` does not read `.env`. A macro VM does, and the build takes over what
+  // it read before the imports of the module that calls the macro are resolved.
+  test.concurrent("a NODE_PATH that only .env sets resolves the imports of a module that calls a macro", async () => {
+    using dir = tempDir("macro-env-loader-node-path", {
       "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
       "macro.ts": `export function value(name: string) {\n  return name;\n}\n`,
       "with-macro.ts": `import { value } from "./macro.ts" with { type: "macro" };\nimport { dep } from "dep";\nconsole.log(value("a"), dep);\n`,
@@ -695,8 +695,8 @@ describe("the macro VM's env loader is its own", () => {
       };
     };
     const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
+    expect(withMacro).toEqual({ resolved: true, unresolved: false, exitCode: 0 });
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
-    expect(withMacro).toEqual(withoutMacro);
   });
 
   test.concurrent("a macro reads .env through its own loader", async () => {

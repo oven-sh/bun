@@ -446,8 +446,8 @@ impl Macro {
             // build thread reads it while this thread parses. This VM's transpiler
             // loads `.env` files into its loader, so it gets a copy, owned by the VM.
             // SAFETY: `env` comes from `MacroContext.env`, the transpiler's loader,
-            // which is live for the whole build. The bundler does not write it
-            // while parse tasks run.
+            // which is live for the whole build. While parse tasks run it is written
+            // only by `adopt_loaded`, under the lock that `clone_loaded` takes.
             let owned_env_loader = match unsafe { env.as_ref() } {
                 Some(env) => Some(Box::new(env.clone_loaded()?)),
                 None => None,
@@ -475,6 +475,11 @@ impl Macro {
         if is_new_vm {
             // SAFETY: `vm` is the freshly-allocated per-thread VM.
             unsafe { (*vm).transpiler.configure_defines()? };
+            // The build resolves the imports of this module with what the VM read, a `NODE_PATH` in `.env`.
+            // SAFETY: as for `clone_loaded` above; the VM's loader is its own.
+            if let Some(env) = unsafe { env.as_mut() } {
+                env.adopt_loaded(unsafe { (*vm).transpiler.env() })?;
+            }
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.

@@ -436,8 +436,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         #[cfg(windows)]
         let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
 
-        // `Loader::load_process` drops these; a package script inherits the
-        // channel on purpose (#11132), so restore them alongside `ipc_fd`.
+        // `Loader::load_process` drops these, but a package script inherits the channel on purpose (#11132).
         #[cfg(not(windows))]
         if ipc_fd.is_some() {
             if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
@@ -2400,24 +2399,32 @@ impl RunCommand {
         }
     }
 
-    /// Whether the nearest package.json, in `dir` or above it, has a syntax error. `enclosing_package_json` skips such a file.
+    /// The file that the error `msg` is located in.
+    fn file_of_error(msg: &bun_ast::Msg) -> Option<&[u8]> {
+        let at = msg.data.location.as_ref()?;
+        (msg.kind == bun_ast::Kind::Err).then_some(&at.file[..])
+    }
+
+    /// The nearest package.json, in `dir` or above it, if it has a syntax error. `enclosing_package_json` skips such a file.
     #[cold]
     #[inline(never)]
-    fn nearest_package_json_is_broken(log: &bun_ast::Log, dir: bun_resolver::DirInfoRef) -> bool {
+    fn nearest_broken_package_json(
+        log: &bun_ast::Log,
+        dir: bun_resolver::DirInfoRef,
+    ) -> Option<Box<[u8]>> {
         let loaded = dir.enclosing_package_json;
         let loaded_path_len = loaded.map_or(0, |it| it.source.path.text.len());
         // The resolver has read `dir` and its parents only, so a longer path is that of a nearer file.
-        log.msgs.iter().any(|msg| {
-            let Some(at) = &msg.data.location else {
-                return false;
-            };
-            msg.kind == bun_ast::Kind::Err
-                && at.file.len() > loaded_path_len
-                && paths::basename(&at.file) == b"package.json"
-                // A file of nothing but whitespace counts as no file.
-                && sys::File::read_from(Fd::cwd(), &at.file)
+        (log.msgs.iter().filter_map(Self::file_of_error))
+            .filter(|file| file.len() > loaded_path_len)
+            .filter(|file| paths::basename(file) == b"package.json")
+            // A file of nothing but whitespace counts as no file.
+            .filter(|file| {
+                sys::File::read_from(Fd::cwd(), file)
                     .is_ok_and(|text| !strings::trim(&text, b" \t\r\n").is_empty())
-        })
+            })
+            .max_by_key(|file| file.len())
+            .map(Box::from)
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
@@ -2539,10 +2546,12 @@ impl RunCommand {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
         let log = unsafe { ctx.log() };
-        let package_json_is_broken = !skip_script_check
-            && log.has_errors()
-            && Self::nearest_package_json_is_broken(log, root_dir);
-        if !skip_script_check && !package_json_is_broken {
+        let broken_package_json = if !skip_script_check && log.has_errors() {
+            Self::nearest_broken_package_json(log, root_dir)
+        } else {
+            None
+        };
+        if !skip_script_check && broken_package_json.is_none() {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
@@ -2701,7 +2710,9 @@ impl RunCommand {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
-                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    let keeps_link = ctx.runtime_options.preserve_symlinks_main && path.is_symlink;
+                    let text = if keeps_link { path.pretty } else { path.text };
+                    let text: Box<[u8]> = text.to_vec().into_boxed_slice();
                     return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
@@ -2811,7 +2822,7 @@ impl RunCommand {
         }
 
         // ── failure ─────────────────────────────────────────────────────────
-        if ctx.runtime_options.if_present && !package_json_is_broken {
+        if ctx.runtime_options.if_present && broken_package_json.is_none() {
             return Ok(true);
         }
 
@@ -2875,16 +2886,13 @@ impl RunCommand {
             return Ok(true);
         }
 
-        if log_errors || package_json_is_broken {
-            // The resolver records a package.json that fails to load (a
-            // syntax error, an unreadable file) in `ctx.log` and returns a
-            // `DirInfo` without it.
-            //
-            // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-            // CLI startup), process-lifetime.
-            let log = unsafe { ctx.log() };
-            let has_log_errors = log.has_errors();
-            if has_log_errors {
+        if log_errors || broken_package_json.is_some() {
+            if let Some(path) = &broken_package_json {
+                // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
+                // CLI startup), process-lifetime.
+                let log = unsafe { ctx.log() };
+                log.msgs
+                    .retain(|msg| Self::file_of_error(msg) == Some(&path[..]));
                 let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ));
@@ -2918,11 +2926,7 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
-                } else if !(has_log_errors && root_dir.enclosing_package_json.is_none()) {
-                    // With no usable package.json and an error that says
-                    // why, the error is the message. "Script not found"
-                    // would claim the script is absent from a file that
-                    // did not load.
+                } else {
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
@@ -3043,26 +3047,26 @@ impl RunCommand {
 
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks). `--preserve-symlinks-main` keeps the path as given.
-        let absolute_script_path: Option<Box<[u8]>> =
-            if ctx.runtime_options.preserve_symlinks_main_enabled() {
-                let mut cwd_buf = bun_paths::path_buffer_pool::get();
-                let mut joined_buf = bun_paths::path_buffer_pool::get();
-                match bun_core::getcwd(&mut cwd_buf) {
-                    Ok(cwd) => {
-                        paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
-                            cwd.as_bytes(),
-                            &mut joined_buf.0,
-                            &[&script_name_buf[..open_len]],
-                        )
-                        .map(Box::from)
-                    }
-                    Err(_) => None,
+        let keeps_link = ctx.runtime_options.preserve_symlinks_main;
+        let absolute_script_path: Option<Box<[u8]>> = if keeps_link {
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let mut joined_buf = bun_paths::path_buffer_pool::get();
+            match bun_core::getcwd(&mut cwd_buf) {
+                Ok(cwd) => {
+                    paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+                        cwd.as_bytes(),
+                        &mut joined_buf.0,
+                        &[&script_name_buf[..open_len]],
+                    )
+                    .map(Box::from)
                 }
-            } else {
-                bun_sys::get_fd_path(fd, &mut script_name_buf)
-                    .ok()
-                    .map(|resolved| Box::from(&*resolved))
-            };
+                Err(_) => None,
+            }
+        } else {
+            bun_sys::get_fd_path(fd, &mut script_name_buf)
+                .ok()
+                .map(|resolved| Box::from(&*resolved))
+        };
         let _ = bun_sys::close(fd);
         let Some(absolute_script_path) = absolute_script_path else {
             return false;
@@ -3071,9 +3075,7 @@ impl RunCommand {
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
-    /// `bun run -` / `node -` / `bun <(echo ...)` — read script from `pipe` into
-    /// `ctx.runtime_options.eval` and boot the VM with the synthetic `[stdin]`
-    /// path. `name` is the entry point as typed. `false` means `pipe` could not be read.
+    /// Runs the script read from `pipe` as `[stdin]`; `name` is the entry point as typed. `false`: `pipe` could not be read.
     fn exec_stdin(ctx: &mut ContextData, pipe: bun_sys::File, name: &[u8]) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
@@ -3215,9 +3217,7 @@ impl RunCommand {
             Self::exec_as_if_node_missing_script();
         }
 
-        // `node -` reads the script from stdin. `Arguments::parse` stopped at
-        // this positional, so everything after the `-` is already in
-        // `ctx.passthrough`; `exec_stdin` puts the `-` itself back in front.
+        // `Arguments::parse` stopped at the `-`, so what follows it is already in `ctx.passthrough`.
         if ctx.positionals[0].as_ref() == b"-" {
             if Self::exec_stdin(ctx, bun_sys::File::stdin(), b"-")? {
                 return Ok(());

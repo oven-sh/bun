@@ -41,12 +41,13 @@ describe("bun", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a package.json that fails to parse reports the parse error, not 'Script not found'", () => {
+  test("the parse error of the nearest package.json is printed before 'Script not found'", () => {
     using dir = tempDir("broken-package-json", {
-      "package.json": `{"name": "p", "scripts": {"s": "echo hi"`,
+      "package.json": `{"name": "top", "private": tru`,
+      "a/package.json": `{"name": "p", "scripts": {"s": "echo hi"`,
     });
     const { exitCode, stdout, stderr } = spawnSync({
-      cwd: String(dir),
+      cwd: join(String(dir), "a"),
       cmd: [bunExe(), "run", "s"],
       env: bunEnv,
       stdout: "pipe",
@@ -55,12 +56,13 @@ describe("bun", () => {
     expect(stdout.toString()).toBeEmpty();
     const err = stderr.toString();
     expect(err).toContain(`Expected "}" but found end of file`);
-    expect(err).toContain(join(String(dir), "package.json") + ":1:40");
-    expect(err).not.toContain("Script not found");
+    expect(err).toContain(join(String(dir), "a", "package.json") + ":1:40");
+    expect(err).not.toContain("Unexpected tru");
+    expect(err).toEndWith('error: Script not found "s"\n');
     expect(exitCode).toBe(1);
   });
 
-  test("a package.json that fails to parse in an ancestor is printed before 'Script not found'", () => {
+  test("a package.json that fails to parse above the nearest one is not reported", () => {
     using dir = tempDir("broken-ancestor-package-json", {
       "package.json": `{"name": "top", "private": tru`,
       "a/b/package.json": JSON.stringify({ name: "deep", scripts: { s: "echo hi" } }),
@@ -73,10 +75,7 @@ describe("bun", () => {
       stderr: "pipe",
     });
     expect(stdout.toString()).toBeEmpty();
-    const err = stderr.toString();
-    expect(err).toContain("Unexpected tru");
-    expect(err).toContain(join(String(dir), "package.json") + ":1:28");
-    expect(err).toContain('Script not found "nope"');
+    expect(stderr.toString()).toBe('error: Script not found "nope"\n');
     expect(exitCode).toBe(1);
   });
 
@@ -97,11 +96,11 @@ describe("bun", () => {
     };
 
     test("a package.json that fails to parse is an error", () => {
-      expect(run(`{\n<<<<<<< HEAD\n  "scripts": { "buildall": "echo a" }\n}`)).toEqual({
-        stdout: "",
-        stderr: expect.stringContaining(join("packages", "a", "package.json") + ":2:1"),
-        exitCode: 1,
-      });
+      const { stdout, stderr, exitCode } = run(`{\n<<<<<<< HEAD\n  "scripts": { "buildall": "echo a" }\n}`);
+      expect(stdout).toBe("");
+      expect(stderr).toContain(join("packages", "a", "package.json") + ":2:1");
+      expect(stderr).toEndWith('error: Script not found "buildall"\n');
+      expect(exitCode).toBe(1);
     });
 
     test.each(["\n", "[]"])("a package.json that is %j is no package.json", packageJson => {

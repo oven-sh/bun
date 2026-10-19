@@ -2852,8 +2852,7 @@ static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomic
 /// A SIGINT arrived during such a wait: stop waiting. Not a VM stop — the VM stays usable.
 static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-/// The loop that wait parks in. The poll retries on EINTR, so the signal does not end it:
-/// `sigint_handler` wakes it.
+/// The loop that wait parks in. The poll retries on EINTR, so `sigint_handler` wakes it.
 #[cfg(unix)]
 static SIGINT_WAKES: core::sync::atomic::AtomicPtr<bun_uws::Loop> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());

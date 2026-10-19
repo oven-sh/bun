@@ -178,6 +178,20 @@ fn lists_workspace(root: &[u8], dir: &[u8], buf: &mut PathBuffer) -> Option<bool
     })))
 }
 
+/// Whether `path` exists and, not following a link, has the owner of `cwd`, who could put the same file into `cwd`.
+#[cfg(unix)]
+fn has_owner_of(path: &ZStr, cwd: &[u8]) -> bool {
+    let Ok(file) = bun_sys::lstat(path) else {
+        return false;
+    };
+    bun_sys::lstat(&bun_core::ZBox::from_bytes(cwd)).is_ok_and(|dir| dir.st_uid == file.st_uid)
+}
+
+#[cfg(not(unix))]
+fn has_owner_of(path: &ZStr, _: &[u8]) -> bool {
+    bun_sys::exists_z(path)
+}
+
 /// The nearest bunfig.toml above `cwd` that is in the same project: not above the nearest package.json, or the workspace root that lists it.
 fn find_config_above<'buf>(cwd: &[u8], buf: &'buf mut PathBuffer) -> Option<&'buf ZStr> {
     // A dependency's scripts and a compiled executable are not part of the project they run in.
@@ -189,9 +203,7 @@ fn find_config_above<'buf>(cwd: &[u8], buf: &'buf mut PathBuffer) -> Option<&'bu
     let mut config_dir = cwd;
     loop {
         config_dir = bun_core::dirname(config_dir)?;
-        if bun_sys::exists_z(join_config_path(config_dir, b"bunfig.toml", buf)?)
-            && !bun_sys::is_shared_directory(config_dir)
-        {
+        if has_owner_of(join_config_path(config_dir, b"bunfig.toml", buf)?, cwd) {
             break;
         }
     }

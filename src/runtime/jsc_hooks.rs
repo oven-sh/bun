@@ -84,9 +84,7 @@ pub(crate) struct RuntimeState {
     /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub(crate) transpiler_arena: Box<bun_alloc::Arena>,
-    /// The env loader `vm.transpiler` points at when the VM owns its own
-    /// (`InitOptions::owned_env_loader`). `None` when the transpiler shares
-    /// the caller's loader. Freed with the state, after the VM.
+    /// `InitOptions::owned_env_loader`, which `vm.transpiler` points at. Freed with the state, after the VM.
     pub(crate) owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).

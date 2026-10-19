@@ -93,10 +93,7 @@ pub struct InitOptions {
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
-    /// An env loader the VM owns, for a VM whose caller's loader belongs to
-    /// another thread (a parse-worker macro VM copies the build's loader).
-    /// The VM's transpiler uses it in place of `env_loader`, and the VM's
-    /// runtime state frees it on teardown.
+    /// Used in place of `env_loader` and freed with the VM: a macro VM's copy of the loader of the build.
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
@@ -4335,8 +4332,7 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        // Not in `map`: `Loader::load_process` drops it so children don't inherit
-        // the channel. Main thread only (Node: no process.send() in workers).
+        // `Loader::load_process` keeps it out of `map` so that children don't inherit the channel.
         if self.is_main_thread() {
             if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
                 let advanced = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE

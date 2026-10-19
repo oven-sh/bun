@@ -612,6 +612,8 @@ describe("junit reporter", () => {
   it.each([
     [["--reporter=junit", "--reporter=dots", "--reporter-outfile=junit.xml"], true],
     [["--reporter-outfile=junit.xml"], false],
+    [["--reporter=junit", "--reporter=dots"], false],
+    [["--reporter=bogus", "--reporter=dots"], false],
   ])("%j writes the report: %p", async (flags, written) => {
     await using tmpDir = tempDir("junit-and-dots", {
       "package.json": "{}",

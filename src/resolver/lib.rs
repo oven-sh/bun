@@ -1741,7 +1741,12 @@ pub mod dir_entry_accessor {
 
     impl AccessorDirEntry for DirEntryIterResult {
         fn name_slice(&self) -> &[u8] {
-            self.entry.base()
+            // On disks that ignore case the lower-case name opens, and lower-case patterns match it.
+            if cfg!(any(windows, target_os = "macos")) {
+                self.entry.base_lowercase()
+            } else {
+                self.entry.base()
+            }
         }
         fn kind(&self) -> bun_sys::FileKind {
             self.kind

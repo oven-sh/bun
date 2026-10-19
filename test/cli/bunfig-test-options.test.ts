@@ -349,6 +349,19 @@ describe.concurrent("[test] filePatterns", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each(
+    named([
+      { bunfig: `filePatterns = ["*.a.ts", "*.b.ts"]`, args: [] },
+      { bunfig: `filePatterns = ["*.a.ts", "*.b.ts"]`, args: ["filter"] },
+    ]),
+  )("$name finds nothing and names the patterns", async ({ bunfig, args }) => {
+    using dir = tempDir("test-file-patterns", { ...files, "bunfig.toml": `[test]\n${bunfig}\n` });
+    const { stderr, exitCode } = await bunTest(String(dir), ...args);
+    expect(stderr).toContain("Tests need to match filePatterns in bunfig.toml: *.a.ts, *.b.ts\n");
+    expect(stderr).not.toContain(`".test"`);
+    expect(exitCode).toBe(1);
+  });
+
   test("a number is an error", async () => {
     using dir = tempDir("test-file-patterns", { ...files, "bunfig.toml": `[test]\nfilePatterns = 1\n` });
     const { stderr, exitCode } = await bunTest(String(dir));

@@ -18,6 +18,8 @@ use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use crate::cli::Command;
 
 const SKIP_LIST: &[&[u8]] = &[
+    // skip hidden directories
+    b".",
     // skip node_modules
     b"node_modules",
     // skip .git folder
@@ -456,24 +458,6 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
-    /// The file system looks up an entry without glob syntax, so it decides whether case matters.
-    fn find_literal(&self) -> Option<glob::walk::MatchedPath> {
-        let pattern: &[u8] = &self.patterns[self.pattern_idx];
-        if glob::detect_glob_syntax(pattern)
-            || strings::split_any(pattern, b"/\\").any(glob_ignore_fn)
-        {
-            return None;
-        }
-        let mut buf = path_buffer_pool::get();
-        let path = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            self.root_dir,
-            &mut buf[..],
-            &[pattern],
-        )?;
-        let stat = bun_sys::stat(path).ok()?;
-        bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode).then(|| path.as_bytes().into())
-    }
-
     /// As in `bun install`, a `!` entry removes a glob match, but never a path that's listed
     /// literally.
     fn is_excluded(&self, package_json_path: &[u8]) -> bool {
@@ -491,10 +475,6 @@ impl<'a> PackageFilterIterator<'a> {
             let Some(active) = &mut self.active else {
                 if self.pattern_idx >= self.patterns.len() {
                     return Ok(None);
-                }
-                if let Some(path) = self.find_literal() {
-                    self.pattern_idx += 1;
-                    return Ok(Some(path));
                 }
                 self.active = Some(self.start_walk()?);
                 continue;

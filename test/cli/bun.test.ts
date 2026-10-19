@@ -452,13 +452,13 @@ describe("bun", () => {
       }
 
       const project = {
-        "package.json": "{}",
+        "package.json": JSON.stringify({ scripts: { "dev": "echo dev", "test:unit": "echo unit" } }, null, 2),
         "myscript.ts": "",
         "foo.txt": "",
         "src/index.ts": "",
         "src/other.ts": "",
         "test/a.test.ts": "",
-        // bun.fish asks `bun getcompletes` for the scripts and bins. This project has none.
+        // bun.fish asks `bun getcompletes` for the scripts and bins. This one has no answer.
         "bin/bun": "#!/bin/sh\n",
       };
 
@@ -490,12 +490,14 @@ describe("bun", () => {
         ? Number(spawnSync({ cmd: ["bash", "-c", "echo ${BASH_VERSINFO[0]}"], env: bunEnv }).stdout.toString())
         : 0;
 
-      test.concurrent.skipIf(bashVersion < 4)("bash offers files, also after a flag or a script", async () => {
+      test.concurrent.skipIf(bashVersion < 4)("bash offers files and scripts, also after a flag", async () => {
         using dir = tempDir("completions-bash", { ...project, "bun.bash": await script("bash") });
         const expected = {
           "bun sr": ["src/"],
           "bun src/": ["src/index.ts", "src/other.ts"],
           "bun run src/": ["src/index.ts", "src/other.ts"],
+          "bun run d": ["dev"],
+          "bun run te": ["test/", "test:unit"],
           "bun --hot src/o": ["src/other.ts"],
           "bun --hot run src/o": ["src/other.ts"],
           "bun --cwd . run src/o": ["src/other.ts"],
@@ -665,6 +667,7 @@ describe("bun", () => {
           /^ {2}Also add it to the current project's package\.json as a link: dependency\.\n {2}bun link --save <package>$/m,
         ],
       ],
+      ["bun patch --help", ["patch"], [/^ {2}bun patch --commit --patches-dir 'my-patches' 'node_modules\/jquery'$/m]],
       [
         "bun audit --help",
         ["audit"],
@@ -697,7 +700,7 @@ describe("bun", () => {
       "index.ts": `console.log(process.env.FOO ?? "-", globalThis.PRE ?? "-", typeof X === "undefined" ? "-" : X);`,
       "with/package.json": JSON.stringify({
         name: "with",
-        scripts: Object.fromEntries(["dev", ...words].map(word => [word, `echo script-${word}`])),
+        scripts: Object.fromEntries(["dev", "run", ...words].map(word => [word, `echo script-${word}`])),
       }),
       "without/package.json": JSON.stringify({ name: "without" }),
       "without/a.test.ts": `import { test } from "bun:test"; test("in without", () => {});`,
@@ -765,6 +768,12 @@ describe("bun", () => {
     test("bun --filter with test runs the script", async () => {
       const { stdout, exitCode } = await run(["--filter", "with", "test"]);
       expect(stdout).toContain("script-test");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter=with --cwd . run dev runs the script that is named run", async () => {
+      const { stdout, exitCode } = await run(["--filter=with", "--cwd", ".", "run", "dev"]);
+      expect(stdout).toContain("script-run dev");
       expect(exitCode).toBe(0);
     });
 

@@ -1820,7 +1820,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
-    for &reporter in args.options(b"--reporter") {
+    if let Some((&reporter, earlier)) = args.options(b"--reporter").split_last() {
+        // Only the last one can fail the run.
+        for &reporter in earlier {
+            match reporter {
+                b"junit" if ctx.test_options.reporter_outfile.is_some() => {
+                    ctx.test_options.reporters.junit = true;
+                }
+                b"dots" | b"dot" => ctx.test_options.reporters.dots = true,
+                _ => {}
+            }
+        }
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
             if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {

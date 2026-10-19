@@ -167,10 +167,8 @@ impl CreateOptions {
         };
 
         let mut positionals = args.positionals().to_vec();
-        // What precedes the command is the value of a flag of `bun`.
-        let is_command = |it: &&[u8]| matches!(*it, b"c" | b"create");
-        if let Some(command) = positionals.iter().position(is_command) {
-            positionals.drain(..=command);
+        if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
+            positionals.remove(0);
         }
 
         Ok(CreateOptions {

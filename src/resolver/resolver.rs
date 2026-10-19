@@ -1643,9 +1643,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // Imports only, as in Node. For `EntryPointRun` the option holds `--preserve-symlinks-main`.
-            let preserve_symlinks =
-                self.opts.preserve_symlinks && kind != ast::ImportKind::EntryPointBuild;
+            // Imports only, as in Node. An entry point that is a link keeps the link's path in `pretty`.
+            let preserve_symlinks = self.opts.preserve_symlinks && !kind.is_entry_point();
 
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
@@ -2873,10 +2872,10 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
+        let node_path: Box<[u8]> = self
             .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
+            .map(DotEnv::Loader::node_path)
+            .unwrap_or_default();
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {

@@ -827,42 +827,47 @@ describe("bun", () => {
       "package.json": JSON.stringify({ name, scripts: { build: `echo BUILD-${name}` } }),
     });
 
+    const upperAndLower = { Core: member("core"), lower: member("lower") };
+    const below = ["./packages/**"];
+
     test.concurrent.each([
       {
         entry: "a glob",
         workspaces: ["packages/*"],
-        files: { packages: { Core: member("core"), lower: member("lower") } },
-      },
-      {
-        entry: "a literal path",
-        workspaces: ["packages/Core", "packages/lower"],
-        files: { packages: { Core: member("core"), lower: member("lower") } },
+        files: { packages: upperAndLower },
+        paths: below,
       },
       {
         entry: "a nested glob",
         workspaces: ["packages/*/*"],
         files: { packages: { UPPER: { Inner: member("core") }, group: { lower: member("lower") } } },
+        paths: below,
       },
-      // The names of these file systems ignore case.
+      // Where names ignore case, what is written in lower case finds the directory.
       ...(isMacOS || isWindows
         ? [
             {
               entry: "a literal path in lower case",
               workspaces: ["./packages/core", "packages/lower"],
-              files: { packages: { Core: member("core"), lower: member("lower") } },
+              files: { packages: upperAndLower },
+              paths: ["./packages/core", "./packages/lower"],
             },
-          ]
-        : []),
-      ...(isLinux
-        ? [
             {
-              entry: "a literal path, next to the same name in lower case",
-              workspaces: ["packages/Core", "packages/core"],
-              files: { packages: { Core: member("core"), core: member("lower") } },
+              entry: "a glob below a directory in lower case",
+              workspaces: ["packages/*"],
+              files: { Packages: upperAndLower },
+              paths: below,
             },
           ]
-        : []),
-    ])("is found through $entry in workspaces", async ({ workspaces, files }) => {
+        : [
+            {
+              entry: "a literal path",
+              workspaces: ["packages/Core", "packages/lower"],
+              files: { packages: upperAndLower },
+              paths: below,
+            },
+          ]),
+    ])("is found through $entry in workspaces", async ({ workspaces, files, paths }) => {
       using dir = tempDir("filter-upper-case-dir", {
         ...files,
         "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
@@ -888,7 +893,7 @@ describe("bun", () => {
         run("--filter", "*"),
         run("--workspaces"),
         run("--filter", "lower"),
-        run("--filter", "./packages/**"),
+        run(...paths.flatMap(path => ["--filter", path])),
       ]);
       const both = { ran: ["BUILD-core", "BUILD-lower"], errors: [], exitCode: 0 };
       expect({ all, everyWorkspace, byName, byPath }).toEqual({

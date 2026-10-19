@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { chmodSync, chownSync } from "node:fs";
 import { join, resolve } from "path";
 
 const fixturePath = (...segs: string[]) => resolve(import.meta.dirname, "fixtures", "preload", ...segs);
@@ -266,6 +267,21 @@ describe.concurrent("Given a working directory without a `bunfig.toml`", () => {
   ])("$name", async ({ files = {}, cwd = "packages/a", args = [], out }) => {
     using dir = tempDir("bunfig-above", { ...monorepo, ...files });
     expect(await run("index.ts", { args, cwd: join(String(dir), cwd) })).toEqual([out, "", 0]);
+  });
+
+  it.skipIf(isWindows || process.getuid?.() !== 0)("the one of another user does not count", async () => {
+    using dir = tempDir("bunfig-above", monorepo);
+    chownSync(join(String(dir), "bunfig.toml"), 65534, 65534);
+    expect(await run("index.ts", { cwd: join(String(dir), "packages/a") })).toEqual([none, "", 0]);
+  });
+
+  it.skipIf(isWindows).each([
+    { name: "group-writable", mode: 0o775 },
+    { name: "sticky and world-writable", mode: 0o1777 },
+  ])("one's own counts in a $name directory", async ({ mode }) => {
+    using dir = tempDir("bunfig-above", monorepo);
+    chmodSync(String(dir), mode);
+    expect(await run("index.ts", { cwd: join(String(dir), "packages/a") })).toEqual([fromRoot, "", 0]);
   });
 
   it("`bun <file>` in a workspace fails if the one of the workspace root cannot be parsed", async () => {

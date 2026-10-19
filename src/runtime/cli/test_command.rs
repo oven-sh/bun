@@ -2478,10 +2478,18 @@ impl TestCommand {
         if test_files.is_empty() && !pass_with_no_tests_from_filter {
             failed_to_find_any_tests = true;
 
+            let file_patterns = ctx.test_options.file_patterns.join(&b", "[..]);
+            let file_patterns = bstr::BStr::new(&file_patterns);
+
             // "bun test" - positionals[0] == "test"
             // Therefore positionals starts at [1].
             if ctx.positionals.len() < 2 {
-                if Output::is_ai_agent() {
+                if !file_patterns.is_empty() {
+                    pretty_errorln!(
+                        "<yellow>No tests found!<r>\n\nTests need to match <b>filePatterns<r> in bunfig.toml: {}\n",
+                        file_patterns
+                    );
+                } else if Output::is_ai_agent() {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
@@ -2526,9 +2534,16 @@ impl TestCommand {
                     Output::print_start_end(ctx.start_time, bun::time::nano_timestamp());
                 }
 
-                pretty_errorln!(
-                    "\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
-                );
+                if !file_patterns.is_empty() {
+                    pretty_errorln!(
+                        "\n\n<blue>note<r><d>:<r> Tests need to match <b>filePatterns<r> in bunfig.toml: {}",
+                        file_patterns
+                    );
+                } else {
+                    pretty_errorln!(
+                        "\n\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
+                    );
+                }
 
                 // print a helpful note
                 if let Some(i) = has_file_like {

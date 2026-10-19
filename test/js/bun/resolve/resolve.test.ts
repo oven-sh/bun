@@ -2220,6 +2220,18 @@ describe.concurrent("--preserve-symlinks", () => {
       {},
       "app/dep.mjs true\n",
     ],
+    [
+      "with NODE_PRESERVE_SYMLINKS_MAIN=1 an entry point runs where the link points",
+      ["imported.mjs"],
+      { NODE_PRESERVE_SYMLINKS_MAIN: "1" },
+      `${atTheTarget} true\n`,
+    ],
+    [
+      "with NODE_PRESERVE_SYMLINKS_MAIN=1 an entry point given without its extension runs where the link points",
+      ["run", "./imported"],
+      { NODE_PRESERVE_SYMLINKS_MAIN: "1" },
+      `${atTheTarget} true\n`,
+    ],
   ])("%s", async (_, args, env, stdout) => {
     expect(await run(args, env)).toEqual({ stdout, stderr: "", exitCode: 0 });
   });

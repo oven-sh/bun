@@ -164,6 +164,9 @@ pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 static DEFAULT_FILES_DISABLED: AtomicBool = AtomicBool::new(false);
 
+/// Held while a thread copies, adds to or reads a `Loader` that the other threads of a build use too.
+static SHARED: bun_core::Mutex<()> = bun_core::Mutex::new(());
+
 /// `--no-env-file` or bunfig `env = false`: from here on no `Loader` of the process reads a default `.env` file.
 pub fn disable_default_files() {
     DEFAULT_FILES_DISABLED.store(true, Ordering::Relaxed);
@@ -584,10 +587,9 @@ impl Loader {
         })
     }
 
-    /// A copy for a VM on another thread: the map plus the record of what the
-    /// source already loaded (process env, default and explicit `.env` files).
-    /// The copy reads only the files the source skipped, into its own map.
+    /// A copy for a VM on another thread, with the record of what `self` has read, so it reads only the rest.
     pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+        let _shared = SHARED.lock();
         Ok(Loader {
             map: self.map.clone_with_allocator()?,
             default_files_loaded: self.default_files_loaded,
@@ -597,6 +599,27 @@ impl Loader {
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })
+    }
+
+    /// Takes over what `copy`, made by `clone_loaded`, has read from env files since.
+    pub fn adopt_loaded(&mut self, copy: &Loader) -> Result<(), AllocError> {
+        let _shared = SHARED.lock();
+        for (key, entry) in copy.map.map.iter() {
+            if self.map.get(key).is_none() {
+                self.map.put(key, &entry.value)?;
+            }
+        }
+        self.default_files_loaded |= copy.default_files_loaded;
+        for file in copy.custom_files_loaded.keys() {
+            self.custom_files_loaded.insert(file)?;
+        }
+        Ok(())
+    }
+
+    /// `NODE_PATH`, as a copy: the thread of a macro VM may be in `adopt_loaded`.
+    pub fn node_path(&self) -> Box<[u8]> {
+        let _shared = SHARED.lock();
+        self.get(b"NODE_PATH").map(Box::from).unwrap_or_default()
     }
 
     pub fn load_process(&mut self) -> Result<(), AllocError> {
@@ -613,8 +636,7 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
-                    // Our inherited IPC channel is not for children spawned from
-                    // this env (Node drops these too); `bun run` re-adds them.
+                    // Not for the children spawned from this env, as in Node. `bun run` adds them again.
                     if is_ipc_channel_key(key) {
                         continue;
                     }

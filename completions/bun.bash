@@ -47,7 +47,7 @@ _read_scripts_in_package_json() {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
+        scripts="${scripts//[\"\']/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
             [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
@@ -58,8 +58,7 @@ _read_scripts_in_package_json() {
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";
     [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
+        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" )
     ]] && {
         local filtered_reply=();
         local reply_word script_name keep;
@@ -238,7 +237,6 @@ _bun_completions() {
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
             [[ "${cur_word}" != -* ]] && {
-                _read_scripts_in_package_json;
                 COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
                 _file_arguments "${RUNNABLE_FILES}";
             }

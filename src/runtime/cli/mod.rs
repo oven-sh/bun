@@ -745,6 +745,7 @@ pub(crate) mod command {
 
         // A flag of `bun` can have its value in the next argument, as in `bun --cwd dir run dev`.
         let mut after_value = false;
+        let mut in_packages = false;
         let name = loop {
             let Some(arg) = iter.next() else {
                 return Tag::AutoCommand;
@@ -756,6 +757,8 @@ pub(crate) mod command {
             if arg[1..].starts_with(b"e") || matches!(flag, b"--eval" | b"--print") {
                 return Tag::AutoCommand;
             }
+            in_packages |=
+                arg == b"--workspaces" || arg.starts_with(b"--filter") || arg.starts_with(b"-F");
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
@@ -779,13 +782,14 @@ pub(crate) mod command {
         use super::script_or_command::{Runs, is_of_the_project, runs};
         let tag = command_named(name);
         let project_has_it = match tag {
-            Tag::AutoCommand | Tag::RunCommand => false,
+            Tag::AutoCommand => false,
+            // `bun --workspaces --cwd dir run` runs the `run` script of each package.
+            Tag::RunCommand => after_value && in_packages,
             Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => is_of_the_project(name),
+            // `bun create` would ignore the `--cwd`, and a reserved word is no command.
+            Tag::CreateCommand | Tag::ReservedCommand => after_value,
             // `bun --cwd dir build` is `bun build` only if the project has no `build` to run. Scripts have `bun` in `PATH`.
-            _ if after_value => {
-                tag == Tag::ReservedCommand || name == b"bun" || runs(name) != Runs::Command
-            }
-            _ => false,
+            _ => after_value && (name == b"bun" || runs(name) != Runs::Command),
         };
         match project_has_it {
             true => Tag::AutoCommand,
@@ -1353,7 +1357,9 @@ pub(crate) mod command {
         // InitCommand parses its own argv (no Context).
         let argv = argv_zslice();
         print_help_if_asked_before(&argv, b"init", Tag::InitCommand);
-        change_directory_before(b"init");
+        if let Some(cwd) = lint_command::cwd_before(b"init") {
+            lint_command::change_directory(cwd);
+        }
         super::init_command::InitCommand::exec(after_command(&argv, b"init"))
     }
 
@@ -1434,13 +1440,6 @@ pub(crate) mod command {
             }
         }
         &[]
-    }
-
-    /// Applies `--cwd` among the flags of `bun`, which precede `command`, for a command that reads argv itself.
-    fn change_directory_before(command: &[u8]) {
-        if let Some(cwd) = lint_command::cwd_before(command) {
-            lint_command::change_directory(cwd);
-        }
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
@@ -1745,10 +1744,7 @@ pub(crate) mod command {
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
-                    // What precedes the command is the value of a flag of `bun`.
-                    if !strings::has_prefix(slice, b"--")
-                        && (positional_i > 0 || matches!(slice, b"create" | b"c"))
-                    {
+                    if !strings::has_prefix(slice, b"--") {
                         if positional_i == 1 {
                             template_name_start = remainder_i + 2;
                         }
@@ -1776,7 +1772,6 @@ pub(crate) mod command {
             Global::exit(0);
         }
 
-        change_directory_before(positionals[0]);
         let template_name = positionals[1];
 
         // if template_name is "react" — deprecated; redirect to react-app/vite.

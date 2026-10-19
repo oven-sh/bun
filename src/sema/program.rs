@@ -1048,7 +1048,19 @@ enum ParseSlot<'s, 'r> {
     },
 }
 
+/// The module names of a file that has many, for `Files::load_ahead`. A barrel file can name ten thousand modules, and none
+/// of their files is known until its names are resolved. So the threads that have nothing to load resolve some of them,
+/// which fills the resolver's cache. The thread that loads the file then finds them there.
+struct NamesToResolve<'r> {
+    /// The file.
+    path: &'r [u8],
+    names: Vec<(Atom, ResolutionMode)>,
+    /// The index of the first name that no thread has taken.
+    next: AtomicUsize,
+}
+
 struct AheadState<'s, 'r> {
+    to_resolve: Vec<Arc<NamesToResolve<'r>>>,
     to_read: std::collections::VecDeque<ToLoad<'r>>,
     /// Files that have been read, with their text. The text is `None` if the run already has the
     /// file (see `Run::has`).
@@ -1098,6 +1110,7 @@ impl<'s, 'r> Ahead<'s, 'r> {
         }
         Ahead {
             state: Guarded::new(AheadState {
+                to_resolve: Vec::new(),
                 seen,
                 to_read: (seeds.into_iter())
                     .map(|(path, is_lib)| ToLoad {
@@ -5049,6 +5062,7 @@ impl<'s> Files<'s> {
                                     paths[at],
                                     missing[at].is_lib,
                                     Some(text),
+                                    &|_| (),
                                 )));
                             });
                             for (&path, result) in paths.iter().zip(results) {
@@ -5908,6 +5922,20 @@ impl<'s> Files<'s> {
             has_to_read,
             has_loaded,
         } = ahead;
+        // Resolves the next few of `job.names`. Returns false if none is left.
+        let resolve_some = |job: &NamesToResolve<'r>| -> bool {
+            const AT_A_TIME: usize = 32;
+            let from = job.next.fetch_add(AT_A_TIME, Ordering::Relaxed);
+            let names = job.names.get(from..).unwrap_or_default();
+            let (resolver, importer) = resolver.redirect_for_resolution(job.path);
+            for &(name, mode) in names.iter().take(AT_A_TIME) {
+                let name = atoms.bytes(name);
+                if !name.is_empty() {
+                    resolver.resolve_module_name(name, importer, mode);
+                }
+            }
+            !names.is_empty()
+        };
         // With `once`, returns true after reading or processing one batch, or after one wait. Returns false once every
         // file is loaded.
         let load = |reads: bool, processes: bool, once: bool| -> bool {
@@ -5919,7 +5947,14 @@ impl<'s> Files<'s> {
                 if once && !std::mem::replace(&mut is_first, false) {
                     return true;
                 }
-                if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
+                if processes && let Some(job) = state.to_resolve.last().cloned() {
+                    drop(state);
+                    let is_any_left = resolve_some(&job);
+                    state = shared.lock();
+                    if !is_any_left {
+                        state.to_resolve.retain(|it| !Arc::ptr_eq(it, &job));
+                    }
+                } else if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
                     let count = state.to_read.len().min(RUN);
                     let some: Vec<_> = state.to_read.drain(..count).collect();
                     state.in_progress += count;
@@ -5959,6 +5994,21 @@ impl<'s> Files<'s> {
                     };
                     drop(state);
                     let arena = *arena.get_or_insert_with(|| session.arena());
+                    let resolve_ahead = |names: &[(Atom, ResolutionMode, bool)]| {
+                        const MANY: usize = 256;
+                        if names.len() < MANY {
+                            return;
+                        }
+                        let job = Arc::new(NamesToResolve {
+                            path,
+                            names: names.iter().map(|it| (it.0, it.1)).collect(),
+                            next: AtomicUsize::new(0),
+                        });
+                        shared.lock().to_resolve.push(Arc::clone(&job));
+                        has_changed.notify_all();
+                        while resolve_some(&job) {}
+                        (shared.lock().to_resolve).retain(|it| !Arc::ptr_eq(it, &job));
+                    };
                     let load_parsed = |specifies_esm: bool, parse: &Parse<'s>| {
                         let mut loaded = Self::load_parsed(
                             arena,
@@ -5970,6 +6020,7 @@ impl<'s> Files<'s> {
                             is_lib,
                             specifies_esm,
                             Err(parse),
+                            &resolve_ahead,
                         );
                         loaded.parse = package;
                         loaded
@@ -6032,7 +6083,17 @@ impl<'s> Files<'s> {
                             loaded
                         }
                         _ => Self::load_one(
-                            session, arena, run, host, resolver, options, atoms, path, is_lib, text,
+                            session,
+                            arena,
+                            run,
+                            host,
+                            resolver,
+                            options,
+                            atoms,
+                            path,
+                            is_lib,
+                            text,
+                            &resolve_ahead,
                         ),
                     };
                     let mut loaded = Box::new(loaded);
@@ -6329,6 +6390,7 @@ impl<'s> Files<'s> {
         path: &[u8],
         is_lib: bool,
         text: Option<Cow<'static, [u8]>>,
+        resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
         let parse = match run.filter(|run| run.has_file(host, path)) {
@@ -6376,6 +6438,7 @@ impl<'s> Files<'s> {
             is_lib,
             specifies_esm,
             Ok(parse),
+            resolve_ahead,
         )
     }
 
@@ -6391,6 +6454,7 @@ impl<'s> Files<'s> {
     }
 
     /// Everything that depends on where the file is. `Err`: the module is without `hir` and `bound`.
+    /// `resolve_ahead`: called with the module names before they're resolved one by one. It may resolve them.
     fn load_parsed<'r>(
         arena: &'s Arena,
         host: &dyn Host,
@@ -6401,6 +6465,7 @@ impl<'s> Files<'s> {
         is_lib: bool,
         specifies_esm: bool,
         parsed: Result<Parse<'s>, &Parse<'s>>,
+        resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
     ) -> Loaded<'s, 'r> {
         let (Ok(Parse { hir, bound, .. }) | Err(Parse { hir, bound, .. })) = &parsed;
         let is_esm = options.resolves_like_node && specifies_esm;
@@ -6561,6 +6626,7 @@ impl<'s> Files<'s> {
         }
         written.shared_sort_by_key(|name| name.0);
         module_names.extend(written.into_iter().map(|name| name.1));
+        resolve_ahead(&module_names);
         let mut imports = Vec::new();
         let (mut untyped_imports, mut untyped_import_files) = (Vec::new(), Vec::new());
         let mut untyped_import_alternates = Vec::new();

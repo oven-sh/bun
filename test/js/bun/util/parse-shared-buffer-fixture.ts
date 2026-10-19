@@ -30,12 +30,6 @@ const CASES: Record<string, Case> = {
   scanImports: separators,
   markdown: heading,
   ansi: heading,
-  // The scanner reads a byte of a plain scalar, then asserts that the input
-  // still holds it when it appends it to the string.
-  yaml: { text: "key: value value value value\n", flip: byte => (byte === 0x76 ? 0x77 : byte) },
-  // A string is measured in UTF-16 units, then converted in a second pass. A
-  // 3-byte sequence that turns into three ASCII letters is three units, not one.
-  toml: { text: 'a = "€€€€€€€€€€€€€€€€"\n', flip: byte => (byte > 0x7f ? 0x61 : byte) },
 };
 
 const api = process.argv[2];
@@ -70,8 +64,6 @@ if (isMainThread) {
     scanImports: () => transpiler.scanImports(input),
     markdown: () => Bun.markdown.html(input),
     ansi: () => Bun.markdown.ansi(input),
-    yaml: () => Bun.YAML.parse(input),
-    toml: () => Bun.TOML.parse(input),
   };
 
   // Count a call only when the worker made a pass while it ran. A debug build

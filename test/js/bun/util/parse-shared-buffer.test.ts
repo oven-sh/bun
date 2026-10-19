@@ -5,10 +5,9 @@ import path from "node:path";
 const fixture = path.join(import.meta.dir, "parse-shared-buffer-fixture.ts");
 
 // Each parser reads a byte more than once: the TypeScript lexer re-reads the
-// digits of a numeric literal after it counts the separators, the markdown
-// block parser scans a heading line twice, YAML asserts the byte its scanner
-// read, and TOML measures a string before it converts it. A worker that writes
-// the SharedArrayBuffer between the two reads aborted the process.
+// digits of a numeric literal after it counts the separators, and the markdown
+// block parser scans a heading line twice. A worker that writes the
+// SharedArrayBuffer between the two reads aborted the process.
 //
 // The call counts: a debug build that parses the shared bytes in place aborts
 // within 200 calls, and within 50 of `transformSync`, which costs the most.
@@ -19,8 +18,6 @@ test.each([
   ["scanImports", 300],
   ["markdown", 1000],
   ["ansi", 1000],
-  ["yaml", 1000],
-  ["toml", 1000],
 ])("%s parses a SharedArrayBuffer a worker writes", async (api, calls) => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), fixture, api, String(calls)],

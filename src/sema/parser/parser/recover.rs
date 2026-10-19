@@ -236,9 +236,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so that no statement is parsed
-    /// again for an `await` in a name: there it is a name. For another `await` `reparseTopLevelAwait` parses all of the
-    /// statement again, in the await context.
+    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so an `await` in a
+    /// property name stays a name and doesn't trigger a reparse. `parseBindingIdentifier` restores it too, which
+    /// matters for the first parameter of `(await) => {}`. Any other `await` identifier makes `reparseTopLevelAwait`
+    /// reparse the whole statement in the await context.
     #[cold]
     #[inline(never)]
     pub(crate) fn top_level_statement(&mut self) -> StmtId {
@@ -502,7 +503,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let is_parenthesized = self.is_parenthesized(expression);
         match kind {
             ExprKind::TaggedTemplate(call) if !is_parenthesized => {
-                let template = self.f[call].template;
+                let template = self.f.template_of(call);
                 let from = self.f.exprs.get(template.idx()).map_or(pos, |it| it.pos);
                 self.error(1443, (from, end), &[]);
             }

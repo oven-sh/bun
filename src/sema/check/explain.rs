@@ -1,6 +1,7 @@
 //! Errors in display form.
 
 use super::Checker;
+pub use super::print::to_valid_utf8;
 use super::sink::{Args, Reported};
 use crate::messages::{self, Category};
 use crate::program::FileId;
@@ -133,7 +134,7 @@ impl Explained {
             for chain in &message_chain {
                 chain.flatten(&mut text, 1);
             }
-            (category, super::print::to_valid_utf8(text), message_chain)
+            (category, to_valid_utf8(text), message_chain)
         }
         let mut d = d;
         let (category, text, message_chain) = reported(&mut d, Category::Error);

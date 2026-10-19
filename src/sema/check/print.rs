@@ -665,7 +665,7 @@ pub(super) fn type_to_string_with(
 }
 
 /// `strings.ToValidUTF8(text, "\uFFFD")` for text that leaves the checker.
-pub(super) fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
+pub fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
     if std::str::from_utf8(&text).is_ok() {
         return text;
     }

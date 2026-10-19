@@ -577,16 +577,15 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     }
     let compact = (groups.len() - shown).min(MAX_COMPACT_GROUPS);
     for group in &groups[shown..shown + compact] {
-        let first_line = strings::split(&group[0].message.message, b"\n")
-            .next()
-            .unwrap_or_default();
+        let message = escaped_lines(&group[0].message.message);
+        let first_line = strings::split(&message, b"\n").next().unwrap_or_default();
         let rule: Vec<u8> = escaped(group[0].rule()).into();
         pretty!(
             out,
             meta.color,
             "  {:>4}  {}  <d>{}<r>\n",
             group.len(),
-            escaped(first_line),
+            BStr::new(first_line),
             BStr::new(&linked(&rule, group[0].message, meta))
         );
     }

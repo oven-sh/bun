@@ -12,6 +12,7 @@ use bun_core::fmt::escape_control_chars;
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::check::explain::to_valid_utf8;
 use bun_sema::messages;
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
@@ -81,14 +82,15 @@ pub fn write_escaped(out: &mut Vec<u8>, text: &[u8]) {
     }
 }
 
-/// `text`, which has line breaks of its own: each of its lines as [`escaped`].
+/// `text`, which has line breaks of its own, `\n` or `\r\n`: each of its lines as [`escaped`], with `\n` between them.
 pub fn write_escaped_lines(out: &mut Vec<u8>, text: &[u8]) {
-    for (i, line) in strings::split(text, b"\n").enumerate() {
-        if i > 0 {
-            out.push(b'\n');
-        }
-        write_escaped(out, line);
+    let mut rest = text;
+    while let Some((line, after)) = strings::split_once_char(rest, b'\n') {
+        write_escaped(out, line.strip_suffix(b"\r").unwrap_or(line));
+        out.push(b'\n');
+        rest = after;
     }
+    write_escaped(out, rest);
 }
 
 /// Relative to the working directory, or absolute when that would need two or more `../`.
@@ -121,7 +123,7 @@ pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
     if !has_line_break(&d.args, &d.message_chain) {
         return write_escaped_lines(out, &d.text);
     }
-    // `d.text`, as `Explained::new` and `of_config_error` make it of these arguments.
+    // What `new_compiler_diagnostic`, `of_config_error` and `Explained::new` make a text of.
     fn composed(code: u32, args: &[Box<[u8]>], chain: &[MessageChain]) -> Vec<u8> {
         let template = messages::message(code).map_or("Unknown error.", |it| it.1);
         let mut text = Vec::new();
@@ -129,7 +131,7 @@ pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
         for it in chain {
             it.flatten(&mut text, 1);
         }
-        crate::in_terms_of_bun(text)
+        text
     }
     fn escaped_args(code: u32, args: &[Box<[u8]>]) -> Box<[Box<[u8]>]> {
         let on_one_line = |arg: &[u8]| Vec::from(escaped(arg));
@@ -150,17 +152,26 @@ pub fn write_message(out: &mut Vec<u8>, d: &Diagnostic) {
         });
         chain.collect()
     }
-    // A text that does not start as these arguments compose it is escaped as it is. What was added to it since follows.
-    let again = composed(d.code, &d.args, &d.message_chain);
-    let Some(added) = d.text.strip_prefix(&again[..]) else {
-        return write_escaped_lines(out, &d.text);
+    // `d.text` starts as one of these: what is composed, what `Explained::new` has of it, and what that is in terms of Bun.
+    let flat = composed(d.code, &d.args, &d.message_chain);
+    let valid = to_valid_utf8(flat.clone());
+    let reworded = crate::in_terms_of_bun(valid.clone());
+    let forms = [(&reworded, true), (&valid, false), (&flat, false)];
+    let Some((form, is_reworded)) = forms.into_iter().find(|it| d.text.starts_with(it.0)) else {
+        // Which line breaks are of an argument is not known: none is kept.
+        return write_escaped(out, &d.text);
     };
     let (args, chain) = (
         escaped_args(d.code, &d.args),
         escaped_chain(&d.message_chain),
     );
-    out.extend_from_slice(&composed(d.code, &args, &chain));
-    write_escaped_lines(out, added);
+    let again = composed(d.code, &args, &chain);
+    out.extend_from_slice(&match is_reworded {
+        true => crate::in_terms_of_bun(again),
+        false => again,
+    });
+    // What was added to it since.
+    write_escaped_lines(out, &d.text[form.len()..]);
 }
 
 /// `1234` as `1,234`.
@@ -191,6 +202,23 @@ fn columns(text: &[u8]) -> usize {
 fn fitting(text: &[u8], width: usize) -> &[u8] {
     let end = strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
     &text[..end]
+}
+
+/// [`fitting`] for text that is [`escaped`]: without the start of an escape sequence, which reads as another character.
+fn fitting_escaped(text: &[u8], width: usize) -> &[u8] {
+    let cut = fitting(text, width);
+    let Some(at) = strings::last_index_of_char(cut, b'\\') else {
+        return cut;
+    };
+    let sequence = match text.get(at + 1) {
+        Some(b'x') => r"\x1b".len(),
+        Some(b'u') => r"\u2028".len(),
+        _ => r"\n".len(),
+    };
+    match cut.len() < text.len().min(at + sequence) {
+        true => &cut[..at],
+        false => cut,
+    }
 }
 
 /// `d` as input for `bun_ast::Msg::write_format`: the message, its location, and the last `shown`
@@ -714,7 +742,7 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 0 => usize::MAX,
                 columns => columns.saturating_sub(width + 12),
             };
-            let cut = fitting(reported, room);
+            let cut = fitting_escaped(reported, room);
             out.extend_from_slice(cut);
             if cut.len() < reported.len() {
                 pretty!(out, style.color, "<d>\u{2026}<r>");

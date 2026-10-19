@@ -41,9 +41,11 @@ async function ownFormats(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exited] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).not.toMatch(RAW_CONTROL);
-    expect(stdout).not.toMatch(/^::forged::/m);
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    for (const text of [stdout, stderr]) {
+      expect(text).not.toMatch(RAW_CONTROL);
+      expect(text).not.toMatch(/^::forged::/m);
+    }
     expect(exited).toBe(exitCode);
     return stdout.trimEnd();
   });
@@ -106,14 +108,21 @@ describe.concurrent("control characters that the linted files have chosen", () =
     expect(agent).toContain(`\n<also>${shown}:2:1 ${shown}:3:1 `);
   });
 
-  // A rule has no arguments when its message is printed: these are the rule's own line breaks.
+  // A rule has no arguments when its message is printed: each line break of the message is one, `\n` or `\r\n`.
   test("a message keeps its line breaks", async () => {
-    const [pretty, agent] = await ownFormats({ "a.ts": `export let f: Function;\n` }, 0);
+    const files = {
+      "a.ts": `export let f: Function;\n`,
+      "b.js": String.raw`const o = { "a\r\nb": 1, "a\r\nb": 2 };` + `\nexport default o;\n`,
+    };
+    const [pretty, agent, annotated] = await ownFormats(files, 1, [{ GITHUB_ACTIONS: "true" }]);
     const message = [
       "The `Function` type accepts any function-like value.",
       "Prefer explicitly defining any function parameters and return type.",
     ];
     expect(pretty).toContain(lines(`warn: ${message[0]}`, `${message[1]}  @typescript-eslint/no-unsafe-function-type`));
     expect(agent).toContain(lines(`>`, ...message, `<source>`));
+    expect(pretty).toContain(lines(`error: Duplicate key 'a`, `b'.  no-dupe-keys`, `    at b.js:1:26`));
+    expect(agent).toContain(lines(`rule="no-dupe-keys">`, `Duplicate key 'a`, `b'.`, `<source>`));
+    expect(annotated).toContain(`,title=no-dupe-keys::Duplicate key 'a%0Ab'.`);
   });
 });

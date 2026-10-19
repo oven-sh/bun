@@ -58,6 +58,8 @@ async function inEveryFormat(dir: Dir, args: string[] = []) {
   return [...own, oneLine];
 }
 const lines = (...lines: string[]) => lines.join("\n");
+/** The lines of `printed` that start like `start`. */
+const of = (printed: string, start: RegExp) => printed.split("\n").filter(line => start.test(line));
 /** Each line that has carets below it, and the carets. */
 const marked = (printed: string) =>
   printed.split("\n").flatMap((line, i, all) => (/^ *\^+$/.test(line) ? [[all[i - 1], line]] : []));
@@ -84,6 +86,16 @@ const project = (files: Record<string, string | Buffer>) =>
 // What a name of a file or a directory has. Windows has no such name with a character below U+0020.
 const inName = isWindows ? "\u202e\u009b" : "\n::forged::\x1b[0m";
 const inNameEscaped = isWindows ? String.raw`\u202e\u009b` : String.raw`\n::forged::\x1b[0m`;
+
+// Some sandboxes have no pseudo-terminals.
+const hasTerminal = (() => {
+  try {
+    new Bun.Terminal({}).close();
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const wrong = `export const n: number = "s";\n`;
 const ts2322 = `Type 'string' is not assignable to type 'number'.`;
@@ -157,7 +169,6 @@ describe("control characters that the checked files have chosen", () => {
       String.raw`Element implicitly has an 'any' type because expression of type '"x\u001B[0m"' can't be used to index type '{ a: number; }'.`,
       String.raw`  Property 'x\x1b[0m' does not exist on type '{ a: number; }'.`,
     ];
-    const of = (printed: string, start: RegExp) => printed.split("\n").filter(line => start.test(line));
     expect(of(pretty.stdout, /^(error|  Property)/)).toEqual([
       `error: TS2882: ${messages[0]}`,
       `error: TS2882: ${messages[1]}`,
@@ -226,6 +237,65 @@ describe("control characters that the checked files have chosen", () => {
         `</error>`,
       ),
     );
+  });
+
+  // The checker has its text as UTF-8, and the arguments as the file has them.
+  test("an argument that is not UTF-8 is on one line too", async () => {
+    const name = (start: string) => start + "\xe9" + String.raw`\n</error>\n::forged::a`;
+    using dir = project({
+      "index.ts": Buffer.from(
+        lines(
+          `import "${name("./x")}";`,
+          `interface A { "${name("k")}": number }`,
+          `export const a: A = { "${name("k")}": "s" };`,
+          ``,
+        ),
+        "latin1",
+      ),
+    });
+    const [pretty, agent] = await ownFormats(dir);
+    const shown = (start: string) => start + "\ufffd" + String.raw`\n</error>\n::forged::a`;
+    const ts2882 = `Cannot find module or type declarations for side-effect import of '${shown("./x")}'.`;
+    const related = `The expected type comes from property '${shown("k")}' which is declared here on type 'A'`;
+    expect(of(pretty.stdout, /^(error|note)/)).toEqual([
+      `error: TS2882: ${ts2882}`,
+      `error: TS2322: ${ts2322}`,
+      `note: ${related}`,
+    ]);
+    expect(of(agent.stdout, /^(Cannot|<related|<\/error)/)).toEqual([
+      ts2882,
+      `</error>`,
+      `<related file="index.ts" line="2" column="15">${related}</related>`,
+      `</error>`,
+    ]);
+  });
+
+  // Only what the checker says of a file is in Bun's terms: `bun add -d` for `npm i --save-dev`.
+  test("an argument with a line break, in a message that is not in Bun's terms", async () => {
+    const name = String.raw`npm i --save-dev \n::forged::b`;
+    using dir = project({
+      "index.ts": lines(`interface A { "${name}": number }`, `export const a: A = { "${name}": "s" };`, ``),
+    });
+    using configured = project({
+      "tsconfig.json": `{"compilerOptions":{"noLib":true,"types":["${name}"]}}`,
+      "index.ts": `export {};\n`,
+    });
+    const [[pretty, agent], [configuredPretty, configuredForAgent]] = await Promise.all([
+      ownFormats(dir),
+      ownFormats(configured),
+    ]);
+    const related = `The expected type comes from property '${name}' which is declared here on type 'A'`;
+    expect(of(pretty.stdout, /^note/)).toEqual([`note: ${related}`]);
+    expect(of(agent.stdout, /^<related/)).toEqual([
+      `<related file="index.ts" line="1" column="15">${related}</related>`,
+    ]);
+    const ts2688 = [
+      `Cannot find type definition file for '${name}'.`,
+      `  The file is in the program because:`,
+      `    Entry point of type library '${name}' specified in compilerOptions`,
+    ];
+    expect(configuredPretty.stdout).toStartWith(lines(`error: TS2688: ${ts2688[0]}`, ...ts2688.slice(1), ``));
+    expect(configuredForAgent.stdout).toStartWith(lines(`<error code="TS2688">`, ...ts2688, `<related `));
   });
 
   test("an error of the configuration file, with its elaboration", async () => {
@@ -357,6 +427,32 @@ describe("control characters that the checked files have chosen", () => {
       Array.from({ length: 8 }, (_, i) => `  3  TS2882  ${message(i + 12)}  index.ts:${i + 13}`),
     );
     expect(groupedForAgent.stdout).toContain(`\n<also>${shown}:2:8 index.ts:1:8 index.ts:21:8 index.ts:41:8</also>\n`);
+  });
+
+  // The line of a kind of error is as wide as the terminal.
+  test.skipIf(isWindows || !hasTerminal)("a line that is cut does not end within an escape sequence", async () => {
+    // More than 50 errors of more than 12 kinds: the others have a line each.
+    const imports = Array.from({ length: 60 }, (_, i) => String.raw`import "./m${i % 20}\u001b[0m";`);
+    using dir = project({ "index.ts": lines(...imports, `export {};`, ``) });
+    const start = `  3  TS2882  Cannot find module or type declarations for side-effect import of './m12`;
+    const decoder = new TextDecoder();
+    let output = "";
+    await using proc = spawn({
+      cmd: [bunExe(), "check"],
+      cwd: String(dir),
+      env,
+      terminal: {
+        // Up to the `\x` of `\x1b`.
+        cols: start.length + 2,
+        rows: 24,
+        data(_terminal, chunk) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    expect(of(Bun.stripANSI(output), /^  3  TS2882  .*m12/).map(line => line.trimEnd())).toEqual([`${start}\u2026`]);
+    expect(exitCode).toBe(1);
   });
 
   test("a message in Bun's terms, of a module whose name has a line break", async () => {

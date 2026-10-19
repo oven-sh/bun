@@ -1608,7 +1608,7 @@ impl<'a> Installer<'a> {
                 bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
             match hardlinker.link() {
                 Ok(()) => true,
-                Err(err) if link_refusal(&err) != LinkRefusal::Fail => false,
+                Err(err) if needs_copy(&err) => false,
                 Err(err) => {
                     print_link_error(
                         "hardlink package folder",
@@ -3021,6 +3021,15 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
         }
     }
     sys::unlink(path)
+}
+
+/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+/// Not `link_refusal`: the copy of a `file:` folder opens the files already there (#45194).
+fn needs_copy(hardlink_err: &sys::Error) -> bool {
+    matches!(
+        hardlink_err.get_errno(),
+        sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
+    )
 }
 
 fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {

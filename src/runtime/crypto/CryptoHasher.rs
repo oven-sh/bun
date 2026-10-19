@@ -419,23 +419,23 @@ impl CryptoHasherClass for CryptoHasher {
         heap: &JsHeap<'a>,
         output: Option<DigestOutput<'a>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
-        finish(
-            heap,
-            output,
-            EVP_MAX_MD_SIZE_USIZE,
-            JsHeap::create_buffer,
-            |out| {
-                Ok(match self {
-                    CryptoHasher::Hmac(hmac) => hmac
-                        .take()
-                        .ok_or_else(|| Self::hmac_consumed(heap))?
-                        .r#final(out)
-                        .len(),
-                    CryptoHasher::Evp(evp) => evp.r#final(engine_of(heap), out).len(),
-                    CryptoHasher::Zig(zig) => zig.final_(out).len(),
-                })
-            },
-        )
+        // `finish` gives the closure all of an output array, so the array must hold
+        // what the arms write: the digest length. SHAKE writes as much as it gets.
+        let at_least = match output {
+            Some(DigestOutput::Into(_)) => self.byte_length(heap)? as usize,
+            _ => 0,
+        };
+        finish(heap, output, at_least, JsHeap::create_buffer, |out| {
+            Ok(match self {
+                CryptoHasher::Hmac(hmac) => hmac
+                    .take()
+                    .ok_or_else(|| Self::hmac_consumed(heap))?
+                    .r#final(out)
+                    .len(),
+                CryptoHasher::Evp(evp) => evp.r#final(engine_of(heap), out).len(),
+                CryptoHasher::Zig(zig) => zig.final_(out).len(),
+            })
+        })
     }
 
     fn hash<'a>(

@@ -4,7 +4,6 @@
 
 #include "NodeExeImportsWindows.h"
 #include <windows.h>
-#include <winternl.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -230,16 +229,23 @@ static const char* redirectNodeExeImports(void* base)
     return missing;
 }
 
+// UNICODE_STRING from <winternl.h>. That header's `STRING` is ambiguous with JSC::STRING in a unified build.
+struct NtUnicodeString {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR Buffer;
+};
+
 struct LdrDllNotificationData {
     ULONG Flags;
-    const UNICODE_STRING* FullDllName;
-    const UNICODE_STRING* BaseDllName;
+    const NtUnicodeString* FullDllName;
+    const NtUnicodeString* BaseDllName;
     PVOID DllBase;
     ULONG SizeOfImage;
 };
 constexpr ULONG LDR_DLL_NOTIFICATION_REASON_LOADED = 1;
 using LdrDllNotificationFunction = VOID(CALLBACK*)(ULONG reason, const LdrDllNotificationData*, PVOID context);
-using LdrRegisterDllNotificationFunction = NTSTATUS(NTAPI*)(ULONG flags, LdrDllNotificationFunction, PVOID context, PVOID* cookie);
+using LdrRegisterDllNotificationFunction = LONG(NTAPI*)(ULONG flags, LdrDllNotificationFunction, PVOID context, PVOID* cookie);
 
 static thread_local NodeExeImports::Scope* t_currentScope = nullptr;
 
@@ -247,7 +253,7 @@ static thread_local NodeExeImports::Scope* t_currentScope = nullptr;
 
 class NodeExeImports::ScopeAccess {
 public:
-    static void record(Scope& scope, void* base, const UNICODE_STRING* moduleName, const char* missing)
+    static void record(Scope& scope, void* base, const NtUnicodeString* moduleName, const char* missing)
     {
         // A module past the capacity is treated as unseen and is redirected again after LoadLibrary returns.
         if (scope.m_notifiedCount < std::size(scope.m_notified))
@@ -282,7 +288,7 @@ static bool registerDllNotification()
         auto ntdll = GetModuleHandleW(L"ntdll.dll");
         auto registerNotification = ntdll ? reinterpret_cast<LdrRegisterDllNotificationFunction>(GetProcAddress(ntdll, "LdrRegisterDllNotification")) : nullptr;
         PVOID cookie = nullptr;
-        return registerNotification && NT_SUCCESS(registerNotification(0, onDllNotification, nullptr, &cookie));
+        return registerNotification && registerNotification(0, onDllNotification, nullptr, &cookie) >= 0;
     }();
     return registered;
 }
@@ -327,7 +333,7 @@ WTF::String NodeExeImports::Scope::unresolvedImportError(HMODULE loaded)
             const wchar_t* base = path + length;
             while (base > path && base[-1] != L'\\' && base[-1] != L'/')
                 --base;
-            UNICODE_STRING name { USHORT((path + length - base) * sizeof(wchar_t)), USHORT((path + length - base) * sizeof(wchar_t)), const_cast<wchar_t*>(base) };
+            NtUnicodeString name { USHORT((path + length - base) * sizeof(wchar_t)), USHORT((path + length - base) * sizeof(wchar_t)), const_cast<wchar_t*>(base) };
             ScopeAccess::record(*this, loaded, length ? &name : nullptr, redirectNodeExeImports(loaded));
         }
         if (m_failed)

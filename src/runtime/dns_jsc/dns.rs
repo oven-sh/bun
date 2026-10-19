@@ -3674,6 +3674,7 @@ impl UvDnsPoll {
     }
 
     pub(crate) fn destroy(this: *mut Self) {
+        // SAFETY: `this` came from `heap::into_raw` in `new`, and nothing uses it after this call.
         unsafe { drop(bun_core::heap::take(this)) };
     }
 

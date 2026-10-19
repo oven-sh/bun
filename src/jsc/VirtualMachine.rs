@@ -1559,9 +1559,8 @@ impl VirtualMachine {
         self.transpiler.resolver.watcher = None;
         let watcher = core::mem::replace(&mut self.bun_watcher, core::ptr::null_mut());
         // SAFETY: as above.
-        if let ImportWatcher::Hot(w) | ImportWatcher::Watch(w) =
-            *unsafe { bun_core::heap::take(watcher) }
-        {
+        let watcher = unsafe { bun_core::heap::take(watcher) };
+        if let ImportWatcher::Hot(w) | ImportWatcher::Watch(w) = *watcher {
             // `shutdown` transferred ownership to the watcher thread.
             let _ = Box::into_raw(w);
         }

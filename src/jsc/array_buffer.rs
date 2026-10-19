@@ -698,7 +698,7 @@ struct NativeCopy {
 
 impl NativeCopy {
     /// Copies the first `len` bytes to `write_back_at` in `view`'s current range.
-    fn write_back(self: Box<Self>, view: JSValue, len: usize) {
+    fn write_back(&self, view: JSValue, len: usize) {
         let Some(offset) = self.write_back_at else {
             return;
         };

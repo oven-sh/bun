@@ -1425,14 +1425,11 @@ impl RecordChain {
     }
 }
 
-/// Returns `ptr`'s `(offset, length)` if `[offset, offset + length + tail)` is within `len`.
-fn checked_range(len: usize, ptr: StringPointer, tail: usize) -> Option<(usize, usize)> {
-    let off = ptr.offset as usize;
-    let n = ptr.length as usize;
-    off.checked_add(n)?
-        .checked_add(tail)
-        .filter(|&end| end <= len)
-        .map(|_| (off, n))
+/// Returns `ptr`'s byte range if it and the `tail` bytes after it are within `len`.
+fn checked_range(len: usize, ptr: StringPointer, tail: usize) -> Option<core::ops::Range<usize>> {
+    let start = ptr.offset as usize;
+    let end = start.checked_add(ptr.length as usize)?;
+    (end.checked_add(tail)? <= len).then_some(start..end)
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -1452,10 +1449,10 @@ unsafe fn slice_to(
     if ptr.length == 0 {
         return Ok(b"");
     }
-    let (off, n) = checked_range(len, ptr, 0).ok_or(what)?;
-    // SAFETY: `[off, off+n)` is within `len` (checked above) and, per the caller
+    let range = checked_range(len, ptr, 0).ok_or(what)?;
+    // SAFETY: `range` is within `len` (checked above) and, per the caller
     // contract, is a live 'static read-only allocation.
-    Ok(unsafe { core::slice::from_raw_parts(base.add(off), n) })
+    Ok(unsafe { core::slice::from_raw_parts(base.add(range.start), range.len()) })
 }
 
 /// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
@@ -1470,11 +1467,11 @@ unsafe fn slice_to_mut(
     ptr: StringPointer,
     what: Corruption,
 ) -> crate::Result<*mut [u8]> {
-    let (off, n) = checked_range(len, ptr, 0).ok_or(what)?;
-    // SAFETY: `off` is within `len` (checked above) of the writable allocation at `base`.
+    let range = checked_range(len, ptr, 0).ok_or(what)?;
+    // SAFETY: `range` is within `len` (checked above) of the writable allocation at `base`.
     Ok(core::ptr::slice_from_raw_parts_mut(
-        unsafe { base.add(off) },
-        n,
+        unsafe { base.add(range.start) },
+        range.len(),
     ))
 }
 
@@ -1491,13 +1488,13 @@ unsafe fn slice_to_z(
     if ptr.length == 0 {
         return Ok(ZStr::EMPTY);
     }
-    let (off, n) = checked_range(len, ptr, 1).ok_or(what)?;
-    // SAFETY: `off + n < len` (checked above), so the terminator byte is in bounds.
-    if unsafe { *base.add(off + n) } != 0 {
+    let range = checked_range(len, ptr, 1).ok_or(what)?;
+    // SAFETY: `range.end < len` (checked above), so the terminator byte is in bounds.
+    if unsafe { *base.add(range.end) } != 0 {
         return Err(what.into());
     }
-    // SAFETY: `[off, off+n]` is in-bounds with a NUL terminator at `base[off+n]`.
-    Ok(unsafe { ZStr::from_raw(base.add(off), n) })
+    // SAFETY: `range` is in bounds with a NUL terminator at `base[range.end]`.
+    Ok(unsafe { ZStr::from_raw(base.add(range.start), range.len()) })
 }
 
 /// A text import the bundler emitted as an asset (`Loader::Text` arm of

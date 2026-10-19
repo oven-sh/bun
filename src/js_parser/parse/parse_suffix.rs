@@ -503,6 +503,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
+    /// No token in this list can continue `a++`. Every suffix loop stops at `after_arrow_body_loc`.
+    fn sfx_end_after_update(p: &mut Self) {
+        if matches!(
+            p.lexer.token,
+            T::TOpenBracket
+                | T::TOpenParen
+                | T::TDot
+                | T::TQuestionDot
+                | T::TNoSubstitutionTemplateLiteral
+                | T::TTemplateHead
+                | T::TExclamation
+        ) {
+            p.after_arrow_body_loc = p.lexer.loc();
+        }
+    }
+
     fn sfx_t_minus_minus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if p.lexer.has_newline_before || level.gte(Level::Postfix) {
             return Ok(Continuation::Done);
@@ -519,6 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        Self::sfx_end_after_update(p);
         Ok(Continuation::Next)
     }
 
@@ -538,6 +555,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        Self::sfx_end_after_update(p);
         Ok(Continuation::Next)
     }
 

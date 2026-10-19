@@ -55,6 +55,9 @@ const plugin = (version: string) => ({
   "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
 });
 
+/** What a run prints that is about none of its files, and how it ends, when it formats them all. */
+const nothingElse = { stdout: "", stderr: "", exitCode: 0 };
+
 /**
  * `bun fmt` takes far longer to start than to format a component. So the texts of many tests are formatted in one run
  * for each configuration. A test adds its texts while the tests are collected. When it runs, it looks at what became of
@@ -77,7 +80,8 @@ function sharedRun(flags: string[] = []) {
       const about = /\n {3,4}at (\d+\.svelte)(:\d+:\d+)?\n\n$/.exec(message)?.[1] ?? "";
       said.set(about, (said.get(about) ?? "") + message);
     }
-    return { stdout, exitCode, files: new Map(names.map((it, index) => [it, after[index]])), said };
+    const rest = { stdout, stderr: said.get("") ?? "", exitCode };
+    return { files: new Map(names.map((it, index) => [it, after[index]])), said, rest };
   }
 
   /** With `config`: a run that has the texts from `first` up to `end`, or a new one of only those. */
@@ -87,7 +91,7 @@ function sharedRun(flags: string[] = []) {
     runs.set(key, sameConfig);
     let found = sameConfig.find(it => it.first <= first && end <= it.end);
     if (!found) sameConfig.push((found = { first, end, done: run(config, first, end) }));
-    return found.done;
+    return found;
   }
 
   return {
@@ -99,15 +103,18 @@ function sharedRun(flags: string[] = []) {
       return {
         names,
         async under(config: Record<string, string>) {
-          const { files, said } = await runWith(config, first, first + names.length);
+          const end = first + names.length;
+          const found = runWith(config, first, end);
+          const { files, said, rest } = await found.done;
+          // A run of only these texts: no other test looks at the rest of it.
+          if (found.first === first && found.end === end) expect(rest).toEqual(nothingElse);
           return { stderr: names.map(it => said.get(it) ?? "").join(""), files: names.map(it => files.get(it)) };
         },
       };
     },
     /** With a configuration: what the run of all the texts printed that is about no file, and how it ended. */
     async rest(config: Record<string, string>) {
-      const { stdout, exitCode, said } = await runWith(config, 0, texts.length);
-      return { stdout, stderr: said.get("") ?? "", exitCode };
+      return (await runWith(config, 0, texts.length).done).rest;
     },
   };
 }
@@ -176,8 +183,7 @@ describe.concurrent("Svelte", () => {
   const inOneCheck = sharedRun(["--debug-check"]);
 
   test.each(everyConfig)("the runs that the tables share say nothing else, and exit with 0: %j", async config => {
-    const nothing = { stdout: "", stderr: "", exitCode: 0 };
-    expect(await Promise.all([inOneRun.rest(config), inOneCheck.rest(config)])).toEqual([nothing, nothing]);
+    expect(await Promise.all([inOneRun.rest(config), inOneCheck.rest(config)])).toEqual([nothingElse, nothingElse]);
   });
 
   // One run for all the cases with the same options.

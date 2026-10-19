@@ -4879,7 +4879,8 @@ describe("row objects", () => {
 });
 
 describe("the newest run of a Statement owns its cursor", () => {
-  const invalidated = "This iterator was invalidated: its statement was run again";
+  const invalidated =
+    "This iterator was invalidated: its statement was run again. Use db.prepare() to get a statement with a cursor of its own.";
 
   function open() {
     const db = new Database(":memory:");
@@ -4971,7 +4972,7 @@ describe("the newest run of a Statement owns its cursor", () => {
     expect(await twoRequests(() => db.query(SQL))).toEqual({
       seen: [{ user: 1, n: 0 }],
       other: rowsOf(2),
-      error: expect.stringContaining(invalidated),
+      error: invalidated,
     });
     // db.prepare() gives each request a Statement of its own.
     expect(await twoRequests(() => db.prepare(SQL))).toEqual({ seen: rowsOf(1), other: rowsOf(2), error: undefined });

@@ -264,14 +264,3 @@ js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, str
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
-// `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`
-// monomorphization. Payload erased;
-// the native struct lives in `bun_runtime::crypto`.
-js_class_module!(JSMD4        = "MD4"        {});
-js_class_module!(JSMD5        = "MD5"        {});
-js_class_module!(JSSHA1       = "SHA1"       {});
-js_class_module!(JSSHA224     = "SHA224"     {});
-js_class_module!(JSSHA256     = "SHA256"     {});
-js_class_module!(JSSHA384     = "SHA384"     {});
-js_class_module!(JSSHA512     = "SHA512"     {});
-js_class_module!(JSSHA512_256 = "SHA512_256" {});

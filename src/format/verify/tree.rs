@@ -72,6 +72,7 @@ lists! {
     props: Prop,
     var_decls: VarDecl,
     calls: Call,
+    tagged_templates: (CallId, ExprId),
     cases: Case,
     jsx: Jsx,
     imports: Import,
@@ -87,6 +88,7 @@ lists! {
     non_null_ends: (ExprId, u32),
     jsx_expressions: (ExprId, u32, u32),
     modifiers_of_params: Span<ModifierId>,
+    modifiers_of_stmts: (StmtId, Span<ModifierId>),
     modifiers_of_props: (PropId, Span<ModifierId>),
     with_bodies: (u32, u32),
     import_attributes: (u32, ExprId),
@@ -403,8 +405,11 @@ impl Walk<'_, '_> {
         for (id, (x, y)) in (0..).map(ExprId).zip(a.exprs.iter().zip(b.exprs)) {
             self.expr_kind((id, x), (id, y))?;
         }
-        for (x, y) in a.stmts.iter().zip(b.stmts) {
-            self.modifiers(x.modifiers, y.modifiers)?;
+        for (id, (x, y)) in (0..).map(StmtId).zip(a.stmts.iter().zip(b.stmts)) {
+            self.modifiers(
+                stmt_modifiers_in(a.modifiers_of_stmts, id),
+                stmt_modifiers_in(b.modifiers_of_stmts, id),
+            )?;
             self.stmt_kind(x.kind, y.kind)?;
         }
         for (id, (x, y)) in (0..).map(TypeNodeId).zip(a.types.iter().zip(b.types)) {
@@ -897,7 +902,10 @@ impl Walk<'_, '_> {
             );
         }
         let result = self
-            .modifiers(x.modifiers, y.modifiers)
+            .modifiers(
+                stmt_modifiers_in(self.a.modifiers_of_stmts, a),
+                stmt_modifiers_in(self.b.modifiers_of_stmts, b),
+            )
             .and_then(|()| self.stmt_kind(x.kind, y.kind));
         self.at(result, x.start, y.start)
     }
@@ -1502,7 +1510,7 @@ impl Walk<'_, '_> {
         let (x, y) = both!(self, calls, a, b, "a call is missing");
         self.check(x.chain == y.chain, "the `?.` of a call")?;
         self.expr(x.callee, y.callee)?;
-        self.type_list(x.type_args, y.type_args)?;
+        self.type_list(x.type_args.of(self.a.ids), y.type_args.of(self.b.ids))?;
         // Allowed: `new A` is `new A()`.
         self.expr_list(x.args, y.args)
     }
@@ -1594,12 +1602,13 @@ impl Walk<'_, '_> {
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
             (Regex, Regex) => self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
             (Template { exprs: p }, Template { exprs: q }) => self.template((a, x, p), (y, q)),
-            (TaggedTemplate(x), TaggedTemplate(y)) => {
-                let (x, y) = both!(self, calls, x, y, "a call is missing");
+            (TaggedTemplate(a), TaggedTemplate(b)) => {
+                let (x, y) = both!(self, calls, a, b, "a call is missing");
                 self.expr(x.callee, y.callee)?;
-                self.type_list(x.type_args, y.type_args)?;
+                self.type_list(x.type_args.of(self.a.ids), y.type_args.of(self.b.ids))?;
                 // Its substitutions are the arguments.
-                self.expr(x.template, y.template)
+                let a = template_in(self.a.tagged_templates, a);
+                self.expr(a, template_in(self.b.tagged_templates, b))
             }
             (Array(x), Array(y)) => {
                 self.has_stack_left()?;
@@ -1664,16 +1673,16 @@ impl Walk<'_, '_> {
                 self.nested(value, value2)
             }
             (
-                Cond { test, yes, no },
+                Cond { test, branches },
                 Cond {
                     test: test2,
-                    yes: yes2,
-                    no: no2,
+                    branches: branches2,
                 },
             ) => {
+                let (x, y) = (branches.of(self.a.ids), branches2.of(self.b.ids));
                 self.expr(test, test2)?;
-                self.expr(yes, yes2)?;
-                self.nested(no, no2)
+                self.expr(x.yes, y.yes)?;
+                self.nested(x.no, y.no)
             }
             (Spread(x), Spread(y)) | (Await(x), Await(y)) | (AsConst(x), AsConst(y)) => {
                 self.nested(x, y)
@@ -1725,7 +1734,7 @@ impl Walk<'_, '_> {
                 },
             ) => {
                 self.nested(expr, expr2)?;
-                self.type_list(type_args, type_args2)
+                self.type_list(type_args.of(self.a.ids), type_args2.of(self.b.ids))
             }
             (Jsx(x), Jsx(y)) => {
                 self.has_stack_left()?;

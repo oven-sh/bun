@@ -37,7 +37,7 @@ impl Checker<'_, '_> {
     pub(super) fn check_duplicates(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
+            let symbol = bound.symbol(SymbolId(i as u32));
             let is_merged = symbol.flags.contains(SymFlags::MERGED);
             let is_class_or_function = |d: &Decl| matches!(d, Decl::Class(_) | Decl::Fn(_));
             if !is_merged
@@ -123,7 +123,7 @@ impl Checker<'_, '_> {
             let did_you_mean = self.did_you_mean_export_type_with_braces(file, refusal.decl);
             diag.related_information.extend(did_you_mean);
             let multiple_default_exports = message == 2528;
-            let declarations = &bound.symbols[refusal.symbol.idx()].decls[..refusal.count as usize];
+            let declarations = &bound.symbol(refusal.symbol).decls[..refusal.count as usize];
             for (index, &declaration) in declarations.iter().enumerate() {
                 let Some(mut d) =
                     self.new_diagnostic_for_declaration_name(file, declaration, message)
@@ -425,7 +425,7 @@ impl Checker<'_, '_> {
                 .enumerate()
                 .any(|(j, other)| j != i && other.0 == name)
             {
-                self.report_on_declaration_name(file, bound.symbols[symbol.idx()].decls[0], 2300);
+                self.report_on_declaration_name(file, bound.symbol(symbol).decls[0], 2300);
             }
         }
     }
@@ -436,7 +436,7 @@ impl Checker<'_, '_> {
         let files = self.files();
         let mut decls: Vec<Declaration> = Vec::new();
         for &part in files.parts(sym).iter() {
-            for &decl in &files.symbol(part).decls {
+            for &decl in files.symbol(part).decls {
                 let own = files.bound(part.file).symbol_of_declaration(decl);
                 decls.push((part.file, decl, own.is_none() || own == part.id));
             }
@@ -635,8 +635,8 @@ impl Checker<'_, '_> {
     /// `isTopLevelInExternalModuleAugmentation`
     fn is_top_level_in_external_module_augmentation(&self, file: FileId, decl: Decl) -> bool {
         let statement = self.files().statement_of_declaration(file, decl);
-        statement.is_some_and(|s| match self.bound(file).stmt_parent.get(s.idx()) {
-            Some(&Parent::Module(m)) => self.is_external_module_augmentation(file, m),
+        statement.is_some_and(|s| match self.bound(file).parent_of_stmt(s) {
+            Parent::Module(m) => self.is_external_module_augmentation(file, m),
             _ => false,
         })
     }
@@ -690,11 +690,9 @@ impl Checker<'_, '_> {
     /// `visited` when it collects the diagnostics of `collected`, so that `collected` has what the
     /// check of `visited` reports in it.
     pub(super) fn is_checked_no_later_than(&self, visited: FileId, collected: FileId) -> bool {
-        let (files, checker_count) = (self.files(), self.task.checker_count);
+        let files = self.files();
         let (rank, last) = (files.rank_of_file(visited), files.rank_of_file(collected));
-        rank <= last
-            && rank.checked_rem(checker_count) == last.checked_rem(checker_count)
-            && self.reports_semantic_errors(visited)
+        rank <= last && self.reports_semantic_errors(visited)
     }
 
     /// `report_conflicts_of_late_bound_members` for each class, interface and type literal whose
@@ -744,11 +742,11 @@ impl Checker<'_, '_> {
                     else {
                         continue;
                     };
-                    // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol.
-                    let name = if self.atoms().is_symbol_name(*name) {
-                        Arg::Bytes(&self.hir(of).text[from as usize..to as usize])
-                    } else {
-                        Arg::Atom(*name)
+                    // `name := memberName`, `DeclarationNameToString(declName)` for a unique symbol. The default library's
+                    // text isn't stored.
+                    let name = match self.hir(of).text.get(from as usize..to as usize) {
+                        Some(written) if self.atoms().is_symbol_name(*name) => Arg::Bytes(written),
+                        _ => Arg::Atom(*name),
                     };
                     for at in earlier.iter().chain(std::iter::once(refused)) {
                         if at.0 == file
@@ -893,11 +891,17 @@ impl Checker<'_, '_> {
                 // `symbolToString(symbol)`: the source text of the name in its first declaration.
                 let declarations = self.declarations_of_member(file, declaration);
                 let first = declarations.first().copied();
+                // The default library's text isn't stored. It writes a name without quotes, and `[Symbol.x]` as anyone does.
+                let is_stored = first.is_none_or(|(of, _)| !self.hir(of).text.is_empty());
+                let first = first.filter(|_| is_stored);
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(place);
                 // `GetTextOfNode` does not skip the `*` before the name.
                 let from = super::spans::start_of_error_range(self.hir(of), from, to);
-                let text = Arg::Bytes(&self.hir(of).text[from as usize..to as usize]);
+                let text = match is_stored || self.atoms().is_symbol_name(name) {
+                    true => Arg::Bytes(&self.hir(of).text[from as usize..to as usize]),
+                    false => Arg::Atom(name),
+                };
                 self.error_at(place, code, &[text]);
             }
         }

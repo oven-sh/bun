@@ -66,12 +66,9 @@ function hasReader(req: Http1FallbackRequest) {
 // Node's socketOnTimeout (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L891-L900) for the time from
 // the end of a response to the end of its request. No response is in flight then.
 function onHttp1KeepAliveTimeout(this: Http1FallbackSocket) {
-  const req = this[kHttp1KeepAliveRequest]!;
-  if (req.emit("timeout", this)) return;
-  // Not in Node: one read of the socket is up to 512 KiB (Node: 64 KiB), so a reader that is slow, and not gone, can
-  // take longer than the timeout to come back for the next one.
-  if (hasReader(req)) return void this.setTimeout(this.timeout!);
-  if (!this.server.emit("timeout", this)) this.destroy();
+  const reqTimeout = this[kHttp1KeepAliveRequest]!.emit("timeout", this);
+  const serverTimeout = this.server.emit("timeout", this);
+  if (!reqTimeout && !serverTimeout) this.destroy();
 }
 
 interface Http1FallbackResponseHead {
@@ -430,8 +427,9 @@ function connectionListenerHTTP1(server, socket, options) {
   // Node's parser consumes a socket that has a handle (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L840-L849):
   // all that the bytes of such a socket lead to runs in that context. For any other stream only the parser's callbacks do.
   const consumesHandle = socket._handle != null;
-  // The socket timeout to put back when the keep-alive timeout ends.
+  // The socket timeout to put back when the keep-alive timeout ends, and the keep-alive timeout that is armed.
   let timeoutBeforeKeepAlive = 0;
+  let keepAliveTimeoutArmed = 0;
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
@@ -586,6 +584,7 @@ function connectionListenerHTTP1(server, socket, options) {
         onResponseFinishHandleSocket(server, socket, this);
         if (socket[kKeepAliveTimeoutSet]) {
           timeoutBeforeKeepAlive = timeout || 0;
+          keepAliveTimeoutArmed = socket.timeout;
           socket[kHttp1KeepAliveRequest] = finishedReq;
           socket.on("timeout", onHttp1KeepAliveTimeout);
         }
@@ -663,7 +662,8 @@ function connectionListenerHTTP1(server, socket, options) {
       socket[kKeepAliveTimeoutSet] = false;
       socket[kHttp1KeepAliveRequest] = undefined;
       socket.removeListener("timeout", onHttp1KeepAliveTimeout);
-      socket.setTimeout(timeoutBeforeKeepAlive);
+      // A timeout that a listener set in the meantime stays.
+      if (socket.timeout === keepAliveTimeoutArmed) socket.setTimeout(timeoutBeforeKeepAlive);
     }
     // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L161-L162: the next message is read while this
     // body is still unread. Node's call has no condition. net.Socket#resume() here calls into the handle each time,

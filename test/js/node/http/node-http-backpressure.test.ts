@@ -2254,162 +2254,114 @@ describe("backpressure", () => {
           }
         });
 
-        it.each([NET_SOCKET, ALLOW_HTTP1])("asks the request first, as Node does: %s", async door => {
-          let asked = 0;
-          let abandoned: http.IncomingMessage | undefined;
-          const result = Promise.withResolvers<object>();
-          const connection = await connectTo(
-            door,
-            (req, res) => {
-              if (req.url !== "/abandoned") return void res.end("next;");
-              abandoned = req;
-              req.on("timeout", () => asked++);
-              afterTimeout(req, res).then(result.resolve);
-              abandonBody(req, res);
-            },
-            TIMEOUTS,
-          );
-          try {
-            writeBody(connection.client, "/abandoned");
-            connection.client.write(GET("/next"));
-            expect({ ...(await result.promise), asked }).toEqual({ timeoutAtFinish: 150, destroyed: false, asked: 1 });
-            // The request has kept its connection: the rest of its body arrives, and the next request is served.
-            abandoned!.resume();
-            await connection.receive("next;");
-          } finally {
-            connection.close();
-          }
-        });
-
-        it.each([
-          [NET_SOCKET, "keeps", false],
-          [NET_SOCKET, "destroys", true],
-          [ALLOW_HTTP1, "keeps", false],
-          [ALLOW_HTTP1, "destroys", true],
-        ] as const)("asks the server last: %s, a 'timeout' listener that %s the socket", async (door, _, destroys) => {
-          let listenerGot: unknown;
-          const result = Promise.withResolvers<object>();
-          const connection = await connectTo(
-            door,
-            (req, res) => {
-              if (req.url !== "/abandoned") return;
-              const socket = req.socket as net.Socket & { server: http.Server };
-              socket.server.once("timeout", (got: net.Socket) => {
-                listenerGot = got === socket ? "the socket" : got;
-                if (destroys) got.destroy();
+        // Node's socketOnTimeout asks the request and then the server, and destroys the socket when neither listens.
+        describe.each([NET_SOCKET, ALLOW_HTTP1])("%s", door => {
+          it.each<[string, string[]]>([
+            ["the request", ["request"]],
+            ["the server", ["server"]],
+            ["the request and then the server", ["request", "server"]],
+          ])("asks %s, and a 'timeout' listener keeps the connection", async (_, listeners) => {
+            const asked: string[] = [];
+            let abandoned: http.IncomingMessage | undefined;
+            const result = Promise.withResolvers<object>();
+            const connection = await connectTo(
+              door,
+              (req, res) => {
+                if (req.url !== "/abandoned") return void res.end("next;");
+                abandoned = req;
+                const socket = req.socket as net.Socket & { server: http.Server };
+                const ask = (who: string) => (got: unknown) =>
+                  asked.push(got === socket ? who : `${who}, not with the socket`);
+                if (listeners.includes("request")) req.on("timeout", ask("request"));
+                if (listeners.includes("server")) socket.server.once("timeout", ask("server"));
+                afterTimeout(req, res).then(result.resolve);
+                abandonBody(req, res);
+              },
+              TIMEOUTS,
+            );
+            try {
+              writeBody(connection.client, "/abandoned");
+              connection.client.write(GET("/next"));
+              expect({ ...(await result.promise), asked }).toEqual({
+                timeoutAtFinish: 150,
+                destroyed: false,
+                asked: listeners,
               });
-              afterTimeout(req, res).then(result.resolve);
-              abandonBody(req, res);
-            },
-            TIMEOUTS,
-          );
-          try {
-            writeBody(connection.client, "/abandoned");
-            expect({ ...(await result.promise), listenerGot }).toEqual({
-              timeoutAtFinish: 150,
-              destroyed: destroys,
-              listenerGot: "the socket",
-            });
-          } finally {
-            connection.close();
-          }
+              // The connection is kept: the rest of the body arrives, and the next request is served.
+              abandoned!.resume();
+              await connection.receive("next;");
+            } finally {
+              connection.close();
+            }
+          });
         });
 
-        it("waits for a reader that takes longer than the timeout to come back for the next read of the socket", async () => {
-          // One read of the socket is up to 512 KiB in Bun and 64 KiB in Node. At this rate the reader is busy with
-          // a read of Bun's for 125 ms, which is longer than the timeout, and with a read of Node's for 16 ms.
-          const RATE = 4 * 1024 * 1024;
-          const read = Promise.withResolvers<number>();
-          const connection = await connectTo(
-            NET_SOCKET,
-            async (req, res) => {
-              if (req.url !== "/slow") return void res.end("next;");
-              res.writeHead(202).end("accepted;");
-              let received = 0;
-              for await (const chunk of req) {
-                received += chunk.length;
-                await new Promise(resolve => setTimeout(resolve, (chunk.length / RATE) * 1000));
-              }
-              read.resolve(received);
-            },
-            { keepAliveTimeout: 50, keepAliveTimeoutBuffer: 0 },
-          );
-          try {
-            writeBody(connection.client, "/slow");
-            connection.client.write(GET("/next"));
-            expect(await connection.until(read.promise, "the end of the body")).toBe(BODY);
-            await connection.receive("next;");
-          } finally {
-            connection.close();
-          }
-        });
+        // A body that nothing reads is dropped as it arrives, so it never stops the socket. The timeout then measures
+        // the client: one that stops in the middle of such a body is idle.
+        it.each(withSocketTimeout)(
+          "closes a connection whose client stops in the middle of a body that nothing reads: %s",
+          async door => {
+            const result = Promise.withResolvers<object>();
+            const connection = await connectTo(
+              door,
+              (req, res) => {
+                afterTimeout(req, res).then(result.resolve);
+                res.end("early;");
+              },
+              TIMEOUTS,
+            );
+            try {
+              connection.client.write(`POST /unread HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${BODY}\r\n\r\n`);
+              connection.client.write(BLOCK);
+              expect(await result.promise).toEqual({ timeoutAtFinish: 150, destroyed: true });
+              await connection.closed;
+              expect(connection.statuses()).toEqual(["HTTP/1.1 200"]);
+            } finally {
+              connection.close();
+            }
+          },
+        );
 
-        it("is armed again for a reader, and closes the connection once that reader has gone", async () => {
-          let closed = false;
-          const connection = await connectTo(
-            NET_SOCKET,
-            (req, res) => {
-              const socket = req.socket;
-              // A reader that takes nothing: the body fills the buffer behind it.
-              const reader = () => {};
-              req.on("readable", reader);
-              socket.once("close", () => (closed = true));
-              // At the first timeout after the response, the reader gives the request up.
-              res.on("finish", () => {
-                socket.once("timeout", () => {
-                  req.removeListener("readable", reader);
-                  req.pause();
+        it.each(["before", "after"] as const)(
+          "ends when the request is complete, and the socket has the timeout that the listener set %s the response",
+          async when => {
+            const seen: { atFinish?: number; atNextRequest?: number; listenersLeft?: number } = {};
+            const connection = await connectTo(
+              NET_SOCKET,
+              (req, res) => {
+                const socket = req.socket;
+                if (req.url !== "/first") {
+                  seen.atNextRequest = socket.timeout;
+                  seen.listenersLeft! += socket.listenerCount("timeout");
+                  return void res.end("second;");
+                }
+                if (when === "before") socket.setTimeout(30_000);
+                seen.listenersLeft = -socket.listenerCount("timeout");
+                // The response is out while the listener still reads the body.
+                req.resume();
+                res.on("finish", () => {
+                  seen.atFinish = socket.timeout;
+                  if (when === "after") socket.setTimeout(30_000);
                 });
+                res.end("first;");
+              },
+              { keepAliveTimeout: 60_000, keepAliveTimeoutBuffer: 1000 },
+            );
+            try {
+              writeBody(connection.client, "/first");
+              connection.client.write(GET("/second"));
+              await connection.receive("second;");
+              // Node keeps the keep-alive timeout until the next request and then sets server.timeout, which is 0.
+              expect(seen).toEqual({
+                atFinish: 61_000,
+                atNextRequest: process.versions.bun ? 30_000 : 0,
+                listenersLeft: 0,
               });
-              res.writeHead(202).end("accepted;");
-            },
-            TIMEOUTS,
-          );
-          try {
-            writeBody(connection.client, "/abandoned-later");
-            // Two timeouts of 150 ms. Without the second one, no event ever comes: wait for it in a bounded loop.
-            for (let waited = 0; !closed && waited < 3000; waited += 25)
-              await new Promise(resolve => setTimeout(resolve, 25));
-            expect(closed).toBe(true);
-          } finally {
-            connection.close();
-          }
-        });
-
-        it("ends when the request is complete, and the socket gets its own timeout back", async () => {
-          const seen: { atFinish?: number; atNextRequest?: number; listenersLeft?: number } = {};
-          const connection = await connectTo(
-            NET_SOCKET,
-            (req, res) => {
-              const socket = req.socket;
-              if (req.url !== "/first") {
-                seen.atNextRequest = socket.timeout;
-                seen.listenersLeft! += socket.listenerCount("timeout");
-                return void res.end("second;");
-              }
-              socket.setTimeout(30_000);
-              seen.listenersLeft = -socket.listenerCount("timeout");
-              // The response is out while the listener still reads the body.
-              req.resume();
-              res.on("finish", () => (seen.atFinish = socket.timeout));
-              res.end("first;");
-            },
-            { keepAliveTimeout: 60_000, keepAliveTimeoutBuffer: 1000 },
-          );
-          try {
-            writeBody(connection.client, "/first");
-            connection.client.write(GET("/second"));
-            await connection.receive("second;");
-            // Node keeps the keep-alive timeout until the next request and then sets server.timeout, which is 0.
-            expect(seen).toEqual({
-              atFinish: 61_000,
-              atNextRequest: process.versions.bun ? 30_000 : 0,
-              listenersLeft: 0,
-            });
-          } finally {
-            connection.close();
-          }
-        });
+            } finally {
+              connection.close();
+            }
+          },
+        );
 
         // Node destroys the socket behind every `Connection: close` response. Bun does that only when nothing takes
         // the rest of the request off the connection, so that a client that sends its body first still gets the response.
@@ -2448,13 +2400,12 @@ describe("backpressure", () => {
             const connection = await connectTo(NET_SOCKET, abandon, { keepAliveTimeout: 0 });
             try {
               writeBody(connection.client, "/abandoned", "Connection: close\r\n");
-              // The client closes when it gets the FIN behind the response. A socket that the body still kept
-              // stopped would be open then.
+              // A socket that the body still kept stopped would be open, and the client with it.
               await connection.closed;
-              expect({ statuses: connection.statuses(), destroyed: connection.serverSide()?.destroyed }).toEqual({
-                statuses: ["HTTP/1.1 413"],
-                destroyed: true,
-              });
+              expect(connection.serverSide()?.destroyed).toBe(true);
+              // The socket is destroyed with bytes of the body unread, so a reset follows the response, as in Node.
+              // Windows drops what the client has not read yet when the reset arrives.
+              if (process.platform !== "win32") expect(connection.statuses()).toEqual(["HTTP/1.1 413"]);
             } finally {
               connection.close();
             }

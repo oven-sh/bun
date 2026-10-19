@@ -234,9 +234,9 @@ pub(super) struct Relater {
     /// Each type with its push number. See `is_created_no_earlier`.
     pub(super) source_stack: Vec<(TypeId, u32)>,
     pub(super) target_stack: Vec<(TypeId, u32)>,
-    /// See `is_last_deeply_nested`.
-    source_identities: Vec<(TypeId, RecursionId)>,
-    target_identities: Vec<(TypeId, RecursionId)>,
+    /// What `is_last_deeply_nested` has worked out about a prefix of each stack.
+    source_identities: Vec<OnStack>,
+    target_identities: Vec<OnStack>,
     pub(super) expanding: u8,
     pub(super) overflow: bool,
     /// A cached `COMPLEXITY_OVERFLOW` entry answered one of the comparisons.
@@ -353,6 +353,22 @@ pub(super) type RecursionId = (u8, u32, u32);
 /// Sentinel `RecursionId`: deciding whether the type has a given identity takes more than an
 /// equality test.
 const NOT_PLAIN: RecursionId = (u8::MAX, 0, 0);
+
+/// What `is_last_deeply_nested` keeps about a type on a stack.
+#[derive(Copy, Clone)]
+struct OnStack {
+    /// `plain_recursion_identity`
+    identity: RecursionId,
+    /// `identity_bit` of every identity that `has_matching_recursion_identity` can accept for the type, now or later.
+    may_match: u64,
+}
+
+/// Returns one of 64 bits for `identity`.
+#[inline]
+fn identity_bit(identity: RecursionId) -> u64 {
+    let word = u64::from(identity.1) << 32 | u64::from(identity.2) ^ u64::from(identity.0) << 28;
+    1 << (word.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58)
+}
 
 /// What `reset_maybe_stack` does with the keys it pops.
 #[derive(Copy, Clone)]
@@ -1221,6 +1237,8 @@ impl<'p, 's> Checker<'p, 's> {
         r.maybe_keys_set.clear();
         r.source_stack.clear();
         r.target_stack.clear();
+        r.source_identities.clear();
+        r.target_identities.clear();
         r.expanding = 0;
         r.overflow = false;
         r.hit_cached_overflow = false;
@@ -4333,9 +4351,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
             r.source_stack.pop();
+            r.source_identities.truncate(r.source_stack.len());
         }
         if recursion & REC_TARGET != 0 {
             r.target_stack.pop();
+            r.target_identities.truncate(r.target_stack.len());
         }
         r.expanding = save_expanding;
         if result.holds() {
@@ -4488,6 +4508,18 @@ impl<'p, 's> Checker<'p, 's> {
         is_source: bool,
         max_depth: usize,
     ) -> bool {
+        self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
+    }
+
+    /// `known`: an `OnStack` for each entry of the stack, or nothing.
+    fn is_deeply_nested_among(
+        &mut self,
+        t: TypeId,
+        stacks: [&[(TypeId, u32)]; 2],
+        is_source: bool,
+        known: &[OnStack],
+        max_depth: usize,
+    ) -> bool {
         let stack = stacks[usize::from(!is_source)];
         if stack.len() < max_depth {
             return false;
@@ -4496,14 +4528,18 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
-                .any(|&p| self.is_deeply_nested_type(p, stacks, is_source, max_depth))
+                .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth))
         {
             return true;
         }
         let identity = self.recursion_identity_as(t, data);
+        let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
-        for &(on_stack, _) in stack {
+        for (i, &(on_stack, _)) in stack.iter().enumerate() {
+            if known.get(i).is_some_and(|known| known.may_match & bit == 0) {
+                continue;
+            }
             if self.has_matching_recursion_identity(on_stack, identity) {
                 if last.is_none_or(|last| self.is_created_no_earlier(on_stack, last, stacks)) {
                     count += 1;
@@ -4539,36 +4575,42 @@ impl<'p, 's> Checker<'p, 's> {
                 .is_ge()
     }
 
-    /// `is_deeply_nested_type` of the last entry of `stack`. `identities`: for a prefix of the
-    /// stack as of the previous call, the type and its `plain_recursion_identity`.
+    /// `is_deeply_nested_type` of the last entry of the stack. `identities`: an `OnStack` for each entry of a prefix of
+    /// the stack. The caller cuts it when it pops.
     fn is_last_deeply_nested(
         &mut self,
         stacks: [&[(TypeId, u32)]; 2],
         is_source: bool,
-        identities: &mut Vec<(TypeId, RecursionId)>,
+        identities: &mut Vec<OnStack>,
         max_depth: usize,
     ) -> bool {
         let stack = stacks[usize::from(!is_source)];
         if stack.len() < max_depth {
             return false;
         }
-        for (i, &(on_stack, _)) in stack.iter().enumerate() {
-            if identities.get(i).is_none_or(|known| known.0 != on_stack) {
-                identities.truncate(i);
-                identities.push((on_stack, self.plain_recursion_identity(on_stack)));
-            }
+        for &(on_stack, _) in &stack[identities.len()..] {
+            identities.push(OnStack {
+                identity: self.plain_recursion_identity(on_stack),
+                may_match: self.identities_that_may_match(on_stack),
+            });
         }
-        let identities = &identities[..stack.len()];
-        let Some(&(t, kept)) = identities.last() else {
+        let (Some(&(t, _)), Some(&OnStack { identity: kept, .. })) =
+            (stack.last(), identities.last())
+        else {
             return false;
         };
         if kept == NOT_PLAIN {
-            return self.is_deeply_nested_type(t, stacks, is_source, max_depth);
+            return self.is_deeply_nested_among(t, stacks, is_source, identities, max_depth);
         }
         let identity = self.recursion_identity_by_now(t, kept);
+        let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
-        for &(on_stack, kept) in identities {
+        for (&(on_stack, _), known) in stack.iter().zip(identities.iter()) {
+            if known.may_match & bit == 0 {
+                continue;
+            }
+            let kept = known.identity;
             let matches = if kept == NOT_PLAIN {
                 self.has_matching_recursion_identity(on_stack, identity)
             } else {
@@ -4586,6 +4628,26 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         false
+    }
+
+    /// See `OnStack::may_match`.
+    fn identities_that_may_match(&mut self, t: TypeId) -> u64 {
+        let is_mapped = is_mapped_kind(self.data(t));
+        let (of, data) = self.mapped_target_with_symbol(t);
+        // The next request may find another target.
+        if is_mapped && self.p.mapped_targets.get(&self.task, &t).is_none() {
+            return u64::MAX;
+        }
+        match data {
+            TypeData::Intersection(parts) => parts
+                .iter()
+                .fold(0, |bits, &part| bits | self.identities_that_may_match(part)),
+            // See `recursion_identity_by_now`.
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => {
+                identity_bit(self.recursion_identity_as(of, data)) | identity_bit((0, of.0, 0))
+            }
+            data => identity_bit(self.recursion_identity_as(of, data)),
+        }
     }
 
     /// `recursion_identity`. `NOT_PLAIN` for a mapped type, which uses the type it is applied to,

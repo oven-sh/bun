@@ -471,8 +471,7 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        // The canonical request: path, session token, upload id, the
-        // response overrides and the fixed parameters, all encoded.
+        // Holds the canonical request with every component at its largest encoded size.
         let mut tmp_buffer = [0u8; 12288];
 
         let authorization: Box<[u8]> = 'brk: {

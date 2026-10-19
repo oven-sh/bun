@@ -1632,9 +1632,22 @@ describe("multipart upload primitives", () => {
     return response.headers.get("etag")!;
   }
 
+  // Registered right after create: drops the upload if it is still open, then the file.
+  function leaveNothing(key: string, uploadId: string) {
+    return {
+      async [Symbol.asyncDispose]() {
+        await client.abortMultipartUpload(key, uploadId).catch(error => {
+          if (error.code !== "NoSuchUpload") throw error;
+        });
+        await client.unlink(key);
+      },
+    };
+  }
+
   it("create, presign each part, complete, read back", async () => {
     const key = `multipart/${randomUUIDv7()}.bin`;
     const { uploadId } = await client.createMultipartUpload(key, { type: "application/octet-stream" });
+    await using _ = leaveNothing(key, uploadId);
     expect(uploadId).toBeString();
     expect(uploadId).not.toBeEmpty();
 
@@ -1655,7 +1668,6 @@ describe("multipart upload primitives", () => {
     const file = client.file(key);
     expect(await file.bytes()).toEqual(new Uint8Array(Buffer.concat([partOne, partTwo])));
     expect((await file.stat()).type).toBe("application/octet-stream");
-    await file.unlink();
   });
 
   it("create sets the type, disposition, encoding, storage class and acl of the file", async () => {
@@ -1666,6 +1678,7 @@ describe("multipart upload primitives", () => {
       storageClass: "STANDARD_IA",
       acl: "public-read",
     });
+    await using _ = leaveNothing(key, uploadId);
     const etag = await putPart(client.presign(key, { method: "PUT", uploadId, partNumber: 1 }), partTwo);
     await client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag }]);
 
@@ -1679,12 +1692,12 @@ describe("multipart upload primitives", () => {
     // public-read: the object is readable without a signature.
     const { origin, pathname } = new URL(client.presign(key));
     expect((await fetch(origin + pathname, { decompress: false })).status).toBe(200);
-    await client.unlink(key);
   });
 
   it("abort drops the upload", async () => {
     const key = `multipart/${randomUUIDv7()}.bin`;
     const { uploadId } = await client.createMultipartUpload(key);
+    await using _ = leaveNothing(key, uploadId);
     const etag = await putPart(client.presign(key, { method: "PUT", uploadId, partNumber: 1 }), partTwo);
     await client.abortMultipartUpload(key, uploadId);
 
@@ -1748,15 +1761,16 @@ describe("multipart upload primitives", () => {
   it("static forms take the credentials as the last argument", async () => {
     const key = `multipart/${randomUUIDv7()}.bin`;
     const { uploadId } = await S3Client.createMultipartUpload(key, credentials);
+    await using _ = leaveNothing(key, uploadId);
     const etag = await putPart(
       S3Client.presign(key, { ...credentials, method: "PUT", uploadId, partNumber: 1 }),
       partTwo,
     );
     await S3Client.completeMultipartUpload(key, uploadId, [{ partNumber: 1, etag }], credentials);
     expect(await S3Client.file(key, credentials).text()).toBe(partTwo.toString());
-    await S3Client.unlink(key, credentials);
 
     const { uploadId: other } = await S3Client.createMultipartUpload(key, credentials);
+    await using __ = leaveNothing(key, other);
     await S3Client.abortMultipartUpload(key, other, credentials);
     await expect(S3Client.abortMultipartUpload(key, other, credentials)).rejects.toMatchObject({
       code: "NoSuchUpload",

@@ -295,11 +295,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.reduced(target);
         }
         let is_trial = error_node.is_some();
-        // What the run with `reportErrors` prints and then discards is numbered too.
-        let is_related = match is_trial && self.hands_out_symbol_ids() {
-            true => Ok(false),
-            false => self.try_is_type_related_to(source, target, relation, is_trial),
-        };
+        let is_related = self.try_is_type_related_to(source, target, relation, is_trial);
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) | (_, None) => {
                 self.end_comparison(is_outermost);
@@ -684,7 +680,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getPropertiesOfType`: for a union, the properties that all its members have.
     pub(super) fn properties_of_type(&mut self, ty: TypeId) -> &'p [Prop<'p>] {
         let ty = self.reduced_apparent_type_as_object(ty);
-        match self.listed_members(ty) {
+        match self.members(ty) {
             Some(members) => &members.shape().props,
             None => &[],
         }
@@ -735,7 +731,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a recursive query gets nil.
         let mut in_progress = self.identical_base_types_in_progress.iter();
-        if in_progress.any(|it| it.0 == ty) {
+        if let Some(&(_, height)) = in_progress.find(|it| it.0 == ty) {
+            self.close_cycle_above(height);
             return None;
         }
         let (mut has_heritage_clause, mut extends_entity_name, mut has_members) =
@@ -937,7 +934,8 @@ impl<'p, 's> Checker<'p, 's> {
         // Two occurrences of `infer U` declare one type parameter.
         let symbol = bound.type_param_symbol[tp.idx()];
         let first = if symbol.is_some() {
-            bound.symbols[symbol.idx()]
+            bound
+                .symbol(symbol)
                 .decls
                 .iter()
                 .find_map(|&decl| match decl {
@@ -987,9 +985,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !(list.iter()).any(|&t| t.is_never() && t != TypeId::UNIQUE_LITERAL)
                 && list.iter().any(|&t| t != list[0])
                 && list.iter().any(|&t| {
-                    self.is_boolean(t)
-                        || self.is_pattern_literal(t)
-                        || self.every_type(t, |c, m| c.is_unit(m))
+                    self.is_boolean(t) || self.is_pattern_literal(t) || self.is_every_type_unit(t)
                 })
                 && self.type_of_prop(prop, members.mapper).is_never()
             {
@@ -1046,7 +1042,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut generalized_source_type = source_type.clone();
         // `isLiteralType`
         if !target.is_never()
-            && self.every_type(source, |c, m| c.is_unit(m))
+            && self.is_every_type_unit(source)
             && !self.may_have_top_level_singleton_types(target, 0)
         {
             generalized_source = self.base_of_literal(source);

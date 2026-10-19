@@ -4,10 +4,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use crate::generated_bindgen::socket_body::{BunSocket, SocketHandle};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
@@ -16,11 +18,8 @@ use bun_ptr::RefPtr;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
-// `err.to_js(global)` on `sys::Error` (the `SysErrorJsc` trait method) is only
-// reached from `#[cfg(not(windows))]` / `#[cfg(unix)]` blocks below.
-#[cfg(not(windows))]
 use bun_jsc::SysErrorJsc;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
@@ -100,6 +99,8 @@ use std::rc::Rc;
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
+use crate::server::ServerWebSocket;
+use crate::socket::udp_socket::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -4668,65 +4669,43 @@ impl DuplexUpgradeContext {
 
 /// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
 /// public `upgradeTLS`, but hostname policy stays with node's JS layer.
-#[bun_jsc::host_fn]
-pub(crate) fn js_upgrade_tls_deferred(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
+pub(crate) fn upgrade_tls_deferred<'a>(
+    cx: &mut JsScope<'a>,
+    socket: BunSocket<'a>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket, opts] = callframe.arguments_as_array::<2>();
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+    match socket {
+        BunSocket::Tcp(this) => {
+            NewSocket::<false>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
+        }
+        BunSocket::Tls(this) => {
+            NewSocket::<true>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
+        }
     }
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
-    }
-    Err(global.throw(format_args!("Expected a socket instance")))
 }
 
 /// node:net's `destroy()`: drops the handshake flight held for the handshake callback.
-#[bun_jsc::host_fn]
-pub(crate) fn js_release_held_flight(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket] = callframe.arguments_as_array::<1>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        this.socket.get().release_held_flight();
-    } else if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
+    match socket {
         // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
-        this.socket.get().release_held_flight();
+        SocketHandle::Tcp(this) => this.socket.get().release_held_flight(),
+        SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
+        SocketHandle::Ignored(_) => {}
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 /// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.
-#[bun_jsc::host_fn]
-pub(crate) fn js_check_server_identity_in_handshake(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket, in_handshake] = callframe.arguments_as_array::<2>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, in_handshake != JSValue::TRUE));
+pub(crate) fn check_server_identity_in_handshake(socket: SocketHandle<'_>, in_handshake: bool) {
+    if let SocketHandle::Tls(this) = socket {
+        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, !in_handshake));
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 /// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
-#[bun_jsc::host_fn]
-pub(crate) fn js_first_flight_before_fin(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket] = callframe.arguments_as_array::<1>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
+    if let SocketHandle::Tls(this) = socket {
         this.socket.get().set_first_flight_before_fin();
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]
@@ -5008,54 +4987,20 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     Ok(array)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_is_named_pipe_socket(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if callframe.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "isNamedPipeSocket",
-            1,
-            callframe.arguments_count() as usize,
-        ));
+pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().is_named_pipe(),
+        SocketHandle::Tls(this) => this.socket.get().is_named_pipe(),
+        SocketHandle::Ignored(_) => false,
     }
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
-    }
-    Ok(JSValue::FALSE)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_get_buffered_amount(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if callframe.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "getBufferedAmount",
-            1,
-            callframe.arguments_count() as usize,
-        ));
+pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
+    match socket {
+        SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Ignored(_) => 0,
     }
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
-    }
-    Ok(JSValue::js_number(0.0))
 }
 
 #[bun_jsc::host_fn]
@@ -5091,6 +5036,14 @@ pub(crate) fn js_create_socket_pair(
     }
 }
 
+unsafe extern "C" {
+    /// The socket of a `WebSocket` or of a node:http server socket's native handle. Null for
+    /// anything else, and for one that isn't connected.
+    safe fn Bun__usSocketForTesting(value: JSValue) -> *mut uws::us_socket_t;
+}
+
+/// `setSocketOptions(socket, 1 | 2, size)` of `bun:internal-for-testing`: SO_SNDBUF (1) or
+/// SO_RCVBUF (2).
 #[bun_jsc::host_fn]
 pub(crate) fn js_set_socket_options(
     global: &JSGlobalObject,
@@ -5102,57 +5055,38 @@ pub(crate) fn js_set_socket_options(
         return Err(global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
     }
 
-    let Some(socket) = arguments[0].as_class_ref::<TCPSocket>() else {
-        return Err(global.throw(format_args!("Expected a SocketTCP instance")));
+    let target = arguments[0];
+    let socket = if let Some(socket) = target.as_class_ref::<TCPSocket>() {
+        socket.socket.get().socket.get()
+    } else if let Some(socket) = target.as_class_ref::<TLSSocket>() {
+        socket.socket.get().socket.get()
+    } else if let Some(websocket) = target.as_class_ref::<ServerWebSocket>() {
+        websocket.us_socket()
+    } else {
+        NonNull::new(Bun__usSocketForTesting(target)).map(NonNull::as_ptr)
+    };
+    let Some(socket) = socket else {
+        return Err(global.throw(format_args!("Expected a connected socket")));
     };
 
-    let is_for_send_buffer = arguments[1].to_int32() == 1;
-    let is_for_recv_buffer = arguments[1].to_int32() == 2;
-    let buffer_size = arguments[2].to_int32();
-    let file_descriptor = socket.socket.get().fd();
-
-    #[cfg(unix)]
-    {
-        // `bun_sys` exposes no public wrapper, so call libc directly.
-        let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
-            let val: libc::c_int = buffer_size;
-            // SAFETY: libc FFI; `val` lives for the call.
-            let rc = unsafe {
-                libc::setsockopt(
-                    file_descriptor.native(),
-                    level,
-                    opt,
-                    (&raw const val).cast::<c_void>(),
-                    core::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                )
-            };
-            if rc != 0 {
-                Some(sys::Error::from_code(
-                    sys::get_errno(rc),
-                    sys::Tag::setsockopt,
-                ))
-            } else {
-                None
-            }
-        };
-        if is_for_send_buffer {
-            if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_SNDBUF) {
-                return Err(global.throw_value(err.to_js(global)));
-            }
-        } else if is_for_recv_buffer {
-            if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_RCVBUF) {
-                return Err(global.throw_value(err.to_js(global)));
-            }
+    let is_recv = match arguments[1].to_int32() {
+        1 => false,
+        2 => true,
+        _ => {
+            return Err(global.throw(format_args!(
+                "Expected 1 (send buffer) or 2 (receive buffer)"
+            )));
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (
-            is_for_send_buffer,
-            is_for_recv_buffer,
-            buffer_size,
-            file_descriptor,
-        );
+    };
+
+    let mut value: c_int = 0;
+    let res = uws::us_socket_t::opaque_mut(socket).buffer_size(
+        is_recv,
+        arguments[2].to_int32(),
+        &mut value,
+    );
+    if let Some(err) = get_us_error::<true>(res, sys::Tag::setsockopt) {
+        return Err(global.throw_value(err.to_js(global)));
     }
 
     Ok(JSValue::UNDEFINED)

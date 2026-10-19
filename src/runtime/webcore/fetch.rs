@@ -1398,12 +1398,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = global_this.bun_vm().as_mut().main();
+                // Relative to the folder of the entry module, or to the working directory when there
+                // is none (`bun bake`).
+                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                    Some(main) => &[main, b"../", url_path_decoded],
+                    None => &[url_path_decoded],
+                };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::platform::Auto,
-                >(
-                    cwd, &mut path_buf, &[main, b"../", url_path_decoded]
-                );
+                >(cwd, &mut path_buf, parts);
                 #[cfg(windows)]
                 {
                     break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(

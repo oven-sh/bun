@@ -805,6 +805,7 @@ fn write_import_type_options<'a>(
                 "}"
             ))
             .should_expand(is_expanded(f, Span::before(inner.start, first.span())))
+            .stays_expanded(f.options().expand == Expand::Auto)
         );
     });
     let format_property = format_with(|f| {
@@ -875,6 +876,7 @@ fn write_import_type_options<'a>(
             "}"
         ))
         .should_expand(is_expanded(f, Span::before(outer.start, keyword)))
+        .stays_expanded(f.options().expand == Expand::Auto)
     );
 }
 

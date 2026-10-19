@@ -3,7 +3,7 @@
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
-use crate::paths;
+use crate::{fs, paths};
 use bun_clap as clap;
 use bun_core::strings;
 
@@ -73,7 +73,7 @@ const FILES: &[Param] = &[
         "--stdin-filepath <path>         Format standard input as this file and print the result"
     ),
     clap::param!(
-        "--ignore-path <path>...         Read ignore patterns from these files <d>(default: .gitignore and .prettierignore)<r>"
+        "--ignore-path <path>...         Read ignore patterns from these files <d>(default: .gitignore, .prettierignore, .git/info/exclude)<r>"
     ),
     clap::param!("--ignore-pattern <pattern>...   Skip files that match this pattern"),
     clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
@@ -112,6 +112,9 @@ const OTHER: &[Param] = &[
     ),
     clap::param!(
         "--debug-check                   Do not write. Fail if formatting a file would change what it means"
+    ),
+    clap::param!(
+        "--no-script                     Run the formatter even if the project has a <b>fmt<r> script"
     ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
@@ -178,6 +181,7 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--bracket-spacing"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--insert-final-newline"),
+    clap::param!("--script"),
 ];
 
 pub const HELP: Help = Help {
@@ -218,6 +222,7 @@ pub const HELP: Help = Help {
         b"single-quote",
         b"init",
         b"doctor",
+        b"no-script",
     ],
 };
 
@@ -297,6 +302,8 @@ pub struct Options {
     modes: Vec<&'static [u8]>,
     pub stdin_filepath: Option<Vec<u8>>,
     pub config: Option<Vec<u8>>,
+    /// True if [`Options::config`] comes from bunfig.toml.
+    is_config_of_bunfig: bool,
     /// `false`: `--no-config`.
     pub config_lookup: bool,
     pub disable_nested_config: bool,
@@ -304,6 +311,10 @@ pub struct Options {
     pub config_precedence: Precedence,
     /// `None`: `.gitignore` and `.prettierignore`.
     pub ignore_path: Option<Vec<Vec<u8>>>,
+    /// Number of leading `ignore_path` entries that come from bunfig.toml.
+    ignore_paths_of_bunfig: usize,
+    /// Filled by [`Options::load_pipes`].
+    pub(crate) pipes: fs::NamedPipes,
     /// Lines of an ignore file that is in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
     /// How many of them, the first, are of bunfig.toml: lines of an ignore file that is where that file is.
@@ -364,11 +375,14 @@ impl Default for Options {
             modes: Vec::new(),
             stdin_filepath: None,
             config: None,
+            is_config_of_bunfig: false,
             config_lookup: true,
             disable_nested_config: false,
             editorconfig: true,
             config_precedence: Precedence::default(),
             ignore_path: None,
+            ignore_paths_of_bunfig: 0,
+            pipes: fs::NamedPipes::default(),
             ignore_pattern: Vec::new(),
             ignore_patterns_of_bunfig: 0,
             bunfig: b"bunfig.toml".to_vec(),
@@ -470,7 +484,7 @@ impl Options {
             b"write" => self.write = is_on,
             b"stdin-filepath" => self.stdin_filepath = owned(),
             // `--no-config` is read as the opposite of a flag that takes a value.
-            b"config" => self.config = owned(),
+            b"config" => (self.config, self.is_config_of_bunfig) = (owned(), false),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"list-files" => self.list_files = is_on,
             b"init" => self.init = is_on,
@@ -575,6 +589,7 @@ impl Options {
         let mut options = self.clone();
         let at = options.patterns.iter().position(|it| it == path)?;
         options.config = Some(options.patterns.remove(at));
+        options.is_config_of_bunfig = false;
         options.check = *checks;
         Some(options)
     }
@@ -623,6 +638,8 @@ impl Options {
         self.bunfig = paths::from_native(path);
         self.has_section_of_bunfig = true;
         self.is_bunfig_named = is_named;
+        self.is_config_of_bunfig = self.config.is_some();
+        self.ignore_paths_of_bunfig = self.ignore_path.as_ref().map_or(0, Vec::len);
         self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
         let directory = paths::dirname(&self.bunfig).to_vec();
         if directory != b"." && !is_named {
@@ -635,6 +652,17 @@ impl Options {
             }
         }
         self
+    }
+
+    /// Reads any named pipes passed to `--config` and `--ignore-path`. See [`fs::NamedPipes::load`].
+    pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
+        let mut named = Vec::new();
+        if !self.is_config_of_bunfig {
+            named.extend(self.config.clone());
+        }
+        let ignore_paths = self.ignore_path.iter().flatten();
+        named.extend(ignore_paths.skip(self.ignore_paths_of_bunfig).cloned());
+        self.pipes.load(cwd, &named)
     }
 
     /// The bunfig.toml above the working directory whose `[fmt]` was found.

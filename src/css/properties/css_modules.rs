@@ -144,6 +144,7 @@ impl Specifier {
     }
 
     pub fn parse(input: &mut Parser) -> css::Result<Specifier> {
+        input.skip_whitespace();
         let start_position = input.position();
         if let Ok(file) = input.try_parse(|i| {
             let s = i.expect_url_or_string()?;
@@ -152,8 +153,13 @@ impl Specifier {
             // (same trick as `css_parser::src_str` — Token payloads are arena-static).
             Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
         }) {
-            let import_record_index =
-                input.add_import_record(file, start_position, bun_ast::ImportKind::Composes)?;
+            let end_position = input.position();
+            let import_record_index = input.add_import_record(
+                file,
+                start_position,
+                end_position,
+                bun_ast::ImportKind::Composes,
+            )?;
             return Ok(Specifier::ImportRecordIndex(import_record_index));
         }
         input.expect_ident_matching(b"global")?;

@@ -61,8 +61,6 @@ pub mod mysql {
         #[path = "PacketType.rs"]
         pub mod packet_type;
 
-        pub use character_set::CharacterSet;
-
         #[path = "Auth.rs"]
         pub mod auth;
         #[path = "AuthSwitchRequest.rs"]

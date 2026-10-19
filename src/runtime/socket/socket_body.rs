@@ -1907,7 +1907,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // including the raw twin of an `upgradeTLS` pair, which shares the fd.
         this.update_flags(|f| {
             f.set(Flags::AUTHORIZED, authorized && !verify_failed);
-            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
             f.set(Flags::REJECTED, transport_unusable);
         });
         if transport_unusable {
@@ -2020,12 +2019,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn reset_client_tls_flags(&self, reject_unauthorized: bool) {
         self.verify_error.set(None);
         self.update_flags(|f| {
-            f.remove(
-                Flags::HANDSHAKE_COMPLETE
-                    | Flags::AUTHORIZED
-                    | Flags::HOSTNAME_MISMATCH
-                    | Flags::REJECTED,
-            );
+            f.remove(Flags::HANDSHAKE_COMPLETE | Flags::AUTHORIZED | Flags::REJECTED);
             f.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
         });
     }
@@ -2966,9 +2960,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        let buffer: BlobOrStringOrBuffer = if args[0].is_undefined() {
-            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
-        } else {
+        let buffer: BlobOrStringOrBuffer =
             match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
                 global,
                 args[0],
@@ -2987,8 +2979,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return WriteResult::Fail;
                 }
                 Err(_) => return WriteResult::Fail,
-            }
-        };
+            };
         // `buffer` Drop frees.
         if matches!(&buffer, BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
             let _ = global.throw(format_args!(
@@ -4209,7 +4200,6 @@ bitflags::bitflags! {
         /// The peer failed verification under an enforcing policy: the socket
         /// refuses writes and is closed right after the handshake callback.
         const REJECTED             = 1 << 10;
-        const HOSTNAME_MISMATCH    = 1 << 11;
         const REJECT_UNAUTHORIZED  = 1 << 12;
         /// Set only by the node:net / node:tls socket constructors: their JS
         /// layer owns server-identity policy (`checkServerIdentity`), so the

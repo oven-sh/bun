@@ -1035,11 +1035,11 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
     }
 }
 
-/// Coordinator-side SIGINT/SIGTERM handling. The handler records the signal
-/// and wakes the loop; `Coordinator::drive` checks it and tears down workers
-/// itself so we don't do non-signal-safe work in the handler. Linux PDEATHSIG
-/// and the Windows Job Object are the safety net for when the coordinator
-/// can't run this (SIGKILL).
+/// Coordinator-side SIGINT/SIGTERM handling. The handler wakes the loop after it sets a
+/// flag; `Coordinator::drive` checks it and tears down workers itself so we
+/// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
+/// Windows Job Object are the safety net for when the coordinator can't run
+/// this (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
 
@@ -1049,9 +1049,7 @@ pub(crate) mod abort_handler {
     /// The loop `Coordinator::drive` ticks. Set by `install`, cleared by `uninstall`.
     static LOOP: bun_uws::LoopWaker = bun_uws::LoopWaker::unset();
 
-    /// Signal context on POSIX; the console control thread on Windows. The
-    /// poll retries on EINTR, so without the wakeup `drive` reads the flag
-    /// only when something else ends the poll.
+    /// Runs in signal context on POSIX, and on the console control thread on Windows.
     fn request_abort(signal: i32) {
         ABORT_SIGNAL.store(signal, Ordering::Release);
         LOOP.wake();

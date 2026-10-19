@@ -526,10 +526,7 @@ mod c {
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
 
-/// The loop that a signal handler, or a thread other than the loop's, wakes.
-///
-/// The poll a loop parks in retries on `EINTR`, so a signal does not end it. A handler that
-/// wants the loop's thread to look at something calls [`wake`](Self::wake).
+/// The loop a signal handler wakes: its poll retries on `EINTR`, so a signal alone does not end it.
 pub struct LoopWaker(AtomicPtr<Loop>);
 
 impl LoopWaker {
@@ -537,8 +534,7 @@ impl LoopWaker {
         Self(AtomicPtr::new(core::ptr::null_mut()))
     }
 
-    /// # Safety
-    /// `loop_` lives for the rest of the process, as the main thread's loop does.
+    /// `loop_` must live for the rest of the process, as the main thread's loop does.
     pub unsafe fn set(&self, loop_: *mut Loop) {
         self.0.store(loop_, Ordering::Release);
     }
@@ -547,8 +543,7 @@ impl LoopWaker {
         self.0.store(core::ptr::null_mut(), Ordering::Release);
     }
 
-    /// Does nothing while no loop is set. Async-signal-safe: one atomic load and
-    /// `us_wakeup_loop`.
+    /// Async-signal-safe. Does nothing while no loop is set.
     pub fn wake(&self) {
         let loop_ = self.0.load(Ordering::Acquire);
         if !loop_.is_null() {

@@ -10,19 +10,8 @@ pub struct JSErrorCode(pub u8);
 #[allow(non_upper_case_globals)]
 impl JSErrorCode {
     pub const Error: Self = Self(0);
-    pub const EvalError: Self = Self(1);
-    pub const RangeError: Self = Self(2);
-    pub const ReferenceError: Self = Self(3);
-    pub const SyntaxError: Self = Self(4);
-    pub const TypeError: Self = Self(5);
-    pub const URIError: Self = Self(6);
-    pub const AggregateError: Self = Self(7);
 
     // StackOverflow & OutOfMemoryError is not an ErrorType in "JavaScriptCore/ErrorType.h" within JSC, so the number here is just totally made up
-    pub const OutOfMemoryError: Self = Self(8);
-    pub const BundlerError: Self = Self(252);
-    pub const StackOverflow: Self = Self(253);
-    pub const UserErrorCode: Self = Self(254);
 }
 
 // keep in sync with ExceptionCode in src/jsc/bindings/ExceptionCode.h

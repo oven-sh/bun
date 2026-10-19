@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -263,7 +263,7 @@ describe("websocket", () => {
       }).toMatchObject(expected);
 
       const webSocket = new WebSocket(url);
-      expect(
+      await expect(
         new Promise<void>((resolve, reject) => {
           webSocket.addEventListener("open", () => resolve());
           webSocket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
@@ -272,7 +272,7 @@ describe("websocket", () => {
       ).resolves.toBeUndefined();
 
       webSocket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-      expect(
+      await expect(
         new Promise(resolve => {
           webSocket.addEventListener("message", ({ data }) => {
             resolve(JSON.parse(data.toString()));
@@ -463,7 +463,7 @@ test.todo("junit reporter", async () => {
   let reporter: JUnitReporter;
   let session: InspectorSession;
 
-  const tempdir = tempDirWithFiles("junit-reporter", {
+  await using tempdir = tempDir("junit-reporter", {
     "package.json": `
       {
         "type": "module",

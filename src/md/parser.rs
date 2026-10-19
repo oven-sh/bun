@@ -3,144 +3,173 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::VecDeque;
 
-use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-
-// Stable Rust cannot branch a type on a const
-// generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
-// inline scanner in inlines.rs depends on `is_set()` being real — a no-op
-// stub here makes every byte fall through the fast path and disables all
-// inline-span recognition (emphasis, links, code, entities, breaks).
-pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
+// What a byte can mean in inline content: `MARK_*`. 0: nothing, and the scans
+// in inlines.rs and links.rs do not look at it.
+pub(crate) type MarkCharMap = [u8; 256];
+/// `[`
+pub(crate) const MARK_OPENER: u8 = 1 << 0;
+/// `]`
+pub(crate) const MARK_CLOSER: u8 = 1 << 1;
+/// `*`, `_`, `~`
+pub(crate) const MARK_DELIMITER: u8 = 1 << 2;
+/// `hidden_at` can find something at it.
+pub(crate) const MARK_HIDES: u8 = 1 << 3;
+/// One of `Extensions::span_bytes`.
+pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
+pub(crate) const MARK_OTHER: u8 = 1 << 5;
 use bun_core::StackCheck;
 
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
-    Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
+    Align, BlockType, Container, ContainerEnds, Extensions, Flags, OFF, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions;
 
 // Rust has no struct-scoped type
 // aliases, so these live at module scope as `parser::EmphDelim` etc.
-pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
-pub use super::ref_defs::RefDef;
+pub(crate) use super::inlines::{EmphDelim, HtmlScanMemo};
+pub(crate) use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
 // `text` is a caller-owned borrow for the parser's lifetime.
 // PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
 // here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
-pub struct Parser<'a> {
-    pub text: &'a [u8],
-    pub size: OFF,
-    pub flags: Flags,
+pub(crate) struct Parser<'a> {
+    pub(crate) text: &'a [u8],
+    pub(crate) size: OFF,
+    pub(crate) has_carriage_return: bool,
+    pub(crate) flags: Flags,
 
     // Output
-    pub renderer: Renderer<'a>,
-    pub image_nesting_level: u32,
-    pub link_nesting_level: u32,
+    pub(crate) renderer: Renderer<'a>,
+    pub(crate) image_nesting_level: u32,
+    pub(crate) link_nesting_level: u32,
 
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
-    pub code_indent_offset: u32,
-    pub doc_ends_with_newline: bool,
+    pub(crate) code_indent_offset: u32,
 
-    // Mark character map — bitset of characters that need special handling
-    pub mark_char_map: MarkCharMap,
+    // Mark character map — the characters that need special handling
+    pub(crate) mark_char_map: MarkCharMap,
+    // Where the bytes of the inline content that is being processed are that
+    // `mark_char_map` has, and all that they can mean.
+    pub(crate) marks: Vec<OFF>,
+    pub(crate) marks_seen: u8,
+    // What hides markers in that content, in its order.
+    pub(crate) hidden: Vec<crate::inlines::Hidden>,
+    // How many times inline content has been processed.
+    pub(crate) inline_serial: u32,
 
     // Dynamic arrays
-    pub marks: Vec<Mark>,
-    pub containers: Vec<Container>,
+    pub(crate) containers: Vec<Container>,
     // 4-byte alignment is
     // load-bearing for the `BlockHeader` reinterpretation in
     // `get_block_header_at`. Here the invariant rests on (a) offsets being
     // padded to a multiple of 4 by every writer and (b) the global allocator
     // returning >=16-byte-aligned bases; `get_block_header_at`
     // debug-asserts it on every access.
-    pub block_bytes: Vec<u8>,
-    pub buffer: Vec<u8>,
-    pub emph_delims: Vec<EmphDelim>,
+    pub(crate) block_bytes: Vec<u8>,
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) emph_delims: Vec<EmphDelim>,
+    // Scratch storage recycled by resolve_emphasis_delimiters (inlines.rs).
+    pub(crate) prev_candidate: Vec<usize>,
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
-    pub bracket_pairs: Vec<(OFF, OFF)>,
+    pub(crate) bracket_pairs: Vec<crate::links::Bracket>,
     // Label-frame stack recycled by process_inline_content (inlines.rs) so
     // blocks with links do not allocate a frame stack per block.
-    pub label_frames: Vec<crate::inlines::LabelFrame>,
+    pub(crate) label_frames: Vec<crate::inlines::LabelFrame>,
     // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
-    pub html_scan_memo: Cell<HtmlScanMemo>,
+    pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
+    // No thematic break starts between these two places. See `is_hr_line`.
+    pub(crate) not_hr: Cell<(OFF, OFF)>,
 
     // Number of active containers
-    pub n_containers: u32,
+    pub(crate) n_containers: u32,
+    // Where in `containers` the open `:::` are, the innermost last
+    pub(crate) directives: Vec<u32>,
+    // The same for `>`. Only kept if `keeps_quotes`
+    pub(crate) quotes: Vec<u32>,
+    // See `set_container_ends`. Only kept if `track`
+    pub(crate) container_ends: VecDeque<ContainerEnds>,
 
     // Current block being built
-    pub current_block: Option<usize>,
-    pub current_block_lines: Vec<VerbatimLine>,
-
-    // Opener stacks
-    pub opener_stacks: [OpenerStack; NUM_OPENER_STACKS],
-
-    // Linked lists through marks
-    pub unresolved_link_head: i32,
-    pub unresolved_link_tail: i32,
-    pub table_cell_boundaries_head: i32,
-    pub table_cell_boundaries_tail: i32,
+    pub(crate) current_block: Option<usize>,
+    pub(crate) current_block_lines: Vec<VerbatimLine>,
 
     // HTML block tracking
-    pub html_block_type: u8,
+    pub(crate) html_block_type: u8,
     // Fenced code block indent
-    pub fence_indent: u32,
+    pub(crate) fence_indent: u32,
 
     // Table column alignments
-    pub table_col_count: u32,
-    pub table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
+    pub(crate) table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
 
     // Ref defs
-    pub ref_defs: Vec<RefDef>,
-    pub ref_def_labels: bun_collections::StringSet,
+    pub(crate) ref_defs: Vec<RefDef>,
+    pub(crate) ref_def_labels: bun_collections::StringSet,
 
     // State
-    pub last_line_has_list_loosening_effect: bool,
-    pub last_list_item_starts_with_two_blank_lines: bool,
-    pub max_ref_def_output: u64,
+    pub(crate) last_line_has_list_loosening_effect: bool,
+    pub(crate) last_list_item_starts_with_two_blank_lines: bool,
+    // The last header in `block_bytes` is the opener of a list item.
+    pub(crate) last_header_opens_list_item: bool,
+    // Nothing is on the last line behind the `[ ]` of its list item
+    pub(crate) last_line_is_only_a_task_mark: bool,
+    pub(crate) max_ref_def_output: u64,
 
     // Stack overflow protection for recursive inline processing
-    pub stack_check: StackCheck,
+    pub(crate) stack_check: StackCheck,
+
+    // `RendererImpl::wants_source`
+    pub(crate) track: bool,
+    // What `container_source` is told, for each container opener and closer
+    // in `block_bytes`, in their order.
+    pub(crate) container_sources: Vec<(OFF, OFF, u32)>,
+    // Where the line that is being analyzed starts.
+    pub(crate) line_beg: OFF,
+    // That line is the `:::` that ends the outermost of the containers that it ends.
+    pub(crate) is_directive_end: bool,
+    // The lines of the paragraph whose reference definitions are being read.
+    pub(crate) def_lines: Vec<VerbatimLine>,
+    pub(crate) extensions: Option<Extensions<'a>>,
+    // Where each line of the inline content that is being processed starts in
+    // it, and in the document.
+    pub(crate) inline_lines: Vec<(u32, OFF)>,
+    // The index of the one of them that was asked about last.
+    pub(crate) inline_line: usize,
+    // `Extensions::leaf_bytes`
+    pub(crate) starts_extension_leaf: bun_collections::ByteSet,
+    // Where the lines of the document start.
+    pub(crate) line_starts: Vec<OFF>,
+    // The labels of the footnotes that are defined, normalized.
+    pub(crate) footnote_labels: bun_collections::StringSet,
 }
 
 #[repr(C)]
 pub struct BlockHeader {
-    pub block_type: BlockType,
-    pub _pad: [u8; 3],
-    pub flags: u32,
-    pub data: u32,
-    pub n_lines: u32,
+    pub(crate) block_type: BlockType,
+    pub(crate) _pad: [u8; 3],
+    pub(crate) flags: u32,
+    pub(crate) data: u32,
+    pub(crate) n_lines: u32,
 }
 
-impl Default for BlockHeader {
-    fn default() -> Self {
-        Self {
-            block_type: BlockType::Doc,
-            _pad: [0, 0, 0],
-            flags: 0,
-            data: 0,
-            n_lines: 0,
-        }
-    }
-}
-
-/// `Parser`'s error type: the union of `{ OutOfMemory, JSError, JSTerminated }`
+/// `Parser`'s error type: the union of `{ OutOfMemory, JSError }`
 /// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
-// (`bun_jsc::JsError` covers the first three, but the md crate sits below
+// (`bun_jsc::JsError` covers the first two, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
-pub type Error = ParserError;
+pub(crate) type Error = ParserError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParserError {
     OutOfMemory,
     JSError,
-    JSTerminated,
     StackOverflow,
     /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
     /// offset arithmetic cannot address it.
@@ -162,8 +191,7 @@ impl core::error::Error for ParserError {}
 
 /// The longest `OFF`-typed fixed lookahead the parser performs from an
 /// in-bounds offset: the `<![CDATA[` probe in `is_html_block_start_condition`
-/// checks `off + MAX_LOOKAHEAD <= size`. (Probes that add in `usize`, like
-/// `match_html_tag`, cannot wrap and do not bound this.)
+/// checks `off + MAX_LOOKAHEAD <= size`.
 pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len() as OFF;
 
 /// The largest input `input_size` accepts. Every offset, mark and span
@@ -178,7 +206,7 @@ pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 /// it), and each new header is written at the end of `block_bytes` rounded
 /// up to its alignment, so the buffer must stop one aligned header short of
 /// `OFF::MAX`.
-pub(crate) const MAX_BLOCK_BYTES: usize =
+const MAX_BLOCK_BYTES: usize =
     OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
 
 // The headroom proof: a buffer filled to the cap can still be aligned up and
@@ -226,7 +254,7 @@ pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
+    pub(crate) fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
         // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
         // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
         // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
@@ -244,7 +272,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
+    pub(crate) fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
         self.get_block_header_at(off)
     }
 
@@ -259,6 +287,8 @@ impl<'a> Parser<'a> {
         let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
         check_block_bytes_len(needed)?;
+        self.last_header_opens_list_item = header.block_type == BlockType::Li
+            && header.flags & crate::types::BLOCK_CONTAINER_OPENER != 0;
         self.block_bytes
             .reserve(needed.saturating_sub(self.block_bytes.len()));
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
@@ -284,9 +314,11 @@ impl<'a> Parser<'a> {
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
+        let track = rend.ptr.wants_source();
         let mut p = Parser {
             text,
             size,
+            has_carriage_return: bun_core::strings::contains_char(text, b'\r'),
             flags,
             renderer: rend,
             image_nesting_level: 0,
@@ -296,34 +328,48 @@ impl<'a> Parser<'a> {
             } else {
                 4
             },
-            doc_ends_with_newline: size > 0 && helpers::is_newline(text[(size - 1) as usize]),
-            mark_char_map: MarkCharMap::init_empty(),
+            mark_char_map: [0; 256],
             marks: Vec::new(),
+            marks_seen: 0,
+            hidden: Vec::new(),
+            inline_serial: 0,
             containers: Vec::new(),
             block_bytes: Vec::new(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
+            prev_candidate: Vec::new(),
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
+            not_hr: Cell::new((0, 0)),
             n_containers: 0,
+            directives: Vec::new(),
+            quotes: Vec::new(),
+            container_ends: VecDeque::new(),
             current_block: None,
             current_block_lines: Vec::new(),
-            opener_stacks: [(); NUM_OPENER_STACKS].map(|_| OpenerStack::default()),
-            unresolved_link_head: -1,
-            unresolved_link_tail: -1,
-            table_cell_boundaries_head: -1,
-            table_cell_boundaries_tail: -1,
             html_block_type: 0,
             fence_indent: 0,
-            table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
             ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
+            last_header_opens_list_item: false,
+            last_line_is_only_a_task_mark: false,
             max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
+            track,
+            container_sources: Vec::new(),
+            line_beg: 0,
+            is_directive_end: false,
+            def_lines: Vec::new(),
+            extensions: None,
+            inline_lines: Vec::new(),
+            inline_line: 0,
+            starts_extension_leaf: bun_collections::ByteSet::init_empty(),
+            line_starts: Vec::new(),
+            footnote_labels: bun_collections::StringSet::new(),
         };
         p.build_mark_char_map();
         Ok(p)
@@ -332,7 +378,7 @@ impl<'a> Parser<'a> {
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
 
     #[inline]
-    pub fn ch(&self, off: OFF) -> u8 {
+    pub(crate) fn ch(&self, off: OFF) -> u8 {
         if off >= self.size {
             return 0;
         }
@@ -340,41 +386,53 @@ impl<'a> Parser<'a> {
     }
 
     fn build_mark_char_map(&mut self) {
-        self.mark_char_map.set(b'\\' as usize);
-        self.mark_char_map.set(b'*' as usize);
-        self.mark_char_map.set(b'_' as usize);
-        self.mark_char_map.set(b'`' as usize);
-        self.mark_char_map.set(b'&' as usize);
-        self.mark_char_map.set(b';' as usize);
-        self.mark_char_map.set(b'[' as usize);
-        self.mark_char_map.set(b'!' as usize);
-        self.mark_char_map.set(b']' as usize);
-        self.mark_char_map.set(0);
-        self.mark_char_map.set(b'\n' as usize); // newlines always need handling (hard/soft breaks)
-        if !self.flags.no_html_spans {
-            self.mark_char_map.set(b'<' as usize);
-            self.mark_char_map.set(b'>' as usize);
+        let flags = self.flags;
+        let map = &mut self.mark_char_map;
+        // newlines always need handling (hard/soft breaks)
+        for c in [b'\\', b'&', b'!', 0, b'\n'] {
+            map[c as usize] = MARK_OTHER;
         }
-        if self.flags.strikethrough {
-            self.mark_char_map.set(b'~' as usize);
+        map[b'*' as usize] = MARK_DELIMITER;
+        map[b'_' as usize] = MARK_DELIMITER;
+        map[b'`' as usize] = MARK_HIDES;
+        map[b'[' as usize] = MARK_OPENER;
+        map[b']' as usize] = MARK_CLOSER;
+        if flags.footnotes {
+            map[b'[' as usize] |= MARK_HIDES;
         }
-        if self.flags.latex_math {
-            self.mark_char_map.set(b'$' as usize);
+        if !flags.no_html_spans {
+            map[b'<' as usize] = MARK_HIDES;
         }
-        if self.flags.permissive_email_autolinks || self.flags.permissive_url_autolinks {
-            self.mark_char_map.set(b':' as usize);
+        if flags.strikethrough {
+            map[b'~' as usize] = MARK_DELIMITER;
         }
-        if self.flags.permissive_email_autolinks {
-            self.mark_char_map.set(b'@' as usize);
+        if flags.latex_math {
+            map[b'$' as usize] = MARK_OTHER;
         }
-        if self.flags.permissive_www_autolinks {
-            self.mark_char_map.set(b'.' as usize);
+        if flags.permissive_email_autolinks || flags.permissive_url_autolinks {
+            map[b':' as usize] = MARK_OTHER;
         }
-        if self.flags.collapse_whitespace {
-            self.mark_char_map.set(b' ' as usize);
-            self.mark_char_map.set(b'\t' as usize);
-            self.mark_char_map.set(b'\r' as usize);
+        if flags.permissive_email_autolinks {
+            map[b'@' as usize] = MARK_OTHER;
         }
+        if flags.permissive_www_autolinks {
+            map[b'.' as usize] = MARK_OTHER;
+        }
+        if flags.collapse_whitespace {
+            for c in *b" \t\r" {
+                map[c as usize] = MARK_OTHER;
+            }
+        }
+    }
+
+    fn set_extensions(&mut self, extensions: Extensions<'a>) {
+        for &c in extensions.span_bytes {
+            self.mark_char_map[c as usize] |= MARK_HIDES | MARK_EXTENSION;
+        }
+        for &c in extensions.leaf_bytes {
+            self.starts_extension_leaf.set(c as usize);
+        }
+        self.extensions = Some(extensions);
     }
 
     // ========================================
@@ -402,22 +460,20 @@ impl<'a> Parser<'a> {
     // inlines.rs — impl Parser:
     //   process_leaf_block, process_inline_content, enter_span, leave_span,
     //   emit_text, emit_emph_open_tags, emit_emph_close_tags,
-    //   find_code_span_end, normalize_code_span_content, is_left_flanking,
-    //   is_right_flanking, can_open_emphasis, can_close_emphasis,
+    //   find_code_span_end, normalize_code_span_content, flanking,
     //   collect_emphasis_delimiters, resolve_emphasis_delimiters, find_entity,
     //   find_html_tag
     //
     // links.rs — impl Parser:
-    //   compute_bracket_matches, match_bracket, scan_bracket_close,
-    //   enter_label_span, process_link, try_match_bracket_link,
-    //   label_contains_link, process_wiki_link, find_autolink,
+    //   compute_bracket_matches, enter_label_span, process_link,
+    //   link_end_behind, process_wiki_link, find_autolink,
     //   render_autolink
     //
     // line_analysis.rs — impl Parser:
     //   is_setext_underline, is_hr_line, is_atx_header_line,
     //   is_opening_code_fence, is_closing_code_fence,
     //   is_html_block_start_condition, is_html_block_end_condition,
-    //   match_html_tag, is_block_level_html_tag, is_complete_html_tag,
+    //   html_tag_name, is_block_level_html_tag, is_complete_html_tag,
     //   is_table_underline, count_table_row_columns, is_container_mark
     //
     // ref_defs.rs — impl Parser:
@@ -433,7 +489,7 @@ impl<'a> Parser<'a> {
 // Public API
 // ========================================
 
-pub fn render_to_html(
+pub(crate) fn render_to_html(
     text: &[u8],
     flags: Flags,
     render_opts: RenderOptions,
@@ -455,16 +511,24 @@ pub fn render_to_html(
 /// Renderer implementation (e.g. for JS callback-based rendering).
 /// `render_options` carries render-only flags (tag_filter, heading_ids,
 /// autolink_headings) so they are not silently dropped by the API.
-pub fn render_with_renderer<'a>(
+pub(crate) fn render_with_renderer<'a>(
     text: &'a [u8],
     flags: Flags,
     render_options: RenderOptions,
     rend: Renderer<'a>,
+    extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-    let input = helpers::skip_utf8_bom(text);
+    // Who wants to know where things are is told places in `text`.
+    let input = match rend.ptr.wants_source() {
+        true => text,
+        false => helpers::skip_utf8_bom(text),
+    };
 
     let mut p = Parser::init(input, flags, rend)?;
+    if let Some(extensions) = extensions {
+        p.set_extensions(extensions);
+    }
 
     p.process_doc()
 }

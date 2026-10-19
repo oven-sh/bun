@@ -28,7 +28,7 @@ export const serverManifest = {};
 /** Server */
 export const ssrManifest = {};
 /** Client */
-export let onServerSideReload: (() => Promise<void>) | null = null;
+export let onServerSideReload: ((update: { clientCodeChanged: boolean }) => Promise<void>) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
@@ -523,21 +523,10 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       throwNotFound(dep, false);
     }
     if (typeof unloadedModule !== "function") {
-      const availableExportKeys = unloadedModule[ESMProps.exports];
       i += 2;
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
         DEBUG.ASSERT(typeof key === "string");
-        // TODO: there is a bug in the way exports are verified. Additionally a
-        // possible performance issue. For the meantime, this is disabled since
-        // it was not shipped in the initial 1.2.3 HMR, and real issues will
-        // just throw 'undefined is not a function' or so on.
-
-        // if (!availableExportKeys.includes(key)) {
-        //   if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
-        //     throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
-        //   }
-        // }
         i++;
       }
       isAsync ||= promiseOrModule instanceof Promise;
@@ -551,34 +540,6 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     }
   }
   return { list, isAsync };
-}
-
-function hasExportStar(starImports: Id[], key: string) {
-  if (starImports.length === 0) return false;
-  const queue: Id[] = [...starImports];
-  const visited = new Set<Id>();
-  while (queue.length > 0) {
-    const starImport = queue.shift()!;
-    if (visited.has(starImport)) continue;
-    visited.add(starImport);
-    const mod = unloadedModuleRegistry[starImport];
-    DEBUG.ASSERT(mod, `Module "${starImport}" not found`);
-    if (typeof mod === "function") {
-      return true;
-    }
-    const availableExportKeys = mod[ESMProps.exports];
-    if (availableExportKeys.includes(key)) {
-      return true; // Found
-    }
-    const nestedStarImports = mod[ESMProps.stars];
-    for (const nestedImport of nestedStarImports) {
-      if (!visited.has(nestedImport)) {
-        queue.push(nestedImport);
-      }
-    }
-  }
-
-  return false;
 }
 
 function getEsmExports(m: HMRModule) {
@@ -966,7 +927,15 @@ if (side === "server") {
 }
 
 if (side === "client") {
+  const { route } = config;
   registerSynthetic("bun:bake/client", {
     onServerSideReload: cb => (onServerSideReload = cb),
+    // For a router whose pages also run in the browser: the modules of the current route.
+    route: route
+      ? {
+          page: () => (route.page ? loadExports(route.page) : Promise.resolve(null)),
+          layouts: () => Promise.all(route.layouts.map(id => loadExports(id))),
+        }
+      : null,
   });
 }

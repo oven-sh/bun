@@ -9,42 +9,50 @@ pub fn decode<C: Copy, R: ReaderContext>(
     reader: &mut NewReader<R>,
     mut for_each: impl FnMut(C, u32, Option<&mut Data>) -> Result<bool, AnyPostgresError>,
 ) -> Result<(), AnyPostgresError> {
-    let mut _remaining_bytes = reader.length()?;
-    _remaining_bytes = _remaining_bytes.saturating_sub(4);
+    // The Int32 message length bounds every read below; a field count or cell
+    // length that overruns it is a malformed DataRow (libpq: "insufficient
+    // data left in message"), not a ShortRead to wait on.
+    let mut remaining_bytes = reader.length()?.saturating_sub(4);
 
+    if remaining_bytes < 2 {
+        return Err(AnyPostgresError::InvalidMessage);
+    }
     let remaining_fields: usize = usize::from(reader.short()?);
+    remaining_bytes -= 2;
 
     for index in 0..remaining_fields {
+        if remaining_bytes < 4 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
         let byte_length = reader.int4()?;
-        match byte_length {
+        remaining_bytes -= 4;
+        let index = u32::try_from(index).expect("int cast");
+        let more = match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
-                if !for_each(
-                    context,
-                    u32::try_from(index).expect("int cast"),
-                    Some(&mut empty),
-                )? {
-                    break;
-                }
+                for_each(context, index, Some(&mut empty))
             }
-            NULL_INT4 => {
-                if !for_each(context, u32::try_from(index).expect("int cast"), None)? {
-                    break;
-                }
-            }
+            NULL_INT4 => for_each(context, index, None),
             _ => {
-                let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
-                if !for_each(
-                    context,
-                    u32::try_from(index).expect("int cast"),
-                    Some(&mut bytes),
-                )? {
-                    break;
+                if byte_length > remaining_bytes {
+                    return Err(AnyPostgresError::InvalidMessage);
                 }
+                remaining_bytes -= byte_length;
+                let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
+                for_each(context, index, Some(&mut bytes))
+            }
+        };
+        match more {
+            Ok(true) => {}
+            Ok(false) => break,
+            // The rest of the row is skipped first, so the caller can fail this row alone.
+            Err(err) => {
+                reader.skip(usize::try_from(remaining_bytes).expect("int cast"))?;
+                return Err(err);
             }
         }
     }
     Ok(())
 }
 
-pub(crate) const NULL_INT4: u32 = 4294967295;
+const NULL_INT4: u32 = 4294967295;

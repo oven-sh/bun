@@ -5,53 +5,41 @@
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 
-// `Tag` is a runtime arg rather than a const generic: it is a
-// `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
-// OID space), so it can't be `ConstParamTy`. The body
-// is a plain match and the only caller (DataCell) computes the tag at runtime
-// anyway.
-// `UnsupportedArrayType` is reported via the crate-wide
-// `crate::Error`.
-pub(crate) fn to_js_typed_array_type(t: Tag) -> crate::Result<JSType> {
-    match t {
-        Tag::int4_array => Ok(JSType::Int32Array),
-        // Tag::int2_array => Ok(JSType::Uint2Array),
-        Tag::float4_array => Ok(JSType::Float32Array),
-        // Tag::float8_array => Ok(JSType::Float64Array),
-        _ => Err(crate::Error::UnsupportedArrayType),
-    }
+/// A buffer stands for its bytes. An Int32Array is a list of numbers, like an Array.
+pub(crate) fn is_bytes(js_type: JSType) -> bool {
+    js_type.is_array_buffer_like() && js_type != JSType::Int32Array
 }
 
-pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
-    if value.is_empty_or_undefined_or_null() {
-        return Ok(Tag::numeric);
+/// The type declared in Parse for `value`.
+pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
+    if value.is_int32() {
+        return Ok(Tag::int4);
+    }
+
+    if value.is_number() {
+        return Ok(from_double(value.as_double()));
+    }
+
+    if value.is_boolean() {
+        return Ok(Tag::bool);
     }
 
     if value.is_cell() {
         let tag = value.js_type();
-        if tag.is_string_like() {
-            return Ok(Tag::text);
+        if tag.is_string_like() || tag == JSType::JSDate {
+            return Ok(Tag::unspecified);
         }
 
-        if tag == JSType::JSDate {
-            return Ok(Tag::timestamptz);
-        }
-
-        if tag.is_typed_array_or_array_buffer() {
-            if tag == JSType::Int32Array {
-                return Ok(Tag::int4_array);
-            }
-
+        if is_bytes(tag) {
             return Ok(Tag::bytea);
         }
 
         if tag == JSType::HeapBigInt {
-            return Ok(Tag::int8);
-        }
+            if value.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
+                return Ok(Tag::int8);
+            }
 
-        if tag.is_array_like() {
-            // We will JSON.stringify anything else.
-            return Ok(Tag::json);
+            return Ok(Tag::numeric);
         }
 
         // Ban these types:
@@ -68,38 +56,27 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
         }
 
         // It's something internal
-        if !tag.is_indexable() {
+        if !tag.is_indexable() && bun_jsc::DOMURL::cast(value).is_none() {
             return Err(global.throw_value(global.ERR_INVALID_ARG_TYPE(format_args!(
                 "Unknown object is not a valid PostgreSQL type"
             ))));
         }
-
-        // We will JSON.stringify anything else.
-        if tag.is_object() {
-            return Ok(Tag::json);
-        }
     }
 
-    if value.is_int32() {
-        return Ok(Tag::int4);
+    Ok(Tag::unspecified)
+}
+
+fn from_double(number: f64) -> Tag {
+    let is_safe_integer =
+        number.trunc() == number && number.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64;
+    // An integer type would drop the sign of -0.
+    if !is_safe_integer || (number == 0.0 && number.is_sign_negative()) {
+        return Tag::float8;
     }
 
-    if value.is_any_int() {
-        let int = value.to_int64();
-        if int >= i64::from(i32::MIN) && int <= i64::from(i32::MAX) {
-            return Ok(Tag::int4);
-        }
-
-        return Ok(Tag::int8);
+    if number >= f64::from(i32::MIN) && number <= f64::from(i32::MAX) {
+        return Tag::int4;
     }
 
-    if value.is_number() {
-        return Ok(Tag::float8);
-    }
-
-    if value.is_boolean() {
-        return Ok(Tag::bool);
-    }
-
-    Ok(Tag::numeric)
+    Tag::int8
 }

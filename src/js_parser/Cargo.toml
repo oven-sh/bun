@@ -12,18 +12,12 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 bytemuck = "1"
-bun_dispatch.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 smallvec.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
 enumset.workspace = true
-libc.workspace = true
 bitflags.workspace = true
-bumpalo.workspace = true
-typed-arena.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
@@ -31,7 +25,6 @@ bun_ptr.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_highway.workspace = true
-bun_io.workspace = true
 bun_ast.workspace = true
 bun_react_compiler = { path = "../react_compiler" }
 bun_options_types.workspace = true

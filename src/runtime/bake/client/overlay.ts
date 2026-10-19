@@ -383,6 +383,24 @@ export function decodeAndAppendServerError(r: DataViewReader) {
 /**
  * Called when the list of errors changes, bundling errors change, or the active error page changes.
  */
+/**
+ * The build errors to show. The server and browser builds each report a file that both bundle,
+ * such as a stylesheet, so the same errors can come from two owners: show them once.
+ */
+function shownBuildErrors() {
+  const seen = new Set<string>();
+  const shown = new Set<FailureOwner>();
+  let messageCount = 0;
+  for (const [owner, failure] of buildErrors) {
+    const key = JSON.stringify([failure.file, failure.messages]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    shown.add(owner);
+    messageCount += failure.messages.length;
+  }
+  return { shown, messageCount };
+}
+
 export function updateErrorOverlay() {
   // if there are no errors, hide the modal
   const totalErrors = runtimeErrors.length + buildErrors.size;
@@ -417,7 +435,8 @@ export function updateErrorOverlay() {
       updateRuntimeErrorOverlay(err);
     } else {
       // Build errors
-      domModalTitle.innerHTML = `<span class="count">${buildErrors.size}</span> Build Error${buildErrors.size === 1 ? "" : "s"}`;
+      const { messageCount } = shownBuildErrors();
+      domModalTitle.innerHTML = `<span class="count">${messageCount}</span> Build Error${messageCount === 1 ? "" : "s"}`;
     }
 
     domNavBar.active.textContent = (activeErrorIndex + 1 + (buildErrors.size > 0 ? 1 : 0)).toString();
@@ -524,8 +543,6 @@ function updateRuntimeErrorOverlay(err: RuntimeError) {
 }
 
 function updateBuildErrorOverlay({ remountAll = false }) {
-  let totalCount = 0;
-
   const owners = remountAll ? buildErrors.keys() : updatedErrorOwners;
 
   for (const owner of owners) {
@@ -538,8 +555,6 @@ function updateBuildErrorOverlay({ remountAll = false }) {
       errorDoms.delete(owner);
       continue;
     }
-
-    totalCount += data.messages.length;
 
     // Create the element for the root if it does not yet exist.
     if (!dom || remountAll) {
@@ -565,6 +580,11 @@ function updateBuildErrorOverlay({ remountAll = false }) {
     }
   }
   updatedErrorOwners.clear();
+
+  const { shown } = shownBuildErrors();
+  for (const [owner, dom] of errorDoms) {
+    dom.root.style.display = shown.has(owner) ? "" : "none";
+  }
 }
 
 function mapCodePreviewLine(line: string) {

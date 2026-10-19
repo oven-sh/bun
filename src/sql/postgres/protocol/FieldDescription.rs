@@ -1,5 +1,5 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
-use crate::postgres::postgres_types::{self as types, Int4, Short};
+use crate::postgres::postgres_types::{self as types, Int4};
 use crate::postgres::protocol::new_reader::NewReader;
 use crate::shared::column_identifier::ColumnIdentifier;
 
@@ -8,31 +8,18 @@ pub struct FieldDescription {
     /// so we do the work to figure out if the property name is a number ahead of time.
     pub name_or_index: ColumnIdentifier,
     pub table_oid: Int4,
-    pub column_index: Short,
+    /// Negative for a system column (`ctid`, `xmin`, ...).
+    pub attribute_number: i16,
     pub type_oid: Int4,
     pub binary: bool,
 }
 
-impl Default for FieldDescription {
-    fn default() -> Self {
-        Self {
-            name_or_index: ColumnIdentifier::Name(Default::default()),
-            table_oid: 0,
-            column_index: 0,
-            type_oid: 0,
-            binary: false,
-        }
-    }
-}
-
 impl FieldDescription {
     pub fn type_tag(&self) -> types::Tag {
-        // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype over
-        // the OID, so wrap the truncated value directly.
-        types::Tag(self.type_oid as Short)
+        types::Tag::from_oid(self.type_oid)
     }
 
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
         let name = reader.read_z()?;
@@ -45,7 +32,7 @@ impl FieldDescription {
 
         // Column attribute number (2 bytes)
         // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
-        let column_index = reader.short()?;
+        let attribute_number = reader.short()? as i16;
 
         // Data type OID (4 bytes)
         // The object ID of the field's data type. The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
@@ -64,7 +51,7 @@ impl FieldDescription {
         };
         Ok(Self {
             table_oid,
-            column_index,
+            attribute_number,
             type_oid,
             binary,
             name_or_index: field_name,

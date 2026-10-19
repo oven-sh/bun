@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMBinding.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
@@ -43,7 +44,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWritableStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWritableStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSWritableStreamPrototype>(vm)) JSWritableStreamPrototype(vm, structure);
+        JSWritableStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWritableStreamPrototype))) JSWritableStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -57,7 +58,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -102,23 +103,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSWritableStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSWritableStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWritableStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWritableStreamConstructor, m_subspaceForWritableStreamConstructor));
 }
 
 template<> void JSWritableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "WritableStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSWritableStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "WritableStream"_s, JSWritableStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSWritableStream>(vm, globalObject));
 }
 
@@ -202,9 +194,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObjec
 void JSWritableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWritableStream::info(), JSWritableStreamPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSWritableStream::info(), JSWritableStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSWritableStream
@@ -238,7 +230,7 @@ JSWritableStream* JSWritableStream::create(VM& vm, Structure* structure)
 
 Structure* JSWritableStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSWritableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -260,12 +252,7 @@ JSValue JSWritableStream::getConstructor(VM& vm, const JSGlobalObject* globalObj
 
 GCClient::IsoSubspace* JSWritableStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWritableStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWritableStream, m_subspaceForWritableStream));
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStream);
@@ -347,7 +334,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort, (JSGlobalObjec
     if (!stream) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStream.prototype.abort can only be called on a WritableStream"_s))));
     if (isWritableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot abort a locked WritableStream"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot abort a locked WritableStream"_s))));
     auto* promise = writableStreamAbort(lexicalGlobalObject, stream, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -361,9 +348,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_close, (JSGlobalObjec
     if (!stream) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "WritableStream.prototype.close can only be called on a WritableStream"_s))));
     if (isWritableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot close a locked WritableStream"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a locked WritableStream"_s))));
     if (writableStreamCloseQueuedOrInFlight(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot close a WritableStream that is already closing"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a WritableStream that is already closing"_s))));
     auto* promise = writableStreamClose(lexicalGlobalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);

@@ -6,6 +6,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectInitializationScope.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/DateInstance.h>
@@ -21,7 +22,6 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
-#include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/TypedArrayAdaptersForwardDeclarations.h"
 
 namespace Bun {
@@ -37,6 +37,13 @@ typedef struct ExternColumnIdentifier {
     bool isIndexedColumn() const { return tag == 1; }
     bool isNamedColumn() const { return tag == 2; }
     bool isDuplicateColumn() const { return tag == 0; }
+
+    Identifier propertyName(VM& vm) const
+    {
+        ASSERT(isNamedColumn());
+        // NonNull: a column named "" is the empty BunString, and Identifier::fromString cannot take a null String.
+        return Identifier::fromString(vm, name.toWTFString(BunString::NonNull));
+    }
 } ExternColumnIdentifier;
 
 typedef struct DataCellArray {
@@ -45,18 +52,17 @@ typedef struct DataCellArray {
     uint32_t cap;
 } DataCellArray;
 
+// Numbers and nulls. No GC cell.
+typedef struct DataCellNumbers {
+    JSC::JSValue* values;
+    uint32_t length;
+    uint32_t cap;
+} DataCellNumbers;
+
 typedef struct DataCellRaw {
     void* ptr;
     uint64_t length;
 } DataCellRaw;
-
-typedef struct TypedArrayDataCell {
-    void* headPtr;
-    void* data;
-    uint32_t length;
-    uint32_t byteLength;
-    JSC::JSType type;
-} TypedArrayDataCell;
 
 typedef union DataCellValue {
     uint8_t null_value;
@@ -67,11 +73,10 @@ typedef union DataCellValue {
     uint64_t unsigned_bigint;
     uint8_t boolean;
     double date;
-    double date_with_time_zone;
     size_t bytea[2];
     WTF::StringImpl* json;
     DataCellArray array;
-    TypedArrayDataCell typed_array;
+    DataCellNumbers numbers;
     DataCellRaw raw;
     uint32_t unsigned_integer;
 } DataCellValue;
@@ -84,14 +89,15 @@ enum class DataCellTag : uint8_t {
     Bigint = 4,
     Boolean = 5,
     Date = 6,
-    DateWithTimeZone = 7,
-    Bytea = 8,
-    Json = 9,
-    Array = 10,
-    TypedArray = 11,
-    Raw = 12,
-    UnsignedInteger = 13,
-    UnsignedBigint = 14,
+    Bytea = 7,
+    Json = 8,
+    Array = 9,
+    Raw = 10,
+    UnsignedInteger = 11,
+    UnsignedBigint = 12,
+    Numbers = 13,
+    Int32Array = 14,
+    Float32Array = 15,
 };
 
 enum class BunResultMode : uint8_t {
@@ -111,6 +117,8 @@ typedef struct DataCell {
     bool isNamedColumn() const { return _indexedColumnFlag == 0; }
     bool isDuplicateColumn() const { return _indexedColumnFlag == 2; }
 } DataCell;
+
+static_assert(sizeof(DataCell) == 32, "DataCell must match SQLDataCell in src/sql_jsc/shared/SQLDataCell.rs");
 
 class BunStructureFlags {
 public:
@@ -169,8 +177,14 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Boolean:
         return jsBoolean(cell.value.boolean);
         break;
-    case DataCellTag::DateWithTimeZone:
     case DataCellTag::Date: {
+        // Postgres 'infinity'::date / '-infinity'::timestamp arrive here as
+        // ±Infinity. DateInstance::create applies timeClip, which maps every
+        // non-finite input to NaN and loses the sign. Return the Number
+        // ±Infinity instead, matching node-postgres (pg-types / postgres-date).
+        if (std::isinf(cell.value.date)) {
+            return jsDoubleNumber(cell.value.date);
+        }
         return JSC::DateInstance::create(vm, globalObject->dateStructure(), cell.value.date);
         break;
     }
@@ -202,81 +216,64 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             RETURN_IF_EXCEPTION(scope, {});
             args.append(result);
         }
+        if (args.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
         RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
     }
-    case DataCellTag::TypedArray: {
-        JSC::JSType type = static_cast<JSC::JSType>(cell.value.typed_array.type);
-        uint32_t length = cell.value.typed_array.length;
-        switch (type) {
-        case JSC::JSType::Int32ArrayType: {
-            JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(int32_t));
+    case DataCellTag::Numbers: {
+        const JSValue* values = cell.value.numbers.values;
+        uint32_t length = cell.value.numbers.length;
+        IndexingType indexingType = ArrayWithInt32;
+        for (JSValue value : std::span { values, length }) {
+            if (value.isInt32())
+                continue;
+            if (!value.isDouble() || std::isnan(value.asDouble())) {
+                indexingType = ArrayWithContiguous;
+                break;
             }
+            indexingType = ArrayWithDouble;
+        }
+        ObjectInitializationScope initializationScope(vm);
+        JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
+        if (!array) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        // ArrayStorage when the global object is having a bad time.
+        indexingType = array->indexingType();
+        if (indexingType == ArrayWithDouble) {
+            auto doubles = array->butterfly()->contiguousDouble();
+            for (uint32_t i = 0; i < length; i++)
+                doubles.atUnsafe(i) = values[i].asNumber();
+        } else if (indexingType == ArrayWithInt32 || indexingType == ArrayWithContiguous) {
+            auto slots = array->butterfly()->contiguous();
+            for (uint32_t i = 0; i < length; i++)
+                slots.atUnsafe(i).setWithoutWriteBarrier(values[i]);
+        } else {
+            for (uint32_t i = 0; i < length; i++)
+                array->initializeIndexWithoutBarrier(initializationScope, i, values[i], indexingType);
+        }
+        return array;
+    }
+    case DataCellTag::Int32Array:
+    case DataCellTag::Float32Array: {
+        size_t length = cell.value.raw.length;
+        JSArrayBufferView* array = cell.tag == DataCellTag::Int32Array
+            ? static_cast<JSArrayBufferView*>(JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length))
+            : JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
+        RETURN_IF_EXCEPTION(scope, {});
 
-            return array;
+        // Each element is 4 bytes of size and 4 of value, big-endian.
+        auto* elements = static_cast<const uint8_t*>(cell.value.raw.ptr);
+        auto* values = static_cast<uint32_t*>(array->vector());
+        for (size_t i = 0; i < length; i++) {
+            uint32_t value;
+            memcpy(&value, elements + i * 8 + 4, sizeof(value));
+            values[i] = std::byteswap(value);
         }
-        case JSC::JSType::Uint32ArrayType: {
-            JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint32>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint32_t));
-            }
-            return array;
-        }
-        case JSC::JSType::Int16ArrayType: {
-            JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt16>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(int16_t));
-            }
-
-            return array;
-        }
-        case JSC::JSType::Uint16ArrayType: {
-            JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint16>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint16_t));
-            }
-            return array;
-        }
-        case JSC::JSType::Float16ArrayType: {
-            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat16>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * 2); // sizeof(float16_t)
-            }
-            return array;
-        }
-        case JSC::JSType::Float32ArrayType: {
-            JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(float));
-            }
-            return array;
-        }
-        case JSC::JSType::Float64ArrayType: {
-            JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat64>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(double));
-            }
-            return array;
-        }
-        default: {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: implement this typed array type");
-        }
-        }
+        return array;
     }
     default: {
         RELEASE_ASSERT_NOT_REACHED();
@@ -296,18 +293,11 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     case BunResultMode::Objects: // objects
 
     {
-        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject);
 
-        // TODO: once we have more tests for this, let's add another branch for
-        // "only mixed names and mixed indexed columns, no duplicates"
-        // then we cna remove this sort and instead do two passes.
-        if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
-            // sort the cells by if they're named or indexed, put named first.
-            // this is to conform to the Structure offsets from earlier.
-            std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
-                return a.isNamedColumn() && !b.isNamedColumn();
-            });
-        }
+        // cells[i] corresponds to fields[i]: the slow path below advances
+        // structureOffsetIndex only on named cells, so it visits them in the
+        // same order JSC__createStructure assigned the offsets. No sort needed.
 
         // Fast path: named columns only, no duplicate columns
         if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
@@ -319,10 +309,12 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
                 if (names.has_value()) {
-                    auto name = names.value()[i];
-                    object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
-
+                    object->putDirect(vm, names.value()[i].propertyName(vm), value);
                 } else {
+                    // CachedStructure::build_from_columns guarantees one offset
+                    // per column on this path; never drop a value silently.
+                    RELEASE_ASSERT_WITH_MESSAGE(structure && structure->isValidOffset(i),
+                        "SQL row column %u has no matching Structure offset", i);
                     object->putDirectOffset(vm, i, value);
                 }
             }
@@ -370,10 +362,13 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                             structureOffsetIndex++;
                         }
                         if (structureOffsetIndex < namesCount) {
-                            auto name = names.value()[structureOffsetIndex++];
-                            object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
+                            object->putDirect(vm, names.value()[structureOffsetIndex++].propertyName(vm), value);
                         }
-                    } else if (structure && structure->isValidOffset(structureOffsetIndex)) {
+                    } else {
+                        // JSC__createStructure added one offset per named
+                        // column; never drop a value silently.
+                        RELEASE_ASSERT_WITH_MESSAGE(structure && structure->isValidOffset(structureOffsetIndex),
+                            "SQL row named column has no matching Structure offset (index %u)", structureOffsetIndex);
                         object->putDirectOffset(vm, structureOffsetIndex++, value);
                     }
                 } else if (cell.isDuplicateColumn()) {
@@ -449,7 +444,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     for (uint32_t i = 0; i < capacity; i++) {
         ExternColumnIdentifier& name = names[i];
         if (name.isNamedColumn()) {
-            propertyNames.add(Identifier::fromString(vm, name.name.toWTFString()));
+            propertyNames.add(name.propertyName(vm));
         }
         nonDuplicateCount += !name.isDuplicateColumn();
         if (nonDuplicateCount == JSFinalObject::maxInlineCapacity) {
@@ -480,72 +475,53 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     return JSValue::encode(structure);
 }
 
-extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+// `result.statement`. `columnValues` holds one value for each of `keys`, column after column.
+extern "C" EncodedJSValue SQL__createStatementDescription(JSC::JSGlobalObject* globalObject, const BunString* query, const uint32_t* parameterTypes, size_t parameterCount, const char* const* keys, size_t keyCount, MarkedArgumentBuffer* columnValues)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* object = JSC::constructEmptyObject(vm, structure);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ensureStillAliveHere(object);
-    vm.writeBarrier(object);
+    Vector<Identifier, 8> identifiers;
+    for (const char* key : std::span { keys, keyCount })
+        identifiers.append(Identifier::fromString(vm, byteCast<Latin1Character>(unsafeSpan(key))));
 
-    return JSValue::encode(object);
+    MarkedArgumentBuffer types;
+    for (uint32_t type : std::span { parameterTypes, parameterCount })
+        types.append(jsNumber(type));
+
+    MarkedArgumentBuffer columns;
+    for (size_t i = 0; i < columnValues->size(); i += keyCount) {
+        JSObject* column = constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(keyCount));
+        for (size_t key = 0; key < keyCount; key++)
+            column->putDirect(vm, identifiers[key], columnValues->at(i + key));
+        columns.append(column);
+    }
+
+    if (columnValues->hasOverflowed() || columns.hasOverflowed() || types.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    JSString* string = toJS(globalObject, *query);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSArray* typesArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), types);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSArray* columnsArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), columns);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSObject* statement = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    statement->putDirect(vm, Identifier::fromString(vm, "string"_s), string);
+    statement->putDirect(vm, Identifier::fromString(vm, "types"_s), typesArray);
+    statement->putDirect(vm, Identifier::fromString(vm, "columns"_s), columnsArray);
+    return JSValue::encode(statement);
 }
 
-extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, uint32_t offset, JSC::EncodedJSValue value)
-{
-    JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
-}
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
 
-// PostgreSQL time formatting helpers - following WebKit's pattern
-extern "C" size_t Postgres__formatTime(int64_t microseconds, char* buffer, size_t bufferSize)
+// For ColumnIdentifier::init in bun_sql, which cannot see JSC. UINT32_MAX: not an array index.
+static_assert(MAX_ARRAY_INDEX < std::numeric_limits<uint32_t>::max());
+extern "C" uint32_t JSC__parseIndex(const Latin1Character* name, size_t length)
 {
-    // Convert microseconds since midnight to time components
-    int64_t totalSeconds = microseconds / 1000000;
-
-    int hours = static_cast<int>(totalSeconds / 3600);
-    int minutes = static_cast<int>((totalSeconds % 3600) / 60);
-    int seconds = static_cast<int>(totalSeconds % 60);
-
-    // Format following SQL standard time format
-    int charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d", hours, minutes, seconds);
-
-    // Add fractional seconds if present (PostgreSQL supports microsecond precision)
-    if (microseconds % 1000000 != 0) {
-        // PostgreSQL displays fractional seconds only when non-zero
-        int us = microseconds % 1000000;
-        charactersWritten = snprintf(buffer, bufferSize, "%02d:%02d:%02d.%06d",
-            hours, minutes, seconds, us);
-        // Trim trailing zeros for cleaner output
-        while (buffer[charactersWritten - 1] == '0')
-            charactersWritten--;
-        if (buffer[charactersWritten - 1] == '.')
-            charactersWritten--;
-        buffer[charactersWritten] = '\0';
-    }
-
-    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < bufferSize);
-    return charactersWritten;
-}
-
-extern "C" size_t Postgres__formatTimeTz(int64_t microseconds, int32_t tzOffsetSeconds, char* buffer, size_t bufferSize)
-{
-    // Format time part first
-    size_t timeLen = Postgres__formatTime(microseconds, buffer, bufferSize);
-
-    // PostgreSQL convention: negative offset means positive UTC offset
-    // Add timezone in ±HH or ±HH:MM format
-    int tzHours = abs(tzOffsetSeconds) / 3600;
-    int tzMinutes = (abs(tzOffsetSeconds) % 3600) / 60;
-
-    int tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d",
-        tzOffsetSeconds <= 0 ? '+' : '-', tzHours);
-
-    if (tzMinutes != 0) {
-        tzLen = snprintf(buffer + timeLen, bufferSize - timeLen, "%c%02d:%02d",
-            tzOffsetSeconds <= 0 ? '+' : '-', tzHours, tzMinutes);
-    }
-
-    return timeLen + tzLen;
+    return parseIndex(std::span<const Latin1Character> { name, length }).value_or(std::numeric_limits<uint32_t>::max());
 }
 }

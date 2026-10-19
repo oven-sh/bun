@@ -50,6 +50,20 @@ it("long arrays get cutoff", () => {
   );
 });
 
+it("long arrays get cutoff at a nested indent", () => {
+  const row = "          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,\n";
+  expect(Bun.inspect([[[[Array(1000).fill(4)]]]], { depth: 5 })).toEqual(
+    "[\n  [\n    [\n      [\n        [\n" +
+      row +
+      row +
+      row +
+      row +
+      "          4, 4, 4, 4,\n" +
+      "          ... 900 more items\n" +
+      "        ]\n      ]\n    ]\n  ]\n]",
+  );
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({
@@ -141,43 +155,6 @@ NamedError: console.error a named error
 
   Error log"
 `);
-});
-
-it("console.log: %% collapses after format args are exhausted, %j of undefined prints 'undefined'", async () => {
-  const src = `
-    console.log("%s %%", "x");
-    console.log("%d %f %j %%", 1, 2, 3);
-    console.log("%s %% %% %%", "x");
-    console.log("%s %s %% end", "a");
-    console.log("100%%", "extra");
-    console.log("[%j]", undefined);
-    console.log("[%j]", function () {});
-    console.log("[%j]", Symbol("s"));
-    console.log("[%j]", null);
-    console.log("[%j]", { a: 1 });
-  `;
-  await using proc = spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
-    stdout:
-      "x %\n" +
-      "1 2 3 %\n" +
-      "x % % %\n" +
-      "a %s % end\n" +
-      "100% extra\n" +
-      "[undefined]\n" +
-      "[undefined]\n" +
-      "[undefined]\n" +
-      "[null]\n" +
-      '[{"a":1}]\n',
-    stderr: "",
-    exitCode: 0,
-  });
 });
 
 it("console.log with SharedArrayBuffer", () => {

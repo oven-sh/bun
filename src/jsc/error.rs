@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("ModuleNotFound")]
     ModuleNotFound,
     #[error("InvalidDataURL")]
@@ -22,6 +20,10 @@ pub enum Error {
     MissingData,
     #[error("InvalidHash")]
     InvalidHash,
+    #[error("InvalidSourceMap")]
+    InvalidSourceMap,
+    #[error("NotARegularFile")]
+    NotARegularFile,
     #[error("CacheDisabled")]
     CacheDisabled,
     #[error("InvalidInputHash")]
@@ -44,14 +46,10 @@ pub enum Error {
     UnexpectedPendingResolution,
     #[error("WorkerTerminated")]
     WorkerTerminated,
-    #[error("JSErrorObject")]
-    JSErrorObject,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
     #[error("MissingDebugInfo")]
     MissingDebugInfo,
-    #[error("InvalidDebugInfo")]
-    InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
     #[error("FailedToOpenSocket")]
@@ -92,7 +90,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::JSTerminated => "JSTerminated",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::InvalidDataURL => "InvalidDataURL",
             Self::InvalidURL => "InvalidURL",
@@ -103,6 +100,8 @@ impl Error {
             Self::WriteFailed => "WriteFailed",
             Self::MissingData => "MissingData",
             Self::InvalidHash => "InvalidHash",
+            Self::InvalidSourceMap => "InvalidSourceMap",
+            Self::NotARegularFile => "NotARegularFile",
             Self::CacheDisabled => "CacheDisabled",
             Self::InvalidInputHash => "InvalidInputHash",
             Self::MismatchedFeatureHash => "MismatchedFeatureHash",
@@ -114,10 +113,8 @@ impl Error {
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::WorkerTerminated => "WorkerTerminated",
-            Self::JSErrorObject => "JSErrorObject",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),

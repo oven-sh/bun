@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { isWindows } from "harness";
+import { bunRun, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -105,18 +105,20 @@ it("refreshed setInterval should not reschedule again", async () => {
   }, 100);
 });
 
-it("setInterval runs with at least the delay time", () => {
-  expect([`run`, join(import.meta.dir, "setInterval-fixture.js")]).toRun();
+it.concurrent("setInterval runs with at least the delay time", async () => {
+  expect(await bunRun([`run`, join(import.meta.dir, "setInterval-fixture.js")])).toSpawn();
 });
 
-it("setInterval canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
+it.concurrent("setInterval canceling with unref, close, _idleTimeout, and _onTimeout", async () => {
+  expect(await bunRun([join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"])).toSpawn();
 });
 
-it(
+it.concurrent(
   "setInterval doesn't leak memory",
-  () => {
-    expect([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]).toRun();
+  async () => {
+    const { stdout, stderr, exitCode } = await bunRun([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]);
+    if (exitCode !== 0) console.error(stderr || stdout);
+    expect(exitCode).toBe(0);
   },
   !isWindows ? 30_000 : 90_000,
 );
@@ -124,6 +126,10 @@ it(
 // ✓ setInterval doesn't leak memory [80188.00ms]
 // TODO: investigate this discrepancy further
 
-it("setInterval doesn't run when cancelled after being scheduled", () => {
-  expect([`run`, join(import.meta.dir, "setInterval-cancel-fixture.js")]).toRun();
-}, 30_000);
+it.concurrent(
+  "setInterval doesn't run when cancelled after being scheduled",
+  async () => {
+    expect(await bunRun([`run`, join(import.meta.dir, "setInterval-cancel-fixture.js")])).toSpawn();
+  },
+  30_000,
+);

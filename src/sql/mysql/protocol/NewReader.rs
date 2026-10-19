@@ -1,17 +1,15 @@
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::decode_length_int;
+use super::stack_reader::PacketReader;
 use crate::shared::data::Data;
 
-/// Structural interface a reader context must provide for protocol decoding.
+/// Structural interface a reader context must provide for packet framing.
 pub trait ReaderContext: Copy {
     fn mark_message_start(self);
     // `&self` (not `self`) so the returned borrow can be tied to the context's
     // buffer lifetime; `Self: Copy` keeps the by-value call sites working.
     fn peek(&self) -> &[u8];
-    fn skip(self, count: isize);
     fn ensure_capacity(self, count: usize) -> bool;
-    fn read(self, count: usize) -> Result<Data, AnyMySQLError>;
-    fn read_z(self) -> Result<Data, AnyMySQLError>;
     fn set_offset_from_start(self, offset: usize);
 }
 
@@ -21,8 +19,6 @@ pub struct NewReader<C: ReaderContext> {
 }
 
 impl<C: ReaderContext> NewReader<C> {
-    pub const IS_WRAPPED: bool = true;
-
     pub fn mark_message_start(self) {
         self.wrapped.mark_message_start();
     }
@@ -31,6 +27,19 @@ impl<C: ReaderContext> NewReader<C> {
         self.wrapped.set_offset_from_start(offset);
     }
 
+    pub fn peek(&self) -> &[u8] {
+        self.wrapped.peek()
+    }
+
+    pub fn ensure_capacity(self, count: usize) -> Result<(), AnyMySQLError> {
+        if !self.wrapped.ensure_capacity(count) {
+            return Err(AnyMySQLError::ShortRead);
+        }
+        Ok(())
+    }
+}
+
+impl PacketReader<'_> {
     pub fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
         self.wrapped.read(count)
     }
@@ -40,24 +49,13 @@ impl<C: ReaderContext> NewReader<C> {
             .skip(count.try_into().ok().expect("skip count fits in isize"));
     }
 
-    pub fn peek(&self) -> &[u8] {
-        self.wrapped.peek()
-    }
-
-    pub fn read_z(self) -> Result<Data, AnyMySQLError> {
+    pub(crate) fn read_z(self) -> Result<Data, AnyMySQLError> {
         self.wrapped.read_z()
     }
 
     pub fn byte(self) -> Result<u8, AnyMySQLError> {
         let data = self.read(1)?;
         Ok(data.slice()[0])
-    }
-
-    pub fn ensure_capacity(self, count: usize) -> Result<(), AnyMySQLError> {
-        if !self.wrapped.ensure_capacity(count) {
-            return Err(AnyMySQLError::ShortRead);
-        }
-        Ok(())
     }
 
     pub fn int<I: ReadableInt>(self) -> Result<I, AnyMySQLError> {
@@ -98,18 +96,9 @@ impl<C: ReaderContext> NewReader<C> {
         Err(AnyMySQLError::InvalidEncodedLength)
     }
 
-    pub fn encoded_len_int(self) -> Result<u64, AnyMySQLError> {
+    pub(crate) fn encoded_len_int(self) -> Result<u64, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
-            return Ok(result.value);
-        }
-        Err(AnyMySQLError::InvalidEncodedInteger)
-    }
-
-    pub fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, AnyMySQLError> {
-        if let Some(result) = decode_length_int(self.peek()) {
-            self.skip(result.bytes_read);
-            *size += result.bytes_read;
             return Ok(result.value);
         }
         Err(AnyMySQLError::InvalidEncodedInteger)
@@ -121,23 +110,3 @@ impl<C: ReaderContext> NewReader<C> {
 /// `bun_sql::ReadableInt`) keep their paths.
 /// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
 pub use bun_core::NativeEndianInt as ReadableInt;
-
-impl<C: ReaderContext> From<C> for NewReader<C> {
-    fn from(wrapped: C) -> Self {
-        Self { wrapped }
-    }
-}
-
-pub trait Decode: Sized {
-    fn decode_internal<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), AnyMySQLError>;
-
-    fn decode<C: ReaderContext>(
-        &mut self,
-        context: impl Into<NewReader<C>>,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(context.into())
-    }
-}

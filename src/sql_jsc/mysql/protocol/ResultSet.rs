@@ -6,8 +6,7 @@ use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
-use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
-use bun_sql::shared::ColumnIdentifier as NameOrIndex;
+use bun_sql::mysql::protocol::stack_reader::PacketReader;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
@@ -15,8 +14,6 @@ use crate::shared::CachedStructure;
 use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
 
 use super::decode_binary_value::{self, decode_binary_value};
-
-pub use bun_sql::mysql::protocol::ResultSetHeader as Header;
 
 bun_core::declare_scope!(MySQLResultSet, visible);
 
@@ -50,17 +47,6 @@ impl<'a> Row<'a> {
             result_mode as u8,
             cached_structure,
         )
-    }
-
-    pub(crate) fn decode_internal<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
-        if self.binary {
-            self.decode_binary(reader)
-        } else {
-            self.decode_text(reader)
-        }
     }
 
     fn parse_value_and_set_cell(
@@ -169,7 +155,7 @@ impl<'a> Row<'a> {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {
                     let slice = value.slice();
-                    *cell = SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1);
+                    *cell = SQLDataCell::bool(!slice.is_empty() && slice[0] == 1);
                 } else {
                     *cell = SQLDataCell::raw(value);
                 }
@@ -190,18 +176,10 @@ impl<'a> Row<'a> {
         }
     }
 
-    fn decode_text<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
-        let cells = vec![SQLDataCell::null(); self.columns.len()].into_boxed_slice();
-        let mut cells = scopeguard::guard(cells, |mut cells| {
-            for value in cells.iter_mut() {
-                value.deinit();
-            }
-        });
+    fn decode_text(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        let mut cells = Cells::new(self.columns.len());
 
-        for (index, value) in cells.iter_mut().enumerate() {
+        for (index, value) in cells.0.iter_mut().enumerate() {
             if let Some(result) = decode_length_int(reader.peek()) {
                 let column = &self.columns[index];
                 // The NULL marker is the single literal byte 0xfb. A 251-byte
@@ -224,29 +202,20 @@ impl<'a> Row<'a> {
                         self.parse_value_and_set_cell(value, column, &string_data);
                     }
                 }
-                value.index = match column.name_or_index {
-                    // The indexed columns can be out of order.
-                    NameOrIndex::Index(i) => i,
-                    _ => u32::try_from(index).expect("int cast"),
-                };
-                value.is_indexed_column = match column.name_or_index {
-                    NameOrIndex::Duplicate => 2,
-                    NameOrIndex::Index(_) => 1,
-                    NameOrIndex::Name(_) => 0,
-                };
+                value.set_column(
+                    u32::try_from(index).expect("int cast"),
+                    &column.name_or_index,
+                );
             } else {
                 return Err(AnyMySQLError::InvalidResultRow);
             }
         }
 
-        self.values = scopeguard::ScopeGuard::into_inner(cells);
+        self.values = core::mem::take(&mut cells.0);
         Ok(())
     }
 
-    fn decode_binary<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
+    fn decode_binary(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         // Header
         let _ = reader.int::<u8>()?;
 
@@ -254,16 +223,11 @@ impl<'a> Row<'a> {
         let bitmap_bytes = (self.columns.len() + 7 + 2) / 8;
         let null_bitmap = reader.read(bitmap_bytes)?;
 
-        let cells = vec![SQLDataCell::null(); self.columns.len()].into_boxed_slice();
-        let mut cells = scopeguard::guard(cells, |mut cells| {
-            for value in cells.iter_mut() {
-                value.deinit();
-            }
-        });
+        let mut cells = Cells::new(self.columns.len());
         // Skip first 2 bits of null bitmap (reserved)
         let bitmap_offset: usize = 2;
 
-        for (i, value) in cells.iter_mut().enumerate() {
+        for (i, value) in cells.0.iter_mut().enumerate() {
             let byte_pos = (bitmap_offset + i) >> 3;
             let bit_pos = ((bitmap_offset + i) & 7) as u8;
             let is_null = (null_bitmap.slice()[byte_pos] & (1u8 << bit_pos)) != 0;
@@ -272,47 +236,45 @@ impl<'a> Row<'a> {
             if is_null {
                 *value = SQLDataCell::null();
             } else {
-                *value = decode_binary_value(
-                    self.global_object,
-                    column.column_type,
-                    column.column_length,
-                    self.raw,
-                    self.bigint,
-                    column.flags.contains(ColumnFlags::UNSIGNED),
-                    column.flags.contains(ColumnFlags::BINARY),
-                    column.character_set,
-                    reader,
-                )
-                .map_err(|e| match e {
-                    crate::Error::MySqlProtocol(e) => e,
-                    other => other
-                        .name()
-                        .parse()
-                        .unwrap_or(AnyMySQLError::InvalidBinaryValue),
-                })?;
+                *value =
+                    decode_binary_value(self.global_object, column, self.raw, self.bigint, reader)
+                        .map_err(|e| match e {
+                            crate::Error::MySqlProtocol(e) => e,
+                            other => other
+                                .name()
+                                .parse()
+                                .unwrap_or(AnyMySQLError::InvalidBinaryValue),
+                        })?;
             }
-            value.index = match column.name_or_index {
-                // The indexed columns can be out of order.
-                NameOrIndex::Index(idx) => idx,
-                _ => u32::try_from(i).expect("int cast"),
-            };
-            value.is_indexed_column = match column.name_or_index {
-                NameOrIndex::Duplicate => 2,
-                NameOrIndex::Index(_) => 1,
-                NameOrIndex::Name(_) => 0,
-            };
+            value.set_column(u32::try_from(i).expect("int cast"), &column.name_or_index);
         }
 
-        self.values = scopeguard::ScopeGuard::into_inner(cells);
+        self.values = core::mem::take(&mut cells.0);
         Ok(())
     }
 
-    // See Decode trait in src/sql/mysql/protocol/NewReader.rs
-    pub(crate) fn decode<Context: ReaderContext>(
-        &mut self,
-        reader: NewReader<Context>,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(reader)
+    pub(crate) fn decode(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        if self.binary {
+            self.decode_binary(reader)
+        } else {
+            self.decode_text(reader)
+        }
+    }
+}
+
+struct Cells(Box<[SQLDataCell]>);
+
+impl Cells {
+    fn new(len: usize) -> Cells {
+        Cells(vec![SQLDataCell::null(); len].into_boxed_slice())
+    }
+}
+
+impl Drop for Cells {
+    fn drop(&mut self) {
+        for value in self.0.iter_mut() {
+            value.deinit();
+        }
     }
 }
 

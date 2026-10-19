@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
 import { isWindows } from "harness";
+import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
 it("arch", () => {
@@ -156,12 +157,48 @@ it("networkInterfaces", () => {
         // may be null
         expect(typeof nI.cidr).toBe("string");
 
+      if (nI.family === "IPv4") {
+        expect(isIPv4(nI.address)).toBeTrue();
+        expect(isIPv4(nI.netmask)).toBeTrue();
+      }
       if (nI.family === "IPv6") {
         expect(nI.scopeid).toBeNumber();
         expect(nI.scope_id).toBeUndefined();
+        expect(isIPv6(nI.address)).toBeTrue();
+        // Node exposes the zone only via the numeric `scopeid` field, never
+        // inline in `address`/`cidr`.
+        expect(nI.address).not.toContain("%");
+        expect(isIPv6(nI.netmask)).toBeTrue();
+        if (nI.cidr) {
+          const [addr, suffix] = nI.cidr.split("/");
+          expect(isIPv6(addr)).toBeTrue();
+          expect(addr).not.toContain("%");
+          expect(Number(suffix)).toBeWithin(0, 129);
+        }
       }
     }
   }
+});
+
+it("networkInterfaces IPv6 loopback", () => {
+  // The loopback interface's IPv6 address/netmask/cidr must be the actual
+  // address, not a placeholder like "<addr family=...>".
+  const entries = Object.values(os.networkInterfaces())
+    .flat()
+    .filter(i => i.internal && i.family === "IPv6" && i.scopeid === 0);
+  // Skip on hosts where IPv6 is disabled entirely (no ::1 on lo). The preceding
+  // test still catches the regression for any IPv6 entries that do exist.
+  if (entries.length === 0) return;
+  const lo = entries.find(e => e.address === "::1") ?? entries[0];
+  expect(lo).toEqual({
+    address: "::1",
+    cidr: "::1/128",
+    netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    family: "IPv6",
+    mac: expect.stringMatching(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/),
+    internal: true,
+    scopeid: 0,
+  });
 });
 
 it("machine", () => {
@@ -257,5 +294,120 @@ it("getPriority system error object", () => {
     });
     expect(err.errno).toBe(isWindows ? -4040 : -3);
     expect(err.syscall).toBe("uv_os_getpriority");
+  }
+});
+
+it("setPriority throws ESRCH for a nonexistent pid", () => {
+  // 0x7ffffffe is above any pid the OS hands out.
+  expect(() => os.setPriority(0x7ffffffe, 0)).toThrow(
+    expect.objectContaining({
+      name: "SystemError",
+      message: "A system error occurred: uv_os_setpriority returned ESRCH (no such process)",
+      code: "ERR_SYSTEM_ERROR",
+      syscall: "uv_os_setpriority",
+      info: { errno: isWindows ? -4040 : -3, code: "ESRCH", message: "no such process", syscall: "uv_os_setpriority" },
+    }),
+  );
+});
+
+it("functions have Node's length", () => {
+  const lengths = Object.fromEntries(
+    [
+      "cpus",
+      "freemem",
+      "getPriority",
+      "homedir",
+      "hostname",
+      "loadavg",
+      "networkInterfaces",
+      "release",
+      "setPriority",
+      "totalmem",
+      "uptime",
+      "userInfo",
+      "version",
+    ].map(name => [name, os[name].length]),
+  );
+  // node -p 'os.<name>.length', v26.7.0
+  expect(lengths).toEqual({
+    cpus: 0,
+    freemem: 0,
+    getPriority: 1,
+    homedir: 0,
+    hostname: 0,
+    loadavg: 0,
+    networkInterfaces: 0,
+    release: 0,
+    setPriority: 2,
+    totalmem: 0,
+    uptime: 0,
+    userInfo: 1,
+    version: 0,
+  });
+});
+
+it("userInfo ignores options that are not an object, like Node", () => {
+  const info = os.userInfo();
+  const encoding = {
+    get() {
+      throw new Error("encoding was read");
+    },
+  };
+  const callable = Object.defineProperty(() => {}, "encoding", encoding);
+  for (const options of [undefined, null, 5, "utf8", true, Symbol("s"), [], ["utf8"], callable]) {
+    expect(os.userInfo(options)).toEqual(info);
+  }
+  expect(() => os.userInfo(Object.defineProperty({}, "encoding", encoding))).toThrow("encoding was read");
+});
+
+it("setPriority with an undefined priority takes the first argument as the priority", () => {
+  expect(() => os.setPriority()).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "priority" argument must be of type number. Received undefined',
+    }),
+  );
+  expect(() => os.setPriority(20, undefined)).toThrow(
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "priority" is out of range. It must be >= -20 && <= 19. Received 20',
+    }),
+  );
+  const priority = os.getPriority();
+  os.setPriority(priority, undefined);
+  expect(os.getPriority()).toBe(priority);
+});
+
+it("an infinite pid or priority is not an integer", () => {
+  for (const value of [Infinity, -Infinity, NaN, 1.5]) {
+    expect(() => os.getPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "pid" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+    expect(() => os.setPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "priority" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+  }
+});
+
+it("with new, each function does what it does in Node", () => {
+  expect(new os.loadavg()).toBeArrayOfSize(3);
+  expect(new os.networkInterfaces()).toEqual(os.networkInterfaces());
+  expect(new os.userInfo()).toEqual(os.userInfo());
+  for (const name of ["getPriority", "homedir", "hostname", "uptime"]) {
+    expect(new os[name]()).toBeObject();
+  }
+  expect(() => new os.setPriority()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  for (const name of ["freemem", "totalmem", "release", "version"]) {
+    expect(() => new os[name]()).toThrow("is not a constructor");
   }
 });

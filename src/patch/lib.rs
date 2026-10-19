@@ -1,29 +1,21 @@
 //! Patch file parser and applier.
 
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{ApplyError, Error, Result};
 
 use core::mem;
 
-use bun_collections::bit_set::ArrayBitSet;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
 
-/// 256-bit set keyed by byte value. `IntegerBitSet<256>` overflows the single-
-/// `usize` mask; `ArrayBitSet<256, 4>` is the >64-bit form per bit_set.rs note.
-type ByteBitSet = ArrayBitSet<256, 4>;
-
 const WHITESPACE: &[u8] = b" \t\n\r";
-
-// TODO: calculate this for different systems
-const PAGE_SIZE: usize = 16384;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PatchFilePart / PatchFile
@@ -34,7 +26,7 @@ const PAGE_SIZE: usize = 16384;
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
-pub enum PatchFilePart<'a> {
+enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
     FileCreation(Box<FileCreation<'a>>),
@@ -44,430 +36,392 @@ pub enum PatchFilePart<'a> {
 
 #[derive(Default)]
 pub struct PatchFile<'a> {
-    pub parts: Vec<PatchFilePart<'a>>,
+    pub(crate) parts: Vec<PatchFilePart<'a>>,
+    pub skipped: Vec<SkippedSection<'a>>,
 }
 
-#[cfg_attr(unix, allow(dead_code))]
-struct ApplyState {
-    pathbuf: PathBuffer,
-    patch_dir_abs_path: Option<usize>,
-}
-
-impl ApplyState {
-    fn new() -> Self {
-        Self {
-            pathbuf: PathBuffer::uninit(),
-            patch_dir_abs_path: None,
-        }
-    }
-
-    #[cfg_attr(unix, allow(dead_code))]
-    fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
-        if let Some(len) = self.patch_dir_abs_path {
-            // pathbuf[len] == 0 was written below on a previous call.
-            return sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len));
-        }
-        match sys::get_fd_path(fd, &mut self.pathbuf) {
-            sys::Result::Ok(p) => {
-                // reshaped for borrowck — capture len, drop `p`,
-                // then re-borrow `self.pathbuf` to write the sentinel.
-                let len = p.len();
-                // On Linux `readlink(2)` does not NUL-terminate, so write the
-                // sentinel explicitly (the buffer is zero-initialized but be
-                // defensive).
-                self.pathbuf.0[len] = 0;
-                self.patch_dir_abs_path = Some(len);
-                sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len))
-            }
-            sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
-        }
-    }
+/// A section of the patch file that `apply` ignores. It is not an error, because older versions of
+/// Bun wrote such sections and applied the rest of the patch.
+pub struct SkippedSection<'a> {
+    /// Byte offset of the section's first line in the patch file.
+    pub offset: usize,
+    pub path: Option<&'a [u8]>,
+    /// The section says `Binary files a/x and b/x differ`, so the patch doesn't have the new
+    /// content.
+    pub is_binary: bool,
 }
 
 impl<'a> PatchFile<'a> {
-    pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
-        let mut state = ApplyState::new();
-
+    pub fn apply(&self, patch_dir: Fd) -> Result<(), ApplyError> {
         for part in &self.parts {
             match part {
-                PatchFilePart::FileDeletion(file_deletion) => {
-                    if !is_safe_patch_path(file_deletion.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink));
-                    }
-                    let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
-
-                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
-                        return Some(e.without_path());
-                    }
+                PatchFilePart::FileDeletion(d) => {
+                    delete_file(patch_dir, d.path).map_err(|e| e.with_path(d.path))?;
                 }
-                PatchFilePart::FileRename(file_rename) => {
-                    if !is_safe_patch_path(file_rename.from_path)
-                        || !is_safe_patch_path(file_rename.to_path)
-                    {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename));
-                    }
-                    let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
-                    let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
-
-                    let todir = paths::dirname_simple(to_path.as_bytes());
-                    if !todir.is_empty() {
-                        if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, todir, 0o755)
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    if let sys::Result::Err(e) =
-                        sys::renameat(patch_dir, &from_path, patch_dir, &to_path)
-                    {
-                        return Some(e.without_path());
-                    }
+                // `rename_file` attributes its own errors, since either side can fail.
+                PatchFilePart::FileRename(r) => rename_file(patch_dir, r)?,
+                PatchFilePart::FileCreation(c) => {
+                    create_file(patch_dir, c).map_err(|e| e.with_path(c.path))?;
                 }
-                PatchFilePart::FileCreation(file_creation) => {
-                    if !is_safe_patch_path(file_creation.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
-                    }
-                    let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
-                    let filedir = paths::dirname_simple(filepath_z.as_bytes());
-                    let mode = file_creation.mode;
-
-                    if !filedir.is_empty() {
-                        // Create the directory under `patch_dir` so the
-                        // subsequent `openat` against `patch_dir` succeeds
-                        // (resolving `filedir` against the process CWD would be
-                        // inconsistent when `patch_dir != cwd`).
-                        if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    let newfile_fd = match sys::openat(
-                        patch_dir,
-                        &filepath_z,
-                        sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-                        mode.to_bun_mode(),
-                    ) {
-                        sys::Result::Ok(fd) => fd,
-                        sys::Result::Err(e) => return Some(e.without_path()),
-                    };
-                    let _close_newfile = scopeguard::guard(newfile_fd, |fd| fd.close());
-
-                    let Some(hunk) = &file_creation.hunk else {
-                        continue;
-                    };
-                    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a
-                    // hunk with zero parts; treat it as an empty file rather than
-                    // indexing `parts[0]`.
-                    let Some(first_part) = hunk.parts.first() else {
-                        continue;
-                    };
-
-                    let last_line = first_part.lines.len().saturating_sub(1);
-                    let no_newline_at_end_of_file = first_part.no_newline_at_end_of_file;
-
-                    let count = {
-                        let mut total: usize = 0;
-                        for (i, line) in first_part.lines.iter().enumerate() {
-                            total += line.len();
-                            total += (i < last_line) as usize;
-                        }
-                        total += (!no_newline_at_end_of_file) as usize;
-                        total
-                    };
-
-                    // PERF: small (<= PAGE_SIZE) allocations could use an arena.
-                    let _ = PAGE_SIZE;
-
-                    // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
-                    let file_contents: Vec<u8> = {
-                        let mut contents = vec![0u8; count];
-                        let mut i: usize = 0;
-                        for (idx, line) in first_part.lines.iter().enumerate() {
-                            contents[i..i + line.len()].copy_from_slice(line);
-                            i += line.len();
-                            if idx < last_line || !no_newline_at_end_of_file {
-                                contents[i] = b'\n';
-                                i += 1;
-                            }
-                        }
-                        contents
-                    };
-
-                    let mut written: usize = 0;
-                    while written < file_contents.len() {
-                        match sys::write(newfile_fd, &file_contents[written..]) {
-                            sys::Result::Ok(bytes) => written += bytes,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        }
-                    }
-                }
-                PatchFilePart::FilePatch(file_patch) => {
-                    if !is_safe_patch_path(file_patch.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
-                    }
-                    // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
-                        return Some(e.without_path());
-                    }
-                }
-                PatchFilePart::FileModeChange(file_mode_change) => {
-                    if !is_safe_patch_path(file_mode_change.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat));
-                    }
-                    let newmode = file_mode_change.new_mode;
-                    let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
-                    #[cfg(unix)]
-                    {
-                        if let sys::Result::Err(e) =
-                            sys::fchmodat(patch_dir, &filepath, newmode.to_bun_mode(), 0)
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    #[cfg(windows)]
-                    {
-                        let absfilepath = match state.patch_dir_abs_path(patch_dir) {
-                            sys::Result::Ok(p) => p,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        };
-                        let mut buf = PathBuffer::uninit();
-                        let joined_absfilepath =
-                            paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                                &mut buf[..],
-                                &[absfilepath.as_bytes(), filepath.as_bytes()],
-                            );
-                        let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                            sys::Result::Ok(f) => f,
-                        };
-                        let _close = scopeguard::guard(fd, |fd| fd.close());
-                        if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
-                            return Some(e.without_path());
-                        }
-                    }
+                PatchFilePart::FilePatch(f) => patch_file(patch_dir, f).map_err(|e| match e {
+                    ApplyError::Sys(e) => ApplyError::Sys(e.with_path(f.path)),
+                    e => e,
+                })?,
+                PatchFilePart::FileModeChange(m) => {
+                    change_mode(patch_dir, m).map_err(|e| e.with_path(m.path))?;
                 }
             }
         }
-
-        None
+        Ok(())
     }
 }
 
-/// Invariants:
-/// - Hunk parts are ordered by first to last in file
-/// - The original starting line and the patched starting line are equal in the first hunk part
-///
-/// TODO: this is a very naive and slow implementation which works by creating a list of lines
-/// we can speed it up by:
-/// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
-/// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
-    let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
+fn delete_file(patch_dir: Fd, path: &[u8]) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, path, None)?;
+    sys::unlinkat(parent.fd, &base)
+}
 
-    // Need to get the mode of the original file
-    // And also get the size to read file into memory
-    let stat = {
-        #[cfg(unix)]
-        let r = sys::fstatat(patch_dir, &file_path);
-        #[cfg(not(unix))]
-        let r = {
-            let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
-                    p.as_bytes(),
-                    file_path.as_bytes(),
-                ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
-            };
-            sys::stat(p)
-        };
-        match r {
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-            sys::Result::Ok(stat) => stat,
-        }
+fn rename_file(patch_dir: Fd, rename: &FileRename<'_>) -> sys::Result<()> {
+    let (from_parent, from_base) = resolve_target(patch_dir, rename.from_path, None)
+        .map_err(|e| e.with_path(rename.from_path))?;
+    let (to_parent, to_base) = resolve_target(patch_dir, rename.to_path, Some(CREATED_DIR_MODE))
+        .map_err(|e| e.with_path(rename.to_path))?;
+    sys::renameat(from_parent.fd, &from_base, to_parent.fd, &to_base)
+        .map_err(|e| e.with_path_dest(rename.from_path, rename.to_path))
+}
+
+fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, creation.path, Some(CREATED_DIR_MODE))?;
+    let (fd, _) = open_target_file(
+        parent.fd,
+        &base,
+        sys::O::CREAT | sys::O::RDWR,
+        creation.mode.to_bun_mode(),
+    )?;
+    let _close = sys::CloseOnDrop::new(fd);
+    // `O_TRUNC` isn't used, so that a target that gets rejected hasn't already been emptied.
+    sys::ftruncate(fd, 0)?;
+
+    // A `@@ -0,0 +0,0 @@` header with no body parses to a hunk with zero parts.
+    let Some(first_part) = creation.hunk.as_ref().and_then(|h| h.parts.first()) else {
+        return Ok(());
     };
-    #[cfg(unix)]
-    let _ = state; // suppress unused on posix
+    let mut contents = first_part.lines.join(&b'\n');
+    if !first_part.no_newline_at_end_of_file {
+        contents.push(b'\n');
+    }
+    sys::File::borrow(&fd).write_all(&contents)
+}
 
-    // Purposefully use `bun.default_allocator` here because if the file size is big like
-    // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
-    //
-    // But if the file size is small, like less than a single page, it's probably ok
-    // to use the arena
-    let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
-    let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
-        Ok(b) => b,
-        Err(_) => {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
-                    .with_path(file_path.as_bytes()),
-            );
-        }
+fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
+    let (parent, base) = resolve_target(patch_dir, patch.path, None)?;
+    apply_patch(patch, parent.fd, &base)
+}
+
+fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, change.path, None)?;
+    let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
+    // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
+    let fd = fd.make_libuv_owned().map_err(|()| {
+        fd.close();
+        sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
+    })?;
+    let _close = sys::CloseOnDrop::new(fd);
+    sys::fchmod(fd, change.new_mode.to_bun_mode())
+}
+
+/// Hunks are placed by matching their `-` side, like `git apply` does, because the `+` line numbers
+/// can be stale.
+fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
+    // One fd for the read and the write-back, so nothing can be swapped in between them.
+    let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
+    let _close_file = sys::CloseOnDrop::new(file_fd);
+
+    if stat.st_size as u64 > MAX_PATCH_TARGET_BYTES {
+        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).into());
+    }
+    let filebuf: Vec<u8> = sys::File::borrow(&file_fd)
+        .read_to_end()
+        .map_err(|_| sys::Error::from_code(sys::E::EINVAL, sys::Tag::read))?;
+
+    let mut lines: Vec<&[u8]> = strings::split(&filebuf, b"\n").collect();
+    // The empty string after the final `\n` is not a line.
+    let mut final_newline = lines.pop_if(|last| last.is_empty()).is_some();
+
+    let does_not_apply = |hunk_index: usize, hunk: &Hunk<'_>| ApplyError::HunkDoesNotApply {
+        path: Box::from(patch.path),
+        hunk: hunk_index + 1,
+        line: hunk.header.original.start,
     };
 
-    let file_line_count: usize;
-    let lines_count: usize = {
-        let mut count: usize = 0;
-        for _ in filebuf.split(|b| *b == b'\n') {
-            count += 1;
-        }
-        file_line_count = count;
-
-        // Adjust to account for the changes. This is only a capacity hint for
-        // `lines` below; saturate so a header that claims more deletions than
-        // the file has cannot panic (bounds are enforced during the splice).
-        for hunk in &patch.hunks {
-            count = count
-                .saturating_add(hunk.header.patched.len as usize)
-                .saturating_sub(hunk.header.original.len as usize);
-            for part in &hunk.parts {
-                let part: &PatchMutationPart = part;
-                match part.ty {
-                    PartType::Deletion => {
-                        // deleting the no newline pragma so we are actually adding a line
-                        count = count.saturating_add(part.no_newline_at_end_of_file as usize);
-                    }
-                    PartType::Insertion => {
-                        count = count.saturating_sub(part.no_newline_at_end_of_file as usize);
-                    }
-                    PartType::Context => {}
-                }
+    // With the hunks sorted by start line, one pass over the old lines is enough. Only a
+    // hand-edited patch has them out of order.
+    let mut hunks: Vec<(usize, &Hunk<'_>)> = patch.hunks.iter().enumerate().collect();
+    hunks.sort_by_key(|(_, hunk)| hunk.header.original.start);
+    let mut patched: Vec<&[u8]> = Vec::with_capacity(lines.len());
+    // Index of the first old line that has not yet been copied to `patched` or deleted.
+    let mut line_cursor: usize = 0;
+    for (hunk_index, hunk) in hunks {
+        // `\ No newline at end of file` ends that side of the file: only an insertion may follow it.
+        // A marker on a context line is exempt: with `git diff --ignore-cr-at-eol` it belongs to
+        // the new side only, and deletions can follow it.
+        if let Some(i) = hunk
+            .parts
+            .iter()
+            .position(|p| p.no_newline_at_end_of_file && p.ty != PartType::Context)
+        {
+            if hunk.parts[i + 1..]
+                .iter()
+                .any(|p| p.ty != PartType::Insertion)
+            {
+                return Err(does_not_apply(hunk_index, hunk));
             }
         }
 
-        count
-    };
-
-    // TODO: i hate this
-    let mut lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
-    {
-        let mut i: usize = 0;
-        for line in filebuf.split(|b| *b == b'\n') {
-            lines.push(line);
-            i += 1;
-        }
-        debug_assert!(i == file_line_count);
-    }
-
-    for hunk in &patch.hunks {
-        let mut line_cursor = (hunk.header.patched.start - 1) as usize;
-
-        // Validate hunk start position is within bounds
-        if line_cursor > lines.len() {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                    .with_path(file_path.as_bytes()),
-            );
-        }
+        let original_start = hunk.header.original.start as usize;
+        let hunk_start = if hunk.header.original.len == 0 {
+            // A `-N,0` header has no old lines to match. Insert after line N, where 0 is the top.
+            if original_start < line_cursor || original_start > lines.len() {
+                return Err(does_not_apply(hunk_index, hunk));
+            }
+            original_start
+        } else {
+            let expected = original_start as isize - 1 - line_cursor as isize;
+            match find_hunk_position(hunk, &lines[line_cursor..], expected) {
+                Some(idx) => line_cursor + idx,
+                None => return Err(does_not_apply(hunk_index, hunk)),
+            }
+        };
+        patched.extend_from_slice(&lines[line_cursor..hunk_start]);
+        line_cursor = hunk_start;
 
         for part in &hunk.parts {
-            let part: &PatchMutationPart = part;
-            match part.ty {
-                PartType::Context => {
-                    // TODO: check if the lines match in the original file?
+            if part.ty == PartType::Insertion {
+                patched.extend_from_slice(&part.lines);
+                continue;
+            }
+            // The match above already guarantees that these lines exist. This is only a safeguard.
+            let Some(old) = lines.get(line_cursor..line_cursor + part.lines.len()) else {
+                return Err(does_not_apply(hunk_index, hunk));
+            };
+            if part.ty == PartType::Context {
+                patched.extend_from_slice(old);
+            }
+            line_cursor += old.len();
+        }
 
-                    // Validate context lines exist
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
+        // A hunk that reaches the end of the file decides whether the file ends in a newline.
+        if line_cursor == lines.len() {
+            let last_kept = hunk.parts.iter().rfind(|p| p.ty != PartType::Deletion);
+            final_newline = !last_kept.is_some_and(|p| p.no_newline_at_end_of_file);
+        }
+    }
+    patched.extend_from_slice(&lines[line_cursor..]);
+    if final_newline {
+        patched.push(b"");
+    }
 
-                    line_cursor += part.lines.len();
-                }
-                PartType::Insertion => {
-                    // Validate insertion position is within bounds
-                    if line_cursor > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
+    sys::ftruncate(file_fd, 0)?;
+    // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`).
+    sys::set_file_offset(file_fd, 0)?;
+    sys::File::borrow(&file_fd).write_all(&patched.join(&b'\n'))?;
+    Ok(())
+}
 
-                    lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
-                    line_cursor += part.lines.len();
-                    if part.no_newline_at_end_of_file {
-                        let _ = lines.pop();
-                    }
-                }
-                PartType::Deletion => {
-                    // TODO: check if the lines match in the original file?
+/// The index nearest to `expected` where the hunk's `-` side matches, forward first.
+fn find_hunk_position(hunk: &Hunk<'_>, lines: &[&[u8]], expected: isize) -> Option<usize> {
+    let last = lines.len() as isize;
+    // A header start far outside the file would otherwise spin until `offset` reaches it.
+    let expected = expected.clamp(0, last);
+    let mut offset: isize = 0;
+    loop {
+        let forward = expected + offset;
+        let backward = expected - offset;
+        if forward > last && backward < 0 {
+            return None;
+        }
+        if (0..=last).contains(&forward) && hunk_matches_at(hunk, lines, forward as usize) {
+            return Some(forward as usize);
+        }
+        if offset != 0
+            && (0..=last).contains(&backward)
+            && hunk_matches_at(hunk, lines, backward as usize)
+        {
+            return Some(backward as usize);
+        }
+        offset += 1;
+    }
+}
 
-                    // Validate deletion range is within bounds
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+/// Trailing whitespace is ignored (patch-package's `linesAreEqual`) so CRLF files match.
+fn hunk_matches_at(hunk: &Hunk<'_>, lines: &[&[u8]], start: usize) -> bool {
+    let mut cursor = start;
+    for part in &hunk.parts {
+        match part.ty {
+            PartType::Insertion => {}
+            PartType::Context | PartType::Deletion => {
+                for patch_line in &part.lines {
+                    let Some(file_line) = lines.get(cursor) else {
+                        return false;
+                    };
+                    if strings::trim_right(file_line, WHITESPACE)
+                        != strings::trim_right(patch_line, WHITESPACE)
+                    {
+                        return false;
                     }
-
-                    lines.drain(line_cursor..line_cursor + part.lines.len());
-                    if part.no_newline_at_end_of_file {
-                        lines.push(b"");
-                    }
-                    // line_cursor -= part.lines.len();
+                    cursor += 1;
                 }
             }
         }
     }
+    true
+}
 
-    let file_fd = match sys::openat(
-        patch_dir,
-        &file_path,
-        sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        stat.st_mode as sys::Mode,
-    ) {
-        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-        sys::Result::Ok(fd) => fd,
+/// A larger `st_size` is an error rather than an unbounded allocation.
+const MAX_PATCH_TARGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// A new file's header mode only describes the file. A directory created with 0o644 couldn't be
+/// entered.
+const CREATED_DIR_MODE: sys::Mode = 0o755;
+
+/// `patch_dir` itself for single-component paths (not closed), an owned fd otherwise.
+struct ParentDir {
+    fd: Fd,
+    owned: bool,
+}
+
+impl Drop for ParentDir {
+    fn drop(&mut self) {
+        if self.owned {
+            self.fd.close();
+        }
+    }
+}
+
+/// The separators [`paths::dirname_simple`] splits on, so the walk and the basename agree.
+const PATH_SEPS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
+/// The verified directory holding `path`'s final component, and that component.
+fn resolve_target(
+    patch_dir: Fd,
+    path: &[u8],
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<(ParentDir, ZBox)> {
+    if !is_safe_patch_path(path) {
+        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+    }
+    let parent = open_parent_beneath(patch_dir, path, create_mode)?;
+    let dir = paths::dirname_simple(path);
+    let base = if dir.is_empty() {
+        path
+    } else {
+        &path[dir.len() + 1..]
     };
-    let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
-
-    let contents = join_bytes(b"\n", &lines);
-
-    let mut written: usize = 0;
-    while written < contents.len() {
-        match sys::write(file_fd, &contents[written..]) {
-            sys::Result::Ok(w) => written += w,
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-        }
-    }
-
-    sys::Result::Ok(())
+    Ok((parent, ZBox::from_vec_with_nul(base.to_vec())))
 }
 
-fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    // Allocate `min(size, max)` and error past `max`, so a pathological
-    // multi-GiB target file errors instead of allocating unboundedly. (The
-    // too-big error would surface as `.INVAL` at the only call site anyway,
-    // so we map it to EINVAL here.)
-    let stat = sys::fstatat(dir, path)?;
-    if stat.st_size as u64 > max as u64 {
-        return sys::Result::Err(
-            sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_path(path.as_bytes()),
-        );
+/// One component at a time, refusing symlinks. [`is_safe_patch_path`] has ruled out `..`.
+fn open_parent_beneath(
+    patch_dir: Fd,
+    path: &[u8],
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<ParentDir> {
+    let mut cur = ParentDir {
+        fd: patch_dir,
+        owned: false,
+    };
+    for component in strings::split_any(paths::dirname_simple(path), PATH_SEPS) {
+        if component.is_empty() || component == b"." {
+            continue;
+        }
+        let component_z = ZBox::from_vec_with_nul(component.to_vec());
+        cur = ParentDir {
+            fd: open_dir_component(cur.fd, &component_z, create_mode)?,
+            owned: true,
+        };
     }
-    sys::File::read_from(dir, path)
+    Ok(cur)
 }
 
-/// Joins byte slices with a separator.
-fn join_bytes(sep: &[u8], slices: &[&[u8]]) -> Vec<u8> {
-    if slices.is_empty() {
-        return Vec::new();
-    }
-    let total: usize =
-        slices.iter().map(|s| s.len()).sum::<usize>() + sep.len() * (slices.len() - 1);
-    let mut out = Vec::with_capacity(total);
-    for (i, s) in slices.iter().enumerate() {
-        if i != 0 {
-            out.extend_from_slice(sep);
+/// `O_NOFOLLOW` here opens the reparse point itself and `fstat` hides it. Not atomic with the open.
+#[cfg(windows)]
+fn reject_reparse_point(dir: Fd, name: &ZStr) -> sys::Result<()> {
+    match sys::get_file_attributes_at(dir, name) {
+        Ok(attrs) if attrs.is_reparse_point => {
+            Err(sys::Error::from_code(sys::E::ELOOP, sys::Tag::open))
         }
-        out.extend_from_slice(s);
+        // It doesn't exist or can't be read. The open that follows reports the real error.
+        _ => Ok(()),
     }
-    out
+}
+
+fn open_dir_component(
+    dir: Fd,
+    component: &ZStr,
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<Fd> {
+    #[cfg(windows)]
+    reject_reparse_point(dir, component)?;
+    let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW;
+    let open_err = match sys::openat(dir, component, flags, 0) {
+        Ok(fd) => return Ok(fd),
+        Err(e) => e,
+    };
+    let Some(mode) = create_mode.filter(|_| open_err.get_errno() == sys::E::ENOENT) else {
+        return Err(symlink_component_err(dir, component, open_err));
+    };
+    match sys::mkdirat(dir, component, mode) {
+        Ok(()) => {}
+        // Another process created it first. The open below verifies whatever is there now.
+        Err(e) if e.get_errno() == sys::E::EEXIST => {}
+        Err(e) => return Err(e),
+    }
+    sys::openat(dir, component, flags, 0).map_err(|e| symlink_component_err(dir, component, e))
+}
+
+/// `O_NOFOLLOW` on a symlink: ENOTDIR or ELOOP on Linux, EMLINK on FreeBSD. ELOOP everywhere.
+fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error {
+    if matches!(
+        e.get_errno(),
+        sys::E::ENOTDIR | sys::E::ELOOP | sys::E::EMLINK
+    ) && let Ok(st) = sys::lstatat(dir, component)
+        && sys::S::ISLNK(st.st_mode as u32)
+    {
+        return sys::Error::from_code(sys::E::ELOOP, sys::Tag::open);
+    }
+    e
+}
+
+/// Only accepts a regular file with one hard link, because a second link could reach the inode from
+/// outside the patch directory.
+fn open_target_file(
+    parent: Fd,
+    base: &ZStr,
+    flags: i32,
+    mode: sys::Mode,
+) -> sys::Result<(Fd, sys::Stat)> {
+    #[cfg(windows)]
+    reject_reparse_point(parent, base)?;
+    // Without `O_NONBLOCK`, opening a FIFO blocks before the `!ISREG` rejection below.
+    let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
+    let fd = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
+        .map_err(|e| symlink_component_err(parent, base, e))?;
+    let stat = match sys::fstat(fd) {
+        Ok(st) => st,
+        Err(e) => {
+            fd.close();
+            return Err(e);
+        }
+    };
+    if !sys::S::ISREG(stat.st_mode as u32) {
+        fd.close();
+        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+    }
+    if stat.st_nlink > 1 {
+        fd.close();
+        return Err(sys::Error::from_code(sys::E::EMLINK, sys::Tag::open));
+    }
+    Ok((fd, stat))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -489,13 +443,12 @@ struct FileDeets<'a> {
     from_path: Option<&'a [u8]>,
     to_path: Option<&'a [u8]>,
     hunks: Vec<Hunk<'a>>,
+    is_binary: bool,
+    /// Byte offset of the section's first line in the patch file.
+    offset: usize,
 }
 
 impl<'a> FileDeets<'a> {
-    fn take_hunks(&mut self) -> Vec<Hunk<'a>> {
-        mem::take(&mut self.hunks)
-    }
-
     fn nullify_empty_strings(&mut self) {
         macro_rules! nullify {
             ($($f:ident),*) => {$(
@@ -526,33 +479,33 @@ impl<'a> FileDeets<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct PatchMutationPart<'a> {
-    pub ty: PartType,
-    pub lines: Vec<&'a [u8]>,
+struct PatchMutationPart<'a> {
+    pub(crate) ty: PartType,
+    pub(crate) lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
-    pub no_newline_at_end_of_file: bool,
+    pub(crate) no_newline_at_end_of_file: bool,
 }
 
-/// Ensure context, insertion, deletion values are in sync with HunkLineType enum
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum PartType {
     #[default]
-    Context = 0,
+    Context,
     Insertion,
     Deletion,
 }
 
 #[derive(Default)]
-pub struct Hunk<'a> {
-    pub header: Header,
-    pub parts: Vec<PatchMutationPart<'a>>,
+struct Hunk<'a> {
+    pub(crate) header: Header,
+    pub(crate) parts: Vec<PatchMutationPart<'a>>,
+    /// Byte offset of the `@@` line in the patch file.
+    offset: usize,
 }
 
 #[derive(Copy, Clone)]
-pub struct HeaderRange {
-    pub start: u32,
-    pub len: u32,
+struct HeaderRange {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 impl Default for HeaderRange {
@@ -563,23 +516,17 @@ impl Default for HeaderRange {
 
 #[derive(Copy, Clone, Default)]
 pub struct Header {
-    pub original: HeaderRange,
-    pub patched: HeaderRange,
-}
-
-impl Header {
-    pub const EMPTY: Header = Header {
-        original: HeaderRange { start: 1, len: 0 },
-        patched: HeaderRange { start: 1, len: 0 },
-    };
+    pub(crate) original: HeaderRange,
+    pub(crate) patched: HeaderRange,
 }
 
 impl<'a> Hunk<'a> {
-    pub(crate) fn verify_integrity(&self) -> bool {
+    /// `pending` is a part the parser has not pushed onto `parts` yet.
+    fn verify_integrity(&self, pending: Option<&PatchMutationPart<'a>>) -> bool {
         let mut original_length: usize = 0;
         let mut patched_length: usize = 0;
 
-        for part in &self.parts {
+        for part in self.parts.iter().chain(pending) {
             match part.ty {
                 PartType::Context => {
                     patched_length += part.lines.len();
@@ -590,12 +537,8 @@ impl<'a> Hunk<'a> {
             }
         }
 
-        if original_length != self.header.original.len as usize
-            || patched_length != self.header.patched.len as usize
-        {
-            return false;
-        }
-        true
+        original_length == self.header.original.len as usize
+            && patched_length == self.header.patched.len as usize
     }
 }
 
@@ -605,17 +548,17 @@ impl<'a> Hunk<'a> {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileMode {
+enum FileMode {
     NonExecutable = 0o644,
     Executable = 0o755,
 }
 
 impl FileMode {
-    pub(crate) fn to_bun_mode(self) -> sys::Mode {
+    fn to_bun_mode(self) -> sys::Mode {
         sys::Mode::try_from(self as u32).expect("int cast")
     }
 
-    pub(crate) fn from_u32(mode: u32) -> Option<FileMode> {
+    fn from_u32(mode: u32) -> Option<FileMode> {
         match mode {
             0o644 => Some(FileMode::NonExecutable),
             0o755 => Some(FileMode::Executable),
@@ -628,38 +571,36 @@ impl FileMode {
 // FileRename / FileModeChange / FilePatch / FileDeletion / FileCreation
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileRename<'a> {
-    pub from_path: &'a [u8],
-    pub to_path: &'a [u8],
-}
-// Does not allocate — no Drop needed.
-
-pub struct FileModeChange<'a> {
-    pub path: &'a [u8],
-    pub old_mode: FileMode,
-    pub new_mode: FileMode,
-}
-// Does not allocate — no Drop needed.
-
-pub struct FilePatch<'a> {
-    pub path: &'a [u8],
-    pub hunks: Vec<Hunk<'a>>,
-    pub before_hash: Option<&'a [u8]>,
-    pub after_hash: Option<&'a [u8]>,
+struct FileRename<'a> {
+    pub(crate) from_path: &'a [u8],
+    pub(crate) to_path: &'a [u8],
 }
 
-pub struct FileDeletion<'a> {
-    pub path: &'a [u8],
-    pub mode: FileMode,
-    pub hunk: Option<Box<Hunk<'a>>>,
-    pub hash: Option<&'a [u8]>,
+struct FileModeChange<'a> {
+    pub(crate) path: &'a [u8],
+    pub(crate) old_mode: FileMode,
+    pub(crate) new_mode: FileMode,
 }
 
-pub struct FileCreation<'a> {
-    pub path: &'a [u8],
-    pub mode: FileMode,
-    pub hunk: Option<Box<Hunk<'a>>>,
-    pub hash: Option<&'a [u8]>,
+struct FilePatch<'a> {
+    pub(crate) path: &'a [u8],
+    pub(crate) hunks: Vec<Hunk<'a>>,
+    pub(crate) before_hash: Option<&'a [u8]>,
+    pub(crate) after_hash: Option<&'a [u8]>,
+}
+
+struct FileDeletion<'a> {
+    pub(crate) path: &'a [u8],
+    pub(crate) mode: FileMode,
+    pub(crate) hunk: Option<Box<Hunk<'a>>>,
+    pub(crate) hash: Option<&'a [u8]>,
+}
+
+struct FileCreation<'a> {
+    pub(crate) path: &'a [u8],
+    pub(crate) mode: FileMode,
+    pub(crate) hunk: Option<Box<Hunk<'a>>>,
+    pub(crate) hash: Option<&'a [u8]>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -790,23 +731,20 @@ mod json {
         w.write_char('}')
     }
 
-    fn write_file_deletion(w: &mut impl Write, fd: &FileDeletion<'_>) -> Result {
+    /// A `FileDeletion` or a `FileCreation`.
+    fn write_whole_file(
+        w: &mut impl Write,
+        path: &[u8],
+        mode: FileMode,
+        hunk: &Option<Box<Hunk<'_>>>,
+        hash: Option<&[u8]>,
+    ) -> Result {
         w.write_str("{\"path\":")?;
-        write_str(w, fd.path)?;
-        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(fd.mode))?;
-        write_opt_hunk(w, &fd.hunk)?;
+        write_str(w, path)?;
+        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(mode))?;
+        write_opt_hunk(w, hunk)?;
         w.write_str(",\"hash\":")?;
-        write_opt_str(w, fd.hash)?;
-        w.write_char('}')
-    }
-
-    fn write_file_creation(w: &mut impl Write, fc: &FileCreation<'_>) -> Result {
-        w.write_str("{\"path\":")?;
-        write_str(w, fc.path)?;
-        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(fc.mode))?;
-        write_opt_hunk(w, &fc.hunk)?;
-        w.write_str(",\"hash\":")?;
-        write_opt_str(w, fc.hash)?;
+        write_opt_str(w, hash)?;
         w.write_char('}')
     }
 
@@ -837,11 +775,11 @@ mod json {
             }
             PatchFilePart::FileDeletion(p) => {
                 w.write_str("{\"file_deletion\":")?;
-                write_file_deletion(w, p)?;
+                write_whole_file(w, p.path, p.mode, &p.hunk, p.hash)?;
             }
             PatchFilePart::FileCreation(p) => {
                 w.write_str("{\"file_creation\":")?;
-                write_file_creation(w, p)?;
+                write_whole_file(w, p.path, p.mode, &p.hunk, p.hash)?;
             }
             PatchFilePart::FileRename(p) => {
                 w.write_str("{\"file_rename\":")?;
@@ -888,6 +826,17 @@ pub enum ParseErr {
     no_path_given_for_file_creation,
     #[error("bad_file_mode")]
     bad_file_mode,
+    #[error("git_binary_patch_not_supported")]
+    git_binary_patch_not_supported,
+    #[error("no_path_given_for_hunk")]
+    no_path_given_for_hunk,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ParseErrAt {
+    pub err: ParseErr,
+    /// Byte offset in the patch file of the line that caused the error.
+    pub offset: usize,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -895,38 +844,30 @@ pub enum ParseErr {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// NOTE: the returned `PatchFile` struct will contain pointers to original file text so make sure to not deallocate `file`
-pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
+pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErrAt> {
     let mut lines_parser = PatchLinesParser::default();
-
-    'brk: {
-        match lines_parser.parse(file, ParseOpts::default()) {
-            Ok(()) => break 'brk,
-            Err(err) => {
-                // TODO: the parser can be refactored to remove this as it is a hacky workaround, like detecting while parsing if legacy diffs are used
-                if err == ParseErr::hunk_header_integrity_check_failed {
-                    lines_parser.reset();
-                    lines_parser.parse(
-                        file,
-                        ParseOpts {
-                            support_legacy_diffs: true,
-                        },
-                    )?;
-                    break 'brk;
-                }
-                return Err(err);
-            }
-        }
-    }
-
-    // reshaped for borrowck — take ownership of result vec instead of slicing.
-    let mut files = mem::take(&mut lines_parser.result);
-    patch_file_second_pass(&mut files)
+    let parsed = lines_parser.parse(file).and_then(|()| {
+        // reshaped for borrowck — take ownership of result vec instead of slicing.
+        let mut files = mem::take(&mut lines_parser.result);
+        patch_file_second_pass(&mut files, &mut lines_parser.offset)
+    });
+    parsed.map_err(|err| ParseErrAt {
+        err,
+        offset: lines_parser.offset,
+    })
 }
 
-fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'a>, ParseErr> {
+/// On error, `offset` is the byte offset of the line at fault: either the section's first line or a
+/// hunk's `@@` line.
+fn patch_file_second_pass<'a>(
+    files: &mut [FileDeets<'a>],
+    offset: &mut usize,
+) -> Result<PatchFile<'a>, ParseErr> {
     let mut result = PatchFile::default();
 
     for file in files.iter_mut() {
+        *offset = file.offset;
+        let parts_before = result.parts.len();
         let ty: PatchFilePartKind = if file.rename_from.is_some_and(|s| !s.is_empty()) {
             PatchFilePartKind::FileRename
         } else if file.deleted_file_mode.is_some_and(|s| !s.is_empty()) {
@@ -958,50 +899,31 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
             }
             PatchFilePartKind::FileDeletion => {
                 let path = file
-                    .diff_line_from_path
-                    .or(file.from_path)
+                    .from_path
+                    .or(file.diff_line_from_path)
                     .ok_or(ParseErr::no_path_given_for_file_deletion)?;
                 result
                     .parts
                     .push(PatchFilePart::FileDeletion(Box::new(FileDeletion {
-                        hunk: if !file.hunks.is_empty() {
-                            let value = mem::replace(
-                                &mut file.hunks[0],
-                                Hunk {
-                                    header: Header::EMPTY,
-                                    ..Default::default()
-                                },
-                            );
-                            Some(Box::new(value))
-                        } else {
-                            None
-                        },
+                        hunk: file.hunks.first_mut().map(mem::take).map(Box::new),
                         path,
                         mode: parse_file_mode(file.deleted_file_mode.unwrap())
                             .ok_or(ParseErr::bad_file_mode)?,
                         hash: file.before_hash,
                     })));
             }
+            // The patch doesn't have the content, and creating an empty file isn't what it asks
+            // for.
+            PatchFilePartKind::FileCreation if file.is_binary => {}
             PatchFilePartKind::FileCreation => {
                 let path = file
-                    .diff_line_to_path
-                    .or(file.to_path)
+                    .to_path
+                    .or(file.diff_line_to_path)
                     .ok_or(ParseErr::no_path_given_for_file_creation)?;
                 result
                     .parts
                     .push(PatchFilePart::FileCreation(Box::new(FileCreation {
-                        hunk: if !file.hunks.is_empty() {
-                            let value = mem::replace(
-                                &mut file.hunks[0],
-                                Hunk {
-                                    header: Header::EMPTY,
-                                    ..Default::default()
-                                },
-                            );
-                            Some(Box::new(value))
-                        } else {
-                            None
-                        },
+                        hunk: file.hunks.first_mut().map(mem::take).map(Box::new),
                         path,
                         mode: parse_file_mode(file.new_file_mode.unwrap())
                             .ok_or(ParseErr::bad_file_mode)?,
@@ -1033,10 +955,25 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                 .parts
                 .push(PatchFilePart::FilePatch(Box::new(FilePatch {
                     path,
-                    hunks: file.take_hunks(),
+                    hunks: mem::take(&mut file.hunks),
                     before_hash: file.before_hash,
                     after_hash: file.after_hash,
                 })));
+        }
+
+        // A section produces no part if it is, for example, a file copy or text that is not a diff.
+        let has_no_part = result.parts.len() == parts_before;
+        if has_no_part && let Some(hunk) = file.hunks.first() {
+            *offset = hunk.offset;
+            return Err(ParseErr::no_path_given_for_hunk);
+        }
+        let is_binary = file.is_binary && ty != PatchFilePartKind::FileDeletion;
+        if has_no_part || is_binary {
+            result.skipped.push(SkippedSection {
+                offset: file.offset,
+                path: file.to_path.or(file.diff_line_to_path),
+                is_binary,
+            });
         }
     }
 
@@ -1048,12 +985,16 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
     FileMode::from_u32(parsed_mode)
 }
 
-fn is_safe_patch_path(path: &[u8]) -> bool {
+/// True for a relative path that cannot leave the folder it starts in, as long as no component of
+/// the path is a symlink.
+pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
+        && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|part| part == b"..")
+        // On Windows, openat strips a drive prefix from a component, so `C:..` resolves to a real
+        // `..`.
+        && !(cfg!(windows) && strings::contains_char(path, b':'))
+        && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1101,19 +1042,19 @@ struct LookbackIterator<'a> {
 }
 
 impl<'a> LookbackIterator<'a> {
-    pub(crate) fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
+    fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
         Self {
             inner,
             prev_index: 0,
         }
     }
 
-    pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<&'a [u8]> {
         self.prev_index = self.inner.index.unwrap_or(self.prev_index);
         self.inner.next()
     }
 
-    pub(crate) fn back(&mut self) {
+    fn back(&mut self) {
         self.inner.index = Some(self.prev_index);
     }
 }
@@ -1129,6 +1070,8 @@ struct PatchLinesParser<'a> {
     state: ParserState,
     current_hunk: Option<Hunk<'a>>,
     current_hunk_mutation_part: Option<PatchMutationPart<'a>>,
+    /// Byte offset of the line being parsed or, after an error, of the line that caused it.
+    offset: usize,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -1138,70 +1081,16 @@ enum ParserState {
     ParsingHunks,
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum HunkLineType {
-    /// Additional context
-    Context = 0,
-    /// Example:
-    /// + sjfskdjfsdf
-    Insertion,
-    /// Example:
-    /// - sjfskdjfsdf
-    Deletion,
-    /// Example:
-    /// @@ -1,3 +1,3 @@
-    Header,
-    /// Example:
-    /// \ No newline at end of file
-    Pragma,
-}
-
-#[derive(Default, Clone, Copy)]
-struct ParseOpts {
-    support_legacy_diffs: bool,
-}
-
 impl<'a> PatchLinesParser<'a> {
-    // Drop handles freeing; `reset()` handles the retain-capacity case.
-
-    fn reset(&mut self) {
-        // reshaped for borrowck — take result vec, clear it, reinit self.
-        let mut result = mem::take(&mut self.result);
-        result.clear();
-        *self = Self {
-            result,
-            ..Default::default()
-        };
-    }
-
-    pub(crate) fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
-        if file_.is_empty() {
+    fn parse(&mut self, file_: &'a [u8]) -> Result<(), ParseErr> {
+        let file = file_.strip_suffix(b"\n").unwrap_or(file_);
+        if file.is_empty() {
             return Ok(());
         }
-        let end = 'brk: {
-            // Peek at the last segment after the final '\n'.
-            let mut prev: usize = file_.len();
-            let last_nl = file_.iter().rposition(|b| *b == b'\n');
-            let last_line = match last_nl {
-                Some(i) => &file_[i + 1..],
-                None => file_,
-            };
-            if last_line.is_empty() {
-                if let Some(i) = last_nl {
-                    // index points to the byte BEFORE the delimiter.
-                    prev = i;
-                }
-            }
-            break 'brk prev;
-        };
-        if end == 0 || end > file_.len() {
-            return Ok(());
-        }
-        let file = &file_[..end];
         let mut lines = LookbackIterator::from_inner(ScalarSplitIter::new(file, b'\n'));
 
         while let Some(line) = lines.next() {
+            self.offset = lines.prev_index;
             match self.state {
                 ParserState::ParsingHeader => {
                     if line.starts_with(b"@@") {
@@ -1261,94 +1150,76 @@ impl<'a> PatchLinesParser<'a> {
                             line.get(b"+++ b/".len()..).unwrap_or_default(),
                             WHITESPACE,
                         ));
+                    } else if line.starts_with(b"Binary files ") {
+                        self.current_file_patch.is_binary = true;
+                    } else if line.starts_with(b"GIT binary patch")
+                        && self.current_file_patch.deleted_file_mode.is_none()
+                    {
+                        return Err(ParseErr::git_binary_patch_not_supported);
                     }
                 }
                 ParserState::ParsingHunks => {
-                    if opts.support_legacy_diffs && line.starts_with(b"--- a/") {
+                    // A legacy file header, or a deletion line unless the hunk is already complete.
+                    if line.starts_with(b"--- a/")
+                        && self.current_hunk.as_ref().is_some_and(|hunk| {
+                            hunk.verify_integrity(self.current_hunk_mutation_part.as_ref())
+                        })
+                    {
                         self.state = ParserState::ParsingHeader;
                         self.commit_file_patch();
                         lines.back();
                         continue;
                     }
-                    // parsing hunks
-                    let hunk_line_type: HunkLineType = if line.is_empty() {
+                    let ty = match line.first().copied() {
                         // treat blank lines as context
-                        HunkLineType::Context
-                    } else {
-                        let maybe = match line[0] {
-                            b'@' => Some(HunkLineType::Header),
-                            b'-' => Some(HunkLineType::Deletion),
-                            b'+' => Some(HunkLineType::Insertion),
-                            b' ' => Some(HunkLineType::Context),
-                            b'\\' => Some(HunkLineType::Pragma),
-                            b'\r' => Some(HunkLineType::Context),
-                            _ => None,
-                        };
-                        match maybe {
-                            Some(t) => t,
-                            None => {
-                                // unrecognized, bail out
-                                self.state = ParserState::ParsingHeader;
-                                self.commit_file_patch();
-                                lines.back();
-                                continue;
-                            }
-                        }
-                    };
-
-                    match hunk_line_type {
-                        HunkLineType::Header => {
+                        None | Some(b' ' | b'\r') => PartType::Context,
+                        Some(b'-') => PartType::Deletion,
+                        Some(b'+') => PartType::Insertion,
+                        // @@ -1,3 +1,3 @@
+                        Some(b'@') => {
                             self.commit_hunk();
-                            self.current_hunk = Some(parse_hunk_header_line(line)?);
+                            self.current_hunk = Some(Hunk {
+                                offset: self.offset,
+                                ..parse_hunk_header_line(line)?
+                            });
+                            continue;
                         }
-                        HunkLineType::Pragma => {
+                        Some(b'\\') => {
                             if !line.starts_with(b"\\ No newline at end of file") {
                                 // TODO: store line
                                 return Err(ParseErr::unrecognized_pragma);
                             }
-                            if self.current_hunk_mutation_part.is_none() {
-                                return Err(
+                            self.current_hunk_mutation_part
+                                .as_mut()
+                                .ok_or(
                                     ParseErr::no_newline_at_eof_pragma_encountered_without_context,
-                                );
-                            }
-                            self.current_hunk_mutation_part
-                                .as_mut()
-                                .unwrap()
+                                )?
                                 .no_newline_at_end_of_file = true;
+                            continue;
                         }
-                        HunkLineType::Insertion
-                        | HunkLineType::Deletion
-                        | HunkLineType::Context => {
-                            if self.current_hunk.is_none() {
-                                return Err(ParseErr::hunk_lines_encountered_before_hunk_header);
-                            }
-                            if self.current_hunk_mutation_part.is_some()
-                                && (self.current_hunk_mutation_part.as_ref().unwrap().ty as u8)
-                                    != (hunk_line_type as u8)
-                            {
-                                let part = self.current_hunk_mutation_part.take().unwrap();
-                                self.current_hunk.as_mut().unwrap().parts.push(part);
-                            }
-
-                            if self.current_hunk_mutation_part.is_none() {
-                                self.current_hunk_mutation_part = Some(PatchMutationPart {
-                                    ty: match hunk_line_type {
-                                        HunkLineType::Context => PartType::Context,
-                                        HunkLineType::Insertion => PartType::Insertion,
-                                        HunkLineType::Deletion => PartType::Deletion,
-                                        _ => unreachable!(),
-                                    },
-                                    ..Default::default()
-                                });
-                            }
-
-                            self.current_hunk_mutation_part
-                                .as_mut()
-                                .unwrap()
-                                .lines
-                                .push(&line[1.min(line.len())..]);
+                        Some(_) => {
+                            // unrecognized, bail out
+                            self.state = ParserState::ParsingHeader;
+                            self.commit_file_patch();
+                            lines.back();
+                            continue;
                         }
-                    }
+                    };
+                    let hunk = self
+                        .current_hunk
+                        .as_mut()
+                        .ok_or(ParseErr::hunk_lines_encountered_before_hunk_header)?;
+                    hunk.parts.extend(
+                        self.current_hunk_mutation_part
+                            .take_if(|part| part.ty != ty),
+                    );
+                    self.current_hunk_mutation_part
+                        .get_or_insert_with(|| PatchMutationPart {
+                            ty,
+                            ..Default::default()
+                        })
+                        .lines
+                        .push(&line[1.min(line.len())..]);
                 }
             }
         }
@@ -1357,7 +1228,8 @@ impl<'a> PatchLinesParser<'a> {
 
         for file_deet in &self.result {
             for hunk in &file_deet.hunks {
-                if !hunk.verify_integrity() {
+                if !hunk.verify_integrity(None) {
+                    self.offset = hunk.offset;
                     return Err(ParseErr::hunk_header_integrity_check_failed);
                 }
             }
@@ -1380,150 +1252,50 @@ impl<'a> PatchLinesParser<'a> {
         self.current_file_patch.nullify_empty_strings();
         let fp = mem::take(&mut self.current_file_patch);
         self.result.push(fp);
+        self.current_file_patch.offset = self.offset;
     }
 }
 
-struct HunkHeaderLineImpl<'a> {
-    line_nr: u32,
-    line_count: u32,
-    rest: &'a [u8],
+fn split_ascii_digits(text: &[u8]) -> (&[u8], &[u8]) {
+    text.split_at(text.iter().take_while(|c| c.is_ascii_digit()).count())
 }
 
-fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, ParseErr> {
-    let mut text = text_;
-    let digits: ByteBitSet = {
-        let mut set = ByteBitSet::init_empty();
-        let mut c = b'0';
-        while c <= b'9' {
-            set.set(c as usize);
-            c += 1;
-        }
-        set
+/// Parses `100,32 ` or `100 `. Returns the range and the rest of the text, starting at the space.
+fn parse_header_range(text: &[u8]) -> Result<(HeaderRange, &[u8]), ParseErr> {
+    let (start, mut rest) = split_ascii_digits(text);
+    let mut len: &[u8] = b"1";
+    if rest.len() < 2 {
+        return Err(ParseErr::bad_header_line);
+    }
+    if let Some(after_comma) = rest.strip_prefix(b",") {
+        (len, rest) = split_ascii_digits(after_comma);
+    }
+    if !rest.starts_with(b" ") {
+        return Err(ParseErr::bad_header_line);
+    }
+    let range = HeaderRange {
+        start: bun_core::parse_decimal::<u32>(start).ok_or(ParseErr::bad_header_line)?,
+        len: bun_core::parse_decimal::<u32>(len).ok_or(ParseErr::bad_header_line)?,
     };
-
-    // @@ -100,32 +100,32 @@
-    //     ^
-    let line_nr_start: usize = 0;
-    let mut line_nr_end: usize = 0;
-    let mut saw_comma = false;
-    let mut saw_whitespace = false;
-    while line_nr_end < text.len() {
-        if text[line_nr_end] == b',' {
-            saw_comma = true;
-            break;
-        } else if text[line_nr_end] == b' ' {
-            saw_whitespace = true;
-            break;
-        }
-        if !digits.is_set(text[line_nr_end] as usize) {
-            return Err(ParseErr::bad_header_line);
-        }
-        line_nr_end += 1;
-    }
-    if !saw_comma && !saw_whitespace {
-        return Err(ParseErr::bad_header_line);
-    }
-    let line_nr = &text[line_nr_start..line_nr_end];
-    let mut line_nr_count: &[u8] = b"1";
-    if line_nr_end + 1 >= text.len() {
-        return Err(ParseErr::bad_header_line);
-    }
-
-    text = &text[line_nr_end..];
-    if text.is_empty() {
-        return Err(ParseErr::bad_header_line);
-    }
-
-    // @@ -100,32 +100,32 @@
-    //        ^
-    //        but the comma can be optional
-    if saw_comma {
-        text = &text[1..];
-        saw_whitespace = false;
-        let first_col_start = 0;
-        let mut first_col_end: usize = 0;
-        while first_col_end < text.len() {
-            if text[first_col_end] == b' ' {
-                saw_whitespace = true;
-                break;
-            }
-            if !digits.is_set(text[first_col_end] as usize) {
-                return Err(ParseErr::bad_header_line);
-            }
-            first_col_end += 1;
-        }
-        if !saw_whitespace {
-            return Err(ParseErr::bad_header_line);
-        }
-        line_nr_count = &text[first_col_start..first_col_end];
-        text = &text[first_col_end..];
-    }
-
-    Ok(HunkHeaderLineImpl {
-        line_nr: 1.max(bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?),
-        line_count: bun_core::parse_decimal::<u32>(line_nr_count)
-            .ok_or(ParseErr::bad_header_line)?,
-        rest: text,
-    })
+    Ok((range, rest))
 }
 
-fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
+fn parse_hunk_header_line<'a>(line: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
     //  const match = headerLine.trim()
     //    .match(/^@@ -(\d+)(,(\d+))? \+(\d+)(,(\d+))? @@.*/)
-
-    let mut line = strings::trim(line_, WHITESPACE);
-    // @@ -100,32 +100,32 @@
-    // ^^^^
-    // this part
-    if !(line.len() >= 4
-        && line[0] == b'@'
-        && line[1] == b'@'
-        && line[2] == b' '
-        && line[3] == b'-')
-    {
-        // TODO: store line
+    let line = strings::trim(line, WHITESPACE)
+        .strip_prefix(b"@@ -")
+        .ok_or(ParseErr::bad_header_line)?;
+    let (original, line) = parse_header_range(line)?;
+    let line = line.strip_prefix(b" +").ok_or(ParseErr::bad_header_line)?;
+    let (patched, line) = parse_header_range(line)?;
+    if !line.starts_with(b" @@") {
         return Err(ParseErr::bad_header_line);
     }
-
-    if line.len() <= 4 {
-        return Err(ParseErr::bad_header_line);
-    }
-
-    // @@ -100,32 +100,32 @@
-    //     ^
-    line = &line[4..];
-
-    let first_result = parse_hunk_header_line_impl(line)?;
-    // @@ -100,32 +100,32 @@
-    //           ^
-    line = first_result.rest;
-    if line.len() < 2 || line[1] != b'+' {
-        return Err(ParseErr::bad_header_line);
-    }
-    line = &line[2..];
-
-    let second_result = parse_hunk_header_line_impl(line)?;
-    // @@ -100,32 +100,32 @@
-    //                   ^
-    line = second_result.rest;
-
-    if line.len() >= 3 && line[0] == b' ' && line[1] == b'@' && line[2] == b'@' {
-        return Ok(Hunk {
-            header: Header {
-                original: HeaderRange {
-                    start: first_result.line_nr,
-                    len: first_result.line_count,
-                },
-                patched: HeaderRange {
-                    start: second_result.line_nr,
-                    len: second_result.line_count,
-                },
-            },
-            parts: Vec::new(),
-        });
-    }
-
-    Err(ParseErr::bad_header_line)
+    Ok(Hunk {
+        header: Header { original, patched },
+        ..Default::default()
+    })
 }
 
 fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
@@ -1536,60 +1308,25 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
 
     let delimiter_start = strings::index_of(line, b"..")? as usize;
 
-    // ArrayBitSet::set is non-const, so this builds at runtime.
-    let valid_chars: ByteBitSet = {
-        let mut bitset = ByteBitSet::init_empty();
-        // TODO: the regex uses \w which is [a-zA-Z0-9_]
-        let mut c = b'0';
-        while c <= b'9' {
-            bitset.set(c as usize);
-            c += 1;
-        }
-        c = b'a';
-        while c <= b'z' {
-            bitset.set(c as usize);
-            c += 1;
-        }
-        c = b'A';
-        while c <= b'Z' {
-            bitset.set(c as usize);
-            c += 1;
-        }
-        bitset.set(b'_' as usize);
-        bitset
-    };
+    // \w is [a-zA-Z0-9_]
+    let is_word = |part: &[u8]| part.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_');
 
     let a_part = &line[..delimiter_start];
-    for &c in a_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
+    if !is_word(a_part) {
+        return None;
     }
 
     let b_part_start = delimiter_start + 2;
     if b_part_start >= line.len() {
         return None;
     }
-    let lmao_bro = &line[b_part_start..];
-    core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
         Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
     let b_part = &line[b_part_start..b_part_end];
-    for &c in a_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
-    }
-    for &c in b_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
-    }
-
-    Some((a_part, b_part))
+    is_word(b_part).then_some((a_part, b_part))
 }
 
 fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
@@ -1602,9 +1339,15 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
     // diff --git a/banana.ts b/banana.ts
     //              ^
-    let rest = &line[PREFIX.len()..];
+    let rest = strings::trim_right(&line[PREFIX.len()..], WHITESPACE);
     if rest.is_empty() {
         return None;
+    }
+
+    // Without a rename both paths are identical, so the ` b/` between them is in the exact middle.
+    let (a_path, b_part) = rest.split_at(rest.len().saturating_sub(b" b/".len()) / 2);
+    if b_part.strip_prefix(b" b/") == Some(a_path) {
+        return Some((a_path, a_path));
     }
 
     let a_path_start_index: usize = 0;
@@ -1637,22 +1380,30 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The storage that `Options.envp` points into.
+pub struct GitDiffEnv {
+    _envp: Vec<*const core::ffi::c_char>,
+    _path: Option<Vec<u8>>,
+}
+
 // `bun_spawn::sync::Options` owns
 // `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
-// the null-terminated envp array is returned alongside as the second tuple element —
+// its storage is returned alongside as the second tuple element —
 // caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
 pub fn spawn_opts(
     old_folder: &[u8],
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
+    loop_: &mut bun_event_loop::AnyEventLoop,
+) -> (bun_spawn::sync::Options, GitDiffEnv) {
     let argv: Vec<Box<[u8]>> = {
-        const ARGV: &[&[u8]] = &[
-            b"git",
+        const ARGS: [&[u8]; 11] = [
             b"-c",
             b"core.safecrlf=false",
+            // By default git prints non-ASCII paths as "caf\303\251", which the parser cannot read.
+            b"-c",
+            b"core.quotepath=false",
             b"diff",
             b"--src-prefix=a/",
             b"--dst-prefix=b/",
@@ -1661,196 +1412,26 @@ pub fn spawn_opts(
             b"--full-index",
             b"--no-index",
         ];
-        // PERF: `Options.argv` is
-        // `Vec<Box<[u8]>>`, so we copy. Profile if it shows up on a hot path.
-        let mut argv_buf: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
-        argv_buf.push(Box::from(git.as_bytes()));
-        for i in 1..ARGV.len() {
-            argv_buf.push(Box::from(ARGV[i]));
-        }
-        argv_buf.push(Box::from(old_folder));
-        argv_buf.push(Box::from(new_folder));
-        argv_buf
+        core::iter::once(git.as_bytes())
+            .chain(ARGS)
+            .chain([old_folder, new_folder])
+            .map(Box::from)
+            .collect()
     };
 
-    // envp is `[:null]?[*:0]const u8` — null-terminated array of C strings. All
-    // entries point at `'static` storage (string literals / process env block);
-    // only the array itself is heap-backed and returned to the caller.
-    let envp_buf: Vec<*const core::ffi::c_char> = {
-        const ENV_ARR: [&[u8]; 4] = [
-            b"GIT_CONFIG_NOSYSTEM\0",
-            b"HOME\0",
-            b"XDG_CONFIG_HOME\0",
-            b"USERPROFILE\0",
-        ];
-        let path = bun_core::env_var::PATH.get();
-        let mut envp_buf: Vec<*const core::ffi::c_char> =
-            Vec::with_capacity(ENV_ARR.len() + usize::from(path.is_some()) + 1);
-        for s in &ENV_ARR {
-            envp_buf.push(s.as_ptr().cast::<core::ffi::c_char>());
-        }
-        if let Some(p) = path {
-            // `env_var::PATH.get()` yields a slice into the C env
-            // block (NUL byte immediately follows on POSIX — see
-            // `bun_core::getenv_z`).
-            envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
-        }
-        envp_buf.push(core::ptr::null()); // sentinel
-        envp_buf
-    };
-
-    #[cfg(not(windows))]
-    let _ = loop_;
-
-    let opts = bun_spawn::sync::Options {
-        stdout: bun_spawn::sync::Stdio::Buffer,
-        stderr: bun_spawn::sync::Stdio::Buffer,
-        cwd: cwd.as_bytes().into(),
-        envp: Some(envp_buf.as_ptr()),
-        argv,
-        #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    (opts, envp_buf)
-}
-
-pub fn diff_post_process(
-    result: &mut bun_spawn::sync::Result,
-    old_folder: &[u8],
-    new_folder: &[u8],
-) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
-    let mut stdout: Vec<u8> = Vec::new();
-    let mut stderr: Vec<u8> = Vec::new();
-
-    mem::swap(&mut stdout, &mut result.stdout);
-    mem::swap(&mut stderr, &mut result.stderr);
-
-    // errdefer-style flags replaced by Drop semantics; on early return
-    // the unreturned vec is dropped automatically.
-
-    if !stderr.is_empty() {
-        return Ok(Err(stderr));
-    }
-
-    bun_core::scoped_log!(Patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
-    git_diff_postprocess(&mut stdout, old_folder, new_folder)?;
-    Ok(Ok(stdout))
-}
-
-// Returns owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
-pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
-    old_folder_: &[u8],
-    new_folder_: &[u8],
-) -> [Vec<u8>; 2] {
-    let bump: usize = if SENTINEL { 1 } else { 0 };
-
-    #[cfg(windows)]
-    let old_folder: Vec<u8> = {
-        // backslash in the path fucks everything up
-        let mut cpy = vec![0u8; old_folder_.len() + bump];
-        cpy[..old_folder_.len()].copy_from_slice(old_folder_);
-        paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[old_folder_.len()] = 0;
-            // The sentinel slice's `.len` excludes the NUL. Truncate so
-            // `Vec::len()` matches; the NUL byte stays in
-            // spare capacity for callers that need a C string via `.as_ptr()`.
-            cpy.truncate(old_folder_.len());
-        }
-        cpy
-    };
-    #[cfg(not(windows))]
-    let old_folder: Vec<u8> = old_folder_.to_vec();
-
-    #[cfg(windows)]
-    let new_folder: Vec<u8> = {
-        let mut cpy = vec![0u8; new_folder_.len() + bump];
-        cpy[..new_folder_.len()].copy_from_slice(new_folder_);
-        paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[new_folder_.len()] = 0;
-            // `.len` excludes the sentinel.
-            cpy.truncate(new_folder_.len());
-        }
-        cpy
-    };
-    #[cfg(not(windows))]
-    let new_folder: Vec<u8> = new_folder_.to_vec();
-
-    #[cfg(unix)]
-    if SENTINEL {
-        // Append NUL.
-        let mut o = old_folder;
-        o.push(0);
-        let mut n = new_folder;
-        n.push(0);
-        return [o, n];
-    }
-
-    let _ = bump;
-    [old_folder, new_folder]
-}
-
-pub fn git_diff_internal(
-    old_folder_: &[u8],
-    new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
-    let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
-    let old_folder = &paths[0][..];
-    let new_folder = &paths[1][..];
-
-    // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
-    // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = PathBuffer::uninit();
-    let git = bun_which::which(
-        &mut gitbuf,
-        bun_core::env_var::PATH.get().unwrap_or(b""),
-        b"",
-        b"git",
-    )
-    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-
-    const ARGV: &[&[u8]] = &[
-        b"-c",
-        b"core.safecrlf=false",
-        b"diff",
-        b"--src-prefix=a/",
-        b"--dst-prefix=b/",
-        b"--ignore-cr-at-eol",
-        b"--irreversible-delete",
-        b"--full-index",
-        b"--no-index",
-    ];
-    let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 3);
-    argv.push(Box::from(git.as_bytes()));
-    for s in ARGV {
-        argv.push(Box::from(*s));
-    }
-    argv.push(Box::from(old_folder));
-    argv.push(Box::from(new_folder));
-
-    // env: { PATH (inherited if set), GIT_CONFIG_NOSYSTEM=1, HOME=, XDG_CONFIG_HOME=, USERPROFILE= }
-    // Static entries point at 'static literals; PATH=<value>\0 needs an owned buffer.
-    let path_var: Option<Vec<u8>> = bun_core::env_var::PATH.get().map(|p| {
-        let mut s = Vec::with_capacity(b"PATH=".len() + p.len() + 1);
-        s.extend_from_slice(b"PATH=");
-        s.extend_from_slice(p);
-        s.push(0);
-        s
-    });
+    // The machine's and the user's git config must not shape the patch.
+    let path_var: Option<Vec<u8>> = bun_core::env_var::PATH
+        .get()
+        .map(|p| [&b"PATH="[..], p, b"\0"].concat());
     const ENV_STATIC: &[&[u8]] = &[
         b"GIT_CONFIG_NOSYSTEM=1\0",
+        b"GIT_ATTR_NOSYSTEM=1\0",
         b"HOME=\0",
         b"XDG_CONFIG_HOME=\0",
         b"USERPROFILE=\0",
+        // Without this, git inside a repository would also read that repository's config and every
+        // .gitattributes above the two folders.
+        concat!("GIT_DIR=", bun_core::null_device!(), "\0").as_bytes(),
     ];
     let mut envp_buf: Vec<*const core::ffi::c_char> =
         Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);
@@ -1868,39 +1449,90 @@ pub fn git_diff_internal(
     let opts = bun_spawn::sync::Options {
         stdout: bun_spawn::sync::Stdio::Buffer,
         stderr: bun_spawn::sync::Stdio::Buffer,
+        cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // This routes through `bun_spawn::sync::spawn`, whose Windows path
-        // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
-        // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
-        // defaulted is a null deref on Windows — supply the caller's loop.
+        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
+        // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
+            // `as_handle` owns the handle conversion so variant internals
+            // stay encapsulated.
             loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
             ..Default::default()
         },
         ..Default::default()
     };
 
-    // unfortunately, git diff returns non-zero exit codes even when it succeeds.
-    // we have to check that stderr was not empty to know if it failed
-    let mut result = bun_spawn::sync::spawn(&opts)??;
+    (
+        opts,
+        GitDiffEnv {
+            _envp: envp_buf,
+            _path: path_var,
+        },
+    )
+}
 
-    // Keep envp storage alive across the spawn call; Options.envp borrows it.
-    drop(opts);
-    drop(envp_buf);
-    drop(path_var);
-
+pub fn diff_post_process(
+    result: &mut bun_spawn::sync::Result,
+    old_folder: &[u8],
+    new_folder: &[u8],
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout = mem::take(&mut result.stdout);
-    let stderr = mem::take(&mut result.stderr);
+    let mut stderr = mem::take(&mut result.stderr);
 
-    if !stderr.is_empty() {
+    // git exits with 1 if there are differences, and also if it cannot read a folder, but then it
+    // prints no patch. stderr is not checked, because git can print a warning with a valid patch.
+    let succeeded = match &result.status {
+        bun_spawn::Status::Exited(exit) => exit.code == 0 || (exit.code == 1 && !stdout.is_empty()),
+        _ => false,
+    };
+    if !succeeded {
+        if stderr.is_empty() {
+            stderr = format!("git exited with {}", result.status).into_bytes();
+        }
         return Ok(Err(stderr));
     }
 
     bun_core::scoped_log!(Patch, "Before postprocess: {}\n", bstr::BStr::new(&stdout));
     git_diff_postprocess(&mut stdout, old_folder, new_folder)?;
     Ok(Ok(stdout))
+}
+
+pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u8>; 2] {
+    #[allow(unused_mut)]
+    let mut folders = [old_folder.to_vec(), new_folder.to_vec()];
+    #[cfg(windows)]
+    for folder in &mut folders {
+        paths::slashes_to_posix_in_place(&mut folder[..]);
+    }
+    folders
+}
+
+pub fn git_diff_internal(
+    old_folder_: &[u8],
+    new_folder_: &[u8],
+    loop_: &mut bun_event_loop::AnyEventLoop,
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
+    let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
+    let old_folder = &paths[0][..];
+    let new_folder = &paths[1][..];
+
+    // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
+    // resolve `git` here — same as `patchCommit`'s `bun.which` call.
+    let mut gitbuf = bun_paths::path_buffer_pool::get();
+    let git = bun_which::which(
+        &mut gitbuf,
+        bun_core::env_var::PATH.get().unwrap_or(b""),
+        b"",
+        b"git",
+    )
+    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+
+    let (opts, _env) = spawn_opts(old_folder, new_folder, ZStr::EMPTY, git, loop_);
+
+    let mut result = bun_spawn::sync::spawn(&opts)??;
+    diff_post_process(&mut result, old_folder, new_folder)
 }
 
 /// Now we need to do the equivalent of these regex subtitutions.
@@ -1933,33 +1565,26 @@ fn git_diff_postprocess(
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> crate::Result<()> {
+    // An installed package contains no symlinks, so a symlink that exists only in the cache's copy
+    // is not something the user deleted. Leave it out of the patch.
+    while let Some(mode) = strings::index_of(&stdout[..], b"\ndeleted file mode 120000\n") {
+        let start = strings::last_index_of_char(&stdout[..mode], b'\n').map_or(0, |i| i + 1);
+        let end = strings::index_of(&stdout[mode + 1..], b"\ndiff --git ")
+            .map_or(stdout.len(), |i| mode + i + 2);
+        stdout.drain(start..end);
+    }
+
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    let mut old_buf = PathBuffer::uninit();
-    let mut new_buf = PathBuffer::uninit();
-
-    let (a_old_folder_slash, b_new_folder_slash) = {
-        let ob = &mut old_buf[..];
-        ob[0] = b'a';
-        ob[1] = b'/';
-        ob[2..2 + old_folder_trimmed.len()].copy_from_slice(old_folder_trimmed);
-        ob[2 + old_folder_trimmed.len()] = b'/';
-
-        let nb = &mut new_buf[..];
-        nb[0] = b'b';
-        nb[1] = b'/';
-        nb[2..2 + new_folder_trimmed.len()].copy_from_slice(new_folder_trimmed);
-        nb[2 + new_folder_trimmed.len()] = b'/';
-
-        (
-            &old_buf[0..2 + old_folder_trimmed.len() + 1],
-            &new_buf[0..2 + new_folder_trimmed.len() + 1],
-        )
-    };
-
-    // const @"$old_folder/" = @"a/$old_folder/"[2..];
-    // const @"$new_folder/" = @"b/$new_folder/"[2..];
+    let prefixed = |prefix: &[u8], folder: &[u8]| [prefix, folder, b"/"].concat();
+    // An added file has the new folder on both sides of its headers, a deleted one the old folder.
+    let prefixed_folders: [(Vec<u8>, bool); 4] = [
+        (prefixed(b"a/", old_folder_trimmed), true),
+        (prefixed(b"b/", old_folder_trimmed), true),
+        (prefixed(b"a/", new_folder_trimmed), false),
+        (prefixed(b"b/", new_folder_trimmed), false),
+    ];
 
     // these vars are here to disambguate `a/$OLD_FOLDER` when $OLD_FOLDER itself contains "a/"
     // basically if $OLD_FOLDER contains "a/" then the code will replace it
@@ -1993,31 +1618,21 @@ fn git_diff_postprocess(
         };
 
         if !skip {
-            // a/$old_folder/
-            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
+            // (a|b)/$old_folder/ and (a|b)/$new_folder/
+            if let Some((idx, len, is_old)) =
+                prefixed_folders.iter().find_map(|(needle, is_old)| {
+                    strings::index_of(&stdout[line_start..line_end], needle)
+                        .map(|idx| (idx, needle.len(), *is_old))
+                })
             {
-                let old_folder_slash_start = idx + 2;
-                stdout.drain(
-                    line_start + old_folder_slash_start
-                        ..line_start + old_folder_slash_start + old_folder_trimmed.len() + 1,
-                );
+                stdout.drain(line_start + idx + 2..line_start + idx + len);
                 // Re-examine this same line.
                 cursor = line_start;
-                saw_a_folder = Some(line_idx as usize);
-                continue;
-            }
-            // b/$new_folder/
-            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
-            {
-                let new_folder_slash_start = idx + 2;
-                stdout.drain(
-                    line_start + new_folder_slash_start
-                        ..line_start + new_folder_slash_start + new_folder_trimmed.len() + 1,
-                );
-                // The next iteration
-                // resumes at the (now-shifted) byte after this line's '\n'.
-                cursor = next_cursor - (new_folder_trimmed.len() + 1);
-                saw_b_folder = Some(line_idx as usize);
+                if is_old {
+                    saw_a_folder = Some(line_idx as usize);
+                } else {
+                    saw_b_folder = Some(line_idx as usize);
+                }
                 continue;
             }
             if saw_a_folder.is_none() || saw_a_folder.unwrap() != line_idx as usize {

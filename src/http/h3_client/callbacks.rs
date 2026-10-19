@@ -16,7 +16,9 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
-use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
+use crate::h2_client::dispatch::{
+    is_malformed_response_field, is_malformed_response_value, trim_response_value,
+};
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
@@ -196,9 +198,19 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     stream_mut(stream).qstream = Some(NonNull::from(&mut *s));
     *s.ext::<Stream>() = NonNull::new(stream);
     bun_core::scoped_log!(h3_client, "stream_open");
-    if let Err(e) = encode::write_request(session, stream_mut(stream), s) {
-        session.fail(stream, e);
-    }
+    // Headers and body go out from `on_stream_writable`, not here.
+    // `on_stream_open` can fire from inside `on_hsk_done`, which lsquic
+    // invokes from `ci_tick`'s crypto-read phase with `SC_BUFFER_STREAM` set
+    // while the client's TLS Finished is still only on the HSK crypto
+    // stream's frab list. Any `lsquic_stream_write` here fills the send
+    // controller so `write_is_possible()` goes false before
+    // `process_streams_write_events` ever dispatches the crypto stream, and
+    // the Finished is never packetized (the server stays a mini-conn and
+    // drops every 1-RTT packet). `on_write` is dispatched via lsquic's
+    // priority iterator, which serves the crypto stream first. This mirrors
+    // lsquic's reference `bin/http_client.c`, whose `on_new_stream` only
+    // calls `lsquic_stream_wantwrite(stream, 1)`.
+    s.want_write(true);
 }
 
 extern "C" fn on_stream_headers(s: *mut quic::Stream) {
@@ -233,7 +245,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         }
         stream
             .decoded_headers
-            .push(picohttp::Header::new(name, value));
+            .push(picohttp::Header::new(name, trim_response_value(value)));
         i += 1;
     }
     if status == 0 {
@@ -277,7 +289,19 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {
     let s = qstream_arg(s);
-    let Some(stream) = stream_of(s) else { return };
+    let Some(stream_ptr) = *s.ext::<Stream>() else {
+        return;
+    };
+    let stream_ptr = stream_ptr.as_ptr();
+    let stream = stream_mut(stream_ptr);
+    if !stream.headers_sent {
+        stream.headers_sent = true;
+        let session = stream.session_mut();
+        if let Err(e) = encode::write_request(session, stream_mut(stream_ptr), s) {
+            session.fail(stream_ptr, e);
+        }
+        return;
+    }
     encode::drain_send_body(stream, s);
 }
 

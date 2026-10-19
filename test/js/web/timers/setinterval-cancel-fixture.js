@@ -2,6 +2,7 @@ const huge = Array.from({ length: 1000000 }, () => 0);
 huge.fill(0);
 let hasRun = false;
 const gc = typeof Bun !== "undefined" ? Bun.gc : typeof globalThis.gc !== "undefined" ? globalThis.gc : () => {};
+const rss = process.memoryUsage.rss;
 
 var timers = new Array(50_000);
 
@@ -18,7 +19,7 @@ function fn(huge) {
   gc(true);
 
   setTimeout(() => {
-    console.log("RSS:", (process.memoryUsage.rss() / 1024 / 1024) | 0, "MB");
+    console.log("RSS:", (rss() / 1024 / 1024) | 0, "MB");
     process.exit(0);
   }, 10);
 }

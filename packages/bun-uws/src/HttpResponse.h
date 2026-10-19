@@ -111,12 +111,12 @@ public:
         return notifyShutdownAfterDrain();
     }
 
-    /* node:http: a socket.end() waits (HTTP_NODE_SHUTDOWN_AFTER_DRAIN) and uWS holds no more bytes: tells the socket
-     * (onSocketDrain), which then sends its FIN. onWritable does this when the bytes leave. This is for the two events with
-     * no writable event behind them: a read, and the end of a response. Returns true when the socket closed. */
+    /* node:http: a socket.end() waits (HTTP_NODE_SHUTDOWN_AFTER_DRAIN). Lets the socket look again (onSocketDrain): it sends
+     * its FIN when nothing is left to wait for. onWritable does this when the bytes leave. This is for the two events with no
+     * writable event behind them: a read, and the end of a response. Returns true when the socket closed. */
     bool notifyShutdownAfterDrain() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN) || !Super::hasFullyDrained()) {
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) {
             return false;
         }
         HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);

@@ -61,7 +61,7 @@ type Message = {
   ruleId: string | null;
   severity: number;
   message: string;
-  fix?: unknown;
+  fix?: { range: [number, number]; text: string };
   suggestions?: { desc: string }[];
 };
 type Result = { filePath: string; messages: Message[]; output?: string };
@@ -952,8 +952,7 @@ describe.concurrent("react/jsx-newline", () => {
 
   test("only offers a fix when there's a line break to double", async () => {
     const files = { "a.jsx": onOneLine, "b.jsx": component("    {time}\n    {now}"), ...bunfig({ [id]: "error" }) };
-    const { stdout } = await lint(files, ["-f", "json", "a.jsx", "b.jsx"]);
-    const results = JSON.parse(stdout) as { messages: { ruleId: string; line: number; fix?: { text: string } }[] }[];
+    const results = resultsOf(await lint(files, ["-f", "json", "a.jsx", "b.jsx"]));
     expect(results.map(it => it.messages.filter(it => it.ruleId === id).map(it => [it.line, it.fix?.text]))).toEqual([
       [[3, undefined]],
       [[4, "\n\n    "]],
@@ -961,28 +960,24 @@ describe.concurrent("react/jsx-newline", () => {
   });
 
   test("--fix doesn't claim to have fixed two expressions on one line", async () => {
-    const { stdout, stderr, exitCode } = await lint({ "a.jsx": onOneLine, ...bunfig({ [id]: "error" }) }, [
-      "--fix",
-      "-f",
-      "unix",
-      "a.jsx",
-    ]);
-    expect(stdout).toContain(`a.jsx:3:20: JSX element should start in a new line [Error/${id}]`);
-    expect(stderr).not.toContain("Circular fixes");
-    expect(stderr).not.toContain("Fixed");
-    expect(exitCode).toBe(1);
+    const run = await lint({ "a.jsx": onOneLine, ...bunfig({ [id]: "error" }) }, ["--fix", "-f", "unix", "a.jsx"]);
+    // No "Fixed 1 problem" and no warning about circular fixes.
+    expect(run).toEqual({
+      stdout: `<dir>/a.jsx:3:20: JSX element should start in a new line [Error/${id}]\n\n1 problem\n`,
+      stderr: "Linted 1 file\n",
+      exitCode: 1,
+    });
   });
 });
 
 // oxlint renames in all of these cases, which merges two different variables into one.
 describe.concurrent("unicorn/catch-error-name only renames when `error` isn't already in use", () => {
   const id = "unicorn/catch-error-name";
-  type Fix = { range: [number, number]; text: string };
 
   /** Returns, for each report, `code` with its fix applied, or `null` if it has no fix. */
   async function renamed(code: string) {
-    const { stdout } = await lint({ "a.mjs": code, ...bunfig({ [id]: "error" }) }, ["-f", "json", "a.mjs"]);
-    const [{ messages }] = JSON.parse(stdout) as { messages: { ruleId: string; fix?: Fix }[] }[];
+    const run = await lint({ "a.mjs": code, ...bunfig({ [id]: "error" }) }, ["-f", "json", "a.mjs"]);
+    const [{ messages }] = resultsOf(run);
     return messages
       .filter(it => it.ruleId === id)
       .map(({ fix }) => (fix ? code.slice(0, fix.range[0]) + fix.text + code.slice(fix.range[1]) : null));
@@ -1683,29 +1678,28 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
   });
 
   const legacy = ["b.js:1 no-debugger"];
-  // oxlint's defaults are on in its directory. Some of them need types, and none of those runs without --type-aware.
-  const skipped = /^warn: Skipped \d+ rules that need type information\n  Use --type-aware to run them\.\n$/;
+  // oxlint's defaults are on in its directory. 15 of them need types, and none of those runs without --type-aware.
+  const skipped = "warn: Skipped 15 rules that need type information\n  Use --type-aware to run them.\n";
 
   // The config of packages/legacy, what it reports there, and what the run warns about.
   test.each([
-    ["packages/legacy/.eslintrc.json", `{ "root": true, "rules": { "no-debugger": "error" } }\n`, legacy, /^$/],
+    ["packages/legacy/.eslintrc.json", `{ "root": true, "rules": { "no-debugger": "error" } }\n`, legacy, ""],
     [
       "packages/legacy/.oxlintrc.json",
       `{ "rules": { "no-debugger": "error" } }\n`,
       [...legacy, "b.js:2 unicorn/no-thenable"],
       skipped,
     ],
-    ["packages/legacy/eslint.config.js", `export default [{ rules: { "no-debugger": "error" } }];\n`, legacy, /^$/],
+    ["packages/legacy/eslint.config.js", `export default [{ rules: { "no-debugger": "error" } }];\n`, legacy, ""],
   ])(
     "a nested %s doesn't fail the run, and the wildcard applies to the rest of the project",
-    async (name, config, inLegacy, warns) => {
+    async (name, config, inLegacy, warnings) => {
       // ES5, which is what ESLint 8 parses by default.
       const code = "debugger;\nvar thenable = { then: function () {} };\n";
       const files = { "a.js": code, "packages/legacy/b.js": code, [name]: config };
       const bunfig = `[lint.categories]\ncorrectness = "error"\n[lint.rules]\n"unicorn/*" = "off"\n`;
       const run = await lint({ ...files, "bunfig.toml": bunfig }, ["-f", "json"]);
-      expect(warningsOf(run)).toMatch(warns);
-      const found = problems(run, warningsOf(run)).filter(it => /no-debugger|unicorn/.test(it));
+      const found = problems(run, warnings).filter(it => /no-debugger|unicorn/.test(it));
       expect(found).toEqual(["a.js:1 no-debugger", ...inLegacy]);
     },
   );
@@ -1959,9 +1953,10 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
   test("with an ESLint config, eslint/no-var in a disable comment isn't treated as no-var", async () => {
     const code =
       "var a = 1; // eslint-disable-line eslint/no-var\nvar b = 2; // eslint-disable-line no-var\nexport { a, b };\n";
-    const { stdout } = await lint({ "a.js": code, ...flat({ "no-var": "error" }) }, ["-f", "json"]);
-    expect(problems(stdout)).toEqual(["a.js:1 eslint/no-var", "a.js:1 no-var"]);
-    expect(stdout).toContain("Definition for rule 'eslint/no-var' was not found.");
+    const run = await lint({ "a.js": code, ...flat({ "no-var": "error" }) }, ["-f", "json"]);
+    expect(problems(run)).toEqual(["a.js:1 eslint/no-var", "a.js:1 no-var"]);
+    const notFound = resultsOf(run).flatMap(it => it.messages.filter(it => it.ruleId === "eslint/no-var"));
+    expect(notFound.map(it => it.message)).toEqual(["Definition for rule 'eslint/no-var' was not found."]);
   });
 
   test("an ESLint config still has to declare its plugins", async () => {

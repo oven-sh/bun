@@ -12,7 +12,22 @@ def load(dirs=('/tmp/oracle-out',)):
                 if k == 'impl':
                     sp = r['impl_span']
                     key = (sp.get('file'), sp.get('lo'), sp.get('hi'), r['self_ty'])
-                    impls.setdefault(key, r)
+                    prev = impls.get(key)
+                    if prev is None:
+                        impls[key] = r
+                    else:
+                        # the same impl seen for another target: another cfg can add inherent items and fields
+                        pa, ra = prev.get('adt') or {}, r.get('adt') or {}
+                        have = {n['name'] for n in pa.get('inherent', [])}
+                        for n in ra.get('inherent', []):
+                            if n['name'] not in have:
+                                pa.setdefault('inherent', []).append(n); have.add(n['name'])
+                        if 'fields' in prev and 'fields' in r:
+                            names = {f['name'] for f in prev['fields']}
+                            extra = [f for f in r['fields'] if f['name'] not in names]
+                            if extra:
+                                prev['fields'].extend(extra)
+                                prev['fields'].sort(key=lambda f: (f.get('ty_span') or {}).get('lo', 0))
                 elif k == 'call':
                     sp = r['span']
                     key = (sp.get('file'), sp.get('lo'), sp.get('hi'), r['ty'])

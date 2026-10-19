@@ -90,6 +90,7 @@ class Manual(Exception):
 
 
 class TypeInfo:
+    unit = False
     overridden = False
     bitflags = False
     foreign_macro = False
@@ -213,6 +214,10 @@ def decide_ctor(t):
                     t.why_manual = "derived enum without a readable default variant"
                     return
                 kinds.add(("suffix", "::" + i["default_variant"]))
+            elif t.kind == "struct" and "Const" in i.get("ctor_kind", ""):
+                # a unit struct: its one value is its name
+                kinds.add(("suffix", ""))
+                t.unit = True
             elif t.kind == "struct":
                 if i.get("default_bounds") and any(b for b in i["default_bounds"]):
                     # `#[derive(Default)]` on a generic struct puts `T: Default` on the impl. The constructor
@@ -352,6 +357,10 @@ def render(tree, suffix=False, path=None, unsure=None):
             raise Manual(f"foreign type {tree['ty']}")
         return fn(tree, path, unsure)
     why = tree.get("why", "unknown")
+    if why.startswith("kind *mut "):
+        return Rendered("core::ptr::null_mut()", cheap=True, fnpath=None)
+    if why.startswith("kind *const "):
+        return Rendered("core::ptr::null()", cheap=True, fnpath=None)
     if re.fullmatch(r"generic Atomic std::sync::atomic::Atomic<\*mut .*>", why):
         return Rendered("core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())", cheap=False, fnpath=None)
     m = re.fullmatch(r"generic Atomic std::sync::atomic::Atomic<(\w+)>", why)
@@ -733,7 +742,7 @@ def rewrite_impl(t, i):
             if len(ms) != 1:
                 raise Manual(f"expected one #[default] in the enum, found {len(ms)}")
             out.append((isp["file"], ms[0].start(), ms[0].end(), b"", "default-attr"))
-        elif t.live and not t.bitflags:
+        elif t.live and not t.bitflags and not t.unit:
             lo, hi, new = gen_struct_ctor(t, i)
             out.append((adt["item_span"]["file"], lo, hi, new, "ctor"))
         return out
@@ -879,7 +888,7 @@ for c in calls:
 GOP = re.compile(r"(?:^|::)(ArrayHashMap|StringArrayHashMap|StringHashMap|HashMap|StaticHashMap)::<[^>]*>::(get_or_put|get_or_put_assume_capacity|get_or_put_adapted)$")
 FILL = re.compile(r"(?:^|::)MimallocArena::alloc_slice_fill_default$")
 JSCELL_TAKE = re.compile(r"(?:^|::)JsCell::<[^>]*>::take$")
-OUR_OR_DEFAULT = re.compile(r"(?:^|::)(MapEntry|IdEntry)::<[^>]*>::or_default$")
+OUR_OR_DEFAULT = re.compile(r"(?:^|::)(MapEntry|IdEntry|Entry)::<[^>]*>::or_default$")
 
 ws_groups = collections.OrderedDict()
 for o in obligs:

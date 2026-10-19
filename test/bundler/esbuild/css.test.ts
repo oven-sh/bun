@@ -1277,6 +1277,8 @@ b {
         .b { background: url("./a(b).png") }
         .c { --bg: url("./my image.png") }
         .d { background: url("./plain.png") }
+        .e { background-image: image-set("./my image.png" 1x, url("./a(b).png") 2x) }
+        @font-face { font-family: I; src: url("./my image.png") }
       `,
       "/my image.png": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
       "/a(b).png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
@@ -1288,11 +1290,32 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api
-        .expectFile("/out/entry.css")
-        .toEqualIgnoringWhitespace(
-          '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}.d{background:url("./plain-w49ecq2a.png")}',
-        );
+      expect(api.readFile("/out/entry.css")).toBe(
+        '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}.d{background:url("./plain-w49ecq2a.png")}' +
+          '.e{background-image:-webkit-image-set(url("./my image-mrrzcz3w.png") 1x,url("./a(b)-nkpagkva.png") 2x);background-image:image-set("./my image-mrrzcz3w.png" 1x,"./a(b)-nkpagkva.png" 2x)}' +
+          '@font-face{font-family:I;src:url("./my image-mrrzcz3w.png")}\n',
+      );
+    },
+  });
+
+  // The whole output path is copied over the placeholder, so `[dir]` carries a
+  // space just like a file name does. An ordinary publicPath is left as it is.
+  itBundled("css/FileLoaderURLAssetNamingDirAndPublicPath", {
+    files: {
+      "/entry.css": `@font-face { font-family: I; src: url("./Brand Fonts/inter.woff2") }`,
+      "/Brand Fonts/inter.woff2": Buffer.alloc(128 * 1024 + 1, "W").toString(),
+    },
+    loader: {
+      ".woff2": "file",
+    },
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    publicPath: "https://cdn.example.com/a/",
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(
+        '@font-face{font-family:I;src:url("https://cdn.example.com/a/Brand Fonts/inter-tny5bcvp.woff2")}\n',
+      );
     },
   });
 
@@ -1318,16 +1341,23 @@ b {
 
   // Windows cannot represent `"` or a line break in a file name.
   describe.skipIf(isWindows)("asset path is escaped for the CSS string it lands in", () => {
+    // The stylesheet only says "icons/logo.png". The package's `exports` picks the file name.
     const injection = 'x");}body{color:red}a{b:url("y';
     itBundled("css/FileLoaderURLEscapesFileName", {
       files: {
-        // `\22 ` is `"` and `\a ` is a line feed.
+        // `\a ` is a line feed.
         "/entry.css": String.raw`
           .a { background: url("./a\a b.png") }
-          .b { background: url("./x\22 );}body{color:red}a{b:url(\22 y.png") }
+          .b { background: url("icons/logo.png") }
+          .c { mask-image: image-set("./a\a b.png" 1x, "icons/logo.png" 2x) }
         `,
         "/a\nb.png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
-        [`/${injection}.png`]: Buffer.alloc(128 * 1024 + 1, "X").toString(),
+        "/node_modules/icons/package.json": JSON.stringify({
+          name: "icons",
+          version: "1.0.0",
+          exports: { "./logo.png": `./${injection}.png` },
+        }),
+        [`/node_modules/icons/${injection}.png`]: Buffer.alloc(128 * 1024 + 1, "X").toString(),
       },
       loader: {
         ".png": "file",
@@ -1337,6 +1367,7 @@ b {
       async onAfterBundle(api) {
         expect(api.readFile("/out/entry.css")).toBe(
           String.raw`.a{background:url("./a\a b-nkpagkva.png")}.b{background:url("./x\");}body{color:red}a{b:url(\"y-w49ecq2a.png")}` +
+            String.raw`.c{mask-image:image-set("./a\a b-nkpagkva.png" 1x,"./x\");}body{color:red}a{b:url(\"y-w49ecq2a.png" 2x)}` +
             "\n",
         );
         // Every url() in the output has to name a file that was written next to it.

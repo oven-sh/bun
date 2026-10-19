@@ -860,7 +860,8 @@ export {};
     rules: { "typescript/no-deprecated": "error" },
     args: typed,
     reports: {},
-    exitCode: 0,
+    // oxc refuses a file that declares `v` twice.
+    exitCode: 1,
   },
   {
     name: "a union of 30,000 template literal types, and one of object types",

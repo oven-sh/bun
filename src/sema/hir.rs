@@ -1309,6 +1309,8 @@ pub mod rare {
     pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
     /// `import.meta`
     pub const IMPORT_META: u32 = 1 << 28;
+    /// The bits that the parser only sets for oxc's dialect. In another dialect a clear bit says nothing.
+    pub const ONLY_IN_OXC_DIALECT: u32 = NESTED_MODULE_SYNTAX | MAY_REDECLARE | ODD_EXPORT;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

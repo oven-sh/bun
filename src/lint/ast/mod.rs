@@ -323,7 +323,11 @@ impl<'a> File<'a> {
             },
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             may_bind_a_parameter_twice: hir.may_bind_a_parameter_twice,
-            rare_syntax: hir.rare_syntax,
+            // The type checker parses its files as tsc does, so it never sets these bits. Set, they mean "maybe".
+            rare_syntax: match types {
+                Some(_) => hir.rare_syntax | hir::rare::ONLY_IN_OXC_DIALECT,
+                None => hir.rare_syntax,
+            },
             hir: Hir::new(hir),
             bound: Bound::new(bound),
             atoms,

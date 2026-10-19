@@ -6061,6 +6061,50 @@ maybe(() => { return f; });
         expect(runs.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(runs.map(() => [runs[0].stdout, "", 1]));
       });
 
+      // TypeScript's parser reports `assert`, and oxc accepts it. Expected: oxlint 1.87.0 with tsgolint 7.0.2003.
+      const cycle = 'import { y } from "./b.js";\nString(y);\n';
+      const twice = "let r = 1;\nlet r = 2;\n";
+      test.each([
+        ["nothing else in it", "", ["b.js:1:10 named", "b.js:2:8 default", "b.js:4:38 namespace"]],
+        [
+          "an import cycle",
+          cycle,
+          ["a.js:1:19 no-cycle", "b.js:1:10 named", "b.js:1:25 no-cycle", "b.js:2:8 default", "b.js:4:38 namespace"],
+        ],
+        // oxc refuses the file, so oxlint knows nothing about what it imports or exports.
+        ["a name declared twice", twice, ["a.js:1:5"]],
+        ["a name declared twice and an import cycle", cycle + twice, ["a.js:3:5"]],
+      ])(
+        "with types, imports from a file with `assert {}` are checked the same at every thread count: %s",
+        async (_, before, expected) => {
+          const compilerOptions = { strict: true, noEmit: true, lib: ["es2015"], types: [], allowJs: true };
+          const rules = ["import/named", "import/default", "import/namespace", "import/no-cycle"];
+          const files = {
+            ".oxlintrc.json": rc({
+              plugins: ["import", "typescript"],
+              rules: Object.fromEntries([...rules, "typescript/no-floating-promises"].map(it => [it, "error"])),
+            }),
+            "tsconfig.json": JSON.stringify({
+              compilerOptions: { ...compilerOptions, resolveJsonModule: true, moduleResolution: "bundler" },
+            }),
+            "d.json": "{}\n",
+            "a.js": `${before}import json from "./d.json" assert { type: "json" };\nexport const x = json;\n`,
+            "b.js":
+              'import { missing } from "./a.js";\nimport none from "./a.js";\nimport * as all from "./a.js";\n' +
+              "export const y = [missing, none, all.nope];\n",
+          };
+          const runs = await Promise.all(
+            [1, 2, 2, 8, 8].map(threads => lint(files, ["-f", "unix", "--type-aware", "--threads", `${threads}`])),
+          );
+          const places = (stdout: string) =>
+            [...stdout.matchAll(/^(\S+:\d+:\d+): .*?(?:\((.*)\))?\]$/gm)]
+              .map(it => it.slice(1).join(" ").trim())
+              .sort();
+          expect(runs.map(it => places(it.stdout))).toEqual(runs.map(() => expected));
+          expect(runs.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(runs.map(() => [runs[0].stdout, "", 1]));
+        },
+      );
+
       const kindsOfFixes = (Object.keys(flagSets) as (keyof typeof flagSets)[]).flatMap(flags =>
         [false, true].map((typed): [keyof typeof flagSets, boolean] => [flags, typed]),
       );

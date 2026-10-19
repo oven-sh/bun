@@ -97,6 +97,39 @@ describe.each(configs)("beside an .oxlintrc.json, when %s", (_, config) => {
     expect(await found(rows, config)).toEqual(rows);
   });
 
+  // The type checker parses the files of a program itself, as tsc does. tsgolint also lints a file that oxc refuses.
+  test.concurrent("--type-aware reports the same errors about names", async () => {
+    const { rules, ...rest } = JSON.parse(config);
+    const compilerOptions = { strict: true, noEmit: true, allowJs: true, lib: ["es2015"], types: [] };
+    const result = await lint(
+      {
+        ".oxlintrc.json": JSON.stringify({
+          ...rest,
+          plugins: ["typescript"],
+          rules: { ...rules, "typescript/no-floating-promises": "error" },
+        }),
+        "tsconfig.json": JSON.stringify({ compilerOptions }),
+        "a.ts": "declare const p: Promise<number>;\nlet a = 1;\nlet a = 2;\np;\nexport { a };\n",
+        "b.js": "export const one = 1;\nexport const one = 2;\n",
+        "c.js": "export { nothing };\n",
+        "d.js": "export {};\nif (true) {\n  export const a = 1;\n}\n",
+        "e.js": 'export {};\nfunction f() {\n  import "./c.js";\n}\nf();\n',
+      },
+      ["--type-aware", "-f", "json"],
+    );
+    using _ = result.dir;
+    const diagnostics: Diagnostic[] = JSON.parse(result.stdout).diagnostics;
+    expect(diagnostics.map(it => `${it.filename}:${it.labels[0].span.line} ${it.message}`).sort()).toEqual([
+      "a.ts:2 Identifier `a` has already been declared",
+      "a.ts:4 Promises must be awaited, add void operator to ignore.",
+      "b.js:1 Duplicated export 'one'",
+      "c.js:1 Export 'nothing' is not defined",
+      "d.js:3 'export statement' declaration can only be used at the top level of a module",
+      "e.js:3 'import statement' declaration can only be used at the top level of a module",
+    ]);
+    expect(result.exitCode).toBe(1);
+  });
+
   test.concurrent('a member of an enum that is written as ["A"] has the name A', async () => {
     const rows: Row[] = [
       ["ts", "enum E { ['A'], A }", declared("A", "10+3,16+1")],

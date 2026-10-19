@@ -588,6 +588,13 @@ describe("css", () => {
     ["::slotted(:global(.a .b))", "::slotted(.a .b)", "Token is not allowed in this state"],
     [".x:not(:global(.a::before))", ".x:not(.a::before)", "Token is not allowed in this state"],
     [".x:nth-child(2 of :global(.a::before))", ".x:nth-child(2 of .a::before)", "Token is not allowed in this state"],
+    // Valid CSS that bun does not parse yet, with or without the wrapper.
+    [":global(.a::before)::marker", ".a::before::marker", "Token is not allowed in this state"],
+    [
+      ":global(select::picker(select)):popover-open",
+      "select::picker(select):popover-open",
+      "Invalid pseudo-class after pseudo-element",
+    ],
   ];
   itBundled("css-module/LocalOrGlobalArgumentIsRejectedLikePlainCss", {
     files: {

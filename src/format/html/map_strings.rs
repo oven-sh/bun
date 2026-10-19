@@ -46,6 +46,27 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
     }
 }
 
+/// True if a line-suffix comment in the captured `content` is still pending where `content` ends.
+pub(crate) fn ends_with_line_suffix(content: Interned, f: &Formatter<'_>) -> bool {
+    let (mut depth, mut is_waiting) = (0u32, false);
+    for element in f.storage.interned(content) {
+        match element {
+            FormatElement::Tag(Tag::StartLineSuffix) => (depth, is_waiting) = (depth + 1, true),
+            FormatElement::Tag(Tag::EndLineSuffix) => depth = depth.saturating_sub(1),
+            FormatElement::Line(_)
+            | FormatElement::IndentedLineGroup(_)
+            | FormatElement::LineSuffixBoundary
+            | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_))
+                if depth == 0 =>
+            {
+                is_waiting = false;
+            }
+            _ => {}
+        }
+    }
+    is_waiting
+}
+
 /// What the line breaks in strings are.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum LineBreaks {
@@ -153,15 +174,14 @@ impl<M: MapString> Mapper<'_, M> {
                         .into_iter()
                         .map(|variant| self.capture(variant, f))
                         .collect();
-                    let mapped = f.best_fitting_of(&variants);
+                    let mapped = f.best_fitting_with(&variants, best_fitting.fallback);
                     f.write_element(mapped);
                 }
                 // What is in it is measured anew.
                 FormatElement::Tag(Tag::StartGroup(group)) => {
-                    let mode = if group.mode() == GroupMode::Expand {
-                        GroupMode::Expand
-                    } else {
-                        GroupMode::Flat
+                    let mode = match group.mode() {
+                        GroupMode::Propagated => GroupMode::Flat,
+                        mode => mode,
                     };
                     f.write_element(FormatElement::Tag(Tag::StartGroup(
                         Group::new().with_id(group.id()).with_mode(mode),

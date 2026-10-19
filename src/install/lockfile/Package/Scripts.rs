@@ -113,7 +113,8 @@ impl Scripts {
         false
     }
 
-    /// npm's rule for the default `node-gyp rebuild` script. `None`: read `gypfile` if it matters.
+    /// npm's rule for the default `node-gyp rebuild` script. Pass `None` to read `gypfile` from
+    /// disk only if it matters.
     pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Option<bool>) -> bool {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
@@ -304,7 +305,8 @@ impl Scripts {
         }
     }
 
-    /// Runs on the isolated linker's task threads. `trusted`: also `true` to list what would run.
+    /// Runs on the isolated linker's task threads. Pass `trusted: true` to also list the scripts
+    /// that would run.
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
@@ -315,7 +317,14 @@ impl Scripts {
         trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
         if !self.has_any() && !self.filled {
-            return self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
+            let list = self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
+            // A `link:` dependency may point to a directory without a package.json.
+            if resolution.tag == ResolutionTag::Symlink
+                && matches!(list, Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)))
+            {
+                return Ok(None);
+            }
+            return list;
         }
 
         let add_node_gyp_rebuild_script =
@@ -337,6 +346,9 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<bool, crate::Error> {
+        if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -421,7 +433,7 @@ pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub(crate) first_index: u8,
     pub total: u8,
-    /// Neither the project's nor a workspace's own scripts.
+    /// True if these aren't the project's or a workspace's own scripts.
     pub(crate) is_dependency: bool,
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,

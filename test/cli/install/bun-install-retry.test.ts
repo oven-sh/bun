@@ -551,8 +551,8 @@ describe.concurrent("backoff", () => {
   const busy = (status: number, retryAfter?: string | null) =>
     new Response("busy", { status, headers: retryAfter == null ? {} : { "Retry-After": retryAfter } });
 
-  // There is one dependency: while its request backs off nothing is in flight,
-  // and the install goes on only because the timer wakes it.
+  // There's only one dependency. While its request backs off, nothing is in flight, and the install only continues
+  // because the timer wakes it.
   it.each(["manifest", "tarball"] as const)("waits longer before each retry of a %s", async failing => {
     using registry = flakyRegistry((kind, hit) => (kind === failing && hit <= 3 ? busy(503) : undefined));
     using dir = project(registry.url);
@@ -585,6 +585,17 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("announces the Retry-After of the tarball after that of the manifest", async () => {
+    using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(429, "1") : undefined));
+    using dir = project(registry.url);
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.includes("asked to wait"))).toEqual([
+      "warn: registry asked to wait 1s before retrying",
+      "warn: registry asked to wait 1s before retrying",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it.each([
     ["manifest", 429],
     ["tarball", 503],
@@ -594,7 +605,7 @@ describe.concurrent("backoff", () => {
     const { err, lines, out, exitCode } = await install(String(dir));
     expect(err).not.toContain("error:");
     expect(lines.filter(line => line.includes("asked to wait"))).toEqual([
-      "warn: the registry asked to wait 1s before the next attempt",
+      "warn: registry asked to wait 1s before retrying",
     ]);
     expect(out).toContain("1 package installed");
     expect(registry.gaps(failing)).toEqual([expect.any(Number)]);
@@ -602,7 +613,7 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("waits a minute at most, and says so at once", async () => {
+  it("waits a minute at most, and says so immediately", async () => {
     using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit === 1 ? busy(429, "86400") : undefined));
     using dir = project(registry.url);
     await using proc = spawn({
@@ -616,9 +627,9 @@ describe.concurrent("backoff", () => {
     let err = "";
     for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
       err += chunk;
-      if (err.includes("next attempt\n")) break;
+      if (err.includes("before retrying\n")) break;
     }
-    expect(err).toContain("warn: the registry asked to wait 60s before the next attempt\n");
+    expect(err).toContain("warn: registry asked to wait 60s before retrying\n");
     expect(registry.at.manifest).toHaveLength(1);
   });
 
@@ -630,7 +641,7 @@ describe.concurrent("backoff", () => {
     { retryAfter: "soon", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "Wed, 21 Oct 2096 07:28:00 GMT", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "3600", backoff: "0", wait: /^0ms$/ },
-    { retryAfter: null, backoff: "nonsense", wait: /^(2[0-9][0-9]|300)ms$/ },
+    { retryAfter: null, backoff: "nonsense", wait: /^([45][0-9]|60)ms$/ },
   ])("Retry-After %j", async ({ retryAfter, backoff, wait }) => {
     using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(503, retryAfter) : undefined));
     using dir = project(registry.url);
@@ -714,16 +725,277 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  // These commands send one request and wait for its answer, outside the install loop.
+  describe.each(["503", "429", "a dropped connection"])("the first request ends in %s", fault => {
+    async function run(...cmd: string[]) {
+      using dropped = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.end();
+          },
+          data() {},
+        },
+      });
+      const requests: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          const { pathname } = new URL(request.url);
+          requests.push(`${request.method} ${pathname} ${request.headers.get("authorization")}`);
+          if (requests.length === 1) {
+            return fault === "a dropped connection"
+              ? Response.redirect(`http://127.0.0.1:${dropped.port}${pathname}`, 307)
+              : busy(Number(fault));
+          }
+          if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+          if (pathname === "/-/whoami") return Response.json({ username: "me" });
+          if (pathname !== "/bar") return Response.json({});
+          return Response.json({
+            name: "bar",
+            "dist-tags": { latest: "0.0.2" },
+            versions: { "0.0.2": { name: "bar", version: "0.0.2", dist: { tarball: `${server.url}bar-0.0.2.tgz` } } },
+          });
+        },
+      });
+      using dir = tempDir("retry-one-request", {
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { cache: false, registry: { url: server.url.href, token: "retry-token" } },
+        }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "foo", dependencies: { bar: "0.0.2" } } },
+          packages: { bar: ["bar@0.0.2", "", {}, ""] },
+        }),
+      });
+      await using proc = spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), stdout: "pipe", stderr: "pipe", env });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      return { err, requests, exitCode };
+    }
+
+    it.each([
+      [["info", "bar"], "GET /bar"],
+      [["pm", "view", "bar"], "GET /bar"],
+      [["pm", "whoami"], "GET /-/whoami"],
+      [["pm", "diff", "bar"], "GET /bar"],
+      [["audit"], "POST /-/npm/v1/security/advisories/bulk"],
+    ])("%j asks again", async (cmd, request) => {
+      const { err, requests, exitCode } = await run(...cmd);
+      expect(err).not.toContain("error:");
+      expect(requests.slice(0, 2)).toEqual([`${request} Bearer retry-token`, `${request} Bearer retry-token`]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The registry may have taken the package before the answer was lost.
+    it("bun publish does not upload the package again", async () => {
+      const { requests, exitCode } = await run("publish");
+      expect(requests).toEqual(["PUT /foo Bearer retry-token"]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe.each([[["info", "bar"]], [["pm", "whoami"]], [["pm", "diff", "bar"]], [["audit"]]])("%j", cmd => {
+    async function run(registry: string, extraEnv: Record<string, string> = {}) {
+      using dir = tempDir("retry-one-request", {
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: { url: registry, token: "t" } } }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "foo", dependencies: { bar: "0.0.2" } } },
+          packages: { bar: ["bar@0.0.2", "", {}, ""] },
+        }),
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+        env: { ...env, ...extraEnv },
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { err, exitCode };
+    }
+
+    // By now, the user has waited for as long as the timeout allows.
+    it("doesn't retry a registry that accepts the connection and never responds", async () => {
+      let connections = 0;
+      using silent = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {
+            connections++;
+          },
+          data() {},
+        },
+      });
+      const { exitCode } = await run(`http://127.0.0.1:${silent.port}/`, { BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" });
+      expect({ connections, exitCode }).toEqual({ connections: 1, exitCode: 1 });
+    });
+
+    it("doesn't retry after a 501", async () => {
+      let requests = 0;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (requests++, busy(501)) });
+      const { exitCode } = await run(server.url.href);
+      expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 1 });
+    });
+
+    it("doesn't print anything about a retry", async () => {
+      let requests = 0;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (requests++, busy(503)) });
+      const { err, exitCode } = await run(server.url.href, {
+        BUN_CONFIG_HTTP_RETRY_BACKOFF: "200",
+        BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+      });
+      expect(err).not.toMatch(/retry/i);
+      expect({ requests, exitCode }).toEqual({ requests: 2, exitCode: 1 });
+    });
+  });
+
+  // The manifest request fails twice.
+  describe("two retries", () => {
+    const run = async (...flags: string[]) => {
+      using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit <= 2 ? busy(503) : undefined));
+      using dir = project(registry.url);
+      const { lines, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_BACKOFF: "190" }, ...flags);
+      expect(exitCode).toBe(0);
+      return lines.filter(line => /retry/i.test(line));
+    };
+
+    it("print nothing", async () => {
+      expect(await run()).toEqual([]);
+    });
+
+    it("get a line each with --verbose", async () => {
+      expect(await run("--verbose")).toEqual([
+        expect.stringMatching(/^warn: HTTPError downloading package manifest bar\. Retry 1\/5 in \d+ms\.\.\.$/),
+        expect.stringMatching(/^warn: HTTPError downloading package manifest bar\. Retry 2\/5 in \d+ms\.\.\.$/),
+      ]);
+    });
+  });
+
   // The next handshake would see the same certificate.
   it("does not retry a certificate it refuses", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("unreachable") });
     using dir = project(server.url.href);
-    // The default backoff: five retries would take over 6 seconds.
+    // The default backoff: five retries would take over a second.
     const { lines, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_BACKOFF: "" }, "--verbose");
     expect(lines.filter(line => line.includes("downloading package manifest"))).toEqual([
       "error: DEPTH_ZERO_SELF_SIGNED_CERT downloading package manifest bar",
     ]);
     expect(exitCode).toBe(1);
+  });
+
+  // The next attempt would go round the same circle.
+  it.each([
+    ["manifest", "error: TooManyRedirects downloading package manifest bar"],
+    ["tarball", "error: TooManyRedirects downloading tarball bar@0.0.2"],
+  ] as const)("names a %s that redirects in a circle, and does not retry it", async (circling, message) => {
+    using registry = flakyRegistry((kind, hit) =>
+      kind === circling
+        ? Response.redirect(`${registry.url}${kind === "tarball" ? `${hit}/bar-0.0.2.tgz` : `bar?${hit}`}`, 302)
+        : undefined,
+    );
+    using dir = project(registry.url);
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.startsWith("error: "))).toContain(message);
+    // As many as `fetch()` follows.
+    expect(registry.at[circling]).toHaveLength(127);
+    expect(exitCode).toBe(1);
+  });
+
+  // This is what `bun init` writes. Peers are resolved after everything else, so offline they used to double the wait.
+  it("doesn't request the project's peers once a dependency has failed", async () => {
+    const requested: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        requested.push(new URL(request.url).pathname);
+        return busy(503);
+      },
+    });
+    using dir = tempDir("install-retry-peers", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        devDependencies: { bar: "latest" },
+        peerDependencies: { baz: "^1" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href } }),
+    });
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.startsWith("error:"))).toEqual([
+      "error: GET " + server.url.href + "bar - 503",
+      "error: bar@latest failed to resolve",
+    ]);
+    expect(requested).toEqual(Array(6).fill("/bar"));
+    expect(exitCode).toBe(1);
+  });
+
+  it("doesn't request a package's peers once a dependency of that package has failed", async () => {
+    const requested: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        requested.push(pathname);
+        if (pathname !== "/bar") return busy(503);
+        const version = {
+          name: "bar",
+          version: "1.0.0",
+          dependencies: { qux: "^1" },
+          peerDependencies: { baz: "^1" },
+          dist: { tarball: `${origin}/bar-1.0.0.tgz` },
+        };
+        return Response.json({ name: "bar", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    using dir = tempDir("install-retry-peers-below", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { bar: "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href } }),
+    });
+    const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only");
+    expect(lines).toContain("error: GET " + server.url.href + "qux - 503");
+    expect(requested).toEqual(["/bar", ...Array(6).fill("/qux")]);
+    expect(exitCode).toBe(1);
+  });
+
+  // yarn.lock and pnpm-lock.yaml don't record `bin`, so a migration asks the registry for it and continues without a
+  // response.
+  describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests that complete a migrated %s", name => {
+    const integrity = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+    const lockfile = {
+      "yarn.lock": `# yarn lockfile v1\n\n\nbar@0.0.2:\n  version "0.0.2"\n  integrity ${integrity}\n`,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      bar:\n        specifier: 0.0.2\n        version: 0.0.2\n\npackages:\n\n  bar@0.0.2:\n    resolution: {integrity: ${integrity}}\n\nsnapshots:\n\n  bar@0.0.2: {}\n`,
+    }[name];
+
+    it("are requested once when the registry can't be reached", async () => {
+      const closed = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+      await closed.stop(true);
+      using dir = project(closed.url.href);
+      await writeFile(join(String(dir), name), lockfile);
+      const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only", "--verbose");
+      // macOS refuses a closed loopback port in connect(2) itself, which is a different error.
+      expect(lines.filter(line => line.includes("downloading package manifest"))).toEqual([
+        expect.stringMatching(/^warn: (ConnectionRefused|FailedToOpenSocket) downloading package manifest bar$/),
+      ]);
+      expect(await file(join(String(dir), "bun.lock")).text()).toContain(`"bar": ["bar@0.0.2", `);
+      expect(exitCode).toBe(0);
+    });
+
+    it("are requested again when the registry is busy", async () => {
+      using registry = flakyRegistry((_, hit) => (hit <= 2 ? busy(503) : undefined));
+      using dir = project(registry.url);
+      await writeFile(join(String(dir), name), lockfile);
+      const { err, exitCode } = await install(String(dir), {}, "--lockfile-only");
+      expect(err).not.toContain("warn:");
+      expect(registry.at.manifest.length).toBe(3);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("request concurrency", () => {
@@ -778,20 +1050,22 @@ describe.concurrent("backoff", () => {
       expect(err).not.toContain("error:");
       expect(out).toContain("9 packages installed");
       expect(exitCode).toBe(0);
-      return lines.filter(line => line.includes("downloading package manifest") || line.includes("at a time"));
+      return lines.filter(
+        line => line.includes("downloading package manifest") || line.includes("concurrent requests"),
+      );
     }
 
     // A lower limit leaves the held manifests waiting for one that is never sent, until the server drops them.
-    it("stays as it is after one dropped connection", async () => {
+    it("isn't changed by one dropped connection", async () => {
       expect(await peakAfter(1, 8)).toEqual([
         "warn: ConnectionClosed downloading package manifest bar. Retry 1/5 in 1ms...",
       ]);
     });
 
-    it("loses a quarter once the same request was dropped twice", async () => {
+    it("drops by a quarter once the same request was dropped twice", async () => {
       expect(await peakAfter(2, 6)).toEqual([
         "warn: ConnectionClosed downloading package manifest bar. Retry 1/5 in 1ms...",
-        "warn: A request failed twice. Sending at most 6 requests at a time",
+        "warn: request failed twice, limiting to 6 concurrent requests",
         "warn: ConnectionClosed downloading package manifest bar. Retry 2/5 in 2ms...",
       ]);
     });
@@ -1067,7 +1341,7 @@ describe.concurrent("a failed download that several dependencies share", () => {
         errorLines = lines.filter(line => line.startsWith("error:"));
         return {
           errors: errorLines.length,
-          // Not the ones about peers.
+          // Excludes the ones about peers.
           warnings: lines.filter(line => line.startsWith("warn: GET ")).length,
           failed: out.includes("Failed to install"),
           exitCode,
@@ -1201,9 +1475,9 @@ describe.concurrent("a failed download that several dependencies share", () => {
     expect(await p.install(root)).toEqual(leftOut);
   });
 
-  // What a peer needs is the copy the tree gives it, which is not always the one it resolved to:
-  // a dependency of the root provides a peer whatever its version.
-  describe("hoisted: a peer that is served the root's version", () => {
+  // A peer needs the copy that the tree gives it, which isn't always the one that it resolved to. A dependency of the
+  // root provides a peer regardless of its version.
+  describe("hoisted: a peer that gets the root's version", () => {
     const packages = [
       baz,
       { name: "baz", version: "2.0.0" },

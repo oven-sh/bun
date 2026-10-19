@@ -2,8 +2,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    PackageManager, get_cache_directory_and_abs_path, package_manager_options::LogLevel,
-    populate_package_cache,
+    PackageManager, get_cache_directory_and_abs_path, populate_package_cache,
 };
 
 use crate::cli::Command;
@@ -13,8 +12,10 @@ pub(crate) fn exec(
     pm: &mut PackageManager,
     original_cwd: &[u8],
 ) -> crate::Result<()> {
-    // Off under `--silent` and `--no-summary`; `fetch` clears the flag it reads.
+    // False with `--silent` and `--no-summary`. Read it now, because `fetch` clears the flag.
     let print_summary = pm.options.should_print_command_name();
+    // Read before calling `fetch`, which sets `dry_run` for its own use.
+    let dry_run = pm.options.dry_run;
 
     if print_summary {
         bun_core::prettyln!(
@@ -34,8 +35,8 @@ pub(crate) fn exec(
         Global::exit(1);
     }
 
-    // Nothing is linked or run here, so the scan is left to the command that does.
-    if pm.options.security_scanner.is_some() && pm.options.log_level != LogLevel::Silent {
+    // Nothing is linked or run here, so the scan is left to the command that links.
+    if pm.options.security_scanner.is_some() && pm.options.log_level.is_verbose() {
         bun_core::note!(
             "packages are not scanned until <b>bun install<r> runs the security scanner"
         );
@@ -47,7 +48,8 @@ pub(crate) fn exec(
 
     if summary.fetched > 0 {
         bun_core::pretty!(
-            "<green>Fetched {} package{}<r> into cache ",
+            "<green>{} {} package{}<r> into cache ",
+            if dry_run { "Would fetch" } else { "Fetched" },
             summary.fetched,
             if summary.fetched == 1 { "" } else { "s" },
         );

@@ -168,7 +168,7 @@ type Hostile = {
 const badName = (name: Bytes, title = JSON.stringify(name.toString())): Hostile => ({
   title: `entry name ${title}`,
   packages: [pkg(name)],
-  error: "not the name of a cache entry",
+  error: "invalid cache entry name",
 });
 
 const inPackage = (
@@ -288,11 +288,23 @@ const hostile: Hostile[] = [
   inPackage("a file below a file", [file("a"), file("a/b")], /ENOTDIR|ENOENT/),
   inPackage("a file before its directory", [file("a/b"), dir("a")], "ENOENT"),
   inPackage("a directory before its parent", [dir("a/b"), dir("a")], "ENOENT"),
-  { title: "the same package twice", packages: [pkg(evil), pkg(evil)], error: "packages are not in order" },
+  // macOS has no such file names.
+  inPackage(
+    "the same file twice, its name in Latin-1",
+    [file(Buffer.from("caf\xe9", "latin1"), "1"), file(Buffer.from("caf\xe9", "latin1"), "2")],
+    /EEXIST|EILSEQ/,
+  ),
+  inPackage("a file without its directory, its name in Latin-1", [file(Buffer.from("a/caf\xe9", "latin1"))], "ENOENT"),
+  inPackage(
+    "a file without its directory, that name in Latin-1",
+    [file(Buffer.from("a\xafb/c", "latin1"))],
+    /ENOENT|EILSEQ/,
+  ),
+  { title: "the same package twice", packages: [pkg(evil), pkg(evil)], error: "packages out of order" },
   {
     title: "packages out of order",
     packages: [pkg("b@1.0.0@@@1"), pkg("a@1.0.0@@@1")],
-    error: "packages are not in order",
+    error: "packages out of order",
   },
 
   // Records in the wrong place.
@@ -322,7 +334,7 @@ const hostile: Hostile[] = [
   {
     title: "a package without a checksum",
     packages: [record(PACKAGE, evil, 0, packageJson)],
-    error: "record runs past the end of its package",
+    error: "record runs past end of package",
   },
   {
     title: "a wrong checksum",
@@ -361,7 +373,7 @@ const hostile: Hostile[] = [
   {
     title: "a package one byte shorter than its records",
     packages: [record(PACKAGE, evil, 0, evilBody, { size: BigInt(evilBody.length - 1) })],
-    error: /malformed checksum record|runs past the end/,
+    error: /malformed checksum record|runs past end/,
   },
   {
     title: "a package one byte longer than its records",
@@ -371,25 +383,25 @@ const hostile: Hostile[] = [
   {
     title: "a package of 2^64-1 bytes",
     packages: [record(PACKAGE, evil, 0, evilBody, { size: U64_MAX })],
-    error: "cut short",
+    error: "truncated",
   },
   {
     title: "a package of 2^63 bytes",
     packages: [record(PACKAGE, evil, 0, evilBody, { size: 1n << 63n })],
-    error: "cut short",
+    error: "truncated",
   },
-  inPackage("a file of 2^64-1 bytes", [record(FILE, "a", 0o644, "x", { size: U64_MAX })], "cut short"),
-  inPackage("a file of 2^63 bytes", [record(FILE, "a", 0o644, "x", { size: 1n << 63n })], "cut short"),
-  inPackage("a file of 1 TB", [record(FILE, "a", 0o644, "x", { size: 1n << 40n })], "cut short"),
-  inPackage("a file that swallows the checksum", [record(FILE, "a", 0o644, "x", { size: 30n })], "runs past the end"),
+  inPackage("a file of 2^64-1 bytes", [record(FILE, "a", 0o644, "x", { size: U64_MAX })], "truncated"),
+  inPackage("a file of 2^63 bytes", [record(FILE, "a", 0o644, "x", { size: 1n << 63n })], "truncated"),
+  inPackage("a file of 1 TB", [record(FILE, "a", 0o644, "x", { size: 1n << 40n })], "truncated"),
+  inPackage("a file that swallows the checksum", [record(FILE, "a", 0o644, "x", { size: 30n })], "runs past end"),
   inPackage("a path of 2^32-1 bytes", [record(FILE, "a", 0o644, "x", { pathLen: 0xffff_ffff })], "path is too long"),
   inPackage(
     "a path that swallows the rest",
     [record(FILE, "a", 0o644, "x", { pathLen: 60 })],
-    /cut short|unsafe path|past the end/,
+    /truncated|unsafe path|past end/,
   ),
   inPackage("a symlink target of 10 000 bytes", [link("l", Buffer.alloc(10_000, "a"))], "symlink target is too long"),
-  inPackage("a symlink target of 2^64-1 bytes", [record(SYMLINK, "l", 0o777, "a", { size: U64_MAX })], "cut short"),
+  inPackage("a symlink target of 2^64-1 bytes", [record(SYMLINK, "l", 0o777, "a", { size: U64_MAX })], "truncated"),
 
   // The file as a whole.
   { title: "an empty file", pack: Buffer.alloc(0), error: "not a bun cache pack" },
@@ -404,23 +416,27 @@ const hostile: Hostile[] = [
     pack: Buffer.concat([Buffer.from("BUNCACHEPACK\0v2\n"), end()]),
     error: "not a bun cache pack",
   },
-  { title: "the magic alone", pack: MAGIC, error: "cut short" },
-  { title: "no end record", pack: Buffer.concat([MAGIC, pkg(evil)]), error: "cut short" },
+  { title: "the magic alone", pack: MAGIC, error: "truncated" },
+  { title: "no end record", pack: Buffer.concat([MAGIC, pkg(evil)]), error: "truncated" },
   {
     title: "a byte after the end",
     pack: Buffer.concat([packOf(pkg(evil)), Buffer.from([0])]),
-    error: "bytes after the end",
+    error: "trailing bytes after pack",
   },
-  { title: "a package after the end", pack: Buffer.concat([packOf(), pkg(evil), end()]), error: "bytes after the end" },
+  {
+    title: "a package after the end",
+    pack: Buffer.concat([packOf(), pkg(evil), end()]),
+    error: "trailing bytes after pack",
+  },
   {
     title: "an end record with a path",
     pack: Buffer.concat([MAGIC, pkg(evil), record(END, "a")]),
-    error: "bytes after the end",
+    error: "trailing bytes after pack",
   },
   {
     title: "an end record with contents",
     pack: Buffer.concat([MAGIC, pkg(evil), record(END, "", 0, "a")]),
-    error: "after the end",
+    error: "trailing bytes after pack",
   },
   {
     title: "an end record with a mode",
@@ -503,6 +519,11 @@ const windowsOnly = [
   ...["a<b", "a>b", 'a"b', "a|b", "a?b", "a*b", "a\x01b", "a\x1fb", "a\x7fb"],
 ];
 
+const dryRuns = [
+  { title: "--dry-run", flags: ["--dry-run"], config: {} },
+  { title: "dryRun = true in bunfig.toml", flags: [], config: { dryRun: true } },
+];
+
 describe("bun pm cache unpack", () => {
   describe("refuses, and leaves the cache as it was:", () => {
     const rows = isWindows ? [...hostile, ...windowsOnly.flatMap(path => badPath(path))] : hostile;
@@ -567,7 +588,7 @@ describe("bun pm cache unpack", () => {
     expect(readdirSync(box.tmp)).toEqual([]);
   }
 
-  test.concurrent("the sound pack is sound", async () => {
+  test.concurrent("the valid pack is valid", async () => {
     using box = sandbox();
     writeFileSync(box.at("sound.pack"), sound);
     const { out, err, code } = await bun(box, ["pm", "cache", "unpack", box.at("sound.pack")]);
@@ -575,6 +596,25 @@ describe("bun pm cache unpack", () => {
     expect(out).toContain("Unpacked 2 packages (2 new, 0 already cached, ");
     expect(entryNames(box.cache)).toEqual(["@scope/b@1.0.0@@@1", "a@1.0.0@@@1"]);
     expect(code).toBe(0);
+  });
+
+  test.concurrent.each(dryRuns)("$title checks the pack and leaves the cache as it was", async ({ flags, config }) => {
+    using box = sandbox({ cache: populatedCache, project: { "bunfig.toml": toml({ install: config }) } });
+    writeFileSync(box.at("sound.pack"), sound);
+    writeFileSync(box.at("cut.pack"), sound.subarray(0, sound.length - 1));
+    const before = snapshot(box.cache, true);
+
+    let r = await bun(box, ["pm", "cache", "unpack", box.at("sound.pack"), ...flags]);
+    expect(r.err).toBe("");
+    expect(r.out).toContain("Would unpack 2 packages (2 new, 0 already cached, ");
+    expect(r.code).toBe(0);
+
+    r = await bun(box, ["pm", "cache", "unpack", box.at("cut.pack"), ...flags]);
+    expect(r.err).toContain("error: bun pm cache unpack failed: ");
+    expect(r.code).toBe(1);
+
+    expect(snapshot(box.cache, true)).toEqual(before);
+    expect(readdirSync(box.tmp)).toEqual([]);
   });
 
   test.concurrent("refuses a pack that is cut at, before or after any record boundary", async () => {
@@ -688,7 +728,7 @@ describe("bun pm cache unpack", () => {
     },
   );
 
-  test.concurrent("does not touch what the cache has, complete or not", async () => {
+  test.concurrent("doesn't touch existing cache entries, complete or not", async () => {
     using box = sandbox({
       cache: {
         ...populatedCache,
@@ -717,7 +757,7 @@ describe("bun pm cache unpack", () => {
 
     const { out, err, code } = await bun(box, ["pm", "cache", "unpack", box.at("some.pack")]);
 
-    expect(err).toContain("warn: left 2 incomplete cache entries as found");
+    expect(err).toContain("warn: ignoring 2 incomplete cache entries");
     expect(err).not.toContain("error:");
     expect(out).toContain("Unpacked 9 packages (2 new, 5 already cached, ");
     expect(untouched(snapshot(box.cache, true))).toEqual(before);
@@ -730,7 +770,7 @@ describe("bun pm cache unpack", () => {
     expect(code).toBe(0);
   });
 
-  test.concurrent("does not read the packages the cache has", async () => {
+  test.concurrent("doesn't read the packages that are already in the cache", async () => {
     using box = sandbox({ cache: populatedCache });
     // Garbage where the records of a cached package would be; a sound package after it.
     const garbage = Buffer.alloc(3 << 20, 0xff);
@@ -741,7 +781,7 @@ describe("bun pm cache unpack", () => {
     expect(code).toBe(0);
   });
 
-  test.concurrent("several at once: every entry is created once, by one of them", async () => {
+  test.concurrent("several at the same time: every entry is created once, by one of them", async () => {
     using box = sandbox();
     const names = Array.from(
       { length: 40 },
@@ -949,7 +989,7 @@ describe("bun pm cache pack", () => {
     }
   });
 
-  test.concurrent("leaves out, and reports, what the cache does not have or has in part", async () => {
+  test.concurrent("skips and reports entries that the cache doesn't have or only has in part", async () => {
     using box = sandbox();
     await installedProject(box);
     const [gone, partial] = entryNames(box.cache).filter(name => /^(no-deps|what-bin)@/.test(name));
@@ -957,7 +997,7 @@ describe("bun pm cache pack", () => {
     rmSync(join(box.cache, partial, "package.json"));
 
     let r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-    expect(r.err).toContain("warn: left out 2 packages the cache does not have");
+    expect(r.err).toContain("warn: skipping 2 packages not in cache");
     expect(r.out).toContain(`Packed ${installedCount - 2} packages (`);
     expect(r.code).toBe(0);
 
@@ -968,31 +1008,34 @@ describe("bun pm cache pack", () => {
     expect(r.code).toBe(0);
   });
 
-  test.concurrent("does not miss what no install here fetches: bundled, or for another platform", async () => {
-    using box = sandbox({
-      project: {
-        "package.json": JSON.stringify({
-          name: "app",
-          // Bundles no-deps@1.0.0.
-          dependencies: { "bundled-1": "1.0.0" },
-          // "os": ["foo"]
-          optionalDependencies: { "native-foo-x64": "1.0.0" },
-        }),
-      },
-    });
-    writeFileSync(join(box.project, "bunfig.toml"), toml({ install: { registry: registry.registryUrl() } }));
-    let r = await bun(box, ["install"]);
-    expect(r.err).not.toContain("error:");
-    expect(r.code).toBe(0);
-    const lockfile = readFileSync(join(box.project, "bun.lock"), "utf8");
-    expect(lockfile).toContain("no-deps@1.0.0");
-    expect(lockfile).toContain("native-foo-x64@1.0.0");
+  test.concurrent(
+    "doesn't report packages that no install here downloads: bundled, or for another platform",
+    async () => {
+      using box = sandbox({
+        project: {
+          "package.json": JSON.stringify({
+            name: "app",
+            // Bundles no-deps@1.0.0.
+            dependencies: { "bundled-1": "1.0.0" },
+            // "os": ["foo"]
+            optionalDependencies: { "native-foo-x64": "1.0.0" },
+          }),
+        },
+      });
+      writeFileSync(join(box.project, "bunfig.toml"), toml({ install: { registry: registry.registryUrl() } }));
+      let r = await bun(box, ["install"]);
+      expect(r.err).not.toContain("error:");
+      expect(r.code).toBe(0);
+      const lockfile = readFileSync(join(box.project, "bun.lock"), "utf8");
+      expect(lockfile).toContain("no-deps@1.0.0");
+      expect(lockfile).toContain("native-foo-x64@1.0.0");
 
-    r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-    expect(r.err).toBe("");
-    expect(r.out).toContain("Packed 1 package (");
-    expect(r.code).toBe(0);
-  });
+      r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
+      expect(r.err).toBe("");
+      expect(r.out).toContain("Packed 1 package (");
+      expect(r.code).toBe(0);
+    },
+  );
 
   test.concurrent.skipIf(isWindows)(
     "refuses an entry that unpack would refuse, and leaves no file behind",
@@ -1012,7 +1055,7 @@ describe("bun pm cache pack", () => {
       ]) {
         symlinkSync(target, join(entry, path));
         const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-        expect(r.err).toContain("error: bun pm cache pack failed: cache entry has a symlink that may lead out of it: ");
+        expect(r.err).toContain("error: bun pm cache pack failed: cache entry has symlink that may point outside it: ");
         expect(r.err).toContain(`/${path}"`);
         expect(r.out).toBe("");
         expect(r.code).toBe(1);
@@ -1021,7 +1064,7 @@ describe("bun pm cache pack", () => {
 
       writeFileSync(join(entry, "back\\slash"), "");
       const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-      expect(r.err).toContain("cache entry has a path that cannot be packed");
+      expect(r.err).toContain("cache entry path cannot be packed");
       expect(r.code).toBe(1);
 
       expect(readFileSync(join(box.project, "cache.pack"), "utf8")).toBe("the previous pack");
@@ -1060,6 +1103,28 @@ describe("bun pm cache pack", () => {
       expect(r.code).toBe(0);
     },
   );
+
+  test.concurrent.each(dryRuns)("$title reads the cache and writes nothing", async ({ flags, config }) => {
+    using box = sandbox();
+    await installedProject(box);
+    writeFileSync(
+      join(box.project, "bunfig.toml"),
+      toml({ install: { registry: registry.registryUrl(), linker: "hoisted", ...config } }),
+    );
+    writeFileSync(join(box.project, "old.pack"), "stays");
+    const before = [snapshot(box.project, true), snapshot(box.cache, true)];
+
+    for (const destination of ["old.pack", join("new", "cache.pack")]) {
+      const r = await bun(box, ["pm", "cache", "pack", destination, ...flags]);
+      expect(r.err).toBe("");
+      expect(r.out).toContain(`Would pack ${installedCount} packages (`);
+      expect(r.out).toContain(` into ${destination} `);
+      expect(r.code).toBe(0);
+    }
+
+    expect([snapshot(box.project, true), snapshot(box.cache, true)]).toEqual(before);
+    expect(readdirSync(box.tmp)).toEqual([]);
+  });
 
   test.concurrent("checks its arguments", async () => {
     using box = sandbox();

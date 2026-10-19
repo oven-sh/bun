@@ -81,7 +81,7 @@ MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data,
     }
 
     auto& vm = isolate->vm();
-    std::span<const unsigned char> span(data, length);
+    std::span<const Latin1Character> span(byteCast<Latin1Character>(data), length);
     JSString* jsString = nullptr;
     switch (type) {
     case NewStringType::kNormal: {
@@ -197,7 +197,7 @@ void String::WriteV2(Isolate* isolate, uint32_t offset, uint32_t length, uint16_
     if (length > 0) {
         auto str = jsString->view(isolate->globalObject());
         if (str->is8Bit()) {
-            WTF::copyElements(std::span<uint16_t>(buffer, length), str->span8().subspan(offset, length));
+            WTF::copyElements(std::span<uint16_t>(buffer, length), byteCast<uint8_t>(str->span8().subspan(offset, length)));
         } else {
             memcpy(buffer, str->span16().subspan(offset, length).data(), static_cast<size_t>(length) * sizeof(uint16_t));
         }
@@ -217,7 +217,7 @@ void String::WriteOneByteV2(Isolate* isolate, uint32_t offset, uint32_t length, 
             memcpy(buffer, str->span8().subspan(offset, length).data(), length);
         } else {
             // like V8, only the least significant byte of each code unit is written
-            WTF::copyElements(std::span<Latin1Character>(buffer, length), str->span16().subspan(offset, length));
+            WTF::copyElements(std::span<Latin1Character>(byteCast<Latin1Character>(buffer), length), str->span16().subspan(offset, length));
         }
     }
     if (flags & WriteFlags::kNullTerminate) {

@@ -37,6 +37,18 @@ enum PatchFilePart<'a> {
 #[derive(Default)]
 pub struct PatchFile<'a> {
     pub(crate) parts: Vec<PatchFilePart<'a>>,
+    pub skipped: Vec<SkippedSection<'a>>,
+}
+
+/// A section of the patch file that `apply` ignores. It is not an error, because older versions of
+/// Bun wrote such sections and applied the rest of the patch.
+pub struct SkippedSection<'a> {
+    /// Byte offset of the section's first line in the patch file.
+    pub offset: usize,
+    pub path: Option<&'a [u8]>,
+    /// The section says `Binary files a/x and b/x differ`, so the patch doesn't have the new
+    /// content.
+    pub is_binary: bool,
 }
 
 impl<'a> PatchFile<'a> {
@@ -87,7 +99,7 @@ fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
         creation.mode.to_bun_mode(),
     )?;
     let _close = sys::CloseOnDrop::new(fd);
-    // No `O_TRUNC`: a target that is rejected must not have been emptied first.
+    // `O_TRUNC` isn't used, so that a target that gets rejected hasn't already been emptied.
     sys::ftruncate(fd, 0)?;
 
     // A `@@ -0,0 +0,0 @@` header with no body parses to a hunk with zero parts.
@@ -109,7 +121,7 @@ fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
-    // On Windows `fchmod` needs a CRT-backed fd; closing that one also closes the HANDLE.
+    // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
     let fd = fd.make_libuv_owned().map_err(|()| {
         fd.close();
         sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
@@ -118,7 +130,8 @@ fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     sys::fchmod(fd, change.new_mode.to_bun_mode())
 }
 
-/// Hunks are placed by matching their `-` side, as `git apply` does; `+` starts can be stale.
+/// Hunks are placed by matching their `-` side, like `git apply` does, because the `+` line numbers
+/// can be stale.
 fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
     // One fd for the read and the write-back, so nothing can be swapped in between them.
     let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
@@ -132,6 +145,8 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
         .map_err(|_| sys::Error::from_code(sys::E::EINVAL, sys::Tag::read))?;
 
     let mut lines: Vec<&[u8]> = strings::split(&filebuf, b"\n").collect();
+    // The empty string after the final `\n` is not a line.
+    let mut final_newline = lines.pop_if(|last| last.is_empty()).is_some();
 
     let does_not_apply = |hunk_index: usize, hunk: &Hunk<'_>| ApplyError::HunkDoesNotApply {
         path: Box::from(patch.path),
@@ -139,11 +154,22 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
         line: hunk.header.original.start,
     };
 
-    // Net lines added by earlier hunks; `-` line numbers refer to the original file.
-    let mut line_delta: isize = 0;
-    for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
+    // With the hunks sorted by start line, one pass over the old lines is enough. Only a
+    // hand-edited patch has them out of order.
+    let mut hunks: Vec<(usize, &Hunk<'_>)> = patch.hunks.iter().enumerate().collect();
+    hunks.sort_by_key(|(_, hunk)| hunk.header.original.start);
+    let mut patched: Vec<&[u8]> = Vec::with_capacity(lines.len());
+    // Index of the first old line that has not yet been copied to `patched` or deleted.
+    let mut line_cursor: usize = 0;
+    for (hunk_index, hunk) in hunks {
         // `\ No newline at end of file` ends that side of the file: only an insertion may follow it.
-        if let Some(i) = hunk.parts.iter().position(|p| p.no_newline_at_end_of_file) {
+        // A marker on a context line is exempt: with `git diff --ignore-cr-at-eol` it belongs to
+        // the new side only, and deletions can follow it.
+        if let Some(i) = hunk
+            .parts
+            .iter()
+            .position(|p| p.no_newline_at_end_of_file && p.ty != PartType::Context)
+        {
             if hunk.parts[i + 1..]
                 .iter()
                 .any(|p| p.ty != PartType::Insertion)
@@ -152,59 +178,53 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
             }
         }
 
-        let original_start = hunk.header.original.start as isize + line_delta;
-        let mut line_cursor = if hunk.header.original.len == 0 {
-            // `-N,0`: nothing to match; insert after line N (0 = top, trailing "" is no line).
-            let line_count = lines.len() - (lines.last() == Some(&&b""[..])) as usize;
-            if original_start < 0 || original_start as usize > line_count {
+        let original_start = hunk.header.original.start as usize;
+        let hunk_start = if hunk.header.original.len == 0 {
+            // A `-N,0` header has no old lines to match. Insert after line N, where 0 is the top.
+            if original_start < line_cursor || original_start > lines.len() {
                 return Err(does_not_apply(hunk_index, hunk));
             }
-            original_start as usize
+            original_start
         } else {
-            match find_hunk_position(hunk, &lines, original_start - 1) {
-                Some(idx) => idx,
+            let expected = original_start as isize - 1 - line_cursor as isize;
+            match find_hunk_position(hunk, &lines[line_cursor..], expected) {
+                Some(idx) => line_cursor + idx,
                 None => return Err(does_not_apply(hunk_index, hunk)),
             }
         };
+        patched.extend_from_slice(&lines[line_cursor..hunk_start]);
+        line_cursor = hunk_start;
 
-        // The match and the pragma check above imply these bounds; keep them checked anyway.
         for part in &hunk.parts {
-            match part.ty {
-                PartType::Context => {
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return Err(does_not_apply(hunk_index, hunk));
-                    }
-                    line_cursor += part.lines.len();
-                }
-                PartType::Insertion => {
-                    if line_cursor > lines.len() {
-                        return Err(does_not_apply(hunk_index, hunk));
-                    }
-                    lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
-                    line_cursor += part.lines.len();
-                    line_delta += part.lines.len() as isize;
-                    if part.no_newline_at_end_of_file {
-                        let _ = lines.pop();
-                    }
-                }
-                PartType::Deletion => {
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return Err(does_not_apply(hunk_index, hunk));
-                    }
-                    lines.drain(line_cursor..line_cursor + part.lines.len());
-                    line_delta -= part.lines.len() as isize;
-                    if part.no_newline_at_end_of_file {
-                        lines.push(b"");
-                    }
-                }
+            if part.ty == PartType::Insertion {
+                patched.extend_from_slice(&part.lines);
+                continue;
             }
+            // The match above already guarantees that these lines exist. This is only a safeguard.
+            let Some(old) = lines.get(line_cursor..line_cursor + part.lines.len()) else {
+                return Err(does_not_apply(hunk_index, hunk));
+            };
+            if part.ty == PartType::Context {
+                patched.extend_from_slice(old);
+            }
+            line_cursor += old.len();
         }
+
+        // A hunk that reaches the end of the file decides whether the file ends in a newline.
+        if line_cursor == lines.len() {
+            let last_kept = hunk.parts.iter().rfind(|p| p.ty != PartType::Deletion);
+            final_newline = !last_kept.is_some_and(|p| p.no_newline_at_end_of_file);
+        }
+    }
+    patched.extend_from_slice(&lines[line_cursor..]);
+    if final_newline {
+        patched.push(b"");
     }
 
     sys::ftruncate(file_fd, 0)?;
     // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`).
     sys::set_file_offset(file_fd, 0)?;
-    sys::File::borrow(&file_fd).write_all(&lines.join(&b'\n'))?;
+    sys::File::borrow(&file_fd).write_all(&patched.join(&b'\n'))?;
     Ok(())
 }
 
@@ -260,7 +280,8 @@ fn hunk_matches_at(hunk: &Hunk<'_>, lines: &[&[u8]], start: usize) -> bool {
 /// A larger `st_size` is an error rather than an unbounded allocation.
 const MAX_PATCH_TARGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
-/// A new file's header mode describes only the file; a directory given 0o644 cannot be entered.
+/// A new file's header mode only describes the file. A directory created with 0o644 couldn't be
+/// entered.
 const CREATED_DIR_MODE: sys::Mode = 0o755;
 
 /// `patch_dir` itself for single-component paths (not closed), an owned fd otherwise.
@@ -329,7 +350,7 @@ fn reject_reparse_point(dir: Fd, name: &ZStr) -> sys::Result<()> {
         Ok(attrs) if attrs.is_reparse_point => {
             Err(sys::Error::from_code(sys::E::ELOOP, sys::Tag::open))
         }
-        // Nonexistent or unreadable: the open that follows reports the real error.
+        // It doesn't exist or can't be read. The open that follows reports the real error.
         _ => Ok(()),
     }
 }
@@ -351,7 +372,7 @@ fn open_dir_component(
     };
     match sys::mkdirat(dir, component, mode) {
         Ok(()) => {}
-        // Lost a creation race; the open below verifies whatever is there now.
+        // Another process created it first. The open below verifies whatever is there now.
         Err(e) if e.get_errno() == sys::E::EEXIST => {}
         Err(e) => return Err(e),
     }
@@ -371,7 +392,8 @@ fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error
     e
 }
 
-/// A regular file with one hard link: a second may reach the inode from outside the patch dir.
+/// Only accepts a regular file with one hard link, because a second link could reach the inode from
+/// outside the patch directory.
 fn open_target_file(
     parent: Fd,
     base: &ZStr,
@@ -421,6 +443,9 @@ struct FileDeets<'a> {
     from_path: Option<&'a [u8]>,
     to_path: Option<&'a [u8]>,
     hunks: Vec<Hunk<'a>>,
+    is_binary: bool,
+    /// Byte offset of the section's first line in the patch file.
+    offset: usize,
 }
 
 impl<'a> FileDeets<'a> {
@@ -473,6 +498,8 @@ pub enum PartType {
 struct Hunk<'a> {
     pub(crate) header: Header,
     pub(crate) parts: Vec<PatchMutationPart<'a>>,
+    /// Byte offset of the `@@` line in the patch file.
+    offset: usize,
 }
 
 #[derive(Copy, Clone)]
@@ -799,6 +826,17 @@ pub enum ParseErr {
     no_path_given_for_file_creation,
     #[error("bad_file_mode")]
     bad_file_mode,
+    #[error("git_binary_patch_not_supported")]
+    git_binary_patch_not_supported,
+    #[error("no_path_given_for_hunk")]
+    no_path_given_for_hunk,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ParseErrAt {
+    pub err: ParseErr,
+    /// Byte offset in the patch file of the line that caused the error.
+    pub offset: usize,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -806,19 +844,30 @@ pub enum ParseErr {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// NOTE: the returned `PatchFile` struct will contain pointers to original file text so make sure to not deallocate `file`
-pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
+pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErrAt> {
     let mut lines_parser = PatchLinesParser::default();
-    lines_parser.parse(file)?;
-
-    // reshaped for borrowck — take ownership of result vec instead of slicing.
-    let mut files = mem::take(&mut lines_parser.result);
-    patch_file_second_pass(&mut files)
+    let parsed = lines_parser.parse(file).and_then(|()| {
+        // reshaped for borrowck — take ownership of result vec instead of slicing.
+        let mut files = mem::take(&mut lines_parser.result);
+        patch_file_second_pass(&mut files, &mut lines_parser.offset)
+    });
+    parsed.map_err(|err| ParseErrAt {
+        err,
+        offset: lines_parser.offset,
+    })
 }
 
-fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'a>, ParseErr> {
+/// On error, `offset` is the byte offset of the line at fault: either the section's first line or a
+/// hunk's `@@` line.
+fn patch_file_second_pass<'a>(
+    files: &mut [FileDeets<'a>],
+    offset: &mut usize,
+) -> Result<PatchFile<'a>, ParseErr> {
     let mut result = PatchFile::default();
 
     for file in files.iter_mut() {
+        *offset = file.offset;
+        let parts_before = result.parts.len();
         let ty: PatchFilePartKind = if file.rename_from.is_some_and(|s| !s.is_empty()) {
             PatchFilePartKind::FileRename
         } else if file.deleted_file_mode.is_some_and(|s| !s.is_empty()) {
@@ -850,8 +899,8 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
             }
             PatchFilePartKind::FileDeletion => {
                 let path = file
-                    .diff_line_from_path
-                    .or(file.from_path)
+                    .from_path
+                    .or(file.diff_line_from_path)
                     .ok_or(ParseErr::no_path_given_for_file_deletion)?;
                 result
                     .parts
@@ -863,10 +912,13 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                         hash: file.before_hash,
                     })));
             }
+            // The patch doesn't have the content, and creating an empty file isn't what it asks
+            // for.
+            PatchFilePartKind::FileCreation if file.is_binary => {}
             PatchFilePartKind::FileCreation => {
                 let path = file
-                    .diff_line_to_path
-                    .or(file.to_path)
+                    .to_path
+                    .or(file.diff_line_to_path)
                     .ok_or(ParseErr::no_path_given_for_file_creation)?;
                 result
                     .parts
@@ -908,6 +960,21 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                     after_hash: file.after_hash,
                 })));
         }
+
+        // A section produces no part if it is, for example, a file copy or text that is not a diff.
+        let has_no_part = result.parts.len() == parts_before;
+        if has_no_part && let Some(hunk) = file.hunks.first() {
+            *offset = hunk.offset;
+            return Err(ParseErr::no_path_given_for_hunk);
+        }
+        let is_binary = file.is_binary && ty != PatchFilePartKind::FileDeletion;
+        if has_no_part || is_binary {
+            result.skipped.push(SkippedSection {
+                offset: file.offset,
+                path: file.to_path.or(file.diff_line_to_path),
+                is_binary,
+            });
+        }
     }
 
     Ok(result)
@@ -918,11 +985,14 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
     FileMode::from_u32(parsed_mode)
 }
 
-fn is_safe_patch_path(path: &[u8]) -> bool {
+/// True for a relative path that cannot leave the folder it starts in, as long as no component of
+/// the path is a symlink.
+pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        // On Windows, openat strips a drive prefix from a component: `C:..` resolves a real `..`.
+        // On Windows, openat strips a drive prefix from a component, so `C:..` resolves to a real
+        // `..`.
         && !(cfg!(windows) && strings::contains_char(path, b':'))
         && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
@@ -1000,6 +1070,8 @@ struct PatchLinesParser<'a> {
     state: ParserState,
     current_hunk: Option<Hunk<'a>>,
     current_hunk_mutation_part: Option<PatchMutationPart<'a>>,
+    /// Byte offset of the line being parsed or, after an error, of the line that caused it.
+    offset: usize,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -1018,6 +1090,7 @@ impl<'a> PatchLinesParser<'a> {
         let mut lines = LookbackIterator::from_inner(ScalarSplitIter::new(file, b'\n'));
 
         while let Some(line) = lines.next() {
+            self.offset = lines.prev_index;
             match self.state {
                 ParserState::ParsingHeader => {
                     if line.starts_with(b"@@") {
@@ -1077,6 +1150,12 @@ impl<'a> PatchLinesParser<'a> {
                             line.get(b"+++ b/".len()..).unwrap_or_default(),
                             WHITESPACE,
                         ));
+                    } else if line.starts_with(b"Binary files ") {
+                        self.current_file_patch.is_binary = true;
+                    } else if line.starts_with(b"GIT binary patch")
+                        && self.current_file_patch.deleted_file_mode.is_none()
+                    {
+                        return Err(ParseErr::git_binary_patch_not_supported);
                     }
                 }
                 ParserState::ParsingHunks => {
@@ -1099,7 +1178,10 @@ impl<'a> PatchLinesParser<'a> {
                         // @@ -1,3 +1,3 @@
                         Some(b'@') => {
                             self.commit_hunk();
-                            self.current_hunk = Some(parse_hunk_header_line(line)?);
+                            self.current_hunk = Some(Hunk {
+                                offset: self.offset,
+                                ..parse_hunk_header_line(line)?
+                            });
                             continue;
                         }
                         Some(b'\\') => {
@@ -1147,6 +1229,7 @@ impl<'a> PatchLinesParser<'a> {
         for file_deet in &self.result {
             for hunk in &file_deet.hunks {
                 if !hunk.verify_integrity(None) {
+                    self.offset = hunk.offset;
                     return Err(ParseErr::hunk_header_integrity_check_failed);
                 }
             }
@@ -1169,6 +1252,7 @@ impl<'a> PatchLinesParser<'a> {
         self.current_file_patch.nullify_empty_strings();
         let fp = mem::take(&mut self.current_file_patch);
         self.result.push(fp);
+        self.current_file_patch.offset = self.offset;
     }
 }
 
@@ -1176,7 +1260,7 @@ fn split_ascii_digits(text: &[u8]) -> (&[u8], &[u8]) {
     text.split_at(text.iter().take_while(|c| c.is_ascii_digit()).count())
 }
 
-/// `100,32 ` or `100 `: the range, and the rest from the space on.
+/// Parses `100,32 ` or `100 `. Returns the range and the rest of the text, starting at the space.
 fn parse_header_range(text: &[u8]) -> Result<(HeaderRange, &[u8]), ParseErr> {
     let (start, mut rest) = split_ascii_digits(text);
     let mut len: &[u8] = b"1";
@@ -1210,7 +1294,7 @@ fn parse_hunk_header_line<'a>(line: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
     }
     Ok(Hunk {
         header: Header { original, patched },
-        parts: Vec::new(),
+        ..Default::default()
     })
 }
 
@@ -1255,9 +1339,15 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
     // diff --git a/banana.ts b/banana.ts
     //              ^
-    let rest = &line[PREFIX.len()..];
+    let rest = strings::trim_right(&line[PREFIX.len()..], WHITESPACE);
     if rest.is_empty() {
         return None;
+    }
+
+    // Without a rename both paths are identical, so the ` b/` between them is in the exact middle.
+    let (a_path, b_part) = rest.split_at(rest.len().saturating_sub(b" b/".len()) / 2);
+    if b_part.strip_prefix(b" b/") == Some(a_path) {
+        return Some((a_path, a_path));
     }
 
     let a_path_start_index: usize = 0;
@@ -1290,7 +1380,7 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-/// What `Options.envp` points into.
+/// The storage that `Options.envp` points into.
 pub struct GitDiffEnv {
     _envp: Vec<*const core::ffi::c_char>,
     _path: Option<Vec<u8>>,
@@ -1308,9 +1398,12 @@ pub fn spawn_opts(
     loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, GitDiffEnv) {
     let argv: Vec<Box<[u8]>> = {
-        const ARGS: [&[u8]; 9] = [
+        const ARGS: [&[u8]; 11] = [
             b"-c",
             b"core.safecrlf=false",
+            // By default git prints non-ASCII paths as "caf\303\251", which the parser cannot read.
+            b"-c",
+            b"core.quotepath=false",
             b"diff",
             b"--src-prefix=a/",
             b"--dst-prefix=b/",
@@ -1332,9 +1425,13 @@ pub fn spawn_opts(
         .map(|p| [&b"PATH="[..], p, b"\0"].concat());
     const ENV_STATIC: &[&[u8]] = &[
         b"GIT_CONFIG_NOSYSTEM=1\0",
+        b"GIT_ATTR_NOSYSTEM=1\0",
         b"HOME=\0",
         b"XDG_CONFIG_HOME=\0",
         b"USERPROFILE=\0",
+        // Without this, git inside a repository would also read that repository's config and every
+        // .gitattributes above the two folders.
+        concat!("GIT_DIR=", bun_core::null_device!(), "\0").as_bytes(),
     ];
     let mut envp_buf: Vec<*const core::ffi::c_char> =
         Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);
@@ -1355,7 +1452,8 @@ pub fn spawn_opts(
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // `spawn` derefs `windows.loop_` unconditionally; `WindowsOptions::default()` is zeroed.
+        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
+        // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
             // `as_handle` owns the handle conversion so variant internals
@@ -1381,9 +1479,18 @@ pub fn diff_post_process(
     new_folder: &[u8],
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout = mem::take(&mut result.stdout);
-    let stderr = mem::take(&mut result.stderr);
+    let mut stderr = mem::take(&mut result.stderr);
 
-    if !stderr.is_empty() {
+    // git exits with 1 if there are differences, and also if it cannot read a folder, but then it
+    // prints no patch. stderr is not checked, because git can print a warning with a valid patch.
+    let succeeded = match &result.status {
+        bun_spawn::Status::Exited(exit) => exit.code == 0 || (exit.code == 1 && !stdout.is_empty()),
+        _ => false,
+    };
+    if !succeeded {
+        if stderr.is_empty() {
+            stderr = format!("git exited with {}", result.status).into_bytes();
+        }
         return Ok(Err(stderr));
     }
 
@@ -1424,8 +1531,6 @@ pub fn git_diff_internal(
 
     let (opts, _env) = spawn_opts(old_folder, new_folder, ZStr::EMPTY, git, loop_);
 
-    // unfortunately, git diff returns non-zero exit codes even when it succeeds.
-    // we have to check that stderr was not empty to know if it failed
     let mut result = bun_spawn::sync::spawn(&opts)??;
     diff_post_process(&mut result, old_folder, new_folder)
 }
@@ -1460,6 +1565,15 @@ fn git_diff_postprocess(
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> crate::Result<()> {
+    // An installed package contains no symlinks, so a symlink that exists only in the cache's copy
+    // is not something the user deleted. Leave it out of the patch.
+    while let Some(mode) = strings::index_of(&stdout[..], b"\ndeleted file mode 120000\n") {
+        let start = strings::last_index_of_char(&stdout[..mode], b'\n').map_or(0, |i| i + 1);
+        let end = strings::index_of(&stdout[mode + 1..], b"\ndiff --git ")
+            .map_or(stdout.len(), |i| mode + i + 2);
+        stdout.drain(start..end);
+    }
+
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 

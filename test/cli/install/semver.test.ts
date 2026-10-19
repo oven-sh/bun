@@ -82,7 +82,56 @@ function versionsWith(big: string) {
   ];
 }
 
+test("Bun.semver is a plain object of two functions", () => {
+  expect(Object.getPrototypeOf(Bun.semver)).toBe(Object.prototype);
+  expect(Bun.semver).toBe(Bun.semver);
+  expect(
+    Object.entries(Object.getOwnPropertyDescriptors(Bun.semver)).map(([key, { value, ...attributes }]) => ({
+      key,
+      name: value.name,
+      length: value.length,
+      ...attributes,
+    })),
+  ).toEqual([
+    { key: "satisfies", name: "satisfies", length: 2, writable: true, enumerable: true, configurable: true },
+    { key: "order", name: "order", length: 2, writable: true, enumerable: true, configurable: true },
+  ]);
+});
+
+test.each(["order", "satisfies"] as const)("Bun.semver.%s converts its arguments to strings, left to right", name => {
+  const log: string[] = [];
+  const stringLike = (label: string, value: string) => ({
+    toString() {
+      log.push(label);
+      return value;
+    },
+  });
+  const equal = name === "order" ? 0 : true;
+  expect(Bun.semver[name](stringLike("left", "1.2.3"), stringLike("right", "1.2.3"))).toBe(equal);
+  expect(log).toEqual(["left", "right"]);
+  expect(Bun.semver[name](new String("1.2.3"), ["1.2.3"] as any)).toBe(equal);
+  expect(() =>
+    Bun.semver[name](
+      {
+        toString() {
+          throw new RangeError("left");
+        },
+      },
+      stringLike("right", "1.2.3"),
+    ),
+  ).toThrow(expect.objectContaining({ name: "RangeError", message: "left" }));
+  expect(log).toEqual(["left", "right"]);
+});
+
 describe("Bun.semver.order()", () => {
+  test("an argument that is left out is undefined", () => {
+    for (const args of [[], ["1.2.3"]] as any[]) {
+      expect(() => order(...(args as [string, string]))).toThrow(
+        expect.objectContaining({ name: "Error", message: "Invalid SemVer: undefined\n" }),
+      );
+    }
+  });
+
   test("whitespace bug fix", () => {
     expect(
       order(
@@ -265,14 +314,14 @@ describe("Bun.semver.order()", () => {
 describe("Bun.semver.satisfies()", () => {
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
-    expect(() => {
-      // @ts-expect-error
-      satisfies();
-    }).toThrow("Expected two arguments");
-    expect(() => {
-      // @ts-expect-error
-      satisfies("1.2.3");
-    }).toThrow("Expected two arguments");
+    // An argument that is left out is `undefined`, so the string "undefined": not a version, and a range with no
+    // parseable part, which behaves like "*".
+    // @ts-expect-error
+    expect(satisfies()).toBe(false);
+    // @ts-expect-error
+    expect(satisfies("1.2.3")).toBe(true);
+    for (const range of [undefined, null, "undefined", "latest"] as any[]) expect(satisfies("1.2.3", range)).toBe(true);
+    expect(satisfies(undefined as any, "1.2.3")).toBe(false);
     // @ts-expect-error
     expect(satisfies("1.2.3", "1.2.3", "blah")).toBeTrue();
     expect(() => {
@@ -1345,6 +1394,82 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
+  test("build metadata after a bare major isn't a second range", () => {
+    // Every expectation is node-semver 7.8's answer for the same input. "2+1" used to be "2 || 1" and "2+x" any version.
+    testSatisfiesTable([
+      ["2.5.0", "2+1", true],
+      ["1.5.0", "2+1", false],
+      ["3.5.0", "3+0", true],
+      ["0.5.0", "3+0", false],
+      ["2.5.0", "2+x", true],
+      ["1.5.0", "2+x", false],
+      ["3.5.0", "2+X", false],
+      ["1.5.0", "2+1.5.0", false],
+      ["2.5.0", "2+-", true],
+      ["2.5.0", "2+build", true],
+      ["3.5.0", "2+build", false],
+      ["2.5.0", "v2+1", true],
+      ["1.5.0", "=2+1", false],
+      ["3.5.0", "^2+x", false],
+      ["1.5.0", "~2+x", false],
+      ["1.5.0", ">=2+x", false],
+      ["3.5.0", ">=2+x", true],
+      ["2.5.0", ">2+1", false],
+      ["1.5.0", "<2+1", true],
+      ["2.5.0", "<2+1", false],
+      ["2.5.0", "<=2+1", true],
+      // next to other comparators
+      ["2.1.0", "2+1 <2.4", true],
+      ["2.5.0", "2+1 <2.4", false],
+      ["1.5.0", "2+1 <2.4", false],
+      ["3.5.0", "2+1 - 3", true],
+      ["1.5.0", "2+1 - 3", false],
+      ["3.5.0", "1 - 2+3", false],
+      ["3.5.0", "2+1||3", true],
+      ["1.5.0", "2+1 || 3", false],
+    ]);
+  });
+
+  test("a comparator that means >=0.0.0 doesn't exclude a prerelease of 0.0.0", () => {
+    // Every expectation is node-semver 7.8's answer for the same input: it reads such a comparator as any version.
+    testSatisfiesTable([
+      ...[
+        "*",
+        "x",
+        "^x",
+        "~x",
+        "~>*",
+        "0.x",
+        "0",
+        "0.0.x",
+        "0.0",
+        ">=0",
+        ">=0.0.0",
+        "^0",
+        "~0",
+        "~>0",
+        "^0.0",
+        "~0.0",
+      ].flatMap((any): [string, string, boolean][] => [
+        ["0.0.0-b", `>=0.0.0-a ${any}`, true],
+        ["0.0.0-b", `${any} >=0.0.0-b`, true],
+        ["0.0.0-b", `<0.0.0-c ${any}`, true],
+        ["0.0.0-b", `>=0.0.0-c ${any}`, false],
+        ["0.0.1-b", `>=0.0.0-a ${any}`, false],
+        ["0.0.0-b", any, false],
+      ]),
+      ["0.0.0-b", ">=0.0.0-a ^0.0.0", true],
+      ["0.0.0-b", ">=0.0.0-a ~0.0.0", true],
+      ["0.0.0-b", "0.0.0 - 0.0.0-c", true],
+      ["0.0.0-d", "0.0.0 - 0.0.0-c", false],
+      ["0.0.0-b", ">=0.0.0-a >0.0.0", false],
+      ["0.0.0-b", ">=0.0.0-a 0.0.0", false],
+      ["0.0.0-b", ">=0.0.0-a >=0.0.1", false],
+      ["1.0.0-b", ">=1.0.0-a 1.x", false],
+      ["1.0.0-b", ">=1.0.0-b *", true],
+    ]);
+  });
+
   test("spaces between < or > and = do not split the operator", () => {
     // Every expectation is node-semver 7's answer for the same input. "< =1" used to be "<1".
     testSatisfiesTable([
@@ -1368,7 +1493,7 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
-  test("a wildcard glued to a number is not a version", () => {
+  test("a wildcard attached to a number is not a version", () => {
     testSatisfiesTable([
       ["1.2.3x", "1.2.3", false],
       ["1.2.3*", "*", false],
@@ -1605,7 +1730,7 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
   const disagreements: object[] = [];
   for (let i = iterations(500); i > 0; i--) {
     const r = range();
-    // What nodeSemver.satisfies() does, with the range parsed once for all versions.
+    // Does what nodeSemver.satisfies() does, with the range parsed once for all versions.
     let parsed: InstanceType<typeof nodeSemver.Range> | undefined;
     try {
       parsed = new nodeSemver.Range(r);
@@ -1641,6 +1766,39 @@ function manifestRegistry(versions: string[], requested: string[] = []) {
     },
   });
 }
+
+test.concurrent("bun install doesn't read build metadata after a bare major as a second range", async () => {
+  // "latest" is 1.5.0, which used to be installed for both.
+  const packages = {
+    "digit-after-plus": { declared: "2+1", resolved: "2.5.0" },
+    "x-after-plus": { declared: "^2+x", resolved: "2.5.0" },
+  };
+  await using registry = manifestRegistry(["0.5.0", "2.5.0", "3.5.0", "1.5.0"]);
+  using dir = tempDir("semver-build-behind-major", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: Object.fromEntries(Object.entries(packages).map(([name, { declared }]) => [name, declared])),
+    }),
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  const lockfile = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as {
+    packages: Record<string, [string, ...unknown[]]>;
+  };
+  expect(Object.fromEntries(Object.keys(packages).map(name => [name, lockfile.packages[name]?.[0]]))).toEqual(
+    Object.fromEntries(Object.entries(packages).map(([name, { resolved }]) => [name, `${name}@${resolved}`])),
+  );
+  expect(exitCode).toBe(0);
+});
 
 describe.concurrent("a number above u64::MAX in the package manager", () => {
   test("bun install does not resolve a dependency range that has one", async () => {

@@ -57,10 +57,12 @@ pub struct PlannedEdge {
 
 #[derive(PartialEq, Eq)]
 pub struct Blocker {
-    /// The dependent package or importer file; `package.json` when `override_rule` is set.
+    /// The dependent package or the project's package.json file. It's `package.json` when
+    /// `override_rule` is set.
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
+    pub peer: bool,
     pub latest_fixes: bool,
     /// `OverrideSelector::key` of the `overrides` rule that holds the version.
     pub override_rule: Option<Box<[u8]>>,
@@ -193,9 +195,9 @@ pub struct FixOutcome {
 struct Edge {
     dep_id: DependencyID,
     parent: PackageID,
-    /// After overrides and catalogs are applied; `None` unless that is an npm range.
+    /// The range after overrides and catalogs are applied. `None` unless that's an npm range.
     range: Option<dependency::Version>,
-    /// The override rule's value, else the dependent's specifier; shown when `range` is `None`.
+    /// The override's value, or else the dependent's specifier. Shown when `range` is `None`.
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
     override_rule: Option<Box<[u8]>>,
@@ -319,7 +321,7 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
             bun_core::warn!(
                 "{} did not answer the audit request ({}); skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
-                BStr::new(&group.reason),
+                escape_control_chars(&group.reason),
                 escape_control_chars(&packages)
             );
         }
@@ -430,9 +432,9 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     for item in items {
         bun_core::warn!(
             "{}@{} was not checked for updates: {}",
-            BStr::new(&item.name),
-            BStr::new(&item.from),
-            BStr::new(&item.detail)
+            escape_control_chars(&item.name),
+            escape_control_chars(&item.from),
+            escape_control_chars(&item.detail)
         );
     }
     if !log.msgs.is_empty() {
@@ -442,7 +444,8 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     Output::flush();
 }
 
-/// The entry whose rewrite would move this edge: an exact pin, or with `latest` any npm range.
+/// Returns the entry whose rewrite would move this dependency: an exact pin, or with `latest`, any
+/// npm range.
 fn pin_for(
     lockfile: &Lockfile,
     root_json: Option<&Expr>,
@@ -498,7 +501,8 @@ fn pin_for(
                     let selector = OverrideSelector::from_rule(rule, buf);
                     let written =
                         package_json_edits::override_literal(root_json?, name, &selector)?;
-                    // Differs for a `$ref` in package.json: bun.lock stores what it resolved to.
+                    // They differ for a `$ref` in package.json, because bun.lock stores what it
+                    // resolved to.
                     if *written != *strings::trim(literal, &strings::WHITESPACE_CHARS) {
                         return None;
                     }
@@ -625,7 +629,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 override_rule: rule
                     .map(|rule| OverrideSelector::from_rule(rule, buf).key(dep.name.slice(buf))),
                 bundled: dep.behavior.is_bundled(),
-                peer: dep.behavior.is_peer(),
+                peer: dep.behavior.is_peer() && !dep.behavior.is_bundled(),
                 latest_fixes,
                 pin,
             });
@@ -841,10 +845,23 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
         }
 
+        // If the root package.json depends on this package, every peer dependency on it uses the
+        // root's copy, whatever range the peer declares (see `hoist_dependency`).
+        let root_target = inst
+            .edges
+            .iter()
+            .zip(&target)
+            .find_map(|(edge, t)| (edge.parent == 0 && !edge.peer).then_some(*t));
         let mut chosen: Vec<usize> = if inst.edges.is_empty() {
             vec![0]
         } else {
-            target.iter().flatten().map(|t| t.candidate).collect()
+            inst.edges
+                .iter()
+                .zip(&target)
+                // If the root's copy cannot be upgraded, upgrading a peer dependency has no effect.
+                .filter(|(edge, _)| !(edge.peer && matches!(root_target, Some(None))))
+                .filter_map(|(_, t)| t.map(|t| t.candidate))
+                .collect()
         };
         index_sort::sort_slice_unstable_by(&mut chosen, |a, b| a.cmp(b));
         chosen.dedup();
@@ -926,6 +943,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     }
                 },
                 bundled: edge.bundled,
+                peer: edge.peer && edge.override_rule.is_none() && !edge.latest_fixes,
                 latest_fixes: edge.latest_fixes,
                 override_rule: edge.override_rule.clone(),
             };
@@ -938,8 +956,12 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             expected_gone.push((inst.name_hash, inst.from));
             continue;
         }
-        for &a in &inst.advisories {
-            advisory_still_present.set(a);
+        // If the root's copy is upgraded, the vulnerable version is removed even though these peer
+        // dependencies' ranges reject the new version.
+        if !(matches!(root_target, Some(Some(_))) && blockers.iter().all(|blocker| blocker.peer)) {
+            for &a in &inst.advisories {
+                advisory_still_present.set(a);
+            }
         }
         blocked.push(BlockedFix {
             name: inst.name,
@@ -1001,25 +1023,28 @@ impl FixPlan {
                 }
                 prettyln!("");
                 for edit in &fix.edits {
-                    pretty!("    {}", BStr::new(&edit.file));
+                    pretty!("    {}", escape_control_chars(&edit.file));
                     match &edit.site {
                         EditSite::Dependencies => {}
                         EditSite::Catalog(catalog) => match &**catalog {
                             b"" | b"default" => pretty!(" (catalog)"),
-                            catalog => pretty!(" (catalog {})", BStr::new(catalog)),
+                            catalog => pretty!(" (catalog {})", escape_control_chars(catalog)),
                         },
                         EditSite::Override(selector) if selector.is_bare() => {
                             pretty!(" (overrides)");
                         }
                         EditSite::Override(selector) => {
-                            pretty!(" (overrides {})", BStr::new(&selector.key(&edit.key)));
+                            pretty!(
+                                " (overrides {})",
+                                escape_control_chars(&selector.key(&edit.key))
+                            );
                         }
                     }
                     prettyln!(
                         ": <d>{} {}<r> {}",
-                        BStr::new(&edit.old_literal),
+                        escape_control_chars(&edit.old_literal),
                         glyphs.arrow,
-                        BStr::new(&edit.new_literal)
+                        escape_control_chars(&edit.new_literal)
                     );
                 }
             }
@@ -1035,10 +1060,10 @@ impl FixPlan {
                     } else {
                         glyphs.up
                     },
-                    BStr::new(&item.name),
-                    BStr::new(&item.from),
+                    escape_control_chars(&item.name),
+                    escape_control_chars(&item.from),
                     glyphs.arrow,
-                    BStr::new(&item.needs)
+                    escape_control_chars(&item.needs)
                 );
                 if item.needs_is_downgrade {
                     pretty!(" <d>(downgrade)<r>");
@@ -1047,7 +1072,7 @@ impl FixPlan {
                 for blocker in &item.blockers {
                     pretty!(
                         "    {} {} {}@{}",
-                        BStr::new(&blocker.dependent),
+                        escape_control_chars(&blocker.dependent),
                         if blocker.bundled {
                             "bundles"
                         } else if blocker.override_rule.is_some() {
@@ -1055,11 +1080,14 @@ impl FixPlan {
                         } else {
                             "depends on"
                         },
-                        BStr::new(&item.name),
-                        BStr::new(&blocker.range)
+                        escape_control_chars(&item.name),
+                        escape_control_chars(&blocker.range)
                     );
                     match &blocker.override_rule {
-                        Some(rule) if **rule != *item.name => pretty!(" ({})", BStr::new(rule)),
+                        Some(rule) if **rule != *item.name => {
+                            pretty!(" ({})", escape_control_chars(rule));
+                        }
+                        None if blocker.peer => pretty!(" <d>(peer)<r>"),
                         _ => {}
                     }
                     prettyln!("");
@@ -1074,7 +1102,11 @@ impl FixPlan {
             prettyln!("no published version fixes:");
             let mut all_tokens: Vec<Box<[u8]>> = Vec::new();
             for item in &self.unfixable {
-                pretty!("  {}@{}  <d>", BStr::new(&item.name), BStr::new(&item.from));
+                pretty!(
+                    "  {}@{}  <d>",
+                    escape_control_chars(&item.name),
+                    escape_control_chars(&item.from)
+                );
                 print_tokens(&item.ignore_tokens);
                 prettyln!("<r>");
                 for token in &item.ignore_tokens {
@@ -1173,8 +1205,8 @@ impl FixPlan {
                 for item in &outcome.still_vulnerable {
                     pretty!(
                         "  {}@{}  <d>",
-                        BStr::new(&item.name),
-                        BStr::new(&item.version)
+                        escape_control_chars(&item.name),
+                        escape_control_chars(&item.version)
                     );
                     print_tokens(&item.advisories);
                     prettyln!("<r>");

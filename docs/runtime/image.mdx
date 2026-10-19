@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, JPEG XL, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, jxl-rs, libjxl, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -109,6 +109,8 @@ img.png({ compressionLevel: 6 }); // zlib level 0–9
 img.png({ palette: true, colors: 64, dither: true }); // indexed PNG
 img.webp({ quality: 80 });
 img.webp({ lossless: true });
+img.jxl({ quality: 80 }); // quality: 100 is lossless, as in cjxl
+img.jxl({ lossless: true });
 img.heic({ quality: 80 }); // macOS / Windows only
 img.avif({ quality: 60 }); // macOS / Windows only
 ```
@@ -129,7 +131,7 @@ await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3.file("bucket/out.webp"));
 ```
 
-`.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+`.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.jxl`/`.heic`/`.avif`).
 
 ## Placeholders
 
@@ -185,6 +187,7 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 |                        | Linux                             | macOS               | Windows      |
 | ---------------------- | --------------------------------- | ------------------- | ------------ |
 | JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same                | same         |
+| JPEG XL                | jxl-rs decode · libjxl encode     | same                | same         |
 | BMP / GIF (decode)     | built-in                          | ImageIO             | WIC          |
 | TIFF (decode)          | ❌                                | ImageIO             | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage ³ | Highway SIMD |

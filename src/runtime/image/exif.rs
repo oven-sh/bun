@@ -41,6 +41,20 @@ pub(crate) struct Transform {
 }
 
 impl Orientation {
+    pub(crate) fn from_u16(v: u16) -> Option<Orientation> {
+        match v {
+            1 => Some(Orientation::Normal),
+            2 => Some(Orientation::Flop),
+            3 => Some(Orientation::Rotate180),
+            4 => Some(Orientation::Flip),
+            5 => Some(Orientation::FlopRotate90),
+            6 => Some(Orientation::Rotate90),
+            7 => Some(Orientation::FlopRotate270),
+            8 => Some(Orientation::Rotate270),
+            _ => None,
+        }
+    }
+
     /// The (mirror?, cw-degrees) pair that turns the stored pixels upright.
     pub(crate) fn transform(self) -> Transform {
         match self {
@@ -170,18 +184,7 @@ fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
         if ty != 3 || cnt != 1 {
             return None;
         }
-        let v = rd16(tiff, e + 8, big)?;
-        return match v {
-            1 => Some(Orientation::Normal),
-            2 => Some(Orientation::Flop),
-            3 => Some(Orientation::Rotate180),
-            4 => Some(Orientation::Flip),
-            5 => Some(Orientation::FlopRotate90),
-            6 => Some(Orientation::Rotate90),
-            7 => Some(Orientation::FlopRotate270),
-            8 => Some(Orientation::Rotate270),
-            _ => None,
-        };
+        return Orientation::from_u16(rd16(tiff, e + 8, big)?);
     }
     None
 }

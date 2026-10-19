@@ -794,6 +794,35 @@ describe("Bun.Image", () => {
       expect(extractWebpIccp(lossless)).toBeNull();
     });
 
+    // libjxl parses the profile (skcms) instead of copying it, so fakeProfile
+    // won't do: jxl-rs synthesises a real Display P3 profile from this cjxl
+    // `-d 0 -x color_space=RGB_D65_DCI_Rel_SRG` encode of cornersPng.
+    const cornersP3Jxl = Buffer.from(
+      "/woQMLAgkxsBCAAQAKAASxiTjoWDhBMYt03lC0gBEMD/868/f6g/f8i//vrzfz/5w2JWMxY6AA==",
+      "base64",
+    );
+
+    test("JXL in a non-sRGB colour space hands its profile to the PNG encoder", async () => {
+      const png = await new Bun.Image(cornersP3Jxl).png().bytes();
+      const profile = extractPngIccp(png);
+      expect(profile).not.toBeNull();
+      expect(Buffer.from(profile!.subarray(36, 40)).toString("latin1")).toBe("acsp");
+      // Lossless keeps the P3 numbers; the profile is what gives them meaning.
+      const { data } = decodePngRaw(png);
+      for (let y = 0; y < 3; y++)
+        for (let x = 0; x < 4; x++) expect(rgbaAt(data, 4, x, y)).toEqual(cornerPattern(x, y));
+    });
+
+    test("PNG iCCP survives a lossless JXL round trip; sRGB JXL adds no profile", async () => {
+      const p3Png = await new Bun.Image(cornersP3Jxl).png().bytes();
+      const profile = extractPngIccp(p3Png)!;
+      const jxl = await new Bun.Image(p3Png).jxl({ lossless: true }).bytes();
+      expect(Buffer.from(extractPngIccp(await new Bun.Image(jxl).png().bytes())!)).toEqual(Buffer.from(profile));
+
+      const srgb = await new Bun.Image(cornersPng).jxl({ lossless: true }).bytes();
+      expect(extractPngIccp(await new Bun.Image(srgb).png().bytes())).toBeNull();
+    });
+
     test("CMYK JPEG's ink-channel ICC profile is dropped on re-encode", async () => {
       expect(extractJpegIcc(cmykIccJpeg)).not.toBeNull();
       const jpg = await new Bun.Image(cmykIccJpeg).jpeg({ quality: 90 }).bytes();
@@ -1332,6 +1361,120 @@ describe("Bun.Image", () => {
 test("a subclass inherits Bun.Image.backend", () => {
   class Subclass extends Bun.Image {}
   expect(Subclass.backend).toBe(Bun.Image.backend);
+});
+
+describe("JPEG XL", () => {
+  // From libjxl/jxl-rs jxl/resources/test (BSD-3-Clause): 100×256 sRGB over the
+  // same stored pixels, orientation 1 and orientation 6 (90° clockwise).
+  const orient1Jxl = Buffer.from("/wr4B8aASAgEAQCYAEsoJdaBgoIAqLEbg7EXCAEAkACJ0x+Yv78/1F//11n2LppYelks", "base64");
+  const orient6Jxl = Buffer.from("/wr4B8ZYICYIBAEAmABLKCXWgYKCAKixG4OxFwgBAJAAidMfmL+/P9Rf/9dZ9i6aWHpZLA==", "base64");
+  // Same source, gray_alpha_lossless.jxl: 64×64 8-bit gray + alpha.
+  const grayAlphaJxl = Buffer.from(
+    "/wpPwKK4EAgAEAAoAUsoMd2s8UEP4p6EhIKCkgMQUUAgQNSIuzHGjQs6VCwE4A8IARAASGKCI0DxxO0zn2aP8P7//////z48vgqA9/ywONFttqUMnAYo",
+    "base64",
+  );
+  // cjxl 0.12 `-d 0 --container=1` of cornersPng: the ISOBMFF form (JXL /
+  // ftyp / jxlc boxes) rather than a bare FF 0A codestream.
+  const cornersJxlContainer = Buffer.from(
+    "AAAADEpYTCANCocKAAAAFGZ0eXBqeGwgAAAAAGp4bCAAAAA8anhsY/8KEDCwEggAEACgAEsYk46Fg4QTGLdN5QtIARDA//OvP3+oP3/Iv/76838/+cNiVjMWOgA=",
+    "base64",
+  );
+
+  test("sniffer recognises the bare codestream and the container", async () => {
+    expect(await new Bun.Image(orient1Jxl).metadata()).toEqual({ width: 100, height: 256, format: "jxl" });
+    expect(await new Bun.Image(cornersJxlContainer).metadata()).toEqual({ width: 4, height: 3, format: "jxl" });
+  });
+
+  test("decodes another encoder's lossless output exactly", async () => {
+    const { w, h, data } = decodePngRaw(await new Bun.Image(cornersJxlContainer).png().bytes());
+    expect([w, h]).toEqual([4, 3]);
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 4; x++) expect(rgbaAt(data, 4, x, y)).toEqual(cornerPattern(x, y));
+  });
+
+  test(".jxl({ lossless: true }) round-trips every pixel, translucent alpha included", async () => {
+    const src = makePng(5, 4, (x, y) => [x * 50, y * 60, (x * y * 17) & 255, 40 + x * 40]);
+    const jxl = await new Bun.Image(src).jxl({ lossless: true }).bytes();
+    expect([jxl[0], jxl[1]]).toEqual([0xff, 0x0a]);
+    const back = decodePngRaw(await new Bun.Image(jxl).png().bytes());
+    expect(Buffer.from(back.data)).toEqual(Buffer.from(decodePngRaw(src).data));
+  });
+
+  test(".jxl({ quality: 100 }) is lossless, as in cjxl", async () => {
+    const jxl = await new Bun.Image(gradientPng).jxl({ quality: 100 }).bytes();
+    const back = decodePngRaw(await new Bun.Image(jxl).png().bytes());
+    expect(Buffer.from(back.data)).toEqual(Buffer.from(decodePngRaw(gradientPng).data));
+  });
+
+  test("lossy .jxl() stays close to the source and shrinks as quality drops", async () => {
+    const src = makePng(64, 64, (x, y) => [x * 4, y * 4, ((x + y) * 2) & 255, 255]);
+    const q90 = await new Bun.Image(src).jxl({ quality: 90 }).bytes();
+    const q30 = await new Bun.Image(src).jxl({ quality: 30 }).bytes();
+    expect(q30.length).toBeLessThan(q90.length);
+    const back = decodePngRaw(await new Bun.Image(q90).png().bytes()).data;
+    const orig = decodePngRaw(src).data;
+    let sum = 0;
+    for (let i = 0; i < orig.length; i += 4) for (let c = 0; c < 3; c++) sum += Math.abs(orig[i + c] - back[i + c]);
+    expect(sum / ((orig.length / 4) * 3)).toBeLessThan(4);
+  });
+
+  test("orientation is applied by default and undone with autoOrient: false", async () => {
+    const upright = decodePngRaw(await new Bun.Image(orient1Jxl).rotate(90).png().bytes());
+    const rotated = decodePngRaw(await new Bun.Image(orient6Jxl).png().bytes());
+    expect([rotated.w, rotated.h]).toEqual([256, 100]);
+    expect(Buffer.from(rotated.data)).toEqual(Buffer.from(upright.data));
+    expect(await new Bun.Image(orient6Jxl).metadata()).toEqual({ width: 256, height: 100, format: "jxl" });
+
+    const plain = decodePngRaw(await new Bun.Image(orient1Jxl).png().bytes());
+    const stored = decodePngRaw(await new Bun.Image(orient6Jxl, { autoOrient: false }).png().bytes());
+    expect([stored.w, stored.h]).toEqual([100, 256]);
+    expect(Buffer.from(stored.data)).toEqual(Buffer.from(plain.data));
+    expect(await new Bun.Image(orient6Jxl, { autoOrient: false }).metadata()).toEqual({
+      width: 100,
+      height: 256,
+      format: "jxl",
+    });
+  });
+
+  test("gray + alpha widens to RGBA", async () => {
+    const { w, h, data } = decodePngRaw(await new Bun.Image(grayAlphaJxl).png().bytes());
+    expect([w, h]).toEqual([64, 64]);
+    // Reference values from djxl 0.12 (gray, alpha).
+    for (const [x, y, g, a] of [
+      [0, 0, 0, 255],
+      [63, 0, 126, 129],
+      [0, 63, 126, 255],
+      [63, 63, 252, 129],
+      [32, 32, 128, 191],
+      [10, 50, 120, 235],
+    ])
+      expect(rgbaAt(data, w, x, y)).toEqual([g, g, g, a]);
+  });
+
+  test("a JXL source re-encodes as JXL with no setter; .blob() and .write() agree on the format", async () => {
+    const out = await new Bun.Image(orient1Jxl).resize(10).bytes();
+    expect([out[0], out[1]]).toEqual([0xff, 0x0a]);
+    expect((await new Bun.Image(cornersPng).jxl().blob()).type).toBe("image/jxl");
+    using dir = tempDir("image-jxl", {});
+    const path = join(String(dir), "out.jxl");
+    await new Bun.Image(cornersPng).write(path);
+    const written = await Bun.file(path).bytes();
+    expect([written[0], written[1]]).toEqual([0xff, 0x0a]);
+  });
+
+  test("truncated input rejects with ERR_IMAGE_DECODE_FAILED", async () => {
+    for (const cut of [orient1Jxl.subarray(0, 3), orient1Jxl.subarray(0, orient1Jxl.length - 8)]) {
+      await expect(new Bun.Image(cut).bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+    }
+  });
+
+  test("maxPixels rejects from the header and admits an image of exactly that size", async () => {
+    await expect(new Bun.Image(orient1Jxl, { maxPixels: 1000 }).metadata()).rejects.toThrow(/maxPixels/);
+    await expect(new Bun.Image(orient1Jxl, { maxPixels: 1000 }).bytes()).rejects.toThrow(/maxPixels/);
+    // jxl-rs keeps its own sample budget (width floored at 16, alpha counted);
+    // it must not refuse what Bun's limit allows.
+    expect((await new Bun.Image(grayAlphaJxl, { maxPixels: 64 * 64 }).bytes()).length).toBeGreaterThan(0);
+    expect((await new Bun.Image(cornersJxlContainer, { maxPixels: 4 * 3 }).bytes()).length).toBeGreaterThan(0);
+  });
 });
 
 describe("decode-only formats (BMP / TIFF / GIF)", () => {

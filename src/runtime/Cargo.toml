@@ -22,6 +22,8 @@ getrandom.workspace = true
 sha3 = { version = "0.10", default-features = false }
 blake2 = { version = "0.10", default-features = false }
 bytemuck = "1"
+# Bun.Image JPEG XL decode. Exact pin: jxl-rs is pre-1.0 and its public API moves between minors.
+jxl = "=0.8.0"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true

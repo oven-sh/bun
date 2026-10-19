@@ -9458,7 +9458,7 @@ declare module "bun" {
      * decode rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` on Linux; `gif` decodes the first
      * frame everywhere.
      */
-    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif";
+    type Format = "jpeg" | "png" | "webp" | "heic" | "avif" | "bmp" | "tiff" | "gif" | "jxl";
     type Filter =
       | "nearest"
       | "box"
@@ -9482,7 +9482,8 @@ declare module "bun" {
        */
       maxPixels?: number;
       /**
-       * Apply EXIF Orientation (JPEG) before any other operation.
+       * Apply the stored orientation (JPEG EXIF, the JPEG XL header) before
+       * any other operation.
        * @default true
        */
       autoOrient?: boolean;
@@ -9529,8 +9530,8 @@ declare module "bun" {
    * `autoOrient → rotate → flip/flop → resize → modulate`.
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
-   * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
-   * images don't shift colour.
+   * is preserved through re-encode to JPEG, PNG, WebP, and JPEG XL so
+   * non-sRGB images don't shift colour.
    *
    * @example
    * ```ts
@@ -9622,6 +9623,12 @@ declare module "bun" {
      * rejects with `error.code === "ERR_IMAGE_FORMAT_UNSUPPORTED"` elsewhere.
      */
     avif(options?: { quality?: number }): this;
+    /**
+     * Set output format to JPEG XL (libjxl, every platform). `quality` maps to
+     * a Butteraugli distance the way `cjxl -q` does, and `quality: 100` is
+     * lossless, as it is in cjxl. `lossless: true` keeps every pixel exactly.
+     */
+    jxl(options?: { quality?: number; lossless?: boolean }): this;
 
     /**
      * Run the pipeline and return the encoded bytes. If no format setter was
@@ -9639,7 +9646,7 @@ declare module "bun" {
      *
      * If no format method was chained and `dest` is a path string, the format
      * is inferred from its extension when it's one Bun can encode
-     * (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`); otherwise the source format is
+     * (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`/`.jxl`); otherwise the source format is
      * reused.
      */
     write(dest: BunFile | S3File | Bun.PathLike | number): Promise<number>;

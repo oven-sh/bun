@@ -3634,8 +3634,7 @@ describe.skipIf(isWindows)("an argument that is not UTF-8 is written byte for by
       ["echo hi > $X/out", () => "bun: No such file or directory: absent-\xff/out"],
     );
   }
-  const script =
-    String.raw`BYTE=$(printf '\377'); X=absent-$BYTE; ` + cases.map(([command]) => command).join("; ");
+  const script = String.raw`BYTE=$(printf '\377'); X=absent-$BYTE; ` + cases.map(([command]) => command).join("; ");
   // One byte of output is one character of the string, so a failure shows the bytes.
   const expected = (cwd: string) => cases.map(([, line]) => line(Buffer.from(cwd).toString("latin1"))).join("");
 

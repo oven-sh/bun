@@ -1607,9 +1607,7 @@ describe("a script's output that is not UTF-8 is relayed byte for byte", () => {
     "package.json": JSON.stringify({ name: "filter-bytes", workspaces: ["packages/*"] }),
     "packages/app/package.json": JSON.stringify({
       name: "app",
-      scripts: Object.fromEntries(
-        ["out", "err", "split", "tail"].map(kind => [kind, `${bunExe()} write.js ${kind}`]),
-      ),
+      scripts: Object.fromEntries(["out", "err", "split", "tail"].map(kind => [kind, `${bunExe()} write.js ${kind}`])),
     }),
     "packages/app/write.js": /* js */ `
       const bytes = text => Buffer.from(text, "latin1");

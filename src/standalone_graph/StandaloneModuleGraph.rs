@@ -1551,7 +1551,7 @@ pub(crate) fn to_bytes(
     let mut entry_point_file: Option<&OutputFile> = None;
     // `Graph::from_bytes` keys files by name; a repeat would shift `entry_point_id`.
     // The value is the index of the first output file with that name.
-    let mut seen_names: StringArrayHashMap<u32> = StringArrayHashMap::new();
+    let mut seen_names: StringArrayHashMap<u32> = StringArrayHashMap::with_capacity(module_count);
 
     for (index, (output_file, name)) in output_files.iter().zip(&names).enumerate() {
         if !output_file.output_kind.is_file_in_standalone_mode() {

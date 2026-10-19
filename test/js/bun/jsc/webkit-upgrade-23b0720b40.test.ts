@@ -119,11 +119,9 @@ describe.concurrent("WebKit 23b0720b40 upgrade", () => {
         noInline(quotient);
         noInline(sum);
         for (let i = 0; i < 20000; ++i) { quotient(1, 2); sum(-2147483648, -2147483648); }
-        console.log(JSON.stringify({
-          quotient: quotient(1, 2),
-          sum: sum(-2147483648, -2147483648),
-          compiled: numberOfDFGCompiles(quotient) > 0 && numberOfDFGCompiles(sum) > 0,
-        }));
+        // Read before the two calls below, so that it tells what runs them.
+        const compiled = numberOfDFGCompiles(quotient) > 0 && numberOfDFGCompiles(sum) > 0;
+        console.log(JSON.stringify({ quotient: quotient(1, 2), sum: sum(-2147483648, -2147483648), compiled }));
         `,
       ],
       env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },

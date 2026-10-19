@@ -2415,9 +2415,15 @@ long syscall(long nr, ...) {
   // Builds its arguments in turn, in one process. The shim fails reads only
   // during the second build. That build resolves against what the first build
   // cached: the listings, and the directory records that point at them.
+  //
+  // The bundle thread starts a new generation when its queue is empty, and
+  // that can be after the next Bun.build is queued. A build in the old
+  // generation reads no directory again. So the script builds a probe (the
+  // second entry point, unless one is given) until the shim has failed a read.
   const buildInTurn = `
-    const { unlinkSync, writeFileSync } = require("fs");
+    const { existsSync, unlinkSync, writeFileSync } = require("fs");
     const faultIsOn = process.env.READDIR_FAULT_WHILE;
+    const faultLog = process.env.READDIR_FAULT_LOG;
     // The path comments of a bundle name the files in it.
     async function build(entrypoint) {
       try {
@@ -2428,10 +2434,15 @@ long syscall(long nr, ...) {
         return (e.errors ?? [e]).map(e => e.message);
       }
     }
-    const [first, second = first] = process.argv.slice(2);
+    const [first, second = first, probe = second] = process.argv.slice(2);
     const out = { healthy: await build(first) };
     writeFileSync(faultIsOn, "");
-    out.failing = await build(second);
+    let probed = await build(probe);
+    for (let attempt = 0; attempt < 10 && !existsSync(faultLog); attempt++) {
+      await Bun.sleep(5);
+      probed = await build(probe);
+    }
+    out.failing = probe === second ? probed : await build(second);
     unlinkSync(faultIsOn);
     out.healthyAgain = await build(second);
     console.log(JSON.stringify(out));
@@ -2522,10 +2533,13 @@ long syscall(long nr, ...) {
       "packages/linked/index.js": `export default "linked";\n`,
       "plain.ts": `import plain from "plain";\nconsole.log(plain);\n`,
       "linked.ts": `import linked from "linked";\nconsole.log(linked);\n`,
+      // The lookup of this file reads node_modules again, and nothing below it.
+      "node_modules/marker.js": `export default "marker";\n`,
+      "probe.ts": `import marker from "./node_modules/marker.js";\nconsole.log(marker);\n`,
     });
     const root = realpathSync(String(dir));
     symlinkSync(join("..", "packages", "linked"), join(root, "node_modules", "linked"));
-    const result = await runWithFault(["build.js", "./plain.ts", "./linked.ts"], root, {
+    const result = await runWithFault(["build.js", "./plain.ts", "./linked.ts", "./probe.ts"], root, {
       dir: join(root, "node_modules"),
       hide: "linked",
       while: join(root, "fault-is-on"),
@@ -2585,13 +2599,16 @@ long syscall(long nr, ...) {
       "outer/project/build.js": buildInTurn,
       "outer/project/entry.ts": `console.log("project");\n`,
       "outer/other/entry.ts": `console.log("other");\n`,
+      // The lookup of this file reads the ancestor again, and not the other directory.
+      "outer/marker.ts": `export default "marker";\n`,
+      "outer/project/probe.ts": `import marker from "../marker.ts";\nconsole.log(marker);\n`,
     });
     const root = realpathSync(String(dir));
-    const result = await runWithFault(["build.js", "./entry.ts", "../other/entry.ts"], join(root, "outer/project"), {
-      dir: join(root, "outer"),
-      errno: constants.errno.EACCES,
-      while: join(root, "fault-is-on"),
-    });
+    const result = await runWithFault(
+      ["build.js", "./entry.ts", "../other/entry.ts", "./probe.ts"],
+      join(root, "outer/project"),
+      { dir: join(root, "outer"), errno: constants.errno.EACCES, while: join(root, "fault-is-on") },
+    );
     expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
       stdout: {
         healthy: ["// entry.ts"],

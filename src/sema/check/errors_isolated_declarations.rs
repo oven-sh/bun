@@ -1495,6 +1495,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let NodeData::Expr(e) = self.hir(file).data(*of) else {
                     return None;
                 };
+                self.report_discarded_errors_of(file, e);
                 let ty = self.type_of_expr(file, e);
                 let ty = self.regular(ty);
                 self.get_widened_type(ty)

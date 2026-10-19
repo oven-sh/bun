@@ -557,8 +557,11 @@ impl Checker<'_, '_> {
             // the owning file recomputes it during its own check and reports the diagnostic there.
             if self.task.file != Some(diagnostic.file) {
                 self.mark_tainted_from(self.frames.len().saturating_sub(1));
-            } else if let Some(from) = self.expressions_checked_again() {
-                self.mark_tainted_from(from);
+            } else {
+                self.starts_of_discarded_errors.push(diagnostic.start);
+                if let Some(from) = self.expressions_checked_again() {
+                    self.mark_tainted_from(from);
+                }
             }
             return self.discarded.insert(diagnostic);
         }

@@ -1339,7 +1339,9 @@ impl Checker<'_, '_> {
 
     /// The diagnostics collected in a `diagnosticOutput`.
     fn put_out(&mut self, reported: Vec<Reported>) {
-        self.reported.extend(reported);
+        for diagnostic in reported {
+            self.add_diagnostic(diagnostic);
+        }
     }
 
     /// `elaborateError`: moves the error that `e`, of type `source`, is not assignable to `target`

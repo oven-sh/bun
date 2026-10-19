@@ -944,15 +944,31 @@ export ${f3}
     expect(inF3).toEqual(column ? [`a.ts(5,${column}): ${message}`] : []);
   });
 
-  // `f3` prints `f2`'s type one message deep, so TypeScript reports the assignment inside the call. It's the only error
-  // that isn't expected. Only its place is compared: TypeScript's message is TS2322, ours doesn't print the types yet.
+  // `f2` is first checked two messages deep, where TypeScript discards its errors. Whenever TypeScript prints a type that it
+  // inferred from an expression, it checks that expression again without a cache. `f3` prints `f2`'s type one message
+  // deep, so the error is reported then. Every other error is expected, so `f2`'s line decides the exit code.
+  const wrongAssignment = "TS2322: Type 'string' is not assignable to type 'number'.";
+  const missingProperty = "a.ts(9,30): error TS2339: Property 'nope' does not exist on type '{ port: number; }'.\n";
+  const wrongOperand =
+    "TS2363: The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
   test.each([
-    [`const f2 = () => (slot.port = "zq").toString();`, 19],
-    [`const f2 = () => ((slot.port = "zq").toString());`, 20],
-    [`function f2() { return ((slot.port = "zq").toString()); }`, 26],
-  ])("reports a wrong assignment inside a call if a function below prints the type again: %s", async (f2, column) => {
-    using dir = project({
-      "a.ts": `declare function takesNumber(n: number): number;
+    [`const f2 = () => (slot.port = "zq").toString();`, 19, wrongAssignment, ""],
+    [`const f2 = () => ((slot.port = "zq").toString());`, 20, wrongAssignment, ""],
+    [`function f2() { return ((slot.port = "zq").toString()); }`, 26, wrongAssignment, ""],
+    [`function f2() { return -(slot.port = "zq"); }`, 26, wrongAssignment, ""],
+    [`function f2() { return 1 * slot; }`, 28, wrongOperand, ""],
+    [`function f2() { return [slot.port, 1 * slot]; }`, 40, wrongOperand, ""],
+    [`function f2(q = 1 * slot) { return q; }`, 21, wrongOperand, ""],
+    // It doesn't check the arguments of a resolved call again, nor an initializer whose type it has cached, and it doesn't
+    // compare the operands of `===` when it only wants the type.
+    [`function f2() { return String(slot.port = "zq"); }`, 0, "", ""],
+    [`function f2() { const v = 1 * slot; return v; }`, 0, "", ""],
+    [`function f2() { const v = slot instanceof slot; return v; }`, 0, "", ""],
+    [`function f2() { return slot.port === "zq"; }`, 0, "", ""],
+    // A missing property is reported either way, and makes the array non-cacheable, so its neighbor is cached alone.
+    [`function f2() { return [slot.nope, 1 * slot]; }`, 40, wrongOperand, missingProperty],
+  ])("reports a discarded error if a function below prints the type again: %s", async (f2, column, message, always) => {
+    const program = (below: string) => `declare function takesNumber(n: number): number;
 declare const slot: { port: number };
 // @ts-expect-error
 takesNumber({ g: f1 });
@@ -961,17 +977,17 @@ function f1() {
   return takesNumber({ g: f2 });
 }
 ${f2}
-function f3() {
-  // @ts-expect-error
-  return takesNumber({ g: f2 });
-}
-export {};
-`,
+${below}export {};
+`;
+    using dir = project({
+      "a.ts": program(`function f3() {\n  // @ts-expect-error\n  return takesNumber({ g: f2 });\n}\n`),
     });
     const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
-    const places = stdout.split("\n").flatMap(line => line.match(/^\S+(?=: error TS)/) ?? []);
-    expect(places).toEqual([`a.ts(9,${column})`]);
-    expect(exitCode).toBe(1);
+    expect(stdout).toBe(column ? `${always}a.ts(9,${column}): error ${message}` : "");
+    expect(exitCode).toBe(column ? 1 : 0);
+    // Nothing prints the type again, so nothing more is reported.
+    using alone = project({ "a.ts": program("") });
+    expect(await check(alone, ["--threads", "1"])).toMatchObject({ stdout: always.trim(), exitCode: always ? 1 : 0 });
   });
 
   // Each program makes a member of a `lib.*.d.ts` file circular too. That error isn't printed with `skipLibCheck`, but its

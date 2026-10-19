@@ -254,6 +254,7 @@ impl Checker<'_, '_> {
         self.alias_targets_reported.clear();
         self.signatures_resolved_discarding.clear();
         self.expressions_cached_discarding.clear();
+        self.starts_of_discarded_errors.clear();
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;

@@ -773,6 +773,7 @@ impl<'s> Program<'s> {
             non_existent_properties: Default::default(),
             signatures_resolved_discarding: Vec::new(),
             expressions_cached_discarding: Vec::new(),
+            starts_of_discarded_errors: Vec::new(),
             printing_closes_cycles: false,
             reprinting: false,
             printing_floors: Vec::new(),
@@ -1412,6 +1413,8 @@ pub struct Checker<'p, 's> {
     /// The same for `links.resolvedType` of the expressions of the file being checked that
     /// `is_checked_by_check_expression_cached`.
     expressions_cached_discarding: Vec<ExprId>,
+    /// Where the errors in the file being checked start that were discarded at `maxSerializationLevel`.
+    starts_of_discarded_errors: Vec<u32>,
     /// The next `with_printer` is not a barrier for cycle detection: it prints when and what tsgo
     /// prints.
     printing_closes_cycles: bool,
@@ -1421,8 +1424,8 @@ pub struct Checker<'p, 's> {
     /// The height of `stack` when each `typeToStringEx` in progress began.
     printing_floors: Vec<usize>,
     serialized_types: print::SerializedTypes,
-    /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` rechecks an
-    /// expression: diagnostics reported then are kept.
+    /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` or `report_discarded_errors_of` rechecks
+    /// an expression: diagnostics reported then are kept.
     context_free_level: usize,
     /// `resolved_signature` resolves the calls in this range of a file as if nothing had resolved them, and stores nothing:
     /// see `context_free_type_of_call_resolved_afresh`.

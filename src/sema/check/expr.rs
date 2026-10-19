@@ -5402,14 +5402,15 @@ impl<'p, 's> Checker<'p, 's> {
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 // `checkMode&CheckModeTypeOnly == 0`: while a loop analysis is in progress the
                 // operand types may be narrower than the final ones. Outside one this check also
-                // stands for the later one in the normal mode, so it reports.
+                // stands for the later one in the normal mode, so it reports, unless it's a recheck.
                 let (l, r) = self.check_operands(file, left, right);
+                let is_type_only = self.is_checked_type_only(file, e);
                 if let Some(pushed_at) = self.flow_loop_pushed_at()
-                    && self.is_checked_type_only(file, e)
+                    && is_type_only
                 {
                     // What has not reported is not stored: the check in the normal mode comes here again.
                     self.taint_from(pushed_at);
-                } else {
+                } else if !(is_type_only && self.is_rechecking()) {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

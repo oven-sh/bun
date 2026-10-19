@@ -855,6 +855,49 @@ impl Checker<'_, '_> {
         self.check_type_assignable_to(source, target, Some(at), Some(2850 + u32::from(is_await)));
     }
 
+    /// Reports the errors in `e` that were discarded when `e` was first checked, two messages deep.
+    ///
+    /// tsc calls `getTypeOfExpression(e)` whenever it prints a type that it inferred from `e`, and that checks `e` again
+    /// without a cache. So these errors are reported if the type is printed again less than two messages deep.
+    pub(super) fn report_discarded_errors_of(&mut self, file: FileId, e: ExprId) {
+        if self.expressions_cached_discarding.is_empty()
+            && self.signatures_resolved_discarding.is_empty()
+            && self.starts_of_discarded_errors.is_empty()
+            || self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL
+            || self.task.file != Some(file)
+        {
+            return;
+        }
+        let range = |c: &Self, it: ExprId| (c.start_of(file, it), c.end_of_expr(file, it));
+        let (start, end) = range(self, e);
+        let discarded = self.expressions_cached_discarding.iter();
+        let mut discarded = discarded.chain(&self.signatures_resolved_discarding);
+        if !discarded.any(|&it| range(self, it).0 < end && start < range(self, it).1)
+            && !(self.starts_of_discarded_errors.iter()).any(|at| (start..end).contains(at))
+        {
+            return;
+        }
+        let hir = self.hir(file);
+        // `getQuickTypeOfExpression`. Nothing checks the arguments of a resolved call again, or the operand of a cast.
+        let checked_again = match hir[e].kind {
+            ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee,
+            ExprKind::As { .. } => return,
+            _ => e,
+        };
+        let reported = self.reported.len();
+        // The evaluation reports some errors and the walk reports the rest. A recheck drops what it reports unless
+        // `context_free_level` says otherwise.
+        let level = self.inference_contexts.len();
+        let outer = std::mem::replace(&mut self.context_free_level, level);
+        self.check_expression_afresh(file, checked_again, CheckMode::TYPE_ONLY);
+        self.context_free_level = outer;
+        self.check_expression(file, checked_again);
+        // `remove_diagnostics_in_unchecked_ranges` removes what the walk reports there, but not these.
+        for diagnostic in self.reported.iter_mut().skip(reported) {
+            diagnostic.by_another_node = true;
+        }
+    }
+
     /// The ranges of `expressions_cached_discarding`, where every check of `checkExpression` has
     /// reported in vain, without the nodes that `checkDeferredNodes` has checked since.
     fn ranges_checked_discarding(&self, file: FileId) -> Vec<(u32, u32)> {

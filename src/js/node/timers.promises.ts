@@ -35,6 +35,23 @@ function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyn
   return result;
 }
 
+// Node's SafePromisePrototypeFinally() around the promise: the abort listener is removed when the promise
+// settles, and an abort rejection reaches the caller 6 ticks after the abort.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/timers/promises.js#L88-L91
+function removeAbortListenerWhenSettled(promise: Promise<unknown>, signal: AbortSignal, onCancel: () => void) {
+  return promise.$then(
+    value => {
+      signal.removeEventListener("abort", onCancel);
+      return value;
+    },
+    error => {
+      signal.removeEventListener("abort", onCancel);
+      // The 4 ticks that finally() and then() take in Node's wrapper. JSC's finally() takes fewer.
+      return Promise.$resolve().$then(() => Promise.$reject(error));
+    },
+  );
+}
+
 function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
@@ -80,9 +97,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
     }
   });
-  return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
-    : returnValue;
+  return typeof onCancel !== "undefined" ? removeAbortListenerWhenSettled(returnValue, signal!, onCancel) : returnValue;
 }
 
 function setImmediate(value?, options: TimerOptions = {}) {
@@ -119,9 +134,7 @@ function setImmediate(value?, options: TimerOptions = {}) {
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
     }
   });
-  return typeof onCancel !== "undefined"
-    ? returnValue.finally(() => signal!.removeEventListener("abort", onCancel))
-    : returnValue;
+  return typeof onCancel !== "undefined" ? removeAbortListenerWhenSettled(returnValue, signal!, onCancel) : returnValue;
 }
 
 function setInterval(after = 1, value?, options: TimerOptions = {}) {
@@ -221,7 +234,9 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
             notYielded = notYielded - 1;
             return { done: false, value: value };
           } else if (signal?.aborted) {
-            throw $makeAbortError(undefined, { cause: signal.reason });
+            // A rejected promise, not a throw: the rejection reaches the caller 4 ticks after the abort, as in Node.
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/timers/promises.js#L168-L175
+            return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
           }
           return { done: true };
         });

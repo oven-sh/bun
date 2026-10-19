@@ -25,6 +25,7 @@ if (fault.available()) afterEach(() => fault.clear());
 
 /** CPU time a child process used while it waited, next to how long it waited. */
 type CpuReport = { cpuMs: number; wallMs: number };
+type Socket = Bun.udp.Socket<"buffer"> & Disposable;
 
 /**
  * Runs `fn` against an HTTP/3 server in a child process. `serverFault` is armed
@@ -243,11 +244,11 @@ test.skipIf(skip)("Bun.serve: a send error on every datagram does not spin the s
  */
 async function unsupportedVersionDatagram(): Promise<Buffer> {
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
-  await using sink = await Bun.udpSocket({
+  await using sink = (await Bun.udpSocket({
     port: 0,
     hostname: "127.0.0.1",
     socket: { data: (_s, data) => resolve(Buffer.from(data)) },
-  });
+  })) as Socket;
   // The client's first datagram is the padded Initial. Nothing answers it, so
   // abort as soon as it arrives. A fetch that settles first never sent one
   // (a proxy from the environment makes fetch refuse HTTP/3, for example).
@@ -293,18 +294,18 @@ test.skipIf(skip)(
         fetch: () => new Response("ok"),
       });
       const { promise, resolve } = Promise.withResolvers<Buffer>();
-      await using sock = await Bun.udpSocket({
+      await using sock = (await Bun.udpSocket({
         port: 0,
         hostname: "127.0.0.1",
         socket: { data: (_s, data) => resolve(Buffer.from(data)) },
-      });
-      expect(sock.send(datagram, server.port, "127.0.0.1")).toBe(true);
+      })) as Socket;
+      expect(sock.send(datagram, server.port!, "127.0.0.1")).toBe(true);
       // The reply offers QUIC version 1, the version the HTTP/3 client speaks.
       expect(offeredVersions(await promise)).toContain(1);
     }
     const report = await withServer(
       async port => {
-        await using sock = await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+        await using sock = (await Bun.udpSocket({ port: 0, hostname: "127.0.0.1", socket: { data() {} } })) as Socket;
         expect(sock.send(datagram, port, "127.0.0.1")).toBe(true);
         // Nothing to await: the reply never leaves the host. Measure a window.
         await Bun.sleep(1000);

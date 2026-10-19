@@ -73,7 +73,11 @@ describe("hash", () => {
 
       test("password is required", () => {
         // @ts-expect-error
-        expect(() => hash()).toThrow();
+        expect(() => hash()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+        // @ts-expect-error
+        expect(() => hash(undefined)).toThrow("password must be a string");
+        // @ts-expect-error
+        expect(() => hash(undefined, "bcrypt")).toThrow("password must be a string");
       });
 
       test("invalid algorithm throws", () => {
@@ -241,10 +245,15 @@ describe("verify", () => {
   describe("arguments parsing", () => {
     for (let verify of [password.verify, password.verifySync]) {
       test("minimum args", () => {
+        const invalidArgument = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
         // @ts-expect-error
-        expect(() => verify()).toThrow();
+        expect(() => verify()).toThrow(invalidArgument);
         // @ts-expect-error
-        expect(() => verify("")).toThrow();
+        expect(() => verify("")).toThrow(invalidArgument);
+        // @ts-expect-error
+        expect(() => verify(undefined, "$")).toThrow("password must be a string");
+        // @ts-expect-error
+        expect(() => verify("$", undefined)).toThrow("hash must be a string");
       });
 
       test("empty values return false", async () => {
@@ -382,19 +391,19 @@ for (let algorithmValue of algorithms) {
   const prefix = algorithmValue === "bcrypt" ? "$2" : "$" + (algorithmValue || defaultAlgorithm);
 
   describe(algorithmValue ? algorithmValue : "default", () => {
-    const hash = (value: string | TypedArray) => {
+    const hash = (value: string | NodeJS.TypedArray) => {
+      return algorithmValue ? password.hash(value, algorithmValue as any) : password.hash(value);
+    };
+
+    const hashSync = (value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
     };
 
-    const hashSync = (value: string | TypedArray) => {
-      return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
-    };
-
-    const verify = (pw: string | TypedArray, value: string | TypedArray) => {
+    const verify = (pw: string | NodeJS.TypedArray, value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.verify(pw, value, algorithmValue as any) : password.verify(pw, value);
     };
 
-    const verifySync = (pw: string | TypedArray, value: string | TypedArray) => {
+    const verifySync = (pw: string | NodeJS.TypedArray, value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.verifySync(pw, value, algorithmValue as any) : password.verifySync(pw, value);
     };
 

@@ -1,0 +1,95 @@
+------------------
+{ printWidth: 80 }
+------------------
+interface A {
+  a /* prettier-ignore */: B<C>;
+  d /* prettier-ignore */?: E<F>;
+  g: // prettier-ignore
+  H<  I >;
+  j() /* prettier-ignore */ : K<  L >;
+  m: N<O>;
+}
+
+type P = { a /* prettier-ignore */: B<C> };
+
+class Q {
+  a /* prettier-ignore */ : B<  C >;
+}
+
+interface R {
+  a: // comment
+  B<C>;
+  readonly d: /* comment */
+  unique symbol;
+}
+
+interface S {
+  a /* prettier-ignore */: B<C> /* comment */;
+}
+
+interface T {
+  a?: /* comment */
+  B;
+  [c]: /* comment */
+  D;
+  e /* 2 */?: /* 1 */
+  F;
+  g /* comment */?: H;
+  [i /* comment */]: J;
+}
+
+interface U {
+  a /* comment */: B;
+  c /* prettier-ignore */: D<E> /* comment */;
+  f: // comment
+  G;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+interface A {
+  a /* prettier-ignore */: B<C>;
+  d /* prettier-ignore */?: E<F>;
+  g: // prettier-ignore
+  H<  I >;
+  j() /* prettier-ignore */ : K<  L >;
+  m: N<O>;
+}
+
+type P = { a /* prettier-ignore */: B<C> };
+
+class Q {
+  a /* prettier-ignore */ : B<  C >;
+}
+
+interface R {
+  a: // comment
+  B<C>;
+  readonly d: /* comment */
+  unique symbol;
+}
+
+interface S {
+  a /* prettier-ignore */: B<C> /* comment */;
+}
+
+interface T {
+  a?: /* comment */
+  B;
+  [c]: /* comment */
+  D;
+  e /* 2 */?: /* 1 */
+  F;
+  g /* comment */?: H;
+  [i /* comment */]: J;
+}
+
+interface U {
+  a /* comment */: B;
+  c /* prettier-ignore */: D<E> /* comment */;
+  f: // comment
+  G;
+}
+
+===================== End =====================

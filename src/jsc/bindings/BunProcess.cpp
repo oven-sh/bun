@@ -170,15 +170,10 @@ using namespace JSC;
 #endif
 
 using JSGlobalObject = JSC::JSGlobalObject;
-using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
-using JSModuleLoader = JSC::JSModuleLoader;
-using JSModuleRecord = JSC::JSModuleRecord;
 using Identifier = JSC::Identifier;
-using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
-using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
@@ -192,6 +187,7 @@ extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
+extern "C" const char* Bun__typescript_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
@@ -313,6 +309,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     putVersion("icu", icuVersionString());
     putVersion("unicode", unicodeVersionString());
     putVersion("sqlite", String::fromLatin1(Bun__sqlite3_version()));
+    // What `bun check` is a port of.
+    putVersion("typescript", String::fromLatin1(Bun__typescript_version()));
     putVersion("modules", STRINGIFY(REPORTED_NODEJS_ABI_VERSION) ""_s);
 #undef STRINGIFY
 #undef STRINGIFY_IMPL
@@ -834,7 +832,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         auto str = value.getString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         auto policy = WTF::TrailingJunkPolicy::Disallow;
-        auto opt = str.is8Bit() ? WTF::parseInteger<mode_t, uint8_t>(str.span8(), 8, policy) : WTF::parseInteger<mode_t, char16_t>(str.span16(), 8, policy);
+        auto opt = str.is8Bit() ? WTF::parseInteger<mode_t, Latin1Character>(str.span8(), 8, policy) : WTF::parseInteger<mode_t, char16_t>(str.span16(), 8, policy);
         if (!opt.has_value()) return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "mask"_s, value, "must be a 32-bit unsigned integer or an octal string"_s);
         newUmask = opt.value();
     } else {

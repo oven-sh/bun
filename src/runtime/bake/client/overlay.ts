@@ -41,6 +41,7 @@ let needUpdateNavbar = false;
 
 let domShadowRoot: HTMLElement;
 let domModalTitle: HTMLElement;
+let domEyebrow: HTMLElement;
 let domErrorContent: HTMLElement;
 /** For build errors */
 let domFooterText: HTMLElement;
@@ -97,6 +98,8 @@ const textNode = (str = "") => document.createTextNode(str);
 interface ErrorDomNodes {
   root: HTMLElement;
   fileName: Text;
+  /** "3 errors" */
+  count: Text;
   messages: HTMLElement[];
 }
 
@@ -149,35 +152,51 @@ function mountModal() {
   shadow.adoptedStyleSheets = [sheet];
 
   const root = elem("div", { class: "root" }, [
-    elem("div", { class: "modal" }, [
-      // Runtime errors get a switcher to toggle between each runtime error and
-      // the build errors. This is done because runtime errors are very big.
-      // Only visible when a runtime error is present.
-      (domNavBar.root = elem("nav", null, [
-        // TODO: use SVG for this
-        (domNavBar.prevBtn = elemText(
-          "button",
-          { class: "tab-button left", disabled: "true", "aria-label": "Previous error" },
-          "",
-        )),
-        (domNavBar.nextBtn = elemText("button", { class: "tab-button right", "aria-label": "Next error" }, "")),
-        elem("span", null, [
-          (domNavBar.active = elem("code")),
-          textNode(" of "),
-          (domNavBar.total = elem("code")),
-          (domNavBar.label = textNode(" Errors")),
+    elem("div", { class: "shadow" }, [
+      elem("div", { class: "frame" }, [
+        elem("div", { class: "modal" }, [
+          // Runtime errors get a switcher to toggle between each runtime error and
+          // the build errors. This is done because runtime errors are very big.
+          // Only visible when a runtime error is present.
+          (domNavBar.root = elem("nav", null, [
+            // TODO: use SVG for this
+            (domNavBar.prevBtn = elemText(
+              "button",
+              { class: "tab-button left", disabled: "true", "aria-label": "Previous error" },
+              "",
+            )),
+            (domNavBar.nextBtn = elemText("button", { class: "tab-button right", "aria-label": "Next error" }, "")),
+            elem("span", null, [
+              (domNavBar.active = elem("code")),
+              textNode(" of "),
+              (domNavBar.total = elem("code")),
+              (domNavBar.label = textNode(" Errors")),
+            ]),
+            elem("div", { class: "flex" }),
+            (domNavBar.dismissAllBtn = elem("button", { class: "dismiss-all", "aria-label": "Dismiss all errors" })),
+          ])),
+          // The active page's header
+          elem("header", null, [
+            elem("div", null, [
+              (domEyebrow = elem("div", { class: "eyebrow" })),
+              (domModalTitle = elem("div", { class: "title" })),
+            ]),
+            elem("div", { class: "flex" }),
+            elem("div", { class: "hint" }, [
+              textNode("fix a file and save,"),
+              elem("br"),
+              textNode("the page updates on its own"),
+            ]),
+          ]),
+          elem("div", { class: "rule" }),
+          // The active page's content
+          (domErrorContent = elem("div", { class: "error-content" })),
+          elem("footer", null, [
+            (domFooterText = elemText("div", null, "")),
+            elem("div", { class: "flex" }),
+            elem("div", { class: "version" }, [elemText("b", null, "bun"), textNode(" v" + config.bun)]),
+          ]),
         ]),
-        elem("div", { class: "flex" }),
-        (domNavBar.dismissAllBtn = elem("button", { class: "dismiss-all", "aria-label": "Dismiss all errors" })),
-      ])),
-      // The active page's header
-      elem("header", null, [(domModalTitle = elem("div", { class: "title" }))]),
-      // The active page's content
-      (domErrorContent = elem("div", { class: "error-content" })),
-      elem("footer", null, [
-        (domFooterText = elemText("div", null, "")),
-        elem("div", { class: "flex" }),
-        elemText("div", null, "Bun v" + config.bun),
       ]),
     ]),
   ]);
@@ -383,6 +402,26 @@ export function decodeAndAppendServerError(r: DataViewReader) {
 /**
  * Called when the list of errors changes, bundling errors change, or the active error page changes.
  */
+/**
+ * The build errors to show. The server and browser builds each report a file that both bundle,
+ * such as a stylesheet, so the same errors can come from two owners: show them once.
+ */
+function shownBuildErrors() {
+  const seen = new Set<string>();
+  const shown = new Set<FailureOwner>();
+  const files = new Set<string | null>();
+  let messageCount = 0;
+  for (const [owner, failure] of buildErrors) {
+    const key = JSON.stringify([failure.file, failure.messages]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    shown.add(owner);
+    files.add(failure.file);
+    messageCount += failure.messages.length;
+  }
+  return { shown, messageCount, fileCount: files.size };
+}
+
 export function updateErrorOverlay() {
   // if there are no errors, hide the modal
   const totalErrors = runtimeErrors.length + buildErrors.size;
@@ -413,11 +452,18 @@ export function updateErrorOverlay() {
     if (activeErrorIndex >= 0) {
       // Runtime errors
       const err = runtimeErrors[activeErrorIndex];
-      domModalTitle.innerHTML = err.async ? "Unhandled Promise Rejection" : "Runtime Error";
+      domEyebrow.textContent = "Runtime error";
+      domModalTitle.textContent = err.async
+        ? "Unhandled promise rejection"
+        : err.name && err.name !== "Error"
+          ? err.name
+          : "Error";
       updateRuntimeErrorOverlay(err);
     } else {
       // Build errors
-      domModalTitle.innerHTML = `<span class="count">${buildErrors.size}</span> Build Error${buildErrors.size === 1 ? "" : "s"}`;
+      const { messageCount, fileCount } = shownBuildErrors();
+      domEyebrow.textContent = "Build failed";
+      domModalTitle.innerHTML = `<span class="count">${messageCount}</span> error${messageCount === 1 ? "" : "s"} in ${fileCount} file${fileCount === 1 ? "" : "s"}`;
     }
 
     domNavBar.active.textContent = (activeErrorIndex + 1 + (buildErrors.size > 0 ? 1 : 0)).toString();
@@ -540,10 +586,14 @@ function updateBuildErrorOverlay({ remountAll = false }) {
     // Create the element for the root if it does not yet exist.
     if (!dom || remountAll) {
       let fileName;
+      let count;
       const root = elem("div", { class: "b-group" }, [
-        elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [(fileName = textNode())])]),
+        elem("div", { class: "file-head" }, [
+          elem("div", { class: "file-name" }, [(fileName = textNode())]),
+          elem("div", { class: "pill" }, [(count = textNode())]),
+        ]),
       ]);
-      dom = { root, fileName, messages: [] };
+      dom = { root, fileName, count, messages: [] };
       domErrorContent.appendChild(root);
       errorDoms.set(owner, dom);
     } else {
@@ -553,14 +603,21 @@ function updateBuildErrorOverlay({ remountAll = false }) {
 
     // Update the DOM with the new data.
     dom.fileName.textContent = data.file;
+    const n = data.messages.length;
+    dom.count.textContent = `${n} ${n === 1 ? "error" : "errors"}`;
 
-    for (const msg of data.messages) {
-      const domMessage = renderBundlerMessage(msg);
+    for (const group of groupByKind(data.messages)) {
+      const domMessage = group.length === 1 ? renderBundlerMessage(group[0]) : renderBundlerGroup(group);
       dom.root.appendChild(domMessage);
       dom.messages.push(domMessage);
     }
   }
   updatedErrorOwners.clear();
+
+  const { shown } = shownBuildErrors();
+  for (const [owner, dom] of errorDoms) {
+    dom.root.style.display = shown.has(owner) ? "" : "none";
+  }
 }
 
 function mapCodePreviewLine(line: string) {
@@ -571,10 +628,54 @@ function mapCodePreviewLine(line: string) {
 
 const bundleLogLevelToName = ["error", "warn", "note", "debug", "verbose"];
 
+/**
+ * What a message says without its specifics: `Could not resolve: "./a"` is `Could not resolve`.
+ * Messages of one file with the same kind share a card, one row each.
+ */
+function kindOf(msg: BundlerMessage) {
+  return msg.message.replace(/:?\s*"[^"]*"/g, "").trim() || msg.message;
+}
+
+function groupByKind(messages: BundlerMessage[]) {
+  const groups = new Map<string, BundlerMessage[]>();
+  for (const msg of messages) {
+    // A message with notes keeps its own card: the notes are about it alone.
+    const key = msg.notes.length > 0 ? `\0${groups.size}` : `${msg.level}\0${kindOf(msg)}`;
+    let group = groups.get(key);
+    if (!group) groups.set(key, (group = []));
+    group.push(msg);
+  }
+  return groups.values();
+}
+
+function renderBundlerGroup(group: BundlerMessage[]) {
+  const { level } = group[0];
+  const levelName = bundleLogLevelToName[level];
+  return elem(
+    "div",
+    { class: "b-kind" },
+    [
+      elem("div", { class: "message-desc " + levelName }, [
+        elemText("span", { class: "log-label log-" + levelName }, levelName),
+        elemText("span", { class: "log-text" }, kindOf(group[0])),
+        elemText("span", { class: "times" }, `×${group.length}`),
+      ]),
+      // Each row is one error: its level and full message are on the element, for tools and tests.
+      ...group.map(msg =>
+        elem(
+          "div",
+          { class: "b-msg", "data-level": levelName, "data-message": msg.message, title: msg.message },
+          msg.location ? renderCodeLine(msg.location, level) : [renderErrorMessageLine(level, msg.message)],
+        ),
+      ),
+    ].flat(1),
+  );
+}
+
 function renderBundlerMessage(msg: BundlerMessage) {
   return elem(
     "div",
-    { class: "b-msg" },
+    { class: "b-kind b-msg", "data-level": bundleLogLevelToName[msg.level], "data-message": msg.message },
     [
       renderErrorMessageLine(msg.level, msg.message),
       ...(msg.location ? renderCodeLine(msg.location, msg.level) : []),

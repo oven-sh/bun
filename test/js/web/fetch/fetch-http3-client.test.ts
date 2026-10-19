@@ -9,7 +9,7 @@ import { listen } from "node:quic";
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
 // is what makes this suite prove `protocol: "http3"` actually works.
-let server: Server;
+let server: Server<undefined>;
 let base: string;
 const big = Buffer.alloc(256 * 1024, "abcdefghijklmnop");
 const { liveCounts } = fetchH3Internals;
@@ -447,7 +447,7 @@ describe("fetch protocol: http3", () => {
     };
     const res = await fetch(`${base}/headers-echo`, { ...h3, headers: sent });
     expect(res.status).toBe(200);
-    const got: Record<string, string> = await res.json();
+    const got = (await res.json()) as Record<string, string>;
     for (const [name, value] of Object.entries(sent)) {
       expect(got[name.toLowerCase()]).toBe(value);
     }
@@ -723,7 +723,7 @@ describe("fetch protocol: http3", () => {
 // truncated body is the whole body. If the request declared a content-length,
 // the server's lsquic answers that FIN by closing the whole connection.
 describe("aborted upload", () => {
-  let server: Server;
+  let server: Server<undefined>;
   let origin: string;
   let firstChunkRead: PromiseWithResolvers<void>;
   let serverSaw: PromiseWithResolvers<{ body: string; received: number; contentLength: string | null }>;
@@ -842,7 +842,7 @@ describe("interim responses ahead of the final response", () => {
       {
         sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
         transportParams: { maxIdleTimeout: 5 },
-        onheaders(this: any, received: Record<string, string>) {
+        onheaders(this: any, received: NodeJS.Dict<string | string[]>) {
           this.sendInformationalHeaders({ ":status": "100" });
           this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
           if (received[":path"] === "/no-body") {
@@ -862,7 +862,7 @@ describe("interim responses ahead of the final response", () => {
   ])("100 and 103, then the final response of %s", async (path, expected) => {
     const origin = await listenOrigin();
     try {
-      const res = await fetch(`https://127.0.0.1:${origin.address.port}${path}`, h3);
+      const res = await fetch(`https://127.0.0.1:${origin.address!.port}${path}`, h3);
       expect({ status: res.status, final: res.headers.get("x-final"), body: await res.text() }).toEqual(expected);
     } finally {
       // Not close(): it waits for the session that fetch() keeps in its pool.
@@ -892,7 +892,7 @@ test("strips leading and trailing whitespace from a response field value", async
     },
   );
   try {
-    const { headers } = await fetch(`https://127.0.0.1:${origin.address.port}/`, h3);
+    const { headers } = await fetch(`https://127.0.0.1:${origin.address!.port}/`, h3);
     expect({
       ws: headers.get("x-ws"),
       onlyWs: headers.get("x-only-ws"),
@@ -1257,5 +1257,48 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   // stay off QUIC: the live h3 session count stays at 0 after the second fetch.
   expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32234
+test("connects to a server with an Ed25519 certificate", async () => {
+  const fixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const server = Bun.serve({
+    port: 0,
+    tls: { key: Bun.file(join(fixtures, "ed25519-key.pem")), cert: Bun.file(join(fixtures, "ed25519-cert.pem")) },
+    http3: true,
+    http1: false,
+    fetch: () => new Response("ed25519 over h3"),
+  });
+  try {
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
+    expect(await res.text()).toBe("ed25519 over h3");
+  } finally {
+    // As in afterAll: the pooled session drains on lsquic's idle timeout, so stop(true) is not awaited.
+    server.stop(true);
+  }
+});
+
+test("protocol: http3 is refused once tls.DEFAULT_CIPHERS is assigned, as it is with a ciphers option", async () => {
+  const fixture = `
+    import tls from "node:tls";
+    const server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("ok") });
+    const attempt = options =>
+      fetch(server.url, { protocol: "http3", tls: { rejectUnauthorized: false, ...options } }).then(
+        res => res.text(),
+        error => error.code,
+      );
+    const ciphers = "ECDHE-RSA-AES256-GCM-SHA384";
+    const results = { nothing: await attempt(), option: await attempt({ ciphers }) };
+    tls.DEFAULT_CIPHERS = ciphers;
+    results.assigned = await attempt();
+    console.log(JSON.stringify(results));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The HTTP/3 client has one context, which takes no option. QUIC is TLS 1.3, so the list would not apply to it.
+  expect(JSON.parse(stdout)).toEqual({ nothing: "ok", option: "HTTP3Unsupported", assigned: "HTTP3Unsupported" });
   expect(exitCode).toBe(0);
 });

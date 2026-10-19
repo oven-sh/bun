@@ -142,7 +142,7 @@ pub struct Options<'a> {
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
-    /// The output cannot evaluate `import.meta.require` (not for Bun, or CommonJS): read it as `require`.
+    /// The output is not an ES module that Bun runs, so it cannot evaluate `import.meta.require`: print it as `require`.
     pub lower_import_meta_require: bool,
 
     /// When using react fast refresh or server components, the framework is
@@ -1007,8 +1007,10 @@ impl<'a> Parser<'a> {
             before.push(js_ast::Part::default());
 
             if p.has_import_meta && !p.is_source_runtime() {
-                p.is_written_by_bun =
-                    Self::is_written_by_bun(&source.contents, !hashbang.is_empty());
+                p.is_written_by_bun = matches!(
+                    Self::has_bun_pragma(&source.contents, !hashbang.is_empty()),
+                    Some(crate::AlreadyBundled::Bun | crate::AlreadyBundled::Bytecode)
+                );
                 p.read_require_aliases(stmts);
             }
         }
@@ -2550,21 +2552,7 @@ impl<'a> Parser<'a> {
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
     // called from gated `_parse` body above
-    /// Whether the file starts with the `// @bun` line of Bun's bundler. `has_bun_pragma` also takes `// @bundle`.
-    fn is_written_by_bun(contents: &[u8], has_hashbang: bool) -> bool {
-        let line = if has_hashbang {
-            match strings::index_of_char_usize(contents, b'\n') {
-                Some(end) => &contents[end + 1..],
-                None => return false,
-            }
-        } else {
-            contents
-        };
-        line.strip_prefix(b"// @bun")
-            .is_some_and(|rest| matches!(rest.first(), None | Some(b' ' | b'\r' | b'\n')))
-    }
-
-    fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
+    pub fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();
 

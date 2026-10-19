@@ -155,6 +155,14 @@ impl SideEffects {
                     return None;
                 }
             }
+            // As removable as the `import.meta.require` that it replaces.
+            ExprData::ESpecial(E::Special::ImportMetaRequire(_)) => {
+                if p.options.features.auto_polyfill_require {
+                    let runtime_require = p.runtime_identifier_ref(b"__require");
+                    p.ignore_usage(runtime_require);
+                }
+                return None;
+            }
             ExprData::EIdentifier(ident) => {
                 if ident.must_keep_due_to_with_stmt() {
                     return Some(expr);

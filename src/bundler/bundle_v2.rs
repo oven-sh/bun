@@ -2065,25 +2065,6 @@ pub mod bv2_impl {
             // outlives `BundleV2`.
             self.transpiler.log_mut()
         }
-
-        /// A `RUNTIME_IF_UNRESOLVED` record did not resolve. Only a debug line says so: the dev server's log is for failures.
-        fn note_left_for_run_time(
-            &self,
-            source: &bun_ast::Source,
-            loc: bun_ast::Loc,
-            specifier: &[u8],
-        ) {
-            if self.dev_server.is_none() {
-                self.transpiler.log_mut().add_debug_fmt(
-                    Some(source),
-                    loc,
-                    format_args!(
-                        "Could not resolve \"{}\" at build time. The call stays for run time.",
-                        bstr::BStr::new(specifier)
-                    ),
-                );
-            }
-        }
     }
 
     pub(crate) struct ReachableFileVisitor<'a> {
@@ -2091,6 +2072,7 @@ pub mod bv2_impl {
         pub(crate) visited: DynamicBitSet,
         pub(crate) all_import_records: &'a mut [import_record::List<'a>],
         pub(crate) all_loaders: &'a [Loader],
+        pub(crate) all_sources: &'a [bun_ast::Source],
         pub(crate) all_urls_for_css: &'a [&'a [u8]],
         pub(crate) redirects: &'a [u32],
         pub(crate) dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
@@ -2124,6 +2106,19 @@ pub mod bv2_impl {
 
     impl<'a> ReachableFileVisitor<'a> {
         const MAX_REDIRECTS: usize = 64;
+
+        /// Whether the file is the function wrapper that Bun writes for `--format=cjs --target=bun`.
+        #[cold]
+        fn is_bun_cjs_wrapper(source: &bun_ast::Source) -> bool {
+            let contents = source.contents();
+            matches!(
+                bun_js_parser::Parser::has_bun_pragma(contents, contents.starts_with(b"#!")),
+                Some(
+                    bun_js_parser::AlreadyBundled::BunCjs
+                        | bun_js_parser::AlreadyBundled::BytecodeCjs
+                )
+            )
+        }
 
         // Find all files reachable from all entry points. This order should be
         // deterministic given that the entry point order is deterministic, since the
@@ -2254,6 +2249,19 @@ pub mod bv2_impl {
                             let import_record = &mut self.all_import_records
                                 [import_record_list_id.get() as usize]
                                 .as_mut_slice()[ir_idx];
+                            // The bundler does not read a `// @bun @bun-cjs` file as a module: a `require` that Bun wrote through `import.meta.require` onto it stays a call for run time.
+                            if import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED)
+                                && import_record.source_index.is_valid()
+                                && Self::is_bun_cjs_wrapper(
+                                    &self.all_sources[import_record.source_index.get() as usize],
+                                )
+                            {
+                                import_record.source_index = Index::INVALID;
+                                import_record.path = Fs::Path::init(import_record.original_path);
+                                continue;
+                            }
                             // Mark if the file is imported by JS and its URL is inlined for CSS
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
@@ -2392,6 +2400,7 @@ pub mod bv2_impl {
                 redirects: self.graph.ast.items_redirect_import_record_index(),
                 all_import_records,
                 all_loaders: self.graph.input_files.items_loader(),
+                all_sources: self.graph.input_files.items_source(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 split_require: self.transpiler.options.split_require,
@@ -2784,35 +2793,12 @@ pub mod bv2_impl {
                 ) {
                     Ok(r) => break r,
                     Err(err) => {
-                        // A `require` that Bun wrote through `import.meta.require` stays a run-time call, after the same retry.
-                        if self.graph.ast.items_import_records()
+                        // A `require` that Bun wrote through `import.meta.require` stays a call for run time.
+                        let stays_for_run_time = self.graph.ast.items_import_records()
                             [import_record.importer_source_index as usize]
                             .as_slice()[import_record.import_record_index as usize]
                             .flags
-                            .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED)
-                        {
-                            if err == _resolver::Error::ModuleNotFound
-                                && self.dev_server.is_some()
-                                && !had_busted_dir_cache
-                                // SAFETY: see `transpiler` note above.
-                                && unsafe { &mut *transpiler }
-                                    .resolver
-                                    .bust_dir_cache_from_specifier(
-                                        &import_record.source_file,
-                                        &import_record.specifier,
-                                    )
-                            {
-                                had_busted_dir_cache = true;
-                                continue;
-                            }
-                            self.note_left_for_run_time(
-                                &self.graph.input_files.items_source()
-                                    [import_record.importer_source_index as usize],
-                                import_record.range.loc,
-                                &import_record.specifier,
-                            );
-                            return;
-                        }
+                            .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED);
 
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
@@ -2843,12 +2829,14 @@ pub mod bv2_impl {
                                 .expect("oom");
 
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                                unsafe {
-                                    self.graph.ast.items_parts_mut()
-                                        [import_record.importer_source_index as usize]
-                                        .set_len((0) as usize)
-                                };
+                                if !stays_for_run_time {
+                                    // SAFETY: truncating to len 0 never exposes uninitialized elements.
+                                    unsafe {
+                                        self.graph.ast.items_parts_mut()
+                                            [import_record.importer_source_index as usize]
+                                            .set_len((0) as usize)
+                                    };
+                                }
                             }
                         }
 
@@ -2879,10 +2867,12 @@ pub mod bv2_impl {
                             // This may cause broken code to write.
                             // However, doing this means we tell them all the resolve errors
                             // Rather than just the first one.
-                            record.path.is_disabled = true;
-                            record
-                                .flags
-                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                            if !stays_for_run_time {
+                                record.path.is_disabled = true;
+                                record
+                                    .flags
+                                    .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                            }
                         }
                         let source: Option<&bun_ast::Source> = Some(
                             &self.graph.input_files.items_source()
@@ -6935,30 +6925,6 @@ pub mod bv2_impl {
                     ) {
                         Ok(r) => break r,
                         Err(err) => {
-                            // A `require` that Bun wrote through `import.meta.require` stays a run-time call, after the same retry.
-                            if import_record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED)
-                            {
-                                if err == _resolver::Error::ModuleNotFound
-                                    && self.bun_watcher.is_some()
-                                    && !had_busted_dir_cache
-                                    && transpiler.resolver.bust_dir_cache_from_specifier(
-                                        source.path.text,
-                                        import_record.path.text,
-                                    )
-                                {
-                                    had_busted_dir_cache = true;
-                                    continue 'inner;
-                                }
-                                self.note_left_for_run_time(
-                                    source,
-                                    import_record.range.loc,
-                                    import_record.path.text,
-                                );
-                                continue 'outer;
-                            }
-
                             // borrowck — `log_for_resolution_failures` returns
                             // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
                             // deref (DevServer vtable or `transpiler.log`). Detach via
@@ -7006,10 +6972,16 @@ pub mod bv2_impl {
                             // This may cause broken code to write.
                             // However, doing this means we tell them all the resolve errors
                             // Rather than just the first one.
-                            import_record.path.is_disabled = true;
-                            import_record
+                            // A `require` that Bun wrote through `import.meta.require` stays a call for run time.
+                            if !import_record
                                 .flags
-                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                                .contains(bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED)
+                            {
+                                import_record.path.is_disabled = true;
+                                import_record
+                                    .flags
+                                    .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                            }
 
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;

@@ -262,7 +262,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
-    /// The file starts with the `// @bun` line of Bun's bundler. Set in a bundle parse of a file with `import.meta`.
+    /// The file starts with the `// @bun` line of an ES module that Bun's bundler wrote (`has_bun_pragma`). Set in a bundle parse of a file with `import.meta`.
     pub(crate) is_written_by_bun: bool,
     /// `(loc of the binding, declared symbol)` of each declaration that `read_require_aliases` read, in source order.
     pub(crate) require_aliases: Vec<(bun_ast::Loc, Ref)>,
@@ -5098,16 +5098,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let decl = &mut local.decls[at];
             if let (Some(name_loc), Some(import_meta)) = (key_loc, decl.value) {
                 decl.binding = binding;
-                decl.value = Some(self.new_expr(
-                    E::Dot {
-                        target: import_meta,
-                        name: E::Str::new(b"require"),
-                        name_loc,
-                        can_be_removed_if_unused: true,
-                        ..Default::default()
-                    },
-                    import_meta.loc,
-                ));
+                decl.value = Some(self.import_meta_require_dot(import_meta, name_loc));
             }
 
             let require = js_ast::scope::Member {
@@ -5130,6 +5121,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .binary_search_by_key(&declare_loc.start, |alias| alias.0.start)
             .ok()?;
         Some((index as u32, self.require_aliases[index].1))
+    }
+
+    /// `import.meta.require` as the visit pass leaves it: removable when unused.
+    pub(crate) fn import_meta_require_dot(
+        &mut self,
+        import_meta: Expr,
+        name_loc: bun_ast::Loc,
+    ) -> Expr {
+        self.new_expr(
+            E::Dot {
+                target: import_meta,
+                name: E::Str::new(b"require"),
+                name_loc,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            },
+            import_meta.loc,
+        )
     }
 
     /// Hashed generated-symbol name; arena-owned for symbol lifetime.
@@ -5423,6 +5432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             source_index: bun_ast::Index::INVALID,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
+            require_alias: bun_ast::import_record::RequireAliasOptional::NONE,
         });
         u32::try_from(index).expect("int cast")
     }
@@ -6325,8 +6335,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EArrow(_)
             | js_ast::ExprData::EImportMeta(_) => return true,
 
-            // A bundle always gives `require` a value, so an unused `var x = require` goes like `var x = import.meta.require`.
-            js_ast::ExprData::ERequireCallTarget => return self.options.bundle,
+            // As removable as the `import.meta.require` that it replaces.
+            js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(_)) => return true,
 
             js_ast::ExprData::EInlinedEnum(e) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&e.value);

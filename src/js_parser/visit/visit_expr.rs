@@ -2527,35 +2527,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)] // PERF(port:frame): an `Expr` result or an `ExprIn` parameter costs every `e_call`.
     fn import_meta_require_call(p: &mut Self, e: &mut Expr, name_loc: bun_ast::Loc) -> bool {
-        if p.is_written_by_bun && Self::read_as_require_call(p, e) {
+        if p.is_written_by_bun && Self::read_as_require_call(p, e, None) {
             return true;
         }
 
         let mut call = e.data.e_call().expect("infallible: variant checked");
         let loc = call.target.loc;
         if !p.options.lower_import_meta_require {
-            call.target = p.new_expr(
-                E::Dot {
-                    target: Expr {
-                        data: Data::EImportMeta(E::ImportMeta {}),
-                        loc,
-                    },
-                    name: E::Str::new(b"require"),
-                    name_loc,
-                    can_be_removed_if_unused: true,
-                    ..Default::default()
-                },
+            let import_meta = Expr {
+                data: Data::EImportMeta(E::ImportMeta {}),
                 loc,
-            );
+            };
+            call.target = p.import_meta_require_dot(import_meta, name_loc);
             return false;
         }
 
-        // The output has no `import.meta.require`: a call of `require` at run time, like the end of the `ERequireCallTarget` block.
+        // The marker stays the target: the printer spells it as `require`, and no later visit reads the call as `require("x")`.
         if p.is_control_flow_dead {
             *e = p.new_expr(E::Null {}, e.loc);
             return true;
         }
-        call.target = p.value_for_require(name_loc);
         call.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
         if let Some(first) = call.args.slice().first()
             && !matches!(first.data, Data::EString(..))
@@ -2573,12 +2564,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn require_alias_call(p: &mut Self, e: &mut Expr, index: u32) -> bool {
-        if Self::read_as_require_call(p, e) {
+        let declared = p.require_aliases[index as usize].1;
+        if Self::read_as_require_call(p, e, Some(declared)) {
             return true;
         }
 
         let mut call = e.data.e_call().expect("infallible: variant checked");
-        let declared = p.require_aliases[index as usize].1;
         p.record_usage(declared);
         call.target = p.handle_identifier(
             call.target.loc,
@@ -2594,8 +2585,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// Makes the call `e`, which Bun wrote through `import.meta.require`, a `require("x")` when it has one string argument.
-    fn read_as_require_call(p: &mut Self, e: &mut Expr) -> bool {
+    /// Makes the call `e`, which Bun wrote through `import.meta.require`, a `require("x")` when it has one string argument. `alias` is the variable that the call names.
+    fn read_as_require_call(p: &mut Self, e: &mut Expr, alias: Option<Ref>) -> bool {
         let call = e.data.e_call().expect("infallible: variant checked");
         if call.optional_chain.is_some()
             || call.args.len_u32() != 1
@@ -2603,7 +2594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return false;
         }
-        let first = call.args.slice()[0];
+        let first = Self::fold_specifier(p, call.args.slice()[0]);
         if !matches!(first.data, Data::EString(..)) {
             return false;
         }
@@ -2614,14 +2605,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = p.transpose_require(first, &TransposeState::default());
         p.options.features.unwrap_commonjs_to_esm = unwrap;
 
-        let mut flags = bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED;
-        if !p.options.lower_import_meta_require {
-            flags |= bun_ast::ImportRecordFlags::IMPORT_META_REQUIRE;
-        }
+        // Where the output can evaluate `import.meta.require`, a call that stays for run time prints as Bun wrote it.
+        let as_written = !p.options.lower_import_meta_require;
         for record in &mut p.import_records.items_mut()[first_record..] {
-            record.flags.insert(flags);
+            record.flags.insert(
+                bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                    | bun_ast::ImportRecordFlags::RUNTIME_IF_UNRESOLVED,
+            );
+            match alias {
+                Some(alias) if as_written => {
+                    record.require_alias =
+                        bun_ast::import_record::RequireAlias::init(alias.inner_index())
+                            .to_optional();
+                }
+                None if as_written => {
+                    record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IMPORT_META_REQUIRE);
+                }
+                _ => {}
+            }
         }
         true
+    }
+
+    /// The fold that `e_call` forces on the argument of `require()`, for an argument that is already visited.
+    fn fold_specifier(p: &Self, expr: Expr) -> Expr {
+        use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
+        match expr.data {
+            Data::EBinary(binary) if binary.op == Op::BinAdd => {
+                let left = Self::fold_specifier(p, binary.left);
+                let right = Self::fold_specifier(p, binary.right);
+                fold_string_addition(left, right, p.arena, FoldStringAdditionKind::Normal)
+                    .unwrap_or(expr)
+            }
+            Data::ETemplate(mut template) if template.tag.is_none() => {
+                for part in template.parts_mut() {
+                    part.value = Self::fold_specifier(p, part.value);
+                }
+                template.fold(p.arena, expr.loc)
+            }
+            _ => expr,
+        }
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.

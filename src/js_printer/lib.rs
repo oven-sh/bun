@@ -1323,6 +1323,8 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// The file being printed: an import record's `require_alias` is a symbol of it.
+    pub source_index: u32,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1408,6 +1410,7 @@ impl<'a> Default for Options<'a> {
             to_esm_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
+            source_index: 0,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -2949,6 +2952,12 @@ pub(crate) mod __gated_printer {
                         mi.flags.contains_import_meta = true;
                     }
                     self.print(b"import.meta.require");
+                } else if let Some(alias) = record.require_alias.get() {
+                    self.print_symbol(Ref::new(
+                        alias.get(),
+                        self.options.source_index,
+                        bun_ast::RefTag::Symbol,
+                    ));
                 } else if let Some(ref_) = self.options.require_ref {
                     self.print_symbol(ref_);
                 } else {
@@ -3422,9 +3431,17 @@ pub(crate) mod __gated_printer {
                             true,
                         );
                     }
-                    E::Special::ImportMetaRequire(_) | E::Special::RequireAlias(_) => {
-                        unreachable!("`e_call` replaces its marker")
+                    E::Special::ImportMetaRequire(_) => {
+                        self.print_expr(
+                            Expr {
+                                data: ExprData::ERequireCallTarget,
+                                loc: expr.loc,
+                            },
+                            level,
+                            in_flags,
+                        );
                     }
+                    E::Special::RequireAlias(_) => unreachable!("`e_call` replaces its marker"),
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
                     self.print_commonjs_export_identifier(*id, expr.loc, false);

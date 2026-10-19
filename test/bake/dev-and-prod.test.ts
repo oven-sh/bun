@@ -1,6 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { writeFileSync } from "node:fs";
-import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -203,6 +203,17 @@ devTest("using runtime import", {
   },
 });
 // Bun writes `require` into ES-module output through `import.meta`. A page over such files gets what they require.
+const writtenByBun = {
+  // `bun build --no-bundle --target=bun`
+  "dist/lib.js": `var {require}=import.meta;const config = require("./config.json");\nexport const name = config.name;\n`,
+  "dist/config.json": `{ "name": "world" }`,
+  // `bun build --splitting --target=bun`
+  "dist/index.js": `// @bun\nfunction port() {\n  return import.meta.require("./settings-xzncmjae.js").port;\n}\nexport {\n  port\n};\n`,
+  "dist/settings-xzncmjae.js": `// @bun\nvar port = 3000;\nexport {\n  port\n};\n`,
+  // `bun build --target=bun`
+  "dist/helper.js": `// @bun\nvar __require = import.meta.require;\nfunction greet() {\n  return __require("./greeting.cjs").greeting;\n}\nexport {\n  greet\n};\n`,
+  "dist/greeting.cjs": `exports.greeting = "hello";`,
+};
 devAndProductionTest("files that bun wrote require through import.meta", {
   files: {
     "index.html": emptyHtmlFile({
@@ -211,18 +222,53 @@ devAndProductionTest("files that bun wrote require through import.meta", {
     "index.ts": `
       import { name } from "./dist/lib.js";
       import { port } from "./dist/index.js";
-      console.log(name + " " + port());
+      import { greet } from "./dist/helper.js";
+      console.log(greet() + " " + name + " " + port());
     `,
-    // \`bun build --no-bundle --target=bun\`
-    "dist/lib.js": `var {require}=import.meta;const config = require("./config.json");\nexport const name = config.name;\n`,
-    "dist/config.json": `{ "name": "world" }`,
-    // \`bun build --splitting --target=bun\`
-    "dist/index.js": `// @bun\nfunction port() {\n  return import.meta.require("./settings-xzncmjae.js").port;\n}\nexport {\n  port\n};\n`,
-    "dist/settings-xzncmjae.js": `// @bun\nvar port = 3000;\nexport {\n  port\n};\n`,
+    ...writtenByBun,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("world 3000");
+    await c.expectMessage("hello world 3000");
+  },
+});
+// The server side of the dev server has no `import.meta.require` either: it prints `import.meta` as an object of its own.
+devTest("files that bun wrote require through import.meta, in a route", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { name } from "../dist/lib.js";
+      import { port } from "../dist/index.js";
+      import { greet } from "../dist/helper.js";
+      export default function (req, meta) {
+        return new Response(greet() + " " + name + " " + port());
+      }
+    `,
+    ...writtenByBun,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("hello world 3000");
+  },
+});
+// A string that does not resolve stays a call. The dev server builds the file again when the file is there.
+devTest("a file that bun wrote requires a file that is not there yet", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { port } from "./dist/index.js";
+      console.log("port " + port());
+    `,
+    "dist/index.js": `// @bun\nfunction port() {\n  try {\n    return import.meta.require("./settings.js").port;\n  } catch {\n    return "none";\n  }\n}\nexport {\n  port\n};\n`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("port none");
+    await c.expectReload(async () => {
+      await dev.write("dist/settings.js", `export const port = 3000;`);
+    });
+    await c.expectMessage("port 3000");
   },
 });
 devTest("hmr handles rapid consecutive edits", {

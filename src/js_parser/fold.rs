@@ -618,15 +618,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !p.is_source_runtime()
                         && !p.method_call_must_be_replaced_with_undefined
                     {
-                        if identifier_opts.is_call_target() {
-                            if p.is_written_by_bun || p.options.lower_import_meta_require {
-                                return Some(Expr {
-                                    data: js_ast::ExprData::ESpecial(
-                                        E::Special::ImportMetaRequire(name_loc),
-                                    ),
-                                    loc: target.loc,
-                                });
-                            }
+                        let is_marker = if identifier_opts.is_call_target() {
+                            // `e_call` decides what the call is when it has the arguments.
+                            p.is_written_by_bun || p.options.lower_import_meta_require
                         } else if p.options.lower_import_meta_require
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                             && !identifier_opts.is_delete_target()
@@ -634,7 +628,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if p.options.features.allow_runtime {
                                 p.record_usage_of_runtime_require();
                             }
-                            return Some(p.value_for_require(name_loc));
+                            true
+                        } else {
+                            false
+                        };
+                        if is_marker {
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(
+                                    name_loc,
+                                )),
+                                loc: target.loc,
+                            });
                         }
                     }
 

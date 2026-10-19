@@ -783,6 +783,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             source_index: Default::default(),
             original_path: b"",
             flags: Default::default(),
+            require_alias: bun_ast::import_record::RequireAliasOptional::NONE,
         });
     }
 
@@ -3091,6 +3092,7 @@ impl<'a> Parser<'a> {
                 source_index: Default::default(),
                 original_path: b"",
                 flags: Default::default(),
+                require_alias: bun_ast::import_record::RequireAliasOptional::NONE,
             });
             Ok(idx)
         } else {

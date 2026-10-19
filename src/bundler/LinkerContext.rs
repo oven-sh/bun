@@ -2456,6 +2456,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            source_index: source_index.get(),
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),

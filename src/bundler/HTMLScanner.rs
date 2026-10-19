@@ -116,6 +116,7 @@ impl<'a> HTMLScanner<'a> {
             source_index: AstIndex::default(),
             original_path: b"",
             flags: ImportRecordFlags::default(),
+            require_alias: bun_ast::import_record::RequireAliasOptional::NONE,
         };
 
         self.import_records.push(record);

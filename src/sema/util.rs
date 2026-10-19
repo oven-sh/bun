@@ -585,7 +585,8 @@ pub(crate) fn spread_of(window: Window, hash: u64) -> u64 {
 pub(crate) struct InWindow;
 
 impl Placement for InWindow {
-    const LEAST: usize = 8;
+    /// A table that grows stays allocated beside the bigger one, so a smaller start takes more memory, not less.
+    const LEAST: usize = 32;
     #[inline]
     fn start(tag: u32) -> usize {
         tag as usize

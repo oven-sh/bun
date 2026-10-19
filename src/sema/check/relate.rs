@@ -15,7 +15,7 @@ use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::shortcuts::task_fact;
 use super::*;
 use crate::util::SharedSort;
-use crate::util::{FxHashSet, FxHasher};
+use crate::util::{FxHashSet, FxHasher, Window, Windowed};
 use smallvec::SmallVec;
 use std::hash::Hasher;
 use std::ops::{BitAnd, BitAndAssign};
@@ -142,6 +142,16 @@ impl Key {
     #[inline]
     fn is_hash_of_own_ids(self) -> bool {
         self.2 & GENERIC_KEY != 0 && self.0.is_local()
+    }
+}
+
+impl Windowed for Key {
+    #[inline]
+    fn window(&self) -> Window {
+        match self.2 & GENERIC_KEY {
+            0 => Window::of_type(self.0.0.max(self.1.0)),
+            _ => Window::of_hash(self),
+        }
     }
 }
 

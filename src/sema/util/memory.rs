@@ -976,39 +976,163 @@ struct Retired<C> {
     next: *mut Retired<C>,
 }
 
-/// `N` series of cell slices. Readers get the newest slice of a series without a lock. Each series is a shard of a
+/// The newest `Slice` of each series of a `Newest`, or null for a series that is still empty.
+///
+/// # Safety
+/// Every series has one pointer, which starts out null. `existing`, `entry` and `for_each` return that pointer, and the
+/// implementation never writes to it.
+pub unsafe trait Series<C, A>: Sized {
+    fn new_in(alloc: A) -> Self;
+    /// Returns the pointer of `series` for reading, or `None` if it's known to be null.
+    fn existing(&self, series: usize, order: Ordering) -> Option<&AtomicPtr<C>>;
+    /// Returns the pointer of `series` for writing.
+    fn entry(&self, series: usize) -> &AtomicPtr<C>;
+    fn for_each(&self, visit: impl FnMut(&AtomicPtr<C>));
+}
+
+/// A fixed number of series. The pointers are adjacent, so eight share a cache line, and threads don't write anything
+/// else on those lines.
+pub struct Fixed<C, const N: usize>([AtomicPtr<C>; N]);
+
+// SAFETY: the pointer of a series is the array element with its number.
+unsafe impl<C, A, const N: usize> Series<C, A> for Fixed<C, N> {
+    fn new_in(_: A) -> Self {
+        Fixed([const { AtomicPtr::new(null_mut()) }; N])
+    }
+    #[inline(always)]
+    fn existing(&self, series: usize, _: Ordering) -> Option<&AtomicPtr<C>> {
+        Some(&self.0[series])
+    }
+    #[inline(always)]
+    fn entry(&self, series: usize) -> &AtomicPtr<C> {
+        &self.0[series]
+    }
+    fn for_each(&self, visit: impl FnMut(&AtomicPtr<C>)) {
+        self.0.iter().for_each(visit);
+    }
+}
+
+/// What a `Growing` stores for a series.
+struct Head<C> {
+    newest: AtomicPtr<C>,
+    count: AtomicU32,
+}
+
+/// Number of `Head`s in the first chunk of a `Growing`, as a power of two.
+const FIRST_HEADS_BITS: u32 = 6;
+
+type Heads<C, A> = Chunks<Head<C>, FIRST_HEADS_BITS, A>;
+
+/// A number of series that keeps growing, with a counter for each. The series are numbered from 0 in each of four
+/// groups. The top bits of a series number select the group: see `Growing::series`.
+pub struct Growing<C, A: Allocator + Clone>([Heads<C, A>; 4]);
+
+impl<C, A: Allocator + Clone> Growing<C, A> {
+    const GROUP_SHIFT: u32 = 28;
+
+    /// Returns the number of series `index` of `group`. `index` must be below 2^28.
+    #[inline(always)]
+    pub fn series(group: usize, index: u32) -> usize {
+        (group << Self::GROUP_SHIFT) | index as usize
+    }
+
+    #[inline(always)]
+    fn split(&self, series: usize) -> (&Heads<C, A>, u32) {
+        let index = series & ((1 << Self::GROUP_SHIFT) - 1);
+        (&self.0[(series >> Self::GROUP_SHIFT) % 4], index as u32)
+    }
+
+    #[inline]
+    fn head(&self, series: usize) -> &Head<C> {
+        fn zeroed<C, A: Allocator>(len: usize, alloc: A) -> Box<[Head<C>], A> {
+            // SAFETY: all zero bytes are a null pointer and the count 0.
+            unsafe { Box::new_zeroed_slice_in(len, alloc).assume_init() }
+        }
+        let (heads, index) = self.split(series);
+        // SAFETY: inside the chunk, which `zeroed` has initialized and the drop frees.
+        unsafe { &*heads.slot_or_install(index, zeroed) }
+    }
+
+    /// Returns the counter of `series`, which starts at 0.
+    #[inline]
+    pub fn count(&self, series: usize) -> &AtomicU32 {
+        &self.head(series).count
+    }
+}
+
+// SAFETY: the pointer of a series is in its `Head`, which is zeroed when its chunk is allocated and never moves.
+unsafe impl<C, A: Allocator + Clone> Series<C, A> for Growing<C, A> {
+    fn new_in(alloc: A) -> Self {
+        Growing(std::array::from_fn(|_| Chunks::new_in(alloc.clone())))
+    }
+    #[inline(always)]
+    fn existing(&self, series: usize, order: Ordering) -> Option<&AtomicPtr<C>> {
+        let (heads, index) = self.split(series);
+        let Located { chunk, offset } = Heads::<C, A>::locate(index);
+        let base = heads.bases[chunk].load(order);
+        if base.is_null() {
+            return None;
+        }
+        // SAFETY: as in `head`.
+        Some(unsafe { &(*base.wrapping_add(offset)).newest })
+    }
+    #[inline(always)]
+    fn entry(&self, series: usize) -> &AtomicPtr<C> {
+        &self.head(series).newest
+    }
+    fn for_each(&self, mut visit: impl FnMut(&AtomicPtr<C>)) {
+        let bases = (self.0.iter()).flat_map(|heads| heads.bases.iter().enumerate());
+        for (chunk, base) in bases {
+            let base = base.load(Ordering::Acquire);
+            if !base.is_null() {
+                let len = Heads::<C, A>::len_of(chunk);
+                // SAFETY: the chunk starts `len` after its base and has `len` heads. See `head`.
+                let heads = unsafe { std::slice::from_raw_parts(base.wrapping_add(len), len) };
+                heads.iter().for_each(|head| visit(&head.newest));
+            }
+        }
+    }
+}
+
+/// Several series of cell slices. Readers get the newest slice of a series without a lock. Each series is a shard of a
 /// table, and a bigger slice replaces the newest one when the shard fills up. Older slices stay allocated until
 /// `forget_older`, because a reader may still be using one.
-pub struct Newest<C, A: Allocator + Clone = Global, const N: usize = 1> {
-    /// The newest `Slice` of each series, or null if the series is still empty. The pointers are adjacent, so eight
-    /// share a cache line, and threads don't write anything else on those lines.
-    newest: [AtomicPtr<C>; N],
+pub struct Newest<C, A: Allocator + Clone = Global, S: Series<C, A> = Fixed<C, 1>> {
+    newest: S,
     retired: AtomicPtr<Retired<C>>,
     alloc: A,
     owns: Owns<C>,
 }
 
-impl<C: Zeroed, A: Allocator + Clone + Default, const N: usize> Default for Newest<C, A, N> {
+impl<C: Zeroed, A: Allocator + Clone + Default, S: Series<C, A>> Default for Newest<C, A, S> {
     fn default() -> Self {
         Self::new_in(A::default())
     }
 }
 
-impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
+impl<C: Zeroed, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
     pub fn new_in(alloc: A) -> Self {
         Newest {
-            newest: [const { AtomicPtr::new(null_mut()) }; N],
+            newest: S::new_in(alloc.clone()),
             retired: AtomicPtr::new(null_mut()),
             alloc,
             owns: PhantomData,
         }
     }
 
+    #[inline]
+    pub fn series(&self) -> &S {
+        &self.newest
+    }
+
     /// Returns the newest slice of `series`, or an empty slice if there isn't one yet. Pass `Relaxed` only if something
     /// else has ordered the last `replace` before this call.
     #[inline]
     pub fn get(&self, series: usize, order: Ordering) -> &[C] {
-        let newest = Slice(self.newest[series].load(order));
+        let Some(newest) = self.newest.existing(series, order) else {
+            return &[];
+        };
+        let newest = Slice(newest.load(order));
         if newest.0.is_null() {
             return &[];
         }
@@ -1031,13 +1155,13 @@ impl<C: Zeroed, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
         let cells = unsafe { std::slice::from_raw_parts(first, len) };
         touch_pages(cells);
         fill(cells);
-        let old = self.newest[series].swap(Slice::new(first, len).0, Ordering::Release);
+        let old = (self.newest.entry(series)).swap(Slice::new(first, len).0, Ordering::Release);
         self.retire(Slice(old));
         cells
     }
 }
 
-impl<C, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
+impl<C, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
     /// Adds `slice` to the retired list. Any thread may call this, because different series can be replaced at the same
     /// time.
     fn retire(&self, slice: Slice<C>) {
@@ -1078,15 +1202,13 @@ impl<C, A: Allocator + Clone, const N: usize> Newest<C, A, N> {
 
     /// Frees all of them.
     pub fn clear(&mut self) {
-        for series in 0..N {
-            let newest = std::mem::replace(self.newest[series].get_mut(), null_mut());
-            self.retire(Slice(newest));
-        }
+        (self.newest)
+            .for_each(|newest| self.retire(Slice(newest.swap(null_mut(), Ordering::Relaxed))));
         self.forget_older();
     }
 }
 
-impl<C, A: Allocator + Clone, const N: usize> Drop for Newest<C, A, N> {
+impl<C, A: Allocator + Clone, S: Series<C, A>> Drop for Newest<C, A, S> {
     fn drop(&mut self) {
         self.clear();
     }
@@ -1663,11 +1785,13 @@ mod tests {
         drop((cells, vec));
         assert_eq!(count(), 0);
 
-        let mut newest = Newest::<AtomicU32, _, 2>::new_in(alloc);
+        let mut newest = Newest::<AtomicU32, _, Fixed<_, 2>>::new_in(alloc);
         let first = newest.replace(1, 4, |_| {});
         newest.replace(1, 8, |_| {});
         newest.replace(0, 1, |_| {});
-        let len = |newest: &Newest<_, _, 2>, series| newest.get(series, Ordering::Relaxed).len();
+        let len = |newest: &Newest<_, _, Fixed<_, 2>>, series| {
+            newest.get(series, Ordering::Relaxed).len()
+        };
         assert_eq!((first.len(), len(&newest, 1), len(&newest, 0)), (4, 8, 1));
         // One allocation per slice, plus the list node for the retired slice.
         assert_eq!(count(), 4);
@@ -1676,6 +1800,34 @@ mod tests {
         newest.clear();
         assert_eq!((len(&newest, 1), len(&newest, 0), count()), (0, 0, 0));
         newest.replace(0, 2, |_| {});
+        drop(newest);
+        assert_eq!(count(), 0);
+
+        type Many<'a> = Growing<AtomicU32, Counting<'a>>;
+        let mut newest = Newest::<AtomicU32, _, Many<'_>>::new_in(alloc);
+        let (near, far, other) = (
+            Many::series(0, 3),
+            Many::series(0, 5000),
+            Many::series(3, 3),
+        );
+        let len =
+            |newest: &Newest<_, _, Many<'_>>, series| newest.get(series, Ordering::Relaxed).len();
+        assert_eq!((len(&newest, near), len(&newest, far), count()), (0, 0, 0));
+        newest.replace(near, 4, |_| {});
+        newest.replace(far, 2, |_| {});
+        newest.replace(other, 1, |_| {});
+        newest.replace(near, 8, |_| {});
+        newest.series().count(near).store(7, Ordering::Relaxed);
+        let lens = (len(&newest, near), len(&newest, far), len(&newest, other));
+        assert_eq!(lens, (8, 2, 1));
+        let counter = |series| newest.series().count(series).load(Ordering::Relaxed);
+        assert_eq!((counter(near), counter(far), counter(other)), (7, 0, 0));
+        // Three chunks of heads, four slices, and the list node for the retired slice.
+        assert_eq!(count(), 8);
+        newest.forget_older();
+        assert_eq!((len(&newest, near), count()), (8, 6));
+        newest.clear();
+        assert_eq!((len(&newest, near), len(&newest, far), count()), (0, 0, 3));
         drop(newest);
         assert_eq!(count(), 0);
 

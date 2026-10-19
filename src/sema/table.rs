@@ -19,7 +19,7 @@ use crate::program::{FileId, Sym};
 use crate::session::Session;
 use crate::types::{Follow, OwnStore, Visitor};
 use crate::util::memory::{Cells, FixedCells, Zeroed};
-use crate::util::{AppendVec, ShardedMap, spread_hash};
+use crate::util::{AppendVec, Windowed, WindowedMap, spread_hash, spread_in_window};
 use std::alloc::{Allocator, Global};
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -749,7 +749,7 @@ impl<I: Id, T, P: Policy, A: Alloc> ByIdIndirect<I, T, P, A> {
 
 /// A memo table for keys that are more than a single id.
 pub struct ByKey<K, V, P: Policy = Frozen, A: Alloc = Global> {
-    published: ShardedMap<K, V, A, PUBLISHED_SHARDS>,
+    published: WindowedMap<K, V, A>,
     slot: Slot<HashedInTask<K, V>>,
     policy: PhantomData<fn(P)>,
 }
@@ -757,7 +757,7 @@ pub struct ByKey<K, V, P: Policy = Frozen, A: Alloc = Global> {
 impl<K: std::hash::Hash + Eq, V, P: Policy, A: Alloc> ByKey<K, V, P, A> {
     pub fn new_in(alloc: A) -> Self {
         ByKey {
-            published: ShardedMap::new_in(alloc),
+            published: WindowedMap::new_in(alloc),
             slot: Slot::NONE,
             policy: PhantomData,
         }
@@ -1410,7 +1410,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
 
 impl<'s, K, V, W: Location, A: Alloc> ByKey<K, V, Buffered<W>, A>
 where
-    K: std::hash::Hash + Eq + Clone + MaybeLocal + Follow + Send + 's,
+    K: Windowed + Eq + Clone + MaybeLocal + Follow + Send + 's,
     V: Copy + Follow + Send + 's,
 {
     /// `Ok`: the entry went to the shared part, or another task was first: what the key has there now. `Err`: the
@@ -1486,7 +1486,7 @@ where
 
     #[inline]
     pub fn get(&self, task: &Task<'s>, key: &K) -> Option<V> {
-        let spread = spread_hash(key);
+        let spread = spread_in_window(key);
         if let Some(value) = self.published(task, spread, key) {
             return Some(value);
         }
@@ -1495,7 +1495,7 @@ where
 
     #[inline]
     pub fn insert(&self, task: &Task<'s>, key: K, value: V, stored: Stored) -> V {
-        let spread = spread_hash(&key);
+        let spread = spread_in_window(&key);
         if let Some(value) = self.published(task, spread, &key) {
             return value;
         }
@@ -1505,7 +1505,7 @@ where
     /// An entry that was written at once is published, so it is unchanged. Whoever stores an entry that is to be replaced
     /// stores it with `Stored::held_back`.
     pub fn rewrite(&self, task: &Task<'s>, key: K, value: V, stored: Stored) {
-        let spread = spread_hash(&key);
+        let spread = spread_in_window(&key);
         if self.published(task, spread, &key).is_none() {
             self.put(task, (spread, key, value), stored, true);
         }
@@ -1514,7 +1514,7 @@ where
     /// `get`. `Err`: the hash of `key`, for `insert_absent` and `rewrite_absent`.
     #[inline]
     pub fn get_or_hash(&self, task: &Task<'s>, key: &K) -> Result<V, u64> {
-        let spread = spread_hash(key);
+        let spread = spread_in_window(key);
         if let Some(value) = self.published(task, spread, key) {
             return Ok(value);
         }
@@ -1717,16 +1717,9 @@ impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Pu
     }
 }
 
-/// How many threads can fill a `ByKey` concurrently. Each owns an equal number of the map's shards.
-const PARTS: usize = 8;
-
-/// The number of shards of the published part of a `ByKey`, a multiple of `PARTS`. Tasks add to it at any time, each under
-/// the lock of a shard.
-const PUBLISHED_SHARDS: usize = 8 * PARTS;
-
 impl<'s, K, V, W: Location, A: Alloc> Publish<'s> for ByKey<K, V, Buffered<W>, A>
 where
-    K: std::hash::Hash + Eq + Clone + Follow + Send + Sync + 's,
+    K: Windowed + Eq + Clone + Follow + Send + Sync + 's,
     V: Copy + Follow + Send + Sync + 's,
 {
     /// `key`: the place of the entry in the `Hashed` of the task.
@@ -1738,7 +1731,7 @@ where
         if key.is_bound(&task.own) || value.is_bound(&task.own) {
             return false;
         }
-        let spread = spread_hash(key);
+        let spread = spread_in_window(key);
         self.published.add_if_absent(spread, key, *value)
     }
 

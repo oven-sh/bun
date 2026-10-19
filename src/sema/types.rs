@@ -10,7 +10,9 @@ use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
 use crate::util::memory::{OWN, Placeholder, Placeholders, Segmented};
-use crate::util::{FxHashMap, FxHasher, GrowingPlaces, LocalVec, SharedSort, spread_hash};
+use crate::util::{
+    FxHashMap, FxHasher, LocalVec, SharedSort, Window, Windowed, WindowedPlaces, spread_in_window,
+};
 use bun_alloc::{ArenaBox, vec_from_iter_in};
 use bun_threading::Guarded;
 use smallvec::SmallVec;
@@ -2018,7 +2020,7 @@ impl Record for TypeRecord<'_> {
 ///   id order, which is why types are ordered by `Types::content_order`.
 /// - `place` keeps at most one record per key at any time, so there's nothing to merge.
 struct Interned<'s, V> {
-    index: Box<GrowingPlaces<&'s Session, INDEX_SHARDS>, &'s Session>,
+    index: Box<WindowedPlaces<&'s Session>, &'s Session>,
     /// Arena-allocated so that a task can borrow them for as long as it may live (see `Segmented::of_either`). The slot
     /// for an id at or above `first_placed` contains `Record::hole` until `place` fills it.
     items: &'s Shared<'s, V>,
@@ -2026,14 +2028,11 @@ struct Interned<'s, V> {
     first_placed: u32,
 }
 
-/// Threads can add to an index at any time. Each add locks one shard.
-const INDEX_SHARDS: usize = 64;
-
 impl<'s, V: Record> Interned<'s, V> {
     fn new_in(session: &'s Session) -> Self {
         let items = Shared::new_in(session);
         Interned {
-            index: Box::new_in(GrowingPlaces::new_in(session), session),
+            index: Box::new_in(WindowedPlaces::new_in(session), session),
             items: session.arena().alloc(items),
             first_placed: u32::MAX,
         }
@@ -2502,6 +2501,158 @@ impl std::hash::Hash for Pairs<'_> {
     }
 }
 
+/// Returns the window of the youngest of `types`.
+#[inline]
+fn window_of_youngest(types: &[TypeId]) -> Option<Window> {
+    types.iter().map(|it| it.0).max().map(Window::of_type)
+}
+
+/// Returns the window of `mapper`. An instantiation is younger than what it instantiates, and so is its mapper. What
+/// isn't instantiated is in the window that `declared` returns.
+#[inline]
+fn window_of_mapper(mapper: MapperId, declared: impl FnOnce() -> Window) -> Window {
+    match mapper == MapperId::IDENTITY {
+        true => declared(),
+        false => Window::of_mapper(mapper.0),
+    }
+}
+
+#[inline]
+fn window_of_symbol(symbol: Sym) -> Window {
+    Window::of_place(symbol.file.0, symbol.id.0)
+}
+
+#[inline]
+fn window_of_reference(target: Sym, args: &[TypeId]) -> Window {
+    window_of_youngest(args).unwrap_or_else(|| window_of_symbol(target))
+}
+
+#[inline]
+fn window_of_functions(decls: &[(FileId, FnId)], mapper: MapperId) -> Window {
+    window_of_mapper(mapper, || match decls.first() {
+        Some(first) => Window::of_place(first.0.0, first.1.0),
+        None => Window::of_type(0),
+    })
+}
+
+impl Windowed for Pairs<'_> {
+    #[inline]
+    fn window(&self) -> Window {
+        let youngest = |most: u32, pair: &(TypeId, TypeId)| most.max(pair.0.0).max(pair.1.0);
+        Window::of_type(self.0.iter().fold(0, youngest))
+    }
+}
+
+impl Windowed for [IndexComponent] {
+    #[inline]
+    fn window(&self) -> Window {
+        Window::of_hash(self)
+    }
+}
+
+impl Windowed for SigData<'_> {
+    #[inline]
+    fn window(&self) -> Window {
+        match *self {
+            SigData::Decl { file, func, mapper }
+            | SigData::Construct {
+                file, func, mapper, ..
+            } => window_of_mapper(mapper, || Window::of_place(file.0, func.0)),
+            SigData::DefaultConstruct { class, mapper, .. } => {
+                window_of_mapper(mapper, || window_of_symbol(class))
+            }
+            SigData::WithReturn { ret, .. } => Window::of_type(ret.0),
+            SigData::Synth { .. } => Window::of_hash(self),
+        }
+    }
+}
+
+impl Windowed for TypeData<'_> {
+    #[inline]
+    fn window(&self) -> Window {
+        let list =
+            |types: &[TypeId]| window_of_youngest(types).unwrap_or_else(|| Window::of_type(0));
+        match self {
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } => window_of_reference(*target, args),
+            TypeData::ThisParam(symbol) => window_of_symbol(*symbol),
+            TypeData::TypeParam(file, param, mapper) => {
+                window_of_mapper(*mapper, || Window::of_place(file.0, param.0))
+            }
+            TypeData::Cond {
+                file, node, mapper, ..
+            } => window_of_mapper(*mapper, || Window::of_place(file.0, node.0)),
+            TypeData::Anon { mapper, .. } => window_of_mapper(*mapper, || Window::of_hash(self)),
+            TypeData::Fns { decls, mapper } => window_of_functions(decls, *mapper),
+            TypeData::Union(members) | TypeData::Intersection(members) => list(members),
+            TypeData::Tuple {
+                elems: TypeArguments::Given(elems),
+                ..
+            } => list(elems),
+            TypeData::IndexedAccess { obj, index, .. } => Window::of_type(obj.0.max(index.0)),
+            TypeData::Substitution { base, constraint } => {
+                Window::of_type(base.0.max(constraint.0))
+            }
+            TypeData::ReverseMapped { source, mapped, of } => {
+                Window::of_type(source.0.max(mapped.0).max(of.0))
+            }
+            TypeData::Keyof(of)
+            | TypeData::StringMapping { ty: of, .. }
+            | TypeData::EvolvingArray(of) => Window::of_type(of.0),
+            TypeData::StringLit { value, .. } => Window::of_atom(value.0),
+            _ => Window::of_hash(self),
+        }
+    }
+}
+
+impl Windowed for Made<'_> {
+    #[inline]
+    fn window(&self) -> Window {
+        self.0.window()
+    }
+}
+
+/// The same window as for the `Made` that has this key.
+impl Windowed for (TypeKey<'_>, Option<&ProvenanceKey<'_>>) {
+    #[inline]
+    fn window(&self) -> Window {
+        let list =
+            |types: &[TypeId]| window_of_youngest(types).unwrap_or_else(|| Window::of_type(0));
+        match self.0 {
+            TypeKey::Data(data) => data.window(),
+            TypeKey::Union(members) | TypeKey::Intersection(members) => list(members),
+            TypeKey::Ref { target, args } => window_of_reference(target, args),
+            TypeKey::Tuple { elems, .. } => list(elems),
+            TypeKey::Fns { decls, mapper } => window_of_functions(decls, mapper),
+        }
+    }
+}
+
+macro_rules! windowed_by {
+    ($($key:ty: |$it:ident| $window:expr;)*) => {$(
+        impl Windowed for $key {
+            #[inline]
+            fn window(&self) -> Window {
+                let $it = self;
+                $window
+            }
+        }
+    )*};
+}
+windowed_by! {
+    FileId: |it| Window::of_place(it.0, 0);
+    (FileId, TypeNodeId): |it| Window::of_place(it.0.0, it.1.0);
+    (FileId, crate::node::Node): |it| Window::of_place(it.0.0, 0);
+    (FileId, TypeNodeId, MapperId): |it| window_of_mapper(it.2, || Window::of_place(it.0.0, it.1.0));
+    (TypeId, Atom): |it| Window::of_type(it.0.0);
+    (TypeId, TypeId): |it| Window::of_type(it.0.0.max(it.1.0));
+    (TypeId, TypeId, TypeId): |it| Window::of_type(it.0.0.max(it.1.0).max(it.2.0));
+    (TypeId, MapperId): |it| Window::of_mapper(it.1.0);
+    (MapperId, MapperId): |it| Window::of_mapper(it.0.0.max(it.1.0));
+}
+
 /// Whether the type parameters are sorted by id without duplicates. That order makes equal sets of
 /// pairs intern as one mapper and lets `map` search.
 #[inline]
@@ -2718,7 +2869,7 @@ impl<'s> TypeStore<'s> {
         // First: the flags of a type are those of its mapper too.
         let no_pairs = (Mapping::empty(), ObjectFlags::empty());
         assert_eq!(
-            store.mappers.add(spread_hash(&Pairs(&[])), no_pairs),
+            store.mappers.add(spread_in_window(&Pairs(&[])), no_pairs),
             MapperId::IDENTITY.0
         );
         let arena = session.arena();
@@ -2752,7 +2903,7 @@ impl<'s> TypeStore<'s> {
         );
         let no_components = List::<IndexComponent>::empty();
         assert_eq!(
-            (store.components).add(spread_hash(&no_components), no_components),
+            (store.components).add(spread_in_window(&no_components[..]), no_components),
             ComponentsId::NONE.0
         );
         store
@@ -2763,7 +2914,7 @@ impl<'s> TypeStore<'s> {
     pub fn publish_constant(&self, data: TypeData<'s>) -> TypeId {
         debug_assert!(!self.shares_records());
         let created = (data, None);
-        let spread = spread_hash(&created);
+        let spread = spread_in_window(&created);
         if let Some(id) = self.types.find(spread, |record| record.created == created) {
             return TypeId(id);
         }
@@ -3772,7 +3923,7 @@ impl<'p, 's> Types<'p, 's> {
         {
             return self.intern(data.clone_in(self.own.arena));
         }
-        let spread = spread_hash(&key);
+        let spread = spread_in_window(&key);
         TypeId(intern_record(
             (&self.published.types, self.own),
             |own| &own.types,
@@ -3796,7 +3947,7 @@ impl<'p, 's> Types<'p, 's> {
                 let provenance =
                     provenance.map(|it| ArenaBox::new_in(it.to_provenance(arena), arena));
                 let created: Made<'s> = (data.to_data(arena), provenance);
-                debug_assert_eq!(spread_hash(&created), spread);
+                debug_assert_eq!(spread_in_window(&created), spread);
                 self.new_record_of_task(created, id)
             },
         ))
@@ -3825,7 +3976,7 @@ impl<'p, 's> Types<'p, 's> {
         TypeId(intern_record(
             (&self.published.types, self.own),
             |own| &own.types,
-            (spread_hash(&created), created),
+            (spread_in_window(&created), created),
             |created| created.is_bound(self.own),
             |created| created.mentions_own(),
             |record, created| record.created == *created,
@@ -3923,7 +4074,7 @@ impl<'p, 's> Types<'p, 's> {
         SigId(intern_record(
             (&self.published.sigs, self.own),
             |own| &own.sigs,
-            (spread_hash(&data), data),
+            (spread_in_window(&data), data),
             |data| data.is_bound(self.own),
             |data| data.mentions_own(),
             |record, data| record == data,
@@ -3947,7 +4098,7 @@ impl<'p, 's> Types<'p, 's> {
         ComponentsId(intern_record(
             (&self.published.components, self.own),
             |own| &own.components,
-            (spread_hash(list), list),
+            (spread_in_window(list), list),
             |list| list.is_bound(self.own),
             |_| false,
             |record, list| **record == **list,
@@ -3990,7 +4141,7 @@ impl<'p, 's> Types<'p, 's> {
         MapperId(intern_record(
             (&self.published.mappers, self.own),
             |own| &own.mappers,
-            (spread_hash(&Pairs(pairs)), pairs),
+            (spread_in_window(&Pairs(pairs)), pairs),
             |pairs| pairs.is_bound(self.own),
             |pairs| pairs.iter().any(MaybeLocal::is_local),
             |record, pairs| *record.0 == **pairs,
@@ -5133,6 +5284,7 @@ impl<'s> OwnStore<'s> {
 #[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
+    use crate::util::spread_hash;
 
     type Fat<'s> = ShortList<TypeId, 3, List<'s, TypeId>>;
     type Thin<'s> = ShortList<TypeId, 3, ThinList<'s, TypeId>>;

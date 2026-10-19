@@ -223,6 +223,13 @@ impl UnionCalls {
 /// the alias.
 pub(super) type IntersectionKey = (Box<[TypeId]>, bool, Option<(Sym, Box<[TypeId]>)>);
 
+impl crate::util::Windowed for IntersectionKey {
+    #[inline]
+    fn window(&self) -> crate::util::Window {
+        crate::util::Window::of_type(self.0.iter().map(|it| it.0).max().unwrap_or(0))
+    }
+}
+
 /// `T & P` as `constrained_type_variable` takes it apart.
 #[derive(Copy, Clone)]
 struct ConstrainedTypeVariable {

@@ -16,7 +16,7 @@ use crate::types::{
     ElemFlags, List, MapperId, OriginKey, Provenance, ProvenanceKey, Sharing, ShortList,
     TypeArguments, TypeData, TypeId, TypeKey, TypeStore, Types, UnionOrigin,
 };
-use crate::util::{ShardedMap, shard_among};
+use crate::util::{ShardedMap, WindowedMap, shard_among, spread_in_window};
 use bun_sema_standalone as _;
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -571,6 +571,32 @@ fn threads_fill_and_read_a_sharded_map() {
         }
     });
     assert_eq!(map.entries(), 300);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn threads_fill_and_read_a_windowed_map() {
+    let map = WindowedMap::<(TypeId, TypeId), u32>::new_in(std::alloc::Global);
+    let key_of = |i: u32| (TypeId(i * 37), TypeId(i % 5));
+    on_threads(4, &|thread| {
+        for i in 0..3000 {
+            let i = (i * 7 + thread as u32) % 3000;
+            let key = key_of(i);
+            map.add_if_absent(spread_in_window(&key), &key, i);
+            assert_eq!(map.get_by_now(spread_in_window(&key), &key), Some(&i));
+            let other = key_of((i + 11) % 3000);
+            if let Some(value) = map.get_by_now(spread_in_window(&other), &other) {
+                assert_eq!(*value, (i + 11) % 3000);
+            }
+        }
+    });
+    assert_eq!(map.entries(), 3000);
+    for i in 0..3000 {
+        let key = key_of(i);
+        assert_eq!(map.get_frozen(spread_in_window(&key), &key), Some(&i));
+    }
+    let absent = (TypeId(1), TypeId(1));
+    assert_eq!(map.get_frozen(spread_in_window(&absent), &absent), None);
 }
 
 #[test]
@@ -1142,7 +1168,7 @@ fn the_first_of_two_entries_written_immediately_is_kept() {
     assert_eq!(kept, NUMBER);
     // `rewrite` looks no further than the task's own part, as for a key that `get` has not found.
     (tables.by_id).rewrite(&second, STRING, STRING, from_now(&second));
-    let spread = crate::util::spread_hash(&(STRING, STRING));
+    let spread = spread_in_window(&(STRING, STRING));
     let key = (STRING, STRING);
     let kept = (tables.by_key).insert_absent(&second, spread, key, STRING, from_now(&second));
     assert_eq!(kept, NUMBER);

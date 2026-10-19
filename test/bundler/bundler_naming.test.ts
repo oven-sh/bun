@@ -455,7 +455,8 @@ describe("bundler", () => {
 });
 
 // A chunk prints the output path of each asset it embeds, so its [hash] has to
-// change when that path does.
+// change when that path does. A stylesheet inlines an asset under 128 KB instead
+// of printing its path. The asset is still copied when anything else prints it.
 describe("bundler", () => {
   // `chunks` must print the asset path. Their names are given without the [hash].
   for (const { asset, entrypoints, fromPlugin, chunks } of [
@@ -479,46 +480,57 @@ describe("bundler", () => {
       fromPlugin: false,
       chunks: ["index.html", "logo.js"],
     },
+    {
+      asset: "the src of an HTML page, and the url() of its stylesheet",
+      entrypoints: ["index.html"],
+      fromPlugin: false,
+      chunks: ["index.html", "chunk.css"],
+    },
   ]) {
-    test.concurrent(`naming/ChunkHashCoversAssetPath (the asset is ${asset})`, async () => {
-      using dir = tempDir("naming-chunk-hash-asset", {
-        "entry.js": `import logo from "./logo.png";\nconsole.log(logo);`,
-        "style.css": `body { background: url("./logo.png"); }`,
-        "index.html": `<img src="./logo.png">`,
-        "logo.png": "on disk",
-      });
-      // Builds with an asset that is full of `fill`. Returns the name of each chunk that prints the asset path.
-      const build = async (fill: string) => {
-        // More than 128 KB, so that the stylesheet does not inline the asset.
-        const bytes = Buffer.alloc(200 * 1024, fill);
-        if (!fromPlugin) writeFileSync(join(String(dir), "logo.png"), bytes);
-        const logoPlugin: Bun.BunPlugin = {
-          name: "logo",
-          setup(builder) {
-            builder.onLoad({ filter: /\.png$/ }, () => ({ contents: bytes, loader: "file" }));
-          },
-        };
-        const { outputs } = await Bun.build({
-          entrypoints: entrypoints.map(file => join(String(dir), file)),
-          naming: { entry: "[name]-[hash].[ext]" },
-          plugins: fromPlugin ? [logoPlugin] : [],
+    for (const kilobytes of [1, 200]) {
+      const inlined = kilobytes < 128;
+      test.concurrent(`naming/ChunkHashCoversAssetPath (the asset is ${asset}, ${kilobytes} KB)`, async () => {
+        using dir = tempDir("naming-chunk-hash-asset", {
+          "entry.js": `import logo from "./logo.png";\nconsole.log(logo);`,
+          "style.css": `body { background: url("./logo.png"); }`,
+          "index.html": `<link rel="stylesheet" href="./style.css"><img src="./logo.png">`,
+          "logo.png": "on disk",
         });
-        const names: Record<string, string> = {};
-        for (const output of outputs) {
-          const name = basename(output.path);
-          if (!name.endsWith(".png") && /logo-\w+\.png/.test(await output.text())) {
-            names[name.replace(/-\w+\./, ".")] = name;
+        // Builds with an asset that is full of `fill`. Returns the name of each chunk that prints the asset path.
+        const build = async (fill: string) => {
+          const bytes = Buffer.alloc(kilobytes * 1024, fill);
+          if (!fromPlugin) writeFileSync(join(String(dir), "logo.png"), bytes);
+          const logoPlugin: Bun.BunPlugin = {
+            name: "logo",
+            setup(builder) {
+              builder.onLoad({ filter: /\.png$/ }, () => ({ contents: bytes, loader: "file" }));
+            },
+          };
+          const { outputs } = await Bun.build({
+            entrypoints: entrypoints.map(file => join(String(dir), file)),
+            naming: { entry: "[name]-[hash].[ext]" },
+            plugins: fromPlugin ? [logoPlugin] : [],
+          });
+          const names: Record<string, string> = {};
+          let copied = false;
+          for (const output of outputs) {
+            const name = basename(output.path);
+            if (name.endsWith(".png")) copied = true;
+            else if (/logo-\w+\.png/.test(await output.text())) names[name.replace(/-\w+\./, ".")] = name;
           }
-        }
-        return names;
-      };
+          expect(copied).toBe(true);
+          return names;
+        };
 
-      const first = await build("A");
-      const second = await build("B");
-      expect(Object.keys(first)).toEqual(expect.arrayContaining(chunks));
-      expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
-      // No chunk that prints the asset path keeps its name.
-      expect(Object.keys(first).filter(chunk => first[chunk] === second[chunk])).toEqual([]);
-    });
+        const first = await build("A");
+        const second = await build("B");
+        expect(Object.keys(first)).toEqual(
+          expect.arrayContaining(inlined ? chunks.filter(chunk => !chunk.endsWith(".css")) : chunks),
+        );
+        expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
+        // No chunk that prints the asset path keeps its name.
+        expect(Object.keys(first).filter(chunk => first[chunk] === second[chunk])).toEqual([]);
+      });
+    }
   }
 });

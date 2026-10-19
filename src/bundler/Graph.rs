@@ -77,7 +77,8 @@ pub struct Graph<'a> {
     pub(crate) html_imports: HtmlImports,
 
     /// Files whose parse result registered an asset (`unique_key_for_additional_file`).
-    /// Zero skips `process_files_to_copy`.
+    /// An upper bound: `find_reachable_files` can drop a key later. Zero skips
+    /// `process_files_to_copy`.
     pub(crate) asset_file_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
@@ -109,7 +110,8 @@ pub struct InputFile {
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
     /// Index into `Graph::additional_output_files`. `process_files_to_copy` sets it for every
-    /// reachable file whose parse result registered an asset (`unique_key_for_additional_file`).
+    /// reachable file that still has a `unique_key_for_additional_file` after
+    /// `find_reachable_files` dropped the assets that only an inlining stylesheet uses.
     pub asset_output_file: Option<u32>,
     // No `arena` field — the owned fields
     // (Box/Vec) carry their allocator.

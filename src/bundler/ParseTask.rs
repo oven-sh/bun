@@ -2442,16 +2442,35 @@ pub mod parse_worker {
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // `entry.contents` is owned by `task.stage` (written back by
-            // the caller after parse — see `ParseTask::run`). `Source` is stored in
-            // `Success` which lives no longer than the `ParseTask` itself, so this
-            // borrow is sound. Routed through the audited `StoreStr` arena-erasure
-            // path (single `from_raw_parts` in `StoreStr::slice`); replace with
-            // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
-            contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
+            // SAFETY: `entry.contents` is owned by `task.stage` (written back by the
+            // caller after parse — see `ParseTask::run`), and the task lives in the
+            // arena of the bundle whose graph this `Source` ends up in.
+            contents: std::borrow::Cow::Borrowed(unsafe {
+                bun_ptr::detach_lifetime(entry_contents)
+            }),
             contents_is_recycled: false,
             ..Default::default()
         });
+        // An AST string holds less than 4 GiB (`StoreStr::MAX_LEN`), and a parser
+        // stops at 2 GiB by itself (`Source::check_parseable_len`). Only a file that
+        // the bundle copies as-is is longer: none of its bytes go into the AST.
+        let too_large: Option<[&'static str; 2]> = match topts.compile_mode {
+            _ if entry_contents.len() <= ast::StoreStr::MAX_LEN => None,
+            // The page holds every file as a `data:` URL.
+            options::CompileMode::StandaloneHtml => Some([
+                "File is too large to inline into standalone HTML",
+                "Without --compile, Bun copies the file to the output directory as-is",
+            ]),
+            // The executable holds every file but a database that stays on the disk.
+            options::CompileMode::Executable => (loader != Loader::Sqlite).then_some([
+                "File is too large to embed in a standalone executable",
+                "To keep the file out of the executable, read it from disk at run time, for example with Bun.file()",
+            ]),
+            options::CompileMode::None => (!loader.should_copy_for_bundling()).then_some([
+                "File is too large",
+                "To copy the file to the output directory as-is, import it with { type: \"file\" }",
+            ]),
+        };
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(entry_contents)
@@ -2690,7 +2709,19 @@ pub mod parse_worker {
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if let Some(message) = unsupported_directive {
+            if let Some([what, remedy]) = too_large {
+                // Without a position: finding the line of one would scan the whole source.
+                log.add_range_error_fmt_with_notes(
+                    Some(source),
+                    bun_ast::Range::NONE,
+                    Box::new([bun_ast::Data {
+                        text: remedy.as_bytes().into(),
+                        ..Default::default()
+                    }]),
+                    format_args!("{what} ({} bytes, 4 GiB maximum)", entry_contents.len()),
+                );
+                Err(crate::Error::ParserError)
+            } else if let Some(message) = unsupported_directive {
                 log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
                 Err(crate::Error::ParserError)
             } else if !is_empty || loader.handles_empty_file() {
@@ -2835,7 +2866,7 @@ pub mod parse_worker {
             // both borrowed mutably. The entry must live
             // in-place so its `Contents::Owned` buffer survives in
             // `task.stage` for the bundle's lifetime (Success.source.contents
-            // borrows it via the arena-erased `StoreStr` path). Take it out, parse, then *write it
+            // borrows it with an erased lifetime). Take it out, parse, then *write it
             // back* on every path before `break 'value` so dropping the local
             // can't free the buffer underneath the borrowed source.
             let mut entry =

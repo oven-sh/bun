@@ -32,17 +32,19 @@ use super::{Members, PropOfConstituent};
 /// A member of an intersection that has a property, and the property.
 pub(super) type Holder<'p> = (Members<'p>, &'p Prop<'p>);
 
-/// What a call that left no trace does every time.
-#[derive(Copy, Clone, Default)]
-struct Effects {
-    /// Bytes of native stack it uses.
-    stack: u16,
-    /// Amount it adds to `Checker::instantiation_count`.
-    instantiations: u16,
-    /// Bits it sets in `Checker::reliability`.
-    reliability: u8,
-    /// False: the call hasn't run yet, or it left a trace.
-    is_known: bool,
+/// What a call does every time.
+#[derive(Copy, Clone)]
+enum Effects {
+    /// The call hasn't run yet, or it left a trace.
+    Unknown,
+    Known {
+        /// Bytes of native stack it uses.
+        stack: u16,
+        /// Amount it adds to `Checker::instantiation_count`.
+        instantiations: u16,
+        /// Bits it sets in `Checker::reliability`.
+        reliability: u8,
+    },
 }
 
 /// The type of a property, and what `combine_props` asks about it.
@@ -75,20 +77,11 @@ const _: () = assert!(size_of::<Fact>() == 32);
 impl Fact {
     const NONE: Fact = Fact {
         instantiation: PropInstantiation::Type(TypeId::NEVER),
-        of_instantiation: Effects::NONE,
+        of_instantiation: Effects::Unknown,
         ty: TypeId::NEVER,
-        of_type: Effects::NONE,
+        of_type: Effects::Unknown,
         symbol: 0,
         is_literal: false,
-    };
-}
-
-impl Effects {
-    const NONE: Effects = Effects {
-        stack: 0,
-        instantiations: 0,
-        reliability: 0,
-        is_known: false,
     };
 }
 
@@ -129,7 +122,7 @@ impl<'p> SiblingIntersections<'p> {
     /// Forgets what the calls returned. The numbers stay: they say nothing about types.
     fn forget(&mut self) {
         for fact in self.facts.iter_mut().flat_map(|it| it.iter_mut()) {
-            (fact.of_instantiation, fact.of_type) = (Effects::NONE, Effects::NONE);
+            (fact.of_instantiation, fact.of_type) = (Effects::Unknown, Effects::Unknown);
         }
     }
 }
@@ -201,6 +194,17 @@ struct Readings {
     lowest_taint: usize,
 }
 
+/// The state of the checker before `run_for_a_fact` runs its call.
+struct BeforeRun {
+    readings: Readings,
+    instantiation_count: u32,
+    stack_in_use: usize,
+    /// What the call's caller had set in `Checker::reliability`, which is empty during the call.
+    reliability: u8,
+    /// `Checker::deepest_stack`, which is 0 during the call.
+    deepest_stack: usize,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// True if a call whose lookups all hit would count the same instantiations if it ran again now.
     pub(super) fn may_reuse_for_siblings(&self) -> bool {
@@ -240,14 +244,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// would have stopped it.
     #[inline]
     fn replay(&mut self, effects: Effects) -> bool {
-        let count = (self.instantiation_count).saturating_add(u32::from(effects.instantiations));
+        let Effects::Known {
+            stack,
+            instantiations,
+            reliability,
+        } = effects
+        else {
+            return false;
+        };
+        let count = (self.instantiation_count).saturating_add(u32::from(instantiations));
         let in_use = self.stack_base.saturating_sub(stack_pointer());
-        let deepest = in_use.saturating_add(effects.stack as usize);
-        if !effects.is_known || count >= 5_000_000 || deepest > self.stack_limit {
+        let deepest = in_use.saturating_add(stack as usize);
+        if count >= 5_000_000 || deepest > self.stack_limit {
             return false;
         }
         self.instantiation_count = count;
-        self.reliability |= effects.reliability;
+        self.reliability |= reliability;
         if deepest > self.deepest_stack.get() {
             self.deepest_stack.set(deepest);
         }
@@ -261,34 +273,47 @@ impl<'p, 's> Checker<'p, 's> {
         facts: &mut SiblingIntersections<'p>,
         call: impl FnOnce(&mut Self) -> R,
     ) -> (R, Effects) {
-        let before = self.readings_for_siblings();
-        let count_before = self.instantiation_count;
-        let in_use = self.stack_base.saturating_sub(stack_pointer());
-        let outer_reliability = std::mem::take(&mut self.reliability);
-        let outer_deepest = self.deepest_stack.replace(0);
+        let before = self.begin_run_for_a_fact();
         let result = call(self);
+        (result, self.end_run_for_a_fact(facts, &before))
+    }
+
+    fn begin_run_for_a_fact(&mut self) -> BeforeRun {
+        BeforeRun {
+            readings: self.readings_for_siblings(),
+            instantiation_count: self.instantiation_count,
+            stack_in_use: self.stack_base.saturating_sub(stack_pointer()),
+            reliability: std::mem::take(&mut self.reliability),
+            deepest_stack: self.deepest_stack.replace(0),
+        }
+    }
+
+    /// See `run_for_a_fact`.
+    fn end_run_for_a_fact(
+        &mut self,
+        facts: &mut SiblingIntersections<'p>,
+        before: &BeforeRun,
+    ) -> Effects {
         let deepest = self.deepest_stack.get();
-        self.deepest_stack.set(deepest.max(outer_deepest));
+        self.deepest_stack.set(deepest.max(before.deepest_stack));
         let reliability = self.reliability;
-        self.reliability |= outer_reliability;
+        self.reliability |= before.reliability;
         let after = self.readings_for_siblings();
-        if after.disturbances != before.disturbances {
+        if after.disturbances != before.readings.disturbances {
             facts.forget();
             facts.disturbances = after.disturbances;
         }
-        let stack = u16::try_from(deepest.saturating_sub(in_use));
-        let instantiations = self.instantiation_count.checked_sub(count_before);
+        let stack = u16::try_from(deepest.saturating_sub(before.stack_in_use));
+        let instantiations = (self.instantiation_count).checked_sub(before.instantiation_count);
         let instantiations = instantiations.and_then(|it| u16::try_from(it).ok());
-        let effects = match (stack, instantiations) {
-            (Ok(stack), Some(instantiations)) if after == before => Effects {
+        match (stack, instantiations) {
+            (Ok(stack), Some(instantiations)) if after == before.readings => Effects::Known {
                 stack,
                 instantiations,
                 reliability,
-                is_known: true,
             },
-            _ => Effects::NONE,
-        };
-        (result, effects)
+            _ => Effects::Unknown,
+        }
     }
 
     /// `instantiation_of_prop(prop, mapper)`. `nth`: where the property is in `facts`.

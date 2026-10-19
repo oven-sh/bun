@@ -68,7 +68,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 36: `export`, `require()`, `import()`, a JSX element, an exported async function and
 /// an abstract class are mapped elsewhere.
 /// Version 37: TypeScript `a ? (b: B): T => {...} : c` parses its body once, so `emitDecoratorMetadata` in it names the right type.
-const EXPECTED_VERSION: u32 = 37;
+/// Version 38: TypeScript `(b as B) : c => d` is not an arrow function with a return type.
+const EXPECTED_VERSION: u32 = 38;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

@@ -5204,30 +5204,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let contents_ptr = self.source.contents.as_ptr() as usize;
-        let name_ptr = name.as_ptr() as usize;
-        if contents_ptr <= name_ptr
-            && (name_ptr + name.len()) <= (contents_ptr + self.source.contents.len())
-        {
-            // Both values are
-            // bounded by `source.contents.len()` which the lexer already
-            // requires to fit in u32 (Loc is i32). debug_assert preserves the
-            // safety check without the per-identifier branch in release.
-            let off = name_ptr - contents_ptr;
-            debug_assert!(off <= u32::MAX as usize && name.len() <= u32::MAX as usize);
-            Ref::new(
-                name.len() as u32,
-                off as u32,
-                js_ast::base::RefTag::SourceContentsSlice,
-            )
-        } else {
-            // `allocated_names.len()` is bounded by the
-            // symbol budget (asserted by Ref::pack's INNER_INDEX_BITS check).
-            let inner_index = self.allocated_names.len();
-            debug_assert!(inner_index <= u32::MAX as usize);
-            self.allocated_names.push(name);
-            Ref::init(inner_index as u32, self.source.index.0, false)
+        // A name outside the source, or too long for a slice ref, goes to `allocated_names`.
+        let contents = &self.source.contents;
+        let offset = (name.as_ptr() as usize).wrapping_sub(contents.as_ptr() as usize);
+        if let Some(ref_) = Ref::source_slice(offset, name.len(), contents.len()) {
+            return ref_;
         }
+
+        let inner_index = self.allocated_names.len();
+        debug_assert!(inner_index <= u32::MAX as usize);
+        self.allocated_names.push(name);
+        Ref::init(inner_index as u32, self.source.index.0)
     }
 
     // load_name_from_ref() lives in the impl block above (deduped).

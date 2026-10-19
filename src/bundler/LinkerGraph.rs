@@ -351,7 +351,7 @@ pub(crate) fn generate_new_symbol(
     let source_symbols = &mut symbols.symbols_for_source.slice_mut()[source_index as usize];
 
     let ref_ = Ref::new(
-        source_symbols.len() as u32, // narrows to u31 in pack()
+        source_symbols.len() as u32, // narrows to u28 in pack()
         source_index,
         RefTag::Symbol,
     );

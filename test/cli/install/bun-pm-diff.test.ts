@@ -826,8 +826,8 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
       // Values that the CSS parser keeps as tokens, as a minifier prints them and as `bun fmt` prints them, with
       // one value wrapped and commented by hand. The blank next to a comma and next to `*` and `/` in calc(),
       // the amount of whitespace, and a comment are formatting.
-      "a/tokens.css": `.a{--shadow:0 0 1px red,0 0 2px blue;font-family:var(--f),sans-serif;color:rgba(1,2,3,var(--o));width:calc(var(--a)*2/3);margin:var(--x) auto}@apply a b;`,
-      "b/tokens.css": `.a {\n  --shadow: 0 0 1px red, /* second layer */\n    0 0 2px blue;\n  font-family: var(--f), sans-serif;\n  color: rgba(1, 2, 3, var(--o));\n  width: calc(var(--a) * 2 / 3);\n  margin: var(--x)  auto /* centered */;\n}\n@apply a  b;\n`,
+      "a/tokens.css": `.a{--shadow:0 0 1px red,0 0 2px blue;font-family:var(--f),sans-serif;color:rgba(1,2,3,var(--o));width:calc(var(--a)*2/3);height:calc(var(--h,10px*2));margin:var(--x) auto}@apply a b;`,
+      "b/tokens.css": `.a {\n  --shadow: 0 0 1px red, /* second layer */\n    0 0 2px blue;\n  font-family: var(--f), sans-serif;\n  color: rgba(1, 2, 3, var(--o));\n  width: calc(var(--a) * 2 / 3);\n  height: calc(var(--h, 10px * 2));\n  margin: var(--x)  auto /* centered */;\n}\n@apply a  b;\n`,
     });
     expect(text).toMatch(/\nindex\.js ─+ formatting only\n/);
     expect(text).toMatch(/\npackage\.json ─+ formatting only\n/);

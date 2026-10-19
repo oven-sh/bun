@@ -493,6 +493,19 @@ describe("css tests", () => {
         [".c { --c: calc(var(--w)*2/3); }", ".c {\n  --c: calc(var(--w) * 2 / 3);\n}\n"],
         [".c { --c: calc( var(--w) * 2 / 3 ); }", ".c {\n  --c: calc(var(--w) * 2 / 3);\n}\n"],
         [".c { --c: min(1px*2,3px/4); }", ".c {\n  --c: min(1px * 2, 3px / 4);\n}\n"],
+        // A fallback in a math function is a part of its arguments.
+        [".c { --c: calc(var(--w,10px*2)); }", ".c {\n  --c: calc(var(--w, 10px * 2));\n}\n"],
+        [
+          ".c { --c: calc(1px + var(--w, var(--v,10px/2))); }",
+          ".c {\n  --c: calc(1px + var(--w, var(--v, 10px / 2)));\n}\n",
+        ],
+        [
+          ".c { --c: max(env(safe-area-inset-top,1px*2),3px); }",
+          ".c {\n  --c: max(env(safe-area-inset-top, 1px * 2), 3px);\n}\n",
+        ],
+        // Not in a math function, or behind a function with a grammar that is not known: kept.
+        [".c { --c: var(--w, 10px*2); }", ".c {\n  --c: var(--w, 10px*2);\n}\n"],
+        [".c { --c: calc(foo(var(--w, a*b))); }", ".c {\n  --c: calc(foo(var(--w, a*b)));\n}\n"],
         [".c { --r: 16/9; }", ".c {\n  --r: 16/9;\n}\n"],
         [".c { --r: 16 / 9; }", ".c {\n  --r: 16 / 9;\n}\n"],
         [".c { --sel: .a .b; }", ".c {\n  --sel: .a .b;\n}\n"],

@@ -302,11 +302,21 @@ impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        self.write_value(dest, is_custom_property, false)
+    }
+
+    /// `to_css` for a list that can be in a math function, as a `var()` or `env()` fallback is.
+    fn write_value(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: bool,
+        in_math: bool,
+    ) -> PrintResult<()> {
         // The caller's separator wrote the blank of a whitespace-only value (`--foo: ;`).
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
-        self.write_tokens(dest, is_custom_property, false)
+        self.write_tokens(dest, is_custom_property, in_math)
     }
 
     /// Prints the tokens as stored. It adds no blank: one can be a combinator (`--sel: .a .b`).
@@ -340,8 +350,8 @@ impl TokenList {
                     }
                     ext::url_to_css(url, dest)?;
                 }
-                TokenOrValue::Var(var) => var.to_css(dest, is_custom_property)?,
-                TokenOrValue::Env(env) => env.to_css(dest, is_custom_property)?,
+                TokenOrValue::Var(var) => var.to_css(dest, is_custom_property, in_math)?,
+                TokenOrValue::Env(env) => env.write(dest, is_custom_property, in_math)?,
                 TokenOrValue::Function(f) => f.to_css(dest, is_custom_property)?,
                 TokenOrValue::Length(v) => {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
@@ -1110,12 +1120,17 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: bool,
+        in_math: bool,
+    ) -> PrintResult<()> {
         dest.write_str("var(")?;
         ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
-            fallback.to_css(dest, is_custom_property)?;
+            fallback.write_value(dest, is_custom_property, in_math)?;
         }
         dest.write_char(b')')
     }
@@ -1182,6 +1197,15 @@ impl EnvironmentVariable {
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        self.write(dest, is_custom_property, false)
+    }
+
+    fn write(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: bool,
+        in_math: bool,
+    ) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
 
@@ -1192,7 +1216,7 @@ impl EnvironmentVariable {
 
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
-            fallback.to_css(dest, is_custom_property)?;
+            fallback.write_value(dest, is_custom_property, in_math)?;
         }
 
         dest.write_char(b')')

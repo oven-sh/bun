@@ -209,8 +209,8 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
     // socket was still open when the FIN arrived.
     const finAfterBytes = { outcome: "end", body: SIZE, held: true, serverSocketOpen: true };
 
-    // What the response does when its bytes have left. Node emits no 'drain' behind socket.end(): there the
-    // response never ends in all three cases.
+    // What the response does at the 'drain' that follows its bytes. Node emits no 'drain' behind socket.end(), so
+    // there the response never ends in all three cases.
     const atDrain: [string, (res: ServerResponse) => void][] = [
       ["never ends", () => {}],
       ["ends at 'drain'", res => void res.once("drain", () => res.end())],
@@ -225,8 +225,11 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
           serverSocket.watch(req.socket);
           res.on("error", () => {});
           writeBody(res);
-          onDrain(res);
-          endLater(res, () => res.socket!.end()).then(onEnd);
+          endLater(res, () => {
+            res.socket!.end();
+            // Not before: Bun also emits a 'drain' one tick after writes that reached the high water mark.
+            onDrain(res);
+          }).then(onEnd);
         });
         const { client, outcome, body } = await connect(server);
         try {
@@ -462,6 +465,29 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
         }
       },
     );
+
+    // Not fixed yet. The 'finish' of the socket fires when its end() starts to wait for the bytes, not when the FIN
+    // leaves. A tunnel whose client ended first then has both sides ended, and its auto-destroy closes the socket
+    // in front of the bytes that still wait. Node sends every byte.
+    test.todo("a tunnel whose client ended first still sends the response before it", async () => {
+      await using server = createServer((req, res) => {
+        res.on("error", () => {});
+        writeBody(res);
+      });
+      server.on("connect", (req, socket) => {
+        socket.on("error", () => {});
+        socket.end();
+      });
+      const { client, outcome, body } = await connect(server);
+      try {
+        client.end(GET + "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+        client.resume();
+        expect({ outcome: await outcome, body: body() }).toEqual({ outcome: "end", body: SIZE });
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+      }
+    });
 
     // Nothing reads the upload, so it fills the buffer of the request and stops the reads before end() runs. A
     // close behind the FIN would go out over those bytes as a reset, and a reset discards the response bytes that

@@ -92,6 +92,20 @@ test.concurrent(
   60_000,
 );
 
+// The listener ends the stream instead. The end does not reach the response
+// either, and a stream that its own producer ended is not cancelled.
+test.concurrent(
+  "a req.signal abort listener that ends a direct stream does not reach the closed response",
+  async () => {
+    const { stdout, stderr, exitCode, signalCode } = await runFixture("serve-abort-listener-write-fixture.ts", "end");
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ heard: ["end:0"], pendingRequests: 0 });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  },
+  60_000,
+);
+
 // The listener's flush(true) finds an earlier flush(true) that still waits and
 // a later write that is still buffered. It gets the promise of the earlier
 // flush and sends nothing. Windows takes a write of any size at once, so no

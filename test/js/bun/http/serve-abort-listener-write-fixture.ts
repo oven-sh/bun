@@ -3,6 +3,7 @@
 // given the response up, so nothing it does must reach that response.
 //
 //   write  The client leaves. The listener writes and flushes.
+//   end    The client leaves. The listener ends the stream.
 //   flush  The producer stops the server while a flush(true) waits for a
 //          client that does not read, with a later write still buffered. The
 //          listener calls flush(true) again.
@@ -17,6 +18,7 @@ const server = Bun.serve({
   fetch(req) {
     let controller: any;
     req.signal.addEventListener("abort", () => {
+      if (scenario === "end") return void heard.push(`end:${controller.end()}`);
       if (scenario === "flush") heard.push(`flush(true) again:${Bun.peek.status(controller.flush(true))}`);
       heard.push(`write:${controller.write("late")}`, `flush:${controller.flush()}`);
     });
@@ -69,8 +71,9 @@ const client = await Bun.connect({
 if (scenario === "flush") await stopped.promise.then(() => client.resume());
 await closed.promise;
 // The server hears the close on a later turn of the event loop, and frees the
-// socket one turn after that.
-while (server.pendingRequests > 0) await new Promise(resolve => setImmediate(resolve));
+// socket one turn after that. A request that it never lets go shows in the result.
+const deadline = Date.now() + 2000;
+while (server.pendingRequests > 0 && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
 await new Promise(resolve => setImmediate(resolve));
 
 console.log(JSON.stringify({ heard, pendingRequests: server.pendingRequests }));

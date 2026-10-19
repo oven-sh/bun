@@ -24,7 +24,6 @@ use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
-use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::thread::ThreadId;
@@ -111,28 +110,39 @@ impl Session {
         kept.downcast_ref().expect("it was boxed as a `T`")
     }
 
-    /// Returns the memory of `sessions` to the OS right before the process exits. The arenas are destroyed in parallel. Each
-    /// thread prefers its own, and then also returns the free pages that the allocator retains for it. Without this, a
-    /// single thread unmaps everything at exit, which costs about 70 ms per GB.
-    /// What `keep` took over is not dropped.
-    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads.
+    /// Drops `sessions` right before the process exits, in parallel, and returns their memory to the OS immediately. What
+    /// `keep` took over is dropped first. Then the arenas are destroyed: each thread prefers its own, and afterwards
+    /// returns the free pages that the allocator retains for it, which by then include those of the kept values. Without
+    /// this, a single thread unmaps everything at exit, which costs about 70 ms per GB.
+    /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads, starting them in ascending order.
     pub fn drop_before_the_process_ends(
         sessions: Vec<Session>,
         in_parallel: impl FnOnce(usize, &(dyn Fn(usize) + Sync)),
     ) {
+        /// How many kept values a thread drops at a time.
+        const RUN: usize = 256;
         let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut kept: Vec<Vec<Box<dyn Any + Send + Sync>>> = Vec::new();
         for mut session in sessions {
             let mut next = session.first.take();
             while let Some(mut node) = next {
                 next = node.next.take();
                 arenas.push(node);
             }
-            let _not_dropped = ManuallyDrop::new(session);
+            session.kept.drain(|_, value| match kept.last_mut() {
+                Some(run) if run.len() < RUN => run.push(value),
+                _ => kept.push(vec![value]),
+            });
         }
         // Make mimalloc return freed pages right away instead of caching them for reuse.
         bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
-        let (count, arenas) = (arenas.len(), Guarded::new(arenas));
-        in_parallel(count, &|_| {
+        let (runs, count) = (kept.len(), kept.len() + arenas.len());
+        let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
+        in_parallel(count, &|index| {
+            if index < runs {
+                let run = kept.lock().pop();
+                return drop(run);
+            }
             let thread = std::thread::current().id();
             let mut left = arenas.lock();
             let own = left.iter().position(|it| it.thread == thread);
@@ -299,6 +309,40 @@ mod tests {
         assert!(lists.iter().map(|list| list.len()).eq(1..5));
         assert_eq!(std::sync::Arc::strong_count(&counted), 1 + 1 + 2 + 3 + 4);
         drop(session);
+        assert_eq!(std::sync::Arc::strong_count(&counted), 1);
+    }
+
+    #[test]
+    fn threads_drop_sessions_before_the_process_ends() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counted = std::sync::Arc::new(());
+        let sessions: Vec<Session> = (0..2).map(|_| Session::new()).collect();
+        std::thread::scope(|scope| {
+            for session in sessions.iter().cycle().take(6) {
+                let counted = &counted;
+                scope.spawn(move || {
+                    for n in 0..200u32 {
+                        let kept = session.keep(vec![std::sync::Arc::clone(counted); 2]);
+                        assert_eq!(kept.len(), 2);
+                        assert_eq!(*session.arena().alloc_slice_copy(&[n; 100]), [n; 100]);
+                    }
+                });
+            }
+        });
+        assert_eq!(std::sync::Arc::strong_count(&counted), 1 + 6 * 200 * 2);
+        let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        Session::drop_before_the_process_ends(sessions, |count, work| {
+            std::thread::scope(|scope| {
+                for _ in 0..3 {
+                    scope.spawn(|| {
+                        while next.fetch_add(1, Ordering::Relaxed) < count {
+                            work(done.fetch_add(1, Ordering::Relaxed));
+                        }
+                    });
+                }
+            });
+            assert_eq!(done.load(Ordering::Relaxed), count);
+        });
         assert_eq!(std::sync::Arc::strong_count(&counted), 1);
     }
 

@@ -1342,7 +1342,8 @@ pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
 }
 
 /// `check_then`, for a caller that has read some of the files, or that watches them.
-/// With `Provided::ends_the_process`, the other threads free the last program while `then` runs, and nothing else is freed.
+/// With `Provided::ends_the_process`, the other threads free the last program while `then` runs, and nothing else is freed,
+/// except under leak detection.
 pub fn check_provided_then<R>(
     request: &Request,
     provided: host::Provided,
@@ -1392,9 +1393,12 @@ pub fn check_provided_then<R>(
                 result = then.take().map(|(then, report)| then(report));
             });
         });
-        let _not_dropped = std::mem::ManuallyDrop::new(lent);
-        let _not_dropped = std::mem::ManuallyDrop::new(disk);
-        return result.expect("`parallel_while` has called it");
+        let result = result.expect("`parallel_while` has called it");
+        if !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+            let _not_dropped = std::mem::ManuallyDrop::new(lent);
+            let _not_dropped = std::mem::ManuallyDrop::new(disk);
+        }
+        return result;
     }
     let result = then(report);
     drop(lent);

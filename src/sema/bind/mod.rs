@@ -534,7 +534,8 @@ impl<'s> Symbols<'s> {
         }
     }
 
-    /// Converts the binder's symbols. Each list is allocated at its exact final size.
+    /// Converts the binder's symbols. Each list is allocated at its exact final size, with room for the symbol that the
+    /// merge adds for each `import * as ns`: without it the merge, which is one thread, would copy the lists.
     fn of(symbols: &[GrowingSymbol], arena: &'s Arena) -> Symbols<'s> {
         let is_plain = |it: &&GrowingSymbol| {
             it.exports.is_none()
@@ -544,13 +545,18 @@ impl<'s> Symbols<'s> {
         };
         let plain = symbols.iter().filter(is_plain).count();
         let many = symbols.iter().filter(|it| it.decls.len() > 1).count();
+        let is_namespace = |decl: &Decl| matches!(decl, Decl::ImportNamespace(_));
+        let namespaces = symbols
+            .iter()
+            .filter(|it| it.decls.iter().any(is_namespace));
+        let namespaces = namespaces.count();
         let mut all = Symbols {
             list: ArenaVec::new_in(arena),
             rest: ArenaVec::new_in(arena),
             many: ArenaVec::new_in(arena),
         };
-        all.list.reserve_exact(symbols.len());
-        all.rest.reserve_exact(symbols.len() - plain);
+        all.list.reserve_exact(symbols.len() + namespaces);
+        all.rest.reserve_exact(symbols.len() - plain + namespaces);
         all.many.reserve_exact(many);
         for symbol in symbols {
             all.push(symbol.get(), arena);

@@ -458,9 +458,9 @@ impl CheckCommand {
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            // Only set here, because this function never returns. Under leak detection, everything is freed.
+            // Only set here, because this function never returns.
             Provided {
-                ends_the_process: !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES,
+                ends_the_process: true,
                 ..Default::default()
             },
             |report| (print_report(&report, options, &cwd), report),

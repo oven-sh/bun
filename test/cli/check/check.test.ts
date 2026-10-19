@@ -965,7 +965,7 @@ export ${f3}
     [`function f2() { const v = 1 * slot; return v; }`, 0, "", ""],
     [`function f2() { const v = slot instanceof slot; return v; }`, 0, "", ""],
     [`function f2() { return slot.port === "zq"; }`, 0, "", ""],
-    // A missing property is reported either way, and makes the array non-cacheable, so its neighbor is cached alone.
+    // A missing property is reported either way, and makes the array non-cacheable, so only its neighbor is cached.
     [`function f2() { return [slot.nope, 1 * slot]; }`, 40, wrongOperand, missingProperty],
   ])("reports a discarded error if a function below prints the type again: %s", async (f2, column, message, always) => {
     const program = (below: string) => `declare function takesNumber(n: number): number;
@@ -986,8 +986,11 @@ ${below}export {};
     expect(stdout).toBe(column ? `${always}a.ts(9,${column}): error ${message}` : "");
     expect(exitCode).toBe(column ? 1 : 0);
     // Nothing prints the type again, so nothing more is reported.
-    using alone = project({ "a.ts": program("") });
-    expect(await check(alone, ["--threads", "1"])).toMatchObject({ stdout: always.trim(), exitCode: always ? 1 : 0 });
+    using withoutF3 = project({ "a.ts": program("") });
+    expect(await check(withoutF3, ["--threads", "1"])).toMatchObject({
+      stdout: always.trim(),
+      exitCode: always ? 1 : 0,
+    });
   });
 
   // Each program makes a member of a `lib.*.d.ts` file circular too. That error isn't printed with `skipLibCheck`, but its
@@ -1125,6 +1128,31 @@ module.exports = Base;
       expect(exitCode).toBe(1);
     }
   });
+
+  // TypeScript stops resolving a base constraint ten levels down, so `a.v` is an error if nothing has resolved the inner
+  // levels before. The check of `t.ts` comes first and resolves them from the inside out, and the checks of `f1.ts` and
+  // `f2.ts` must find that, whether or not they share a task with `t.ts`. That depends on the size of `t.ts`.
+  test.each([0, 1500])(
+    "finds a property twelve indexed accesses deep if the declaring file is checked first (%d more statements)",
+    async statements => {
+      const access = (levels: number) => "T" + `["a"]`.repeat(levels);
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["f1.ts", "f2.ts"] }),
+        "t.ts":
+          `export interface R {\n  v: 1;\n  a: R;\n}\n` +
+          `export declare function fa<T extends R>(a: ${access(12)}, b: ${access(5)}): void;\n` +
+          Array.from(
+            { length: statements },
+            (_, i) => `const b${i} = [${i}, "${i}"].map(it => typeof it).join("");\n`,
+          ).join(""),
+        "f1.ts": `import { fa } from "./t";\nconst h1: typeof fa = (a) => {\n  a.v;\n};\n`,
+        "f2.ts": `import { fa } from "./t";\nconst h2: typeof fa = (a, b) => {\n  b.v;\n  b.w;\n};\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+      expect(stdout).toBe(`f2.ts(4,5): error TS2339: Property 'w' does not exist on type '${access(5)}'.`);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   // `Folder`'s base type mentions `Folder` in a conditional type, and comparing `Folder` asks for its base types again.
   // TypeScript reports that if the base types are what was asked for first, as `root.size` does, and not if the class

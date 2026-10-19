@@ -1186,6 +1186,19 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
         self.insert_in_task(task, key, value)
     }
 
+    /// `insert` for an entry that isn't a function of its key only, so another task might not work out the same: it never
+    /// `stays_in_task`.
+    #[inline]
+    pub fn insert_for_every_task(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
+        if key.local_number().is_none() && is_for_all_tasks(task, &value) {
+            if task.may_write_at_once(self.own_slot(), stored) {
+                return self.put_value_at_once(task, key, value);
+            }
+            task.hold_back();
+        }
+        self.insert_in_task(task, key, value)
+    }
+
     /// `put_at_once`, and the self-check.
     #[inline]
     fn put_value_at_once(&self, task: &Task, key: I, value: V) -> V {

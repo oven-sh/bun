@@ -245,6 +245,7 @@ impl Checker<'_, '_> {
         self.instantiations_up_to_a_limit.clear();
         self.relations_cut_short.clear();
         self.relations_of_this_file.clear();
+        self.constraints_of_this_file.clear();
         self.variances_cut_short.clear();
         self.generic_mapped_types_cut_short.clear();
         self.deferred_diagnostics.clear();

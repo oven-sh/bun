@@ -73,7 +73,7 @@
 //!   of a resolution cycle, until its next commit (`Task::stop_writing_at_once`).
 //! - **What depends on how deep the checker was never leaves the task**: a base constraint that was cut short, a comparison
 //!   that holds because two types inside it counted as deeply nested, and what follows from either
-//!   (`Checker::constraints_of_this_task`, `relations_of_this_file`). In a table the first of them would stay for
+//!   (`Checker::constraints_of_this_file`, `relations_of_this_file`). In a table the first of them would stay for
 //!   everybody.
 //! - Variances do not wait for a commit either. See `Claims`.
 

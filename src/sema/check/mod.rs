@@ -868,7 +868,7 @@ impl<'s> Program<'s> {
             comparisons_of_deeply_nested_types: 0,
             relations_of_this_file: Default::default(),
             keeps_relations_for_this_file: false,
-            constraints_of_this_task: Default::default(),
+            constraints_of_this_file: Default::default(),
             constraint_cuts: Default::default(),
             instantiations_in_progress: Vec::new(),
             keys_of_properties_in_progress: Vec::new(),
@@ -1453,7 +1453,7 @@ pub struct Checker<'p, 's> {
     /// The same for `links.resolvedType` of the expressions of the file being checked that
     /// `is_checked_by_check_expression_cached`.
     expressions_cached_discarding: Vec<ExprId>,
-    /// Where the errors in the file being checked start that were discarded at `maxSerializationLevel`.
+    /// The start of each error in the file being checked that was discarded at `maxSerializationLevel`.
     starts_of_discarded_errors: Vec<u32>,
     /// The next `with_printer` is not a barrier for cycle detection: it prints when and what tsgo
     /// prints.
@@ -1622,9 +1622,9 @@ pub struct Checker<'p, 's> {
     /// `insert_relation` stores in `relations_of_this_file`.
     keeps_relations_for_this_file: bool,
     /// The same for the base constraints that were cut short, or follow from one that was: where the cut is depends on how
-    /// deep the computation was when it got to the type. See `known_constraint`.
-    constraints_of_this_task: FxHashMap<TypeId, (Option<TypeId>, bool)>,
-    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_task` was read.
+    /// deep the computation was when it got to the type. See `known_constraint`. `check_file` clears it too.
+    constraints_of_this_file: FxHashMap<TypeId, (Option<TypeId>, bool)>,
+    /// How many times a base constraint was cut short, or an entry of `constraints_of_this_file` was read.
     constraint_cuts: std::cell::Cell<u64>,
     /// In a task that commits: the keys of the `instantiate_cached` in progress that have found no entry, and the types of
     /// the `get_literal_type_from_properties` in progress. Of two with one key the outer one stores last, and its entry

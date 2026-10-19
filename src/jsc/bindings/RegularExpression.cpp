@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/Options.h>
+#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/YarrInterpreter.h>
 #include <wtf/BumpPointerAllocator.h>
 
@@ -31,8 +32,8 @@ struct RegularExpression {
             bytecode = JSC::Yarr::byteCompile(pattern, &allocator, error);
     }
 
-    // Where the match starts, or JSC::Yarr::offsetNoMatch. `offsets` has room for `bytecode->m_offsetsSize`.
-    unsigned exec(WTF::StringView input, unsigned start, unsigned* offsets)
+    // `offsets` has room for `bytecode->m_offsetsSize`. A search that Yarr gives up is neither Match nor NoMatch.
+    JSC::Yarr::JSRegExpResult exec(WTF::StringView input, unsigned start, unsigned* offsets)
     {
         return JSC::Yarr::interpret(bytecode.get(), input, start, offsets);
     }
@@ -77,14 +78,29 @@ extern "C" bool Yarr__RegularExpression__isValid(Bun::RegularExpression* re)
 {
     return !!re->bytecode;
 }
-extern "C" int Yarr__RegularExpression__matches(Bun::RegularExpression* re, const BunString* string)
+
+// `MatchStatus` in src/jsc/RegularExpression.rs mirrors the enum this returns.
+static_assert(static_cast<uint8_t>(JSC::Yarr::MatchStatus::NoMatch) == 0);
+static_assert(static_cast<uint8_t>(JSC::Yarr::MatchStatus::Match) == 1);
+static_assert(static_cast<uint8_t>(JSC::Yarr::MatchStatus::Abandoned) == 2);
+
+extern "C" JSC::Yarr::MatchStatus Yarr__RegularExpression__matches(Bun::RegularExpression* re, const BunString* string)
 {
+    using JSC::Yarr::JSRegExpResult;
+    using JSC::Yarr::MatchStatus;
     auto input = string->toWTFString(BunString::ZeroCopy);
     if (!re->bytecode || input.isNull())
-        return -1;
+        return MatchStatus::NoMatch;
     WTF::Vector<unsigned, 32> offsets;
     offsets.grow(re->bytecode->m_offsetsSize);
-    return static_cast<int>(re->exec(input, 0, offsets.mutableSpan().data()));
+    switch (re->exec(input, 0, offsets.mutableSpan().data())) {
+    case JSRegExpResult::Match:
+        return MatchStatus::Match;
+    case JSRegExpResult::NoMatch:
+        return MatchStatus::NoMatch;
+    default:
+        return MatchStatus::Abandoned;
+    }
 }
 
 // The two below are for src/yarr/lib.rs. `characters` is Latin-1 if `is8Bit`, otherwise UTF-16.
@@ -105,5 +121,6 @@ extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* 
 // `offsets` has room for the `offsetsSize` of `compile`. What a match leaves there: `Compiled::exec` in src/yarr/lib.rs.
 extern "C" bool Yarr__RegularExpression__exec(Bun::RegularExpression* re, const void* characters, uint32_t length, bool is8Bit, uint32_t start, uint32_t* offsets)
 {
-    return re->exec(WTF::StringView(characters, length, is8Bit), start, offsets) != JSC::Yarr::offsetNoMatch;
+    // A search that Yarr gives up counts as no match: "Limits" in src/lint/regex/mod.rs.
+    return re->exec(WTF::StringView(characters, length, is8Bit), start, offsets) == JSC::Yarr::JSRegExpResult::Match;
 }

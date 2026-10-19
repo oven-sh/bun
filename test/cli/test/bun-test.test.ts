@@ -1399,6 +1399,28 @@ describe("bun test", () => {
     `);
   });
 
+  // The filter runs in the RegExp interpreter, which keeps a context for each iteration of the
+  // group in a pool: about 600 fit in 64 KB. A search that does not fit is abandoned. The test
+  // used to count as filtered out, so a run that never ran a matching test passed.
+  test("fails the file of a test whose name the --test-name-pattern search is abandoned on", () => {
+    const name = Buffer.alloc(2000, "a").toString() + "c";
+    const stderr = runTest({
+      args: ["-t", "^(?:a|b)+c$"],
+      env: { BUN_JSC_maxRegExpStackSize: "65536" },
+      input: `
+        import { test } from "bun:test";
+        test("aaac", () => {});
+        test("no match", () => {});
+        test("${name}", () => {});
+      `,
+      expectExitCode: 1,
+    });
+    expect(stderr).toContain(
+      `--test-name-pattern "^(?:a|b)+c$" could not be matched against the test name "${name}": the regular expression exceeded its backtracking limit`,
+    );
+    expect(stderr).not.toContain("filtered out");
+  });
+
   test("Does not print the regex error when a test fails", () => {
     const stderr = runTest({
       args: ["-t", "not-a-test"],

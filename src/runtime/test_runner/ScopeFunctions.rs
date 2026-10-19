@@ -1,6 +1,7 @@
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
+use bun_jsc::regular_expression::MatchStatus;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
@@ -401,7 +402,30 @@ impl ScopeFunctions {
                         // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
                         // `TestRunner` for the process lifetime; single-threaded here so the
                         // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
+                        let status = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
+                        matches_filter = match status {
+                            MatchStatus::Match => true,
+                            MatchStatus::NoMatch => false,
+                            // The pattern may match this test, so its file fails: "filtered out" would pass the run.
+                            MatchStatus::Abandoned => {
+                                let err = global.throw(format_args!(
+                                    "--test-name-pattern {} could not be matched against the test name {}: the regular expression exceeded its backtracking limit",
+                                    bun_core::fmt::QuotedFormatter {
+                                        text: reporter
+                                            .jest
+                                            .test_options
+                                            .test_filter_pattern
+                                            .as_deref()
+                                            .unwrap_or(b""),
+                                    },
+                                    bun_core::fmt::QuotedFormatter {
+                                        text: bun_test.collection.filter_buffer.as_slice(),
+                                    },
+                                ));
+                                bun_test.collection.filter_buffer.clear();
+                                return Err(err);
+                            }
+                        };
 
                         bun_test.collection.filter_buffer.clear();
                     }

@@ -84,6 +84,25 @@ template<> std::optional<BufferEncodingType> parseEnumerationFromString<BufferEn
     return parseEnumerationFromView<BufferEncodingType>(encoding);
 }
 
+// Node converts a value that is not a string only when its `length` is the length of an encoding name, and then takes only a name of that length.
+std::optional<BufferEncodingType> normalizeEncodingOfNonString(JSGlobalObject& lexicalGlobalObject, JSValue value)
+{
+    auto& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const JSValue lengthValue = value.get(&lexicalGlobalObject, vm.propertyNames->length);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!lengthValue.isNumber())
+        return std::nullopt;
+    const double length = lengthValue.asNumber();
+    if (!(length >= "hex"_s.length() && length <= "base64url"_s.length()) || length != std::trunc(length))
+        return std::nullopt;
+    const String name = value.toWTFString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (name.length() != length)
+        return std::nullopt;
+    return parseEnumerationFromView<BufferEncodingType>(name);
+}
+
 template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEncodingType>(const StringView& encoding)
 {
     // caller must check if value is a string

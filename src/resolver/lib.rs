@@ -923,6 +923,7 @@ pub mod fs {
 
     /// One read of a directory for the cache: what `RealFS::read_listing`
     /// reads, and what it may do with the handle.
+    #[derive(Clone, Copy)]
     pub(crate) struct ListingRead<'a> {
         /// The stale listing that this read replaces. It keeps its name, and
         /// the read uses its entry slots again.

@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 368
+      "excluded": 369
     }
   },
   "dirs": [
@@ -493,6 +493,7 @@
     "js/node/util/mime-api.test.ts",
     "js/node/util/util.test.js",
     "js/node/vm/sourcetextmodule-leak.test.ts",
+    "js/node/vm/vm-module-graph-evaluation-bun.test.ts",
     "js/node/watch/fs.watch.test.ts",
     "js/node/worker_threads/worker-transfer-terminate-stress.test.ts",
     "js/node/worker_threads/worker_heap_snapshot_gc.test.ts",

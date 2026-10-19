@@ -1,14 +1,13 @@
-// NodeVMModule::visitChildrenImpl iterates m_resolveCache.values() on the
-// concurrent GC thread while NodeVMSourceTextModule::link() calls
-// m_resolveCache.set() on the mutator. A set()-triggered rehash frees the
-// old bucket array mid-iteration → WTF::HashTable's debug iterator-validity
-// assert (`ASSERTION FAILED: m_table`) or heap-use-after-free under ASAN.
-// Both sides now take cellLock() (same pattern as JSC's AbstractModuleRecord).
+// NodeVMSourceTextModule::link() gives the record its imported modules on the mutator
+// (AbstractModuleRecord::setImportedModule) while the concurrent GC thread visits the record's m_loadedModules.
+// A set that rehashes the map frees the old bucket array during that visit: WTF::HashTable's debug
+// iterator-validity assert (`ASSERTION FAILED: m_table`), or a heap-use-after-free under ASAN. Both sides take
+// cellLock() in JSC.
 //
 // collectContinuously runs a dedicated collector thread so marking overlaps
 // the link() loop; useGenerationalGC=0 makes every cycle a full mark so the
 // freshly-allocated SourceTextModule is actually visited while link()
-// populates its cache. 500 specifiers per module → the WTF::HashMap rehashes
+// populates its map. 500 specifiers per module → the map rehashes
 // ~9× per link() call.
 
 import { expect, test } from "bun:test";
@@ -17,7 +16,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // collectContinuously is very slow under Windows + ASAN in CI; the code path
 // is identical on Linux/macOS, so skip Windows to keep duration reasonable.
 test.skipIf(isWindows)(
-  "vm.SourceTextModule link() m_resolveCache survives concurrent GC",
+  "vm.SourceTextModule link() sets the imported modules of its record under concurrent GC",
   async () => {
     const fixture = `
       const vm = require("node:vm");
@@ -35,7 +34,7 @@ test.skipIf(isWindows)(
 
       (async () => {
         // Create all modules up front so each one exists across several GC
-        // cycles before link() mutates its m_resolveCache.
+        // cycles before link() sets the imported modules of its record.
         const mods = [];
         for (let iter = 0; iter < 60; iter++) {
           mods.push(new vm.SourceTextModule(src, { identifier: "root" + iter }));
@@ -99,12 +98,8 @@ test.skipIf(isWindows)(
 function evaluationErrorFixture(iterations: number) {
   return `
       import * as vm from "node:vm";
-      // Separate, pre-existing bug: the throwing top-level-await module below
-      // (shared by two importers) reports one unhandled rejection per graph even
-      // though every evaluate() is awaited and caught. Tolerate exactly that one
-      // so the crash under test stays the only way this process exits nonzero.
+      // Every evaluate() below is awaited and caught, so nothing is unhandled.
       process.on("unhandledRejection", e => {
-        if (e instanceof URIError && e.message === "tla") return;
         console.error("unexpected unhandled rejection:", e);
         process.exit(3);
       });

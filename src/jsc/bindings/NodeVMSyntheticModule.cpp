@@ -1,7 +1,8 @@
+#include "BunClientData.h"
+#include "NodeVMScriptFetcher.h"
 #include "NodeVMSourceTextModule.h"
 #include "NodeVMSyntheticModule.h"
 
-#include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
@@ -46,13 +47,9 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
     }
 
     JSValue syntheticEvaluationStepsValue = args.at(3);
-    if (!syntheticEvaluationStepsValue.isUndefined()) {
-        if (!syntheticEvaluationStepsValue.isCallable()) {
-            throwArgumentTypeError(*globalObject, scope, 3, "syntheticEvaluationSteps"_s, "Module"_s, "Module"_s, "function"_s);
-            return nullptr;
-        }
-
-        syntheticEvaluationStepsValue = AsyncContextFrame::withAsyncContextIfNeeded(globalObject, syntheticEvaluationStepsValue);
+    if (!syntheticEvaluationStepsValue.isCallable()) {
+        throwArgumentTypeError(*globalObject, scope, 3, "syntheticEvaluationSteps"_s, "Module"_s, "Module"_s, "function"_s);
+        return nullptr;
     }
 
     JSValue moduleWrapperValue = args.at(4);
@@ -87,37 +84,56 @@ void NodeVMSyntheticModule::destroy(JSCell* cell)
     static_cast<NodeVMSyntheticModule*>(cell)->NodeVMSyntheticModule::~NodeVMSyntheticModule();
 }
 
+// An unnamed variable of the record's environment that holds the module until its evaluateCallback ran.
+static ScopeOffset moduleScopeOffset() { return ScopeOffset(0); }
+
+// The one source of all vm.SyntheticModule records. Its fetcher tells the moduleLoaderEvaluate hook what they are.
+static SourceCode sourceCodeOfSyntheticModules(VM& vm)
+{
+    RefPtr<JSC::SourceProvider>& provider = WebCore::clientData(vm)->nodeVMSourceOriginCache().syntheticModuleSource;
+    if (!provider) [[unlikely]] {
+        Ref fetcher = NodeVMScriptFetcher::createForSyntheticModule();
+        provider = StringSourceProvider::create(emptyString(), SourceOrigin { {}, fetcher.get() }, String {}, SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Module);
+    }
+    return SourceCode(Ref { *provider });
+}
+
 void NodeVMSyntheticModule::createModuleRecord(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSModuleLoader* loader = moduleLoader(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    // The source type only feeds AbstractModuleRecord::moduleType(), which the loader attaches to
-    // errors as the failing module's kind; a vm.SyntheticModule is a JavaScript module in that sense.
-    SyntheticModuleRecord* moduleRecord = SyntheticModuleRecord::create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), loader, Identifier::fromString(vm, identifier()), SourceProviderSourceType::Module);
+    JSGlobalObject* realm = moduleRealm(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
-    m_moduleRecord.set(vm, this, moduleRecord);
+    JSModuleRecord* moduleRecord = JSModuleRecord::create(realm, vm, realm->moduleRecordStructure(), realm->moduleLoader(), Identifier::fromString(vm, identifier()), sourceCodeOfSyntheticModules(vm), NoFeatures);
 
     SymbolTable* exportSymbolTable = SymbolTable::create(vm);
 
     ScopeOffset offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
+    RELEASE_ASSERT(offset == moduleScopeOffset());
+
+    offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
     exportSymbolTable->set(NoLockingNecessary, vm.propertyNames->starNamespacePrivateName.impl(), SymbolTableEntry(VarOffset(offset)));
 
     for (const String& exportName : m_exportNames) {
         auto offset = exportSymbolTable->takeNextScopeOffset(NoLockingNecessary);
-        Identifier exportIdentifier = Identifier::fromString(vm, exportName);
-        moduleRecord->addExportEntry(SyntheticModuleRecord::ExportEntry::createLocal(exportIdentifier, exportIdentifier));
-        exportSymbolTable->set(NoLockingNecessary, exportIdentifier.releaseImpl().get(), SymbolTableEntry(VarOffset(offset)));
+        // Named after its slot: JSC shares linked code between importers whose (source, variable name) bindings match.
+        Identifier localName = Identifier::from(vm, offset.offset());
+        moduleRecord->addExportEntry(JSModuleRecord::ExportEntry::createLocal(Identifier::fromString(vm, exportName), localName));
+        exportSymbolTable->set(NoLockingNecessary, localName.impl(), SymbolTableEntry(VarOffset(offset)));
     }
 
     // V8 initializes synthetic-module exports to undefined (reading one
     // before setExport() yields undefined), unlike TDZ which would throw.
-    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, globalObject, nullptr, exportSymbolTable, jsUndefined(), moduleRecord);
-    moduleRecord->setModuleEnvironment(globalObject, moduleEnvironment);
-    RELEASE_AND_RETURN(scope, void());
+    JSModuleEnvironment* moduleEnvironment = JSModuleEnvironment::create(vm, realm, nullptr, exportSymbolTable, jsUndefined(), moduleRecord);
+    moduleEnvironment->variableAt(moduleScopeOffset()).set(vm, moduleEnvironment, this);
+    moduleRecord->setModuleEnvironment(realm, moduleEnvironment);
+    RETURN_IF_EXCEPTION(scope, void());
+    // Link() would make the environment from the code of the module, and this record has none: it is linked as it is.
+    moduleRecord->setStatus(JSC::CyclicModuleRecord::Status::Linked);
+
+    m_moduleRecord.set(vm, this, moduleRecord);
 }
 
 void NodeVMSyntheticModule::ensureModuleRecord(JSGlobalObject* globalObject)
@@ -133,73 +149,33 @@ AbstractModuleRecord* NodeVMSyntheticModule::moduleRecord(JSGlobalObject* global
     return m_moduleRecord.get();
 }
 
-JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (m_status != Status::Unlinked) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Module must be unlinked before linking"_s);
-        return {};
-    }
-
-    SyntheticModuleRecord* record = m_moduleRecord.get();
-
-    if (NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false)) {
-        globalObject = nodeVmGlobalObject;
-    }
-
-    (void)scriptFetcher;
-    Synchronousness sync = record->link(globalObject, nullptr);
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SyntheticModule linking");
-    }
-
-    status(Status::Linked);
-    return JSC::jsUndefined();
-}
-
 JSValue NodeVMSyntheticModule::instantiate(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_status >= Status::Linked) {
+    if (m_isInstantiated) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "Cannot reinstantiate a SyntheticModule"_s);
         return {};
     }
 
-    if (m_status != Status::Unlinked) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be unlinked before instantiating"_s);
-        return {};
-    }
-
-    status(Status::Linked);
+    m_isInstantiated = true;
     return JSC::jsUndefined();
 }
 
-JSValue NodeVMSyntheticModule::evaluate(JSGlobalObject* globalObject)
+void NodeVMSyntheticModule::runEvaluationSteps(JSGlobalObject* globalObject, JSC::JSModuleRecord* record)
 {
-    if (m_status == Status::Evaluated) {
-        return m_evaluationResult.get();
-    }
-
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // NodeVMModule::evaluate flips the status to Evaluating before invoking
-    // the user's evaluation steps (it is the only caller of this method).
-    if (m_status != Status::Evaluating) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before evaluating"_s);
-        return {};
-    }
+    // Evaluate() runs a record once, so the module is there. The record has no more use for it.
+    JSModuleEnvironment* environment = record->moduleEnvironment();
+    auto* module = dynamicDowncast<NodeVMSyntheticModule>(environment->variableAt(moduleScopeOffset()).get());
+    RELEASE_ASSERT(module);
+    environment->variableAt(moduleScopeOffset()).set(vm, environment, jsUndefined());
 
-    ArgList args;
-
-    RELEASE_AND_RETURN(scope, AsyncContextFrame::call(globalObject, m_syntheticEvaluationSteps.get(), m_moduleWrapper.get(), args));
+    // As a module body does, the steps run in the async context of the code that evaluates the module.
+    JSValue steps = module->m_syntheticEvaluationSteps.get();
+    JSC::call(globalObject, steps, JSC::getCallData(steps), module->m_moduleWrapper.get(), ArgList());
 }
 
 void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String exportName, JSValue value)
@@ -207,7 +183,7 @@ void NodeVMSyntheticModule::setExport(JSGlobalObject* globalObject, WTF::String 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (status() < Status::Linked) {
+    if (!m_isInstantiated) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_STATUS, "SyntheticModule must be linked before exports can be set"_s);
         return;
     }

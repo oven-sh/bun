@@ -243,6 +243,11 @@ if (values["skip-emulation"]) {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
   await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
+
+  // TEMPORARY MEASUREMENT, removed before merge: repeat the emulated run to count crash reports at exit.
+  for (let run = 2; run <= 7; run++) {
+    await runTest(`SIMD baseline tests (measurement, run ${run} of 7)`, ["test", simdTestPath], { live: true });
+  }
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

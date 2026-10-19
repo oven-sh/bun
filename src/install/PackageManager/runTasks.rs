@@ -280,6 +280,62 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     )
 }
 
+/// Adds a note that names `--no-cache` to a tarball failure that a cached manifest explains.
+#[cold]
+fn note_cached_manifest(
+    manager: &mut PackageManager,
+    log_mark: usize,
+    task_id: Task::Id,
+    tarball: &ExtractTarball,
+    // The URL of a tarball whose server sent no response.
+    unanswered_url: Option<&[u8]>,
+    is_required: bool,
+) {
+    use crate::network_task::ManifestOrigin;
+    let name = tarball.name.slice();
+    let tasks = &manager.network_dedupe_map;
+    let is_from_cache = (tasks.get(&task_id)).is_some_and(|entry| entry.from_manifest)
+        && !(tasks.get(&Task::Id::for_manifest(name)))
+            .is_some_and(|entry| entry.manifest == ManifestOrigin::Registry);
+    let scope = manager.options.scope_for_package_name(name);
+    // bunx does not take `--no-cache`, and a registry that does not answer has no other manifest.
+    if !is_from_cache
+        || scope.url_hash == *npm::Registry::DEFAULT_URL_HASH
+        || bun_core::env_var::BUN_INTERNAL_BUNX_INSTALL.get().is_some()
+        || unanswered_url
+            .is_some_and(|url| Options::same_origin(&bun_url::URL::parse(url), &scope.url.url()))
+    {
+        return;
+    }
+
+    let mut text = Vec::new();
+    let _ = write!(
+        text,
+        "the tarball URL and hash of {}@{} came from a cached manifest; ",
+        bun_core::fmt::for_terminal(bstr::BStr::new(name)),
+        bun_core::fmt::for_terminal(
+            tarball
+                .resolution
+                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+        ),
+    );
+    // An optional package that failed is in bun.lock, and `--no-cache` does not resolve it again.
+    text.extend_from_slice(if is_required {
+        b"run the command again with \"--no-cache\" to ask the registry".as_slice()
+    } else {
+        b"delete bun.lock and run \"bun install --no-cache\" to ask the registry".as_slice()
+    });
+    let log = manager.log_mut();
+    if log.msgs.len() > log_mark
+        && let Some(msg) = log.msgs.last_mut()
+    {
+        msg.notes = Box::new([bun_ast::Data {
+            text: text.into(),
+            location: None,
+        }]);
+    }
+}
+
 /// The cleanup that runs however `run_tasks_erased` exits.
 struct FinishPass<'a> {
     manager: *mut PackageManager,
@@ -1024,6 +1080,7 @@ fn run_tasks_erased(
                         continue;
                     };
 
+                    let log_mark = manager.log_mut().msgs.len();
                     add_error_or_warning_pretty!(
                         manager.log_mut(),
                         is_required,
@@ -1035,6 +1092,14 @@ fn run_tasks_erased(
                                 .resolution
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
                         ),
+                    );
+                    note_cached_manifest(
+                        manager,
+                        log_mark,
+                        task.task_id,
+                        extract,
+                        Some(&task.url_buf),
+                        is_required,
                     );
                     fail_update_requests(
                         manager,
@@ -1073,6 +1138,7 @@ fn run_tasks_erased(
                         continue;
                     };
 
+                    let log_mark = manager.log_mut().msgs.len();
                     if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -1094,6 +1160,16 @@ fn run_tasks_erased(
                                 metadata.url.slice()
                             )),
                             response.status_code,
+                        );
+                    }
+                    if response.status_code == 404 {
+                        note_cached_manifest(
+                            manager,
+                            log_mark,
+                            task.task_id,
+                            extract,
+                            None,
+                            is_required,
                         );
                     }
                     fail_update_requests(
@@ -1330,6 +1406,7 @@ fn run_tasks_erased(
                         continue;
                     };
 
+                    let log_mark = manager.log_mut().msgs.len();
                     add_error_or_warning_pretty!(
                         manager.log_mut(),
                         is_required,
@@ -1337,6 +1414,16 @@ fn run_tasks_erased(
                         err.name(),
                         bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                     );
+                    if err == crate::Error::IntegrityCheckFailed {
+                        note_cached_manifest(
+                            manager,
+                            log_mark,
+                            task.id,
+                            tarball,
+                            None,
+                            is_required,
+                        );
+                    }
                     fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
 
                     // Void-callback fallback (resolve phase): drain the
@@ -2088,6 +2175,8 @@ pub fn generate_network_task_for_tarball<'a>(
     dependency_id: DependencyID,
     package: &Package,
     authorization: Authorization,
+    // `DedupeMapEntry::from_manifest`
+    from_manifest: bool,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
@@ -2095,9 +2184,11 @@ pub fn generate_network_task_for_tarball<'a>(
         enqueue::offline_miss(this, task_id, "", name, is_required);
         return Err(ForTarballError::Offline);
     }
-    if this.has_created_network_task(task_id, is_required) {
+    let (entry, found_existing) = this.network_task_entry(task_id, is_required);
+    if found_existing {
         return Ok(None);
     }
+    entry.from_manifest = from_manifest;
 
     // reshaped for borrowck —
     // all `&mut this` uses (cache/temp dir, pool slot) happen
@@ -2257,6 +2348,16 @@ impl PackageManager {
         task_id: Task::Id,
         is_required: bool,
     ) -> bool {
+        self.network_task_entry(task_id, is_required).1
+    }
+
+    /// The entry of a task, and whether the task was created before.
+    #[inline]
+    fn network_task_entry(
+        &mut self,
+        task_id: Task::Id,
+        is_required: bool,
+    ) -> (&mut crate::network_task::DedupeMapEntry, bool) {
         let gpe = self
             .network_dedupe_map
             .get_or_put(task_id)
@@ -2269,7 +2370,7 @@ impl PackageManager {
             gpe.value_ptr.is_required || is_required
         };
 
-        gpe.found_existing
+        (gpe.value_ptr, gpe.found_existing)
     }
 
     pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {

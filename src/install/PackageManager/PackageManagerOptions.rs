@@ -337,7 +337,7 @@ fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm
 }
 
 /// Same scheme, host and effective port (some registries spell out `:443` in `dist.tarball`).
-fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
+pub(crate) fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
     !base.hostname.is_empty()
         && url.protocol.eq_ignore_ascii_case(base.protocol)
         && url.hostname.eq_ignore_ascii_case(base.hostname)

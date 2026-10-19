@@ -136,6 +136,7 @@ messages! {
     UnexpectedCharacter = "Unexpected character",
 
     // JSON
+    ExpectedComma = "Expected \",\"",
     ExpectedEndOfFile = "Expected end of file",
 
     // Handlebars

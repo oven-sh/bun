@@ -81,4 +81,22 @@ describe("--sql-preconnect", () => {
     expect(stdout).toContain("Normal script executed");
     expect(connectionAttempts).toBe(0); // No connection should be attempted without the flag
   });
+
+  test("a refused connection does not fail the script", async () => {
+    const listener = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+    const port = listener.port;
+    listener.stop(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--sql-preconnect", "-e", `console.log("script done")`],
+      env: { ...bunEnv, DATABASE_URL: `postgres://127.0.0.1:${port}/db` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("script done\n");
+    expect(exitCode).toBe(0);
+  });
 });

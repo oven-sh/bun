@@ -1148,6 +1148,66 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// "sideEffects": false in barrel-lib says nothing about effect-lib, which has
+// side effects by its own package.json: it loads although nothing asks for
+// `poly`. beta.js and pure-lib stay skipped (a syntax error each).
+devTest("barrel optimization: a re-export into a package with side effects loads it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      console.log('got: ' + Alpha + ' ' + globalThis.effect);
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+      export { poly } from 'effect-lib';
+      export { pure } from 'pure-lib';
+    `,
+    "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = <<<SYNTAX_ERROR>>>;`,
+    "node_modules/effect-lib/package.json": JSON.stringify({
+      name: "effect-lib",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/effect-lib/index.js": `
+      globalThis.effect = "effect-lib ran";
+      export const poly = 1;
+    `,
+    "node_modules/pure-lib/package.json": JSON.stringify({
+      name: "pure-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/pure-lib/index.js": `export const pure = <<<SYNTAX_ERROR>>>;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: ALPHA effect-lib ran");
+
+    // The barrel is parsed again on every update. The records that stayed
+    // deferred in the first build stay deferred, and effect-lib stays loaded.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+        import { Alpha } from 'barrel-lib';
+        console.log('again: ' + Alpha + ' ' + globalThis.effect);
+      `,
+      );
+    });
+    await c.expectMessage("again: ALPHA effect-lib ran");
+  },
+});
 // The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
 // user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
 devTest("a render() that does not return a Response is reported as that", {

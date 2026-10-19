@@ -6466,6 +6466,7 @@ pub mod bv2_impl {
         fn run_resolution_for_parse_task(
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
+            barrel_candidates: &[u32],
         ) -> ResolveQueue {
             let result = match &mut parse_result.value {
                 parse_task::ResultValue::Success(r) => r,
@@ -6481,7 +6482,16 @@ pub mod bv2_impl {
                 loader: result.loader,
                 target,
                 only_records: None,
+                barrel_candidates,
             });
+            if resolve_result.deferred_barrel_candidate {
+                barrel_imports::register_barrel_with_deferrals(
+                    this,
+                    source_index.0,
+                    result.source.path.text,
+                )
+                .expect("oom");
+            }
 
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
@@ -6551,11 +6561,15 @@ pub mod bv2_impl {
         pub(crate) target: options::Target,
         /// See `only_selected_record`.
         pub(crate) only_records: Option<&'a [u32]>,
+        /// The records that `apply_barrel_optimization` nominated, ascending: see `barrel_candidate_stays_deferred`.
+        pub(crate) barrel_candidates: &'a [u32],
     }
 
     pub(crate) struct ResolveImportRecordResult {
         pub(crate) resolve_queue: ResolveQueue,
         pub(crate) last_error: Option<Error>,
+        /// A record of `barrel_candidates` was deferred.
+        pub(crate) deferred_barrel_candidate: bool,
     }
 
     /// `only_records`: barrel un-deferral passes the ascending indices of the records
@@ -6615,10 +6629,18 @@ pub mod bv2_impl {
             if let Some(only) = only_records {
                 estimated_resolve_queue_count = estimated_resolve_queue_count.min(only.len());
             }
+            // Most barrel candidates stay deferred and queue nothing.
+            let barrel_candidates: &[u32] = ctx.barrel_candidates;
+            debug_assert!(barrel_candidates.is_sorted());
+            estimated_resolve_queue_count =
+                estimated_resolve_queue_count.saturating_sub(barrel_candidates.len());
             let mut resolve_queue = ResolveQueue::default();
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
+            let mut deferred_barrel_candidate = false;
+            let mut next_barrel_candidate = 0;
+            let mut side_effect_free_dir: (&[u8], Option<_resolver::DirInfoRef>) = (b"", None);
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
                 if !only_selected_record(only_records, i) {
@@ -6639,6 +6661,30 @@ pub mod bv2_impl {
                 || import_record.source_index.is_valid()
                 {
                     continue;
+                }
+
+                if !barrel_candidates.is_empty() {
+                    while barrel_candidates
+                        .get(next_barrel_candidate)
+                        .is_some_and(|&record| record < i as u32)
+                    {
+                        next_barrel_candidate += 1;
+                    }
+                    if barrel_candidates.get(next_barrel_candidate) == Some(&(i as u32))
+                        && self.barrel_candidate_stays_deferred(
+                            import_record,
+                            source,
+                            ctx.target,
+                            &mut side_effect_free_dir,
+                        )
+                    {
+                        import_record.flags.insert(
+                            bun_ast::ImportRecordFlags::IS_UNUSED
+                                | bun_ast::ImportRecordFlags::IS_BARREL_DEFERRED,
+                        );
+                        deferred_barrel_candidate = true;
+                        continue;
+                    }
                 }
 
                 if let Some(fw) = &self.framework {
@@ -7255,7 +7301,107 @@ pub mod bv2_impl {
             ResolveImportRecordResult {
                 resolve_queue,
                 last_error,
+                deferred_barrel_candidate,
             }
+        }
+
+        /// Whether a record that `apply_barrel_optimization` nominated stays deferred: the linker would not load its target for side effects.
+        #[inline(never)]
+        fn barrel_candidate_stays_deferred(
+            &mut self,
+            import_record: &ImportRecord,
+            source: &bun_ast::Source,
+            target: options::Target,
+            side_effect_free_dir: &mut (&'static [u8], Option<_resolver::DirInfoRef>),
+        ) -> bool {
+            use crate::linker_context_mod::unused_import_is_removable;
+            use bun_ast::SideEffects;
+
+            let specifier = import_record.path.text;
+            // An in-memory file always has side effects.
+            if self.file_map.is_some_and(|file_map| {
+                file_map
+                    .resolve(self.arena(), source.path.text, specifier)
+                    .is_some()
+            }) {
+                return false;
+            }
+
+            let ignore_dce_annotations = self.linker.options.ignore_dce_annotations;
+            let source_dir = source.path.source_dir();
+            let transpiler = self.transpiler_for_target(target);
+            let resolver = &mut transpiler.resolver;
+
+            // A file in a directory of a `"sideEffects": false` package needs no lookup, and a barrel names few directories.
+            if !ignore_dce_annotations {
+                if let Some(slash) = strings::last_index_of_char(specifier, b'/') {
+                    let (import_dir, name) = specifier.split_at(slash + 1);
+                    if side_effect_free_dir.0 != import_dir {
+                        *side_effect_free_dir = (
+                            import_dir,
+                            resolver.side_effect_free_import_dir(source_dir, import_dir),
+                        );
+                    }
+                    if !matches!(name, b"" | b"." | b"..")
+                        && side_effect_free_dir
+                            .1
+                            .is_some_and(|dir| resolver.import_stays_in_dir(dir, specifier, name))
+                    {
+                        debug_assert!(
+                            resolver
+                                .resolve_without_caching_misses(
+                                    source_dir,
+                                    specifier,
+                                    import_record.kind
+                                )
+                                .ok()
+                                .is_none_or(|result| {
+                                    !result.flags.is_external()
+                                        && result.path_const().is_some()
+                                        && unused_import_is_removable(
+                                            result.primary_side_effects_data,
+                                            false,
+                                        )
+                                })
+                        );
+                        return true;
+                    }
+                }
+            }
+
+            // The lookup can list the directory, so the next record asks again.
+            if side_effect_free_dir.1.is_none() {
+                side_effect_free_dir.0 = b"";
+            }
+            // A target that does not resolve stays deferred, as before: no error, and no onResolve plugin is asked.
+            let Ok(result) =
+                resolver.resolve_without_caching_misses(source_dir, specifier, import_record.kind)
+            else {
+                return true;
+            };
+            let mut side_effects = result.primary_side_effects_data;
+            // These run no code of their own: a disabled module, a Node.js polyfill, a file of data that no onLoad plugin takes.
+            if side_effects == SideEffects::HasSideEffects
+                && !result.flags.is_external()
+                && match result.path_const() {
+                    None => true,
+                    Some(path) if path.namespace == b"node" => true,
+                    Some(path) => {
+                        let loader = import_record.loader.unwrap_or_else(|| {
+                            path.loader(&transpiler.options.loaders)
+                                .unwrap_or(Loader::File)
+                        });
+                        (loader.should_copy_for_bundling()
+                            || loader.side_effects() != SideEffects::HasSideEffects)
+                            && !self
+                                .plugins_ref()
+                                .is_some_and(|plugins| plugins.has_any_matches(path, true))
+                    }
+                }
+            {
+                side_effects = SideEffects::NoSideEffectsPureData;
+            }
+            unused_import_is_removable(side_effects, ignore_dce_annotations)
         }
 
         /// Process a resolve queue: create input file slots and schedule parse tasks.
@@ -7615,8 +7761,14 @@ pub mod bv2_impl {
             let mut process_log = true;
 
             if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
-                barrel_imports::apply_barrel_optimization(this, parse_result);
-                resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
+                let mut barrel_candidates = Vec::new();
+                barrel_imports::apply_barrel_optimization(
+                    this,
+                    parse_result,
+                    &mut barrel_candidates,
+                );
+                resolve_queue =
+                    Self::run_resolution_for_parse_task(parse_result, this, &barrel_candidates);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
                 }

@@ -584,6 +584,9 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// False while `resolve_without_caching_misses` runs.
+    cache_missing_dirs: bool,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -661,6 +664,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            cache_missing_dirs: true,
         }
     }
 
@@ -983,6 +987,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            cache_missing_dirs: true,
         }
     }
 
@@ -1572,6 +1577,19 @@ impl<'a> Resolver<'a> {
             }
         }
         self.resolve(source_dir, import_path, kind)
+    }
+
+    /// `resolve_with_framework` for a lookup whose miss is not an error: a directory that does not exist is not remembered as missing.
+    pub fn resolve_without_caching_misses(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        self.cache_missing_dirs = false;
+        let result = self.resolve_with_framework(source_dir, import_path, kind);
+        self.cache_missing_dirs = true;
+        result
     }
 
     pub(crate) fn finalize_result(
@@ -2526,6 +2544,81 @@ impl<'a> Resolver<'a> {
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(joined);
         a || b
+    }
+
+    /// The directory of a relative import, when the cache alone proves that `resolve` gives each file in it the verdict of `"sideEffects": false`.
+    pub fn side_effect_free_import_dir(
+        &mut self,
+        source_dir: &[u8],
+        import_dir: &[u8],
+    ) -> Option<DirInfoRef> {
+        // Each of these can send a relative import somewhere else.
+        if !bun_paths::is_absolute(source_dir)
+            || bun_paths::is_absolute(import_dir)
+            || is_package_path_not_absolute(import_dir)
+            || self.opts.external.abs_paths.count() > 0
+        {
+            return None;
+        }
+        let buf = bufs!(relative_abs_path);
+        let len = self
+            .fs_ref()
+            .abs_buf_checked(&[source_dir, import_dir], buf)?
+            .len();
+        if len >= buf.len() {
+            return None;
+        }
+        buf[len] = SEP;
+        let file_prefix: &[u8] = &buf[..=len];
+        let dir_path = strings::without_trailing_slash_windows_path(&file_prefix[..len]);
+
+        let _unlock = self.mutex.lock_guard();
+        let dir_info = self
+            .dir_cache_mut()
+            .get(dir_path)
+            .map(DirInfoRef::from_slot)?;
+        if self.care_about_browser_field && dir_info.get_enclosing_browser_scope().is_some() {
+            return None;
+        }
+
+        // As `load_as_file_or_directory` and `finalize_result`: the package.json of the package folder decides, then the enclosing one.
+        let mut package_json = dir_info.enclosing_package_json;
+        let node_modules = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
+        if let Some(package_dir) =
+            strings::last_index_of(file_prefix, node_modules).and_then(|at| {
+                let name = at + node_modules.len();
+                strings::index_of_char(&file_prefix[name..], SEP)
+                    .map(|len| &file_prefix[..name + len as usize])
+            })
+        {
+            package_json = self
+                .dir_cache_mut()
+                .get(package_dir)?
+                .package_json()
+                .or(package_json);
+        }
+        matches!(
+            package_json?.side_effects,
+            crate::package_json::SideEffects::False
+        )
+        .then_some(dir_info)
+    }
+
+    /// Whether the relative import `import_path`, with the last segment `name`, finds a file of `dir` or nothing: no `--external` pattern takes it, and the cached listing of `dir` has no directory `name`.
+    pub fn import_stays_in_dir(
+        &mut self,
+        dir: DirInfoRef,
+        import_path: &[u8],
+        name: &[u8],
+    ) -> bool {
+        if self.matches_user_external_pattern(import_path) {
+            return false;
+        }
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        dir.get_entry(self.generation, name).is_none_or(|query| {
+            // SAFETY: `rfs` is the process-global RealFS; the lazy stat in `kind` is serialized on the mutex of the entry.
+            unsafe { query.entry().kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File }
+        })
     }
 
     pub(crate) fn load_node_modules(
@@ -4566,8 +4659,10 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
-                            rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            if self.cache_missing_dirs {
+                                self.dir_cache_mut().mark_not_found(queue_top.result);
+                                rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            }
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;

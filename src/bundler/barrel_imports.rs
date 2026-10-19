@@ -85,6 +85,7 @@ fn resolve_barrel_export(
 
 /// Analyze a parsed file to determine if it's a barrel and mark unneeded
 /// import records as is_unused so they won't be resolved. Runs BEFORE resolution.
+/// A barrel that qualifies by `sideEffects: false` alone only nominates them in `candidates`: see `barrel_candidate_stays_deferred`.
 ///
 /// A file qualifies as a barrel if:
 /// 1. It has `sideEffects: false` or is in `optimize_imports`, AND
@@ -95,15 +96,17 @@ fn resolve_barrel_export(
 pub(crate) fn apply_barrel_optimization(
     this: &mut BundleV2,
     parse_result: &mut parse_task::Result,
+    candidates: &mut Vec<u32>,
 ) {
     // bun.handleOom: Rust aborts on OOM via the global arena; unwrap is for
     // bun_collections ops that still surface AllocError.
-    apply_barrel_optimization_impl(this, parse_result).expect("OOM");
+    apply_barrel_optimization_impl(this, parse_result, candidates).expect("OOM");
 }
 
 fn apply_barrel_optimization_impl(
     this: &mut BundleV2,
     parse_result: &mut parse_task::Result,
+    candidates: &mut Vec<u32>,
 ) -> Result<(), AllocError> {
     let parse_task::ResultValue::Success(result) = &mut parse_result.value else {
         return Ok(());
@@ -254,17 +257,27 @@ fn apply_barrel_optimization_impl(
             let iri = imp.import_record_index;
             if !needed_records.contains(&iri) {
                 if (iri as usize) < ast.import_records.len() {
-                    ast.import_records.as_mut_slice()[iri as usize]
-                        .flags
-                        .insert(
+                    let record = &mut ast.import_records.as_mut_slice()[iri as usize];
+                    // `optimize_imports` is the user's word. `resolve_import_records` skips an is_unused record, and resolves an SSR-graph record in another graph.
+                    if is_explicit
+                        || record.flags.contains(import_record::Flags::IS_UNUSED)
+                        || record.tag == import_record::Tag::BakeResolveToSsrGraph
+                    {
+                        record.flags.insert(
                             import_record::Flags::IS_UNUSED
                                 | import_record::Flags::IS_BARREL_DEFERRED,
                         );
-                    has_deferrals = true;
+                        has_deferrals = true;
+                    } else {
+                        candidates.push(iri);
+                    }
                 }
             }
         }
     }
+    // The loop visits a record once per export name.
+    candidates.sort_unstable();
+    candidates.dedup();
 
     if has_deferrals {
         bun_core::scoped_log!(
@@ -281,19 +294,24 @@ fn apply_barrel_optimization_impl(
                 .saturating_sub(needed_records.count()),
             needed_records.count(),
         );
-
-        // Merge with existing entry (keep already-requested names) or create new
-        let _ = RequestedExports::entry(&mut this.requested_exports, source_index);
-
-        // Register with DevServer so isFileCached returns null for this barrel,
-        // ensuring it gets re-parsed on every incremental build. This is needed
-        // because the set of needed exports can change when importing files change.
-        if let Some(dev) = dev_handle {
-            dev.register_barrel_with_deferrals(result.source.path.text)
-                .map_err(|_| AllocError)?;
-        }
+        register_barrel_with_deferrals(this, source_index, result.source.path.text)?;
     }
 
+    Ok(())
+}
+
+/// Track a barrel that has a deferred record, so that the dev server parses it again on every incremental build.
+pub(crate) fn register_barrel_with_deferrals(
+    this: &mut BundleV2,
+    source_index: u32,
+    source_path: &[u8],
+) -> Result<(), AllocError> {
+    // Merge with existing entry (keep already-requested names) or create new
+    let _ = RequestedExports::entry(&mut this.requested_exports, source_index);
+    if let Some(dev) = this.dev_server_handle().copied() {
+        dev.register_barrel_with_deferrals(source_path)
+            .map_err(|_| AllocError)?;
+    }
     Ok(())
 }
 
@@ -385,6 +403,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         loader,
         target,
         only_records: Some(un_deferred),
+        barrel_candidates: &[],
     });
 
     this.graph.input_files.items_source_mut()[idx] = source;

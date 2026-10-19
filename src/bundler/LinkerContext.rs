@@ -448,9 +448,10 @@ impl<'a> LinkerContext<'a> {
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
-        self.parse_graph().input_files.items_side_effects()[source_index as usize]
-            != SideEffects::HasSideEffects
-            && !self.options.ignore_dce_annotations
+        unused_import_is_removable(
+            self.parse_graph().input_files.items_side_effects()[source_index as usize],
+            self.options.ignore_dce_annotations,
+        )
     }
 
     /// Note: this should call a `MimallocArena` debug hook
@@ -466,6 +467,15 @@ impl<'a> LinkerContext<'a> {
         // if `Graph.heap` ever grows the `MimallocArena` debug hook (see the
         // doc comment above).
     }
+}
+
+/// Whether the linker drops an import of a file with this verdict when nothing uses an export of the file.
+#[inline]
+pub(crate) fn unused_import_is_removable(
+    side_effects: SideEffects,
+    ignore_dce_annotations: bool,
+) -> bool {
+    side_effects != SideEffects::HasSideEffects && !ignore_dce_annotations
 }
 
 // Local re-exports for the tree-shaking impl below. `EntryPoint::Kind`

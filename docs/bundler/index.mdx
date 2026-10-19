@@ -1406,6 +1406,8 @@ The bundler always loads `export *` re-exports (it never defers them) to avoid c
 
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
 
+**Side effects:** In automatic mode, `"sideEffects": false` speaks only for the files of the barrel's own package. The bundler still loads an unused re-export when it could not drop an unused `import` of the same module: a file of a package that does not set `"sideEffects": false`, or an external module. It decides this before it calls an `onResolve` plugin. A barrel that `optimizeImports` lists skips every unused re-export.
+
 ### Re-exported namespaces
 
 Property reads on an import that turns out to be a module namespace are linked straight to the export they name, the same as a named import. This covers namespaces reached indirectly:

@@ -3494,6 +3494,11 @@ declare module "bun" {
      * This is also enabled automatically for any package with
      * `"sideEffects": false` in its `package.json`.
      *
+     * A package that is optimized only automatically still loads an unused
+     * re-export of a module with side effects: a file of a package that does
+     * not set `"sideEffects": false`, or an external module. The packages
+     * listed here skip every unused re-export.
+     *
      * @example
      * ```ts
      * await Bun.build({

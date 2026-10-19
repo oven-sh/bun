@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, readdirSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -2161,6 +2162,618 @@ describe("bundler", () => {
       "/node_modules/faillib/index.js": ['Could not resolve: "./missing.js"'],
     },
   });
+
+  // --- A re-export into a file that the barrel's "sideEffects" does not cover ---
+  // "sideEffects": false in the package.json of a barrel speaks for the files
+  // of that package. A re-export can point at a file of another package. For
+  // each re-export that nothing imports, the bundler asks the resolver, and
+  // skips the re-export only when the linker would drop an unused import of
+  // the same file. A barrel that has a local export gets that result too.
+
+  // b.js, pure-pkg and the decoy stay skipped: the build fails if one is parsed.
+  const sideEffectTarget = (reExport: string, barrelPackage: object = { sideEffects: false }) => ({
+    "/entry.js": /* js */ `
+      import { a } from 'barrel-pkg';
+      console.log(a, globalThis.effect);
+    `,
+    "/node_modules/barrel-pkg/package.json": JSON.stringify({
+      name: "barrel-pkg",
+      main: "./index.js",
+      ...barrelPackage,
+    }),
+    "/node_modules/barrel-pkg/index.js": /* js */ `
+      export { a } from './a.js';
+      export { b } from './b.js';
+      ${reExport}
+      export { pure } from 'pure-pkg';
+    `,
+    "/node_modules/barrel-pkg/a.js": /* js */ `
+      export const a = "a";
+    `,
+    "/node_modules/barrel-pkg/b.js": /* js */ `
+      export const b = <<<SYNTAX_ERROR>>>;
+    `,
+    // A package path never names a file next to the barrel.
+    "/node_modules/barrel-pkg/effect-pkg.js": /* js */ `
+      export const poly = <<<SYNTAX_ERROR>>>;
+    `,
+    "/node_modules/pure-pkg/package.json": JSON.stringify({
+      name: "pure-pkg",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "/node_modules/pure-pkg/index.js": /* js */ `
+      export const pure = <<<SYNTAX_ERROR>>>;
+    `,
+    // No "sideEffects" field: importing this package runs its top level.
+    "/node_modules/effect-pkg/package.json": JSON.stringify({ name: "effect-pkg", main: "./index.js" }),
+    "/node_modules/effect-pkg/index.js": /* js */ `
+      globalThis.effect = "effect-pkg ran";
+      export const poly = 1;
+      export default 2;
+    `,
+  });
+
+  for (const [name, reExport] of [
+    ["Named", `export { poly } from 'effect-pkg';`],
+    ["DefaultAs", `export { default as poly } from 'effect-pkg';`],
+    ["ImportThenExport", `import { poly } from 'effect-pkg'; export { poly };`],
+    ["StarAs", `export * as poly from 'effect-pkg';`],
+  ] as const) {
+    itBundled(`barrel/ReExportFromPackageWithSideEffects/${name}`, {
+      files: sideEffectTarget(reExport),
+      outdir: "/out",
+      run: { stdout: "a effect-pkg ran" },
+    });
+  }
+
+  itBundled("barrel/ReExportFromPackageWithSideEffects/CLI", {
+    files: sideEffectTarget(`export { poly } from 'effect-pkg';`),
+    backend: "cli",
+    outdir: "/out",
+    run: { stdout: "a effect-pkg ran" },
+  });
+
+  // The namespace of `import()` is read for `a` only, so the other re-exports
+  // stay unrequested. The one with side effects still loads.
+  itBundled("barrel/ReExportFromPackageWithSideEffects/PartialDynamicImport", {
+    files: {
+      ...sideEffectTarget(`export { poly } from 'effect-pkg';`),
+      "/entry.js": /* js */ `
+        const { a } = await import('barrel-pkg');
+        console.log(a, globalThis.effect);
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "a effect-pkg ran" },
+  });
+
+  // a.js is only discovered through the barrel, so its request for `poly`
+  // always arrives after the barrel kept that record.
+  itBundled("barrel/ReExportFromPackageWithSideEffects/RequestedLater", {
+    files: {
+      ...sideEffectTarget(`export { poly } from 'effect-pkg';`),
+      "/entry.js": /* js */ `
+        import { a } from 'barrel-pkg';
+        console.log(a(), globalThis.effect);
+      `,
+      "/node_modules/barrel-pkg/a.js": /* js */ `
+        import { poly } from 'barrel-pkg';
+        export const a = () => "a" + poly;
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "a1 effect-pkg ran" },
+  });
+
+  // The resolver decides before a plugin is asked: a plugin that declines
+  // every import sees the records that load, and no record that stays skipped.
+  itBundled("barrel/ReExportFromPackageWithSideEffects/DecliningResolvePlugin", () => {
+    const resolved: string[] = [];
+    return {
+      files: sideEffectTarget(`export { poly } from 'effect-pkg';`),
+      outdir: "/out",
+      plugins(builder) {
+        resolved.length = 0;
+        builder.onResolve({ filter: /.*/ }, args => {
+          resolved.push(args.path);
+          return undefined;
+        });
+      },
+      run: { stdout: "a effect-pkg ran" },
+      onAfterBundle() {
+        expect(resolved.slice(1)).toEqual(["barrel-pkg", "./a.js", "effect-pkg"]);
+      },
+    };
+  });
+
+  // The verdict is the one the resolver gives the specifier.
+  itBundled("barrel/ReExportWithSideEffects/RelativePathOutOfThePackage", {
+    files: {
+      ...sideEffectTarget(`export { sibling } from '../sibling-pkg/index.js';`),
+      "/node_modules/sibling-pkg/package.json": JSON.stringify({ name: "sibling-pkg" }),
+      "/node_modules/sibling-pkg/index.js": /* js */ `
+        globalThis.effect = "sibling-pkg ran";
+        export const sibling = 1;
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "a sibling-pkg ran" },
+  });
+
+  // The resolver reads the package.json that the import path goes through. A
+  // directory import goes through nested/package.json, which has no
+  // "sideEffects" field. The path of a file in that directory goes through the
+  // package.json of barrel-pkg. nested.js is not what "./nested/" names.
+  for (const [name, specifier, stdout] of [
+    ["DirectoryWithItsOwnPackageJson", "./nested", "a nested ran"],
+    ["DirectoryWithTrailingSlash", "./nested/", "a nested ran"],
+    ["FileInDirectoryWithItsOwnPackageJson", "./nested/index.js", "a undefined"],
+  ] as const) {
+    itBundled(`barrel/ReExportWithSideEffects/${name}`, {
+      files: {
+        ...sideEffectTarget(`export { nested } from '${specifier}';`),
+        "/node_modules/barrel-pkg/nested/package.json": JSON.stringify({ name: "nested", main: "./index.js" }),
+        "/node_modules/barrel-pkg/nested/index.js": /* js */ `
+          globalThis.effect = "nested ran";
+          export const nested = 1;
+        `,
+        ...(name === "DirectoryWithTrailingSlash"
+          ? { "/node_modules/barrel-pkg/nested.js": `export const nested = <<<SYNTAX_ERROR>>>;` }
+          : {}),
+      },
+      outdir: "/out",
+      run: { stdout },
+    });
+  }
+
+  // The "browser" field of the application sends a file of barrel-pkg to a
+  // file of the application, which has side effects.
+  itBundled("barrel/ReExportWithSideEffects/FileTheBrowserFieldOfTheApplicationRemaps", {
+    files: {
+      ...sideEffectTarget(`export { poly } from './shim.js';`),
+      "/package.json": JSON.stringify({
+        name: "app",
+        browser: { "./node_modules/barrel-pkg/shim.js": "./app-shim.js" },
+      }),
+      "/node_modules/barrel-pkg/shim.js": /* js */ `
+        export const poly = <<<SYNTAX_ERROR>>>;
+      `,
+      "/app-shim.js": /* js */ `
+        globalThis.effect = "app-shim ran";
+        export const poly = 1;
+      `,
+    },
+    target: "browser",
+    outdir: "/out",
+    run: { stdout: "a app-shim ran" },
+  });
+
+  itBundled("barrel/ReExportWithSideEffects/SubpathImport", {
+    files: sideEffectTarget(`export { poly } from '#effect';`, {
+      sideEffects: false,
+      imports: { "#effect": "effect-pkg" },
+    }),
+    outdir: "/out",
+    run: { stdout: "a effect-pkg ran" },
+  });
+
+  // The barrel is a file of the application, under its "sideEffects": false.
+  itBundled("barrel/ReExportWithSideEffects/ApplicationBarrel", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from './lib';
+        console.log(a, globalThis.effect);
+      `,
+      "/package.json": JSON.stringify({ name: "app", sideEffects: false }),
+      "/lib/index.ts": /* ts */ `
+        export { a } from './a';
+        export { b } from './b';
+        export { poly } from 'effect-pkg';
+      `,
+      "/lib/a.ts": /* ts */ `
+        export const a: string = "a";
+      `,
+      "/lib/b.ts": /* ts */ `
+        export const b = <<<SYNTAX_ERROR>>>;
+      `,
+      "/node_modules/effect-pkg/package.json": JSON.stringify({ name: "effect-pkg", main: "./index.js" }),
+      "/node_modules/effect-pkg/index.js": /* js */ `
+        globalThis.effect = "effect-pkg ran";
+        export const poly = 1;
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "a effect-pkg ran" },
+  });
+
+  // A "sideEffects" array: the file it lists loads, and the file it does not
+  // list stays skipped.
+  itBundled("barrel/ReExportWithSideEffects/FileListedInSideEffectsArray", {
+    files: {
+      ...sideEffectTarget(
+        `export { listed } from 'array-pkg/listed.js'; export { unlisted } from 'array-pkg/unlisted.js';`,
+      ),
+      "/node_modules/array-pkg/package.json": JSON.stringify({
+        name: "array-pkg",
+        sideEffects: ["./listed.js"],
+      }),
+      "/node_modules/array-pkg/listed.js": /* js */ `
+        globalThis.effect = "listed ran";
+        export const listed = 1;
+      `,
+      "/node_modules/array-pkg/unlisted.js": /* js */ `
+        export const unlisted = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "a listed ran" },
+  });
+
+  // An external file is not bundled, so the import statement is what runs it.
+  itBundled("barrel/ReExportFromExternalKeepsTheImport", {
+    files: sideEffectTarget(`export { poly } from 'effect-pkg';`),
+    external: ["effect-pkg"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain(`from "effect-pkg"`);
+    },
+  });
+
+  itBundled("barrel/ReExportOfFileAnExternalPatternNamesKeepsTheImport", {
+    files: {
+      ...sideEffectTarget(`export { vendor } from './vendor.ext.js';`),
+      "/node_modules/barrel-pkg/vendor.ext.js": /* js */ `
+        export const vendor = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    external: ["*.ext.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain(`vendor.ext.js"`);
+    },
+  });
+
+  itBundled("barrel/ReExportWithPackagesExternalKeepsTheImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from './lib/index.js';
+        console.log(a);
+      `,
+      "/package.json": JSON.stringify({ name: "app", sideEffects: false }),
+      "/lib/index.js": /* js */ `
+        export { a } from './a.js';
+        export { poly } from 'effect-pkg';
+      `,
+      "/lib/a.js": /* js */ `
+        export const a = "a";
+      `,
+    },
+    packages: "external",
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain(`from "effect-pkg"`);
+    },
+  });
+
+  // A file passed in `files` always has side effects.
+  test("barrel re-export into an in-memory file loads it", async () => {
+    using dir = tempDir("barrel-in-memory-target", {
+      "entry.js": `import { a } from 'barrel-pkg'; console.log(a);`,
+      "node_modules/barrel-pkg/package.json": JSON.stringify({
+        name: "barrel-pkg",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "node_modules/barrel-pkg/index.js": `
+        export { a } from './a.js';
+        export { memory } from './memory.js';
+      `,
+      "node_modules/barrel-pkg/a.js": `export const a = "a";`,
+    });
+    const root = String(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      files: {
+        [join(root, "node_modules/barrel-pkg/memory.js")]:
+          `globalThis.effect = "IN_MEMORY_EFFECT"; export const memory = 1;`,
+      },
+    });
+    expect(await result.outputs[0].text()).toContain("IN_MEMORY_EFFECT");
+  });
+
+  // --- A re-export that stays skipped ---
+
+  // Only the file the record points at decides. mid-pkg is side-effect free,
+  // so it stays skipped, and nothing reaches the package it imports.
+  itBundled("barrel/ReExportFromSideEffectFreePackageStaysDeferred", {
+    files: {
+      ...sideEffectTarget(`export { mid } from 'mid-pkg';`),
+      "/node_modules/mid-pkg/package.json": JSON.stringify({
+        name: "mid-pkg",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/mid-pkg/index.js": /* js */ `
+        import 'effect-pkg';
+        export const mid = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "a undefined" },
+  });
+
+  // Nothing of the barrel is used, so the linker drops the barrel, and with it
+  // the import that would run effect-pkg.
+  itBundled("barrel/ReExportWithSideEffectsOfUnusedBarrelDoesNotRun", {
+    files: {
+      ...sideEffectTarget(`export { poly } from 'effect-pkg';`),
+      "/entry.js": /* js */ `
+        import 'barrel-pkg';
+        console.log(globalThis.effect);
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "undefined" },
+  });
+
+  // optimizeImports is the word of the user: a listed barrel skips every
+  // re-export that nothing imports, whatever it points at. The second barrel
+  // is also "sideEffects": false, and the list still decides.
+  for (const [name, barrelPackage] of [
+    ["Listed", {}],
+    ["ListedAndSideEffectsFalse", { sideEffects: false }],
+  ] as const) {
+    itBundled(`barrel/OptimizeImportsSkipsReExportFromPackageWithSideEffects/${name}`, {
+      files: {
+        ...sideEffectTarget(`export { poly } from 'effect-pkg';`, barrelPackage),
+        "/node_modules/effect-pkg/index.js": /* js */ `
+          export const poly = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      optimizeImports: ["barrel-pkg"],
+      outdir: "/out",
+      run: { stdout: "a undefined" },
+    });
+  }
+
+  // The browser build maps "fs" to nothing and "url" to a polyfill of Bun.
+  // Neither runs code of its own, so neither loads for a name nobody imports.
+  itBundled("barrel/ReExportOfNodeBuiltinInBrowserBuildStaysDeferred", {
+    files: sideEffectTarget(`export { readFileSync } from 'fs'; export { fileURLToPath } from 'url';`),
+    target: "browser",
+    outdir: "/out",
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect({ fs: out.includes("readFileSync"), url: out.includes("fileURLToPath") }).toEqual({
+        fs: false,
+        url: false,
+      });
+    },
+    run: { stdout: "a undefined" },
+  });
+
+  // A builtin of the target is an external module that runs no code of the
+  // bundle, so its import is not kept either.
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`barrel/ReExportOfBuiltinStaysDeferred/${target}`, {
+      files: sideEffectTarget(`export { readFileSync } from 'fs'; export { join } from 'node:path';`),
+      target,
+      outdir: "/out",
+      onAfterBundle(api) {
+        const out = api.readFile("/out/entry.js");
+        expect({ fs: out.includes('"fs"'), path: out.includes("node:path") }).toEqual({ fs: false, path: false });
+      },
+      run: { stdout: "a undefined" },
+    });
+  }
+
+  // A file that holds only data runs nothing: no asset is written and no JSON
+  // is parsed for a name nobody imports.
+  const dataTargets = {
+    ...sideEffectTarget(
+      `export { default as logo } from 'effect-pkg/logo.svg'; export { default as data } from 'effect-pkg/data.json';`,
+    ),
+    "/node_modules/effect-pkg/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    "/node_modules/effect-pkg/data.json": `{ <<<SYNTAX_ERROR>>> }`,
+  };
+
+  itBundled("barrel/ReExportOfDataFileStaysDeferred", {
+    files: dataTargets,
+    loader: { ".svg": "file" },
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).filter(name => name.endsWith(".svg"))).toEqual([]);
+    },
+    run: { stdout: "a undefined" },
+  });
+
+  // An onLoad plugin can turn the same file into code, so the plugin decides.
+  itBundled("barrel/ReExportOfDataFileAnOnLoadPluginTakesLoads", {
+    files: dataTargets,
+    loader: { ".svg": "file" },
+    outdir: "/out",
+    plugins(builder) {
+      builder.onLoad({ filter: /logo\.svg$/ }, () => ({
+        contents: `globalThis.effect = "logo.svg ran"; export default 1;`,
+        loader: "js",
+      }));
+    },
+    run: { stdout: "a logo.svg ran" },
+  });
+
+  // --- A re-export that does not resolve ---
+  // Nothing asks for these names. The build passes and reports nothing, as it
+  // did when a deferred record was not resolved at all.
+
+  itBundled("barrel/ReExportThatDoesNotResolveStaysDeferred", {
+    files: sideEffectTarget(`export { gone } from 'not-installed-pkg'; export { lost } from './lost.js';`),
+    outdir: "/out",
+    run: { stdout: "a undefined" },
+  });
+
+  // The lookup reads the package.json of the package, so the build reports
+  // what is wrong with it.
+  itBundled("barrel/ReExportIntoPackageWithBrokenPackageJsonIsAnError", {
+    files: {
+      ...sideEffectTarget(`export { broken } from 'broken-pkg';`),
+      "/node_modules/broken-pkg/package.json": `{ "name": "broken-pkg", "main": `,
+      "/node_modules/broken-pkg/index.js": /* js */ `
+        export const broken = 1;
+      `,
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/node_modules/broken-pkg/package.json": ["Unexpected end of file"],
+    },
+  });
+
+  // Only the plugin can resolve "virtual-dep". The plugin is asked when a
+  // module imports the name, and not before: Bun 1.3.9 and esbuild load it.
+  itBundled("barrel/ReExportOnlyAPluginResolvesStaysDeferred", ({ root }) => {
+    const resolved: string[] = [];
+    return {
+      files: {
+        ...sideEffectTarget(`export { virtual } from 'virtual-dep';`),
+        "/virtual-dep.js": /* js */ `
+          globalThis.effect = "virtual-dep ran";
+          export const virtual = 1;
+        `,
+      },
+      outdir: "/out",
+      plugins(builder) {
+        resolved.length = 0;
+        builder.onResolve({ filter: /^virtual-dep$/ }, args => {
+          resolved.push(args.path);
+          return { path: join(root, "virtual-dep.js") };
+        });
+      },
+      run: { stdout: "a undefined" },
+      onAfterBundle() {
+        expect(resolved).toEqual([]);
+      },
+    };
+  });
+
+  // --- What a module that loads again can break ---
+  // These builds pass when the re-export is skipped.
+
+  itBundled("barrel/ReExportOfServerOnlyPackageFailsBrowserBuild", {
+    files: {
+      ...sideEffectTarget(`export { db } from 'server-pkg';`),
+      "/node_modules/server-pkg/package.json": JSON.stringify({ name: "server-pkg", main: "./index.js" }),
+      "/node_modules/server-pkg/index.js": /* js */ `
+        import { Database } from 'bun:sqlite';
+        export const db = new Database(':memory:');
+      `,
+    },
+    target: "browser",
+    outdir: "/out",
+    bundleErrors: {
+      "/node_modules/server-pkg/index.js": ['Browser build cannot import Bun builtin: "bun:sqlite"'],
+    },
+  });
+
+  itBundled("barrel/ReExportOfModuleWithTopLevelAwaitFailsCJSBuild", {
+    files: {
+      ...sideEffectTarget(`export { poly } from 'effect-pkg';`),
+      "/node_modules/effect-pkg/index.js": /* js */ `
+        globalThis.effect = await "effect-pkg ran";
+        export const poly = 1;
+      `,
+    },
+    format: "cjs",
+    outdir: "/out",
+    bundleErrors: {
+      "/node_modules/effect-pkg/index.js": ['"await" can only be used inside an "async" function'],
+    },
+  });
+
+  // A long-lived process builds twice. The first build looks up a re-export
+  // of a package that is not installed, and must not remember the miss: the
+  // second build, after the install, asks for that name.
+  test("barrel re-export of a package installed between two builds resolves", async () => {
+    using dir = tempDir("barrel-install-between-builds", {
+      "one.js": `import { a } from 'barrel-pkg'; console.log(a);`,
+      "two.js": `import { peer } from 'barrel-pkg'; console.log(peer);`,
+      "node_modules/barrel-pkg/package.json": JSON.stringify({
+        name: "barrel-pkg",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "node_modules/barrel-pkg/index.js": `
+        export { a } from './a.js';
+        export { peer } from 'peer-pkg';
+      `,
+      "node_modules/barrel-pkg/a.js": `export const a = "a";`,
+    });
+    const root = String(dir);
+
+    const first = await Bun.build({ entrypoints: [join(root, "one.js")] });
+    expect(await first.outputs[0].text()).toContain(`"a"`);
+
+    mkdirSync(join(root, "node_modules/peer-pkg"), { recursive: true });
+    writeFileSync(join(root, "node_modules/peer-pkg/package.json"), JSON.stringify({ name: "peer-pkg" }));
+    writeFileSync(join(root, "node_modules/peer-pkg/index.js"), `export const peer = "peer-pkg value";`);
+
+    const second = await Bun.build({ entrypoints: [join(root, "two.js")], throw: false });
+    expect(second.logs.map(log => log.message)).toEqual([]);
+    expect(await second.outputs[0].text()).toContain("peer-pkg value");
+  });
+
+  // A plugin writes the file that a re-export names while the build runs, and
+  // a module that loads after that asks for it. The file is found when gen/
+  // is new too. When gen/ exists, the resolver lists it as it looks at the
+  // re-exports, before the plugin writes the file, and the later import does
+  // not see the file: as for any directory that the build listed too early.
+  const fileWrittenDuringTheBuild = (root: string, directoryExists: boolean) => ({
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from 'gen-pkg';
+        import './late.js';
+        console.log(a);
+      `,
+      "/late.js": ``,
+      "/node_modules/gen-pkg/package.json": JSON.stringify({
+        name: "gen-pkg",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/gen-pkg/index.js": /* js */ `
+        export { a } from './a.js';
+        export { generated } from './gen/generated.js';
+        ${directoryExists ? "export { other } from './gen/other.js';" : ""}
+      `,
+      "/node_modules/gen-pkg/a.js": /* js */ `
+        export const a = "a";
+      `,
+      ...(directoryExists ? { "/node_modules/gen-pkg/gen/other.js": `export const other = "other";` } : {}),
+    },
+    outdir: "/out",
+    plugins(builder: Bun.PluginBuilder) {
+      builder.onLoad({ filter: /late\.js$/ }, async ({ defer }) => {
+        // Every other module is loaded: the barrel skipped `generated`.
+        await defer();
+        const dir = join(root, "node_modules/gen-pkg/gen");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "generated.js"), `export const generated = "generated";`);
+        return { contents: `import { generated } from 'gen-pkg'; console.log(generated);`, loader: "js" };
+      });
+    },
+  });
+
+  itBundled("barrel/ReExportOfFileWrittenDuringTheBuild/NewDirectory", ({ root }) => ({
+    ...fileWrittenDuringTheBuild(root, false),
+    run: { stdout: "generated\na" },
+  }));
+
+  itBundled("barrel/ReExportOfFileWrittenDuringTheBuild/ExistingDirectoryIsNotFound", ({ root }) => ({
+    ...fileWrittenDuringTheBuild(root, true),
+    bundleErrors: {
+      "/node_modules/gen-pkg/index.js": ['Could not resolve: "./gen/generated.js"'],
+    },
+  }));
 
   // --- Entry points are never barrels ---
   // An entry point's exports are the public interface of the build. Nothing

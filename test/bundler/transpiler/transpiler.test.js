@@ -2382,9 +2382,30 @@ export default class {
       `;
       for (const loader of ["js", "ts"]) {
         const elim = new Bun.Transpiler({ loader, exports: { eliminate: ["loader"] } });
+        expect(elim.transformSync(code)).not.toContain("./db");
+        expect(elim.scan(code).imports.map(i => i.path)).not.toContain("./db");
+      }
+    });
+
+    it("with trimming off, an eliminated export takes only the imports it used", () => {
+      const code = `
+        import { db } from "./db";
+        import { other } from "./default-only";
+        import unused from "./side-effect";
+        export function loader() { return db.query(); }
+        export default other();
+      `;
+      for (const loader of ["js", "ts"]) {
+        const elim = new Bun.Transpiler({
+          loader,
+          trimUnusedImports: false,
+          treeShaking: false,
+          exports: { eliminate: ["loader", "default"] },
+        });
         const output = elim.transformSync(code);
         expect(output).not.toContain("./db");
-        expect(elim.scan(code).imports.map(i => i.path)).not.toContain("./db");
+        expect(output).not.toContain("./default-only");
+        expect(output).toContain("./side-effect");
       }
     });
 

@@ -384,10 +384,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut mark_for_replace: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
+        let orig_in_deleted = p.in_deleted_export;
         if p.options.features.replace_exports.count() > 0 {
             if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
                 p.is_control_flow_dead =
                     p.options.features.dead_code_elimination && !entry.is_replace();
+                p.in_deleted_export = p.is_control_flow_dead;
                 mark_for_replace = true;
             }
         }
@@ -395,6 +397,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         macro_rules! restore_dead {
             () => {
                 p.is_control_flow_dead = orig_dead;
+                p.in_deleted_export = orig_in_deleted;
             };
         }
 

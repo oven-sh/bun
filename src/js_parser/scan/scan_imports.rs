@@ -285,7 +285,8 @@ impl<'a> ImportScanner<'a> {
                             && st.items.slice().is_empty()
                             && st.default_name.is_none();
                         if unused_after_deleted_exports
-                            || (is_typescript_enabled
+                            || (!keep_unused_imports
+                                && is_typescript_enabled
                                 && found_imports
                                 && is_unused_in_typescript
                                 && !p.options.preserve_unused_imports_ts)

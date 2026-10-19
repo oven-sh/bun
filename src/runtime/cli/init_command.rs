@@ -703,23 +703,14 @@ impl InitCommand {
 
             let dependency_groups =
                 bun_install_types::DependencyGroup::FOUR.map(|group| object.get(group.prop));
-            let is_optional_peer = |name: &[u8]| {
-                object
-                    .get(b"peerDependenciesMeta")
-                    .and_then(|meta| meta.get(name))
-                    .and_then(|peer| peer.get(b"optional"))
-                    .is_some_and(|optional| optional.as_bool() == Some(true))
-            };
-            // `bun install` does not install an optional peer, so it counts only in the group the new entry goes to.
+            // `bun install` does not install every peer, so a peer counts only when the new entry is a peer too.
             let declares_dependency = |name: &[u8], target: &[u8]| {
                 bun_install_types::DependencyGroup::FOUR
                     .iter()
                     .zip(dependency_groups)
                     .any(|(group, listed)| {
-                        listed.is_some_and(|listed| listed.get(name).is_some())
-                            && (group.prop == target
-                                || group.prop != b"peerDependencies"
-                                || !is_optional_peer(name))
+                        (group.prop == target || group.prop != b"peerDependencies")
+                            && listed.is_some_and(|listed| listed.get(name).is_some())
                     })
             };
 

@@ -392,44 +392,15 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       groups: { optionalDependencies: { "@types/bun": "1.1.0", typescript: "5.6.2" } },
     },
     {
-      args: "-y",
-      where: "peerDependencies lists @types/bun and optionalDependencies lists typescript",
-      groups: { peerDependencies: { "@types/bun": "1.1.0" }, optionalDependencies: { typescript: "5.6.2" } },
-    },
-    {
       args: "-m -y",
       where: "dependencies lists both packages",
       groups: { dependencies: { "@types/bun": "1.1.0", typescript: "5.6.2" } },
-    },
-    {
-      args: "-m -y",
-      where: "peerDependencies lists @types/bun",
-      groups: { peerDependencies: { "@types/bun": "1.1.0" } },
-    },
-    {
-      // Only the boolean `true` makes a peer optional, so `bun install` installs this one.
-      args: "-m -y",
-      where: "peerDependencies lists @types/bun and its optional flag is a string",
-      groups: {
-        peerDependencies: { "@types/bun": "1.1.0" },
-        peerDependenciesMeta: { "@types/bun": { optional: "true" } },
-      },
     },
     {
       // These are the groups that `bun init` writes to.
       args: "-y",
       where: "devDependencies lists @types/bun and peerDependencies lists typescript",
       groups: { devDependencies: { "@types/bun": "1.1.0" }, peerDependencies: { typescript: "5.6.2" } },
-    },
-    {
-      // `bun init` writes typescript to peerDependencies, so it keeps an optional peer that is there.
-      args: "-y",
-      where: "devDependencies lists @types/bun and typescript is an optional peer",
-      groups: {
-        devDependencies: { "@types/bun": "1.1.0" },
-        peerDependencies: { typescript: "5.6.2" },
-        peerDependenciesMeta: { typescript: { optional: true } },
-      },
     },
   ])("bun init $args adds no dependency when $where", async ({ args, groups }) => {
     const manifest = { ...configured, ...groups };
@@ -454,28 +425,21 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       added: { peerDependencies: { typescript: "^7" } },
     },
     {
-      // `bun install` does not install an optional peer, so `bun init` adds @types/bun beside it.
+      // `bun install` does not install every peer, so `bun init` adds @types/bun beside a peer entry.
       args: "-m -y",
-      where: "@types/bun is an optional peer",
-      groups: {
-        peerDependencies: { "@types/bun": "1.1.0" },
-        peerDependenciesMeta: { "@types/bun": { optional: true } },
-      },
+      where: "peerDependencies lists @types/bun",
+      groups: { peerDependencies: { "@types/bun": "1.1.0" } },
       added: { devDependencies: { "@types/bun": "latest" } },
     },
-  ])(
-    "bun init $args adds only the dependency that is missing when $where",
-    async ({ args, groups, added }) => {
-      const manifest = { ...configured, ...groups };
+  ])("bun init $args adds only the dependency that is missing when $where", async ({ args, groups, added }) => {
+    const manifest = { ...configured, ...groups };
 
-      const after = await initOverPackageJson(manifest, args);
+    const after = await initOverPackageJson(manifest, args);
 
-      expect(after.manifest).toEqual({ ...manifest, ...added });
-      // `bun init` added a dependency, so the nested `bun install` runs and asks for @types/bun.
-      expect(after.requests).toContain("/@types/bun");
-    },
-    30_000,
-  );
+    expect(after.manifest).toEqual({ ...manifest, ...added });
+    // `bun init` added a dependency, so the nested `bun install` runs and asks for @types/bun.
+    expect(after.requests).toContain("/@types/bun");
+  });
 
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});

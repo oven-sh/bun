@@ -854,6 +854,7 @@ impl<'s> Program<'s> {
             initializers_resolved_by_nested_visit: Vec::new(),
             resolved_parameter_types: Default::default(),
             partial_sig_params: Default::default(),
+            declared_parameters: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -2026,6 +2027,8 @@ pub struct Checker<'p, 's> {
     /// The lists of `sig_params_with_first` that lack a type, each with the number of parameters
     /// before the first that does.
     partial_sig_params: FxHashMap<SigId, (usize, &'p [SigParam])>,
+    /// The results of `declared_parameter` for all parameters of a function, once `is_declared_parameter_settled`.
+    declared_parameters: FxHashMap<(FileId, FnId), &'p [SigParam]>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
     /// `is_flow_loop_visible`.

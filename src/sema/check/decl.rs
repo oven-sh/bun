@@ -4880,35 +4880,67 @@ impl<'p, 's> Checker<'p, 's> {
             Read::Only(_) => 1,
         };
         let mut out = Vec::with_capacity_in(capacity, self.arena);
-        // `getImmediatelyInvokedFunctionExpression`: the argument count of the call of an
-        // immediately invoked function expression.
-        let bound = self.bound(file);
-        let actual = bound
-            .get_immediately_invoked_function_expression(hir, func)
-            .map(|call| hir[call].args.len());
-        // `getMinArgumentCount`: it has no minimum argument count.
-        let is_untyped_in_js = self.is_untyped_signature_in_js_file(file, func);
+        if len == 0 {
+            return out;
+        }
+        let kept = self.declared_parameters.get(&(file, func)).copied();
+        let (mut actual, mut is_untyped_in_js) = (None, false);
+        if kept.is_none() {
+            // `getImmediatelyInvokedFunctionExpression`: the argument count of the call of an
+            // immediately invoked function expression.
+            let call = (self.bound(file)).get_immediately_invoked_function_expression(hir, func);
+            actual = call.map(|call| hir[call].args.len());
+            // `getMinArgumentCount`: it has no minimum argument count.
+            is_untyped_in_js = self.is_untyped_signature_in_js_file(file, func);
+        }
         let maps_this_only = self.maps_this_only(mapper);
-        // All of them, if there is a target.
+        // All of them, unless they are kept or only one is read and there is no target.
         let mut declared: SmallVec<[SigParam; 8]> = SmallVec::new();
+        let mut stays = kept.is_none();
         for i in 0..len {
             if !read.has(i) && target.is_none() {
+                stays = false;
                 continue;
             }
-            let parameter = self.declared_parameter(file, func, i, actual, is_untyped_in_js);
+            let parameter = match kept {
+                Some(kept) => kept[i],
+                None => {
+                    let it = self.declared_parameter(file, func, i, actual, is_untyped_in_js);
+                    stays = stays && self.is_declared_parameter_settled(&it);
+                    declared.push(it);
+                    it
+                }
+            };
             if read.has(i) {
                 let is_asked = read.asks_for(i);
                 let ty = self.instantiate_parameter(&parameter, mapper, maps_this_only, is_asked);
                 out.push(SigParam { ty, ..parameter });
             }
-            if target.is_some() {
-                declared.push(parameter);
-            }
+        }
+        if stays {
+            let mut kept = Vec::with_capacity_in(len, self.arena);
+            kept.extend_from_slice(&declared);
+            self.declared_parameters.insert((file, func), kept.leak());
         }
         if let Some(target) = target {
-            self.keep_closed_types_of_target(target, &declared, read, &mut out);
+            let declared = kept.unwrap_or(&declared);
+            self.keep_closed_types_of_target(target, declared, read, &mut out);
         }
         out
+    }
+
+    /// True if `declared_parameter` computes nothing and returns `parameter` for the rest of the task: it has a name and
+    /// a type annotation, and the type is stored and no evaluation in progress will replace it.
+    fn is_declared_parameter_settled(&self, parameter: &SigParam) -> bool {
+        let Some((file, p)) = parameter.declaration else {
+            return false;
+        };
+        let declaration = &self.hir(file)[p];
+        let q = Query::Pat(file, declaration.pat);
+        !parameter.name.is_none()
+            && declaration.ty.is_some()
+            && (self.p.pat_types.get(&self.task, &(file, declaration.pat))).is_some()
+            && !(self.may_be_in_flight(q) && self.stack.contains(&q))
     }
 
     /// `m.MapsThisOnly()`

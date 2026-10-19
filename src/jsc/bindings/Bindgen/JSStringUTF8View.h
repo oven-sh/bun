@@ -3,7 +3,7 @@
 #include <JavaScriptCore/GCOwnedDataScope.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
-#include <wtf/UniqueArray.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/text/ASCIIFastPath.h>
 
 namespace Bun::Bindgen {
@@ -59,8 +59,7 @@ private:
     JSC::GCOwnedDataScope<WTF::StringView> m_view;
     // Not a Vector with inline capacity, which holds less than the UTF-8 of a string can be.
     std::array<char8_t, 128> m_inlineBuffer;
-    // Not a MallocSpan, which calls free when it holds nothing too.
-    WTF::UniqueArray<char8_t> m_heapBuffer;
+    WTF::MallocSpan<char8_t> m_heapBuffer;
     std::span<const char8_t> m_converted;
     bool m_isConverted { false };
     bool m_isNull { true };

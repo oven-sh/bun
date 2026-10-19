@@ -849,7 +849,7 @@ export class BytesType extends Type {
     if (!this.#isView) return [];
     if (this.#options.shared === "copied")
       return [
-        `Bun::Bindgen::BytesCopy ${target}Copy;`,
+        `WTF::MallocSpan<uint8_t> ${target}Copy;`,
         `if (${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy)) [[unlikely]]`,
         `    RETURN_IF_EXCEPTION(scope, {});`,
       ];

@@ -3422,20 +3422,9 @@ pub(crate) mod __gated_printer {
                             true,
                         );
                     }
-                    E::Special::ImportMetaRequire(name_loc) => {
-                        self.print_expr(
-                            Expr {
-                                data: ExprData::EImportMeta(E::ImportMeta {}),
-                                loc: expr.loc,
-                            },
-                            Level::Postfix,
-                            ExprFlag::none(),
-                        );
-                        self.print(b".");
-                        self.add_source_mapping(*name_loc);
-                        self.print(b"require");
+                    E::Special::ImportMetaRequire(_) | E::Special::RequireAlias(_) => {
+                        unreachable!("`e_call` replaces its marker")
                     }
-                    E::Special::RequireAlias(_) => unreachable!("`e_call` replaces it"),
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
                     self.print_commonjs_export_identifier(*id, expr.loc, false);

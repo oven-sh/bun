@@ -5023,31 +5023,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        let mut names_in_use: Option<NamesInUse<'a>> = None;
-        for index in 0..stmts.len() {
-            let js_ast::StmtData::SLocal(mut local) = stmts[index].data else {
+        // (statement, declarator, binding of the alias, loc of the key in `{ require: alias } = import.meta`)
+        let mut found = Vec::new();
+        for (index, stmt) in stmts.iter().enumerate() {
+            let js_ast::StmtData::SLocal(local) = stmt.data else {
                 continue;
             };
             if local.kind != S::Kind::KVar || local.is_export {
                 continue;
             }
-
-            for decl in local.decls.iter_mut() {
-                // The binding of the alias, and for `{ require: alias } = import.meta` the loc of the key.
-                let (binding, key_loc) = match (
-                    decl.binding.data,
-                    decl.value.map(|value| value.data),
-                ) {
+            for (at, decl) in local.decls.iter().enumerate() {
+                match (decl.binding.data, decl.value.map(|value| value.data)) {
                     (BindingData::BObject(object), Some(ExprData::EImportMeta(_))) => {
-                        match object.properties() {
-                            [property]
-                                if property.flags.is_empty()
-                                    && property.default_value.is_none()
-                                    && matches!(property.key.data, ExprData::EString(key) if key.eql_comptime(b"require")) =>
-                            {
-                                (property.value, Some(property.key.loc))
-                            }
-                            _ => continue,
+                        if let [property] = object.properties()
+                            && property.flags.is_empty()
+                            && property.default_value.is_none()
+                            && matches!(property.key.data, ExprData::EString(key) if key.eql_comptime(b"require"))
+                        {
+                            found.push((index, at, property.value, Some(property.key.loc)));
                         }
                     }
                     (BindingData::BIdentifier(_), Some(ExprData::EDot(dot)))
@@ -5056,57 +5049,78 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && dot.optional_chain.is_none()
                             && matches!(dot.target.data, ExprData::EImportMeta(_)) =>
                     {
-                        (decl.binding, None)
+                        found.push((index, at, decl.binding, None));
                     }
-                    _ => continue,
-                };
-                let BindingData::BIdentifier(id) = binding.data else {
-                    continue;
-                };
-                let alias = id.r#ref;
-                let name = self.load_name_from_ref(alias);
-                let in_use =
-                    names_in_use.get_or_insert_with(|| NamesInUse::of(&*self, stmts, defines));
-                // Each `var` of a name makes a symbol. One more `var` of the name links the symbol before it to its own.
-                if self.symbols[alias.inner_index() as usize].has_link()
-                    || in_use
-                        .linked_symbols
-                        .binary_search(&alias.inner_index())
-                        .is_ok()
-                    || in_use.exported.binary_search(&name).is_ok()
-                    || in_use.define_roots.binary_search(&name).is_ok()
-                    || defines.for_identifier(name).is_some()
-                {
-                    continue;
+                    _ => {}
                 }
-
-                if let (Some(name_loc), Some(import_meta)) = (key_loc, decl.value) {
-                    decl.binding = binding;
-                    decl.value = Some(self.new_expr(
-                        E::Dot {
-                            target: import_meta,
-                            name: E::Str::new(b"require"),
-                            name_loc,
-                            can_be_removed_if_unused: true,
-                            ..Default::default()
-                        },
-                        import_meta.loc,
-                    ));
-                }
-
-                let require = js_ast::scope::Member {
-                    ref_: self.require_ref,
-                    loc: binding.loc,
-                };
-                // SAFETY: `name` is the `original_name` of a symbol, which lives as long as the scope.
-                unsafe { self.module_scope_mut().members.put(name, require) };
-                // The declared symbol is out of `members` and still needs a name from the renamer.
-                VecExt::append(&mut self.module_scope_mut().generated, alias);
-                self.require_aliases.push((binding.loc, alias));
             }
         }
-        self.require_aliases
-            .sort_unstable_by_key(|alias| alias.0.start);
+        if found.is_empty() {
+            return;
+        }
+
+        // Each `var` of a name makes a symbol. One more `var` of the name, or one in a nested block, links to or from it.
+        let mut has_another_reader = vec![false; self.symbols.len()];
+        for symbol in self.symbols.iter().filter(|symbol| symbol.has_link()) {
+            has_another_reader[symbol.link.get().inner_index() as usize] = true;
+        }
+        let exported = stmts.iter().filter_map(|stmt| match stmt.data {
+            js_ast::StmtData::SExportClause(clause) => Some(clause),
+            _ => None,
+        });
+        let exported = exported.flat_map(|clause| {
+            let names = clause.items.slice().iter();
+            names.map(|item| self.load_name_from_ref(item.name.ref_))
+        });
+        let define_roots = defines.dots.values().flatten().map(|dot| &*dot.parts[0]);
+        for name in exported.chain(define_roots) {
+            if let Some(member) = self.module_scope().members.get(name) {
+                has_another_reader[member.ref_.inner_index() as usize] = true;
+            }
+        }
+
+        for (index, at, binding, key_loc) in found {
+            let BindingData::BIdentifier(id) = binding.data else {
+                continue;
+            };
+            let alias = id.r#ref;
+            let name = self.load_name_from_ref(alias);
+            if self.symbols[alias.inner_index() as usize].has_link()
+                || has_another_reader[alias.inner_index() as usize]
+                || defines.for_identifier(name).is_some()
+            {
+                continue;
+            }
+
+            let js_ast::StmtData::SLocal(mut local) = stmts[index].data else {
+                continue;
+            };
+            let decl = &mut local.decls[at];
+            if let (Some(name_loc), Some(import_meta)) = (key_loc, decl.value) {
+                decl.binding = binding;
+                decl.value = Some(self.new_expr(
+                    E::Dot {
+                        target: import_meta,
+                        name: E::Str::new(b"require"),
+                        name_loc,
+                        can_be_removed_if_unused: true,
+                        ..Default::default()
+                    },
+                    import_meta.loc,
+                ));
+            }
+
+            let require = js_ast::scope::Member {
+                ref_: self.require_ref,
+                loc: binding.loc,
+            };
+            // SAFETY: `name` is the `original_name` of a symbol, which lives as long as the scope.
+            unsafe { self.module_scope_mut().members.put(name, require) };
+            // The declared symbol is out of `members` and still needs a name from the renamer.
+            VecExt::append(&mut self.module_scope_mut().generated, alias);
+            self.require_aliases.push((binding.loc, alias));
+        }
+        debug_assert!(self.require_aliases.is_sorted_by_key(|alias| alias.0.start));
     }
 
     /// The declared symbol of the name that `read_require_aliases` read at `declare_loc`, with its index.
@@ -7321,44 +7335,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         false
-    }
-}
-
-/// What a name must not be for `read_require_aliases` to read it. Made once for a file, at the first declaration that matches.
-struct NamesInUse<'a> {
-    /// Names in `export { }` clauses, sorted.
-    exported: Vec<&'a [u8]>,
-    /// The first part of each dot define, sorted.
-    define_roots: Vec<&'a [u8]>,
-    /// Symbols that another declaration links to: a `var` of the same name before it, or in a nested block. Sorted.
-    linked_symbols: Vec<u32>,
-}
-
-impl<'a> NamesInUse<'a> {
-    fn of<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
-        p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
-        stmts: &[Stmt],
-        defines: &'a Define,
-    ) -> Self {
-        let mut exported = Vec::new();
-        for stmt in stmts {
-            if let js_ast::StmtData::SExportClause(clause) = stmt.data {
-                let names = clause.items.slice().iter();
-                exported.extend(names.map(|item| p.load_name_from_ref(item.name.ref_)));
-            }
-        }
-        exported.sort_unstable();
-        let roots = defines.dots.values().flatten();
-        let mut define_roots: Vec<&'a [u8]> = roots.map(|dot| &*dot.parts[0]).collect();
-        define_roots.sort_unstable();
-        let links = p.symbols.iter().filter(|symbol| symbol.has_link());
-        let mut linked_symbols: Vec<u32> = links.map(|s| s.link.get().inner_index()).collect();
-        linked_symbols.sort_unstable();
-        Self {
-            exported,
-            define_roots,
-            linked_symbols,
-        }
     }
 }
 

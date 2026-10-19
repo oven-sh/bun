@@ -2009,7 +2009,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         .do_
         .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST);
     let mut workspaces = DynamicBitSet::init_empty(packages.len()).unwrap_or_oom();
-    match manager.update_target_workspaces.as_deref() {
+    match manager.update_target_workspaces.as_ref() {
         None => workspaces.set(
             manager
                 .root_package_id
@@ -2022,9 +2022,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             for (id, resolution) in resolutions.iter().enumerate() {
                 let is_root = resolution.tag == ResolutionTag::Root;
                 if (is_root || resolution.tag == ResolutionTag::Workspace)
-                    && targets.iter().any(|target| {
-                        target.matches(is_root, name_hashes[id], names[id].slice(buf))
-                    })
+                    && targets.contains(is_root, name_hashes[id], names[id].slice(buf))
                 {
                     workspaces.set(id);
                 }

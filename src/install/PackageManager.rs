@@ -607,7 +607,7 @@ pub struct PackageManager {
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
-    pub update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
+    pub update_target_workspaces: Option<UpdateTargets>,
 
     // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
@@ -830,13 +830,33 @@ pub struct UpdateTargetWorkspace {
     pub name: Box<[u8]>,
 }
 
-impl UpdateTargetWorkspace {
+/// The workspaces that `bun update -r` or `--filter` selects. The root sorts first and the others by name hash, so `contains` is a binary search.
+pub struct UpdateTargets(Box<[UpdateTargetWorkspace]>);
+
+impl FromIterator<UpdateTargetWorkspace> for UpdateTargets {
+    fn from_iter<I: IntoIterator<Item = UpdateTargetWorkspace>>(targets: I) -> Self {
+        Self::sorted(targets.into_iter().collect())
+    }
+}
+
+impl UpdateTargets {
+    fn sorted(mut targets: Vec<UpdateTargetWorkspace>) -> Self {
+        index_sort::sort_slice_unstable_by_key(&mut targets, |target| {
+            (!target.is_root, target.name_hash)
+        });
+        UpdateTargets(targets.into_boxed_slice())
+    }
+
     /// Root is unique, so `is_root` alone identifies it; members match by hash then name.
-    pub fn matches(&self, is_root: bool, name_hash: PackageNameHash, name: &[u8]) -> bool {
-        if self.is_root || is_root {
-            return self.is_root && is_root;
+    pub fn contains(&self, is_root: bool, name_hash: PackageNameHash, name: &[u8]) -> bool {
+        if is_root {
+            return self.0.first().is_some_and(|target| target.is_root);
         }
-        self.name_hash == name_hash && &*self.name == name
+        let start =
+            (self.0).partition_point(|target| target.is_root || target.name_hash < name_hash);
+        (self.0[start..].iter())
+            .take_while(|target| target.name_hash == name_hash)
+            .any(|target| *target.name == *name)
     }
 }
 

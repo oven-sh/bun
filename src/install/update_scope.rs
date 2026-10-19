@@ -12,8 +12,8 @@ use crate::dependency::Behavior;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, reachable};
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::UpdateTargetWorkspace;
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::package_manager::{UpdateTargetWorkspace, UpdateTargets};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
 use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
 use crate::resolution::Tag as ResolutionTag;
@@ -21,7 +21,7 @@ use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_pa
 
 /// Which workspaces a `bun update` may re-resolve and rewrite; a non-workspace package's rows are in scope when one of those workspaces reaches it.
 pub struct UpdateScope<'a> {
-    pub targets: Option<&'a [UpdateTargetWorkspace]>,
+    pub targets: Option<&'a UpdateTargets>,
     pub invoking: Option<PackageNameHash>,
     whole_workspace: bool,
     /// `--depth 0`: only the dependencies of the root and of workspaces are in scope.
@@ -34,7 +34,7 @@ pub struct UpdateScope<'a> {
 impl<'a> UpdateScope<'a> {
     pub fn of(manager: &'a PackageManager) -> UpdateScope<'a> {
         UpdateScope::new(
-            manager.update_target_workspaces.as_deref(),
+            manager.update_target_workspaces.as_ref(),
             manager.workspace_name_hash,
             manager.options.filter_patterns.is_empty(),
             manager.options.do_.update_direct_only(),
@@ -43,7 +43,7 @@ impl<'a> UpdateScope<'a> {
     }
 
     fn new(
-        targets: Option<&'a [UpdateTargetWorkspace]>,
+        targets: Option<&'a UpdateTargets>,
         invoking: Option<PackageNameHash>,
         no_filter: bool,
         direct_only: bool,
@@ -128,7 +128,7 @@ impl UpdateScope<'_> {
         name: &[u8],
     ) -> bool {
         match self.targets {
-            Some(targets) => targets.iter().any(|t| t.matches(is_root, name_hash, name)),
+            Some(targets) => targets.contains(is_root, name_hash, name),
             None => match self.invoking {
                 None => is_root,
                 Some(hash) => !is_root && hash == name_hash,
@@ -361,7 +361,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     };
     let lockfile_name = exit_on_lockfile_load_failure(manager, &subject);
 
-    let selection: Option<Vec<UpdateTargetWorkspace>> = (manager.options.do_.recursive()
+    let selection: Option<UpdateTargets> = (manager.options.do_.recursive()
         || !manager.options.filter_patterns.is_empty())
     .then(|| {
         let lockfile = &*manager.lockfile;
@@ -394,7 +394,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             .collect()
     });
     let scope = UpdateScope::new(
-        selection.as_deref(),
+        selection.as_ref(),
         manager.workspace_name_hash,
         manager.options.filter_patterns.is_empty(),
         direct_only,

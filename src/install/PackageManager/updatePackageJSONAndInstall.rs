@@ -432,8 +432,8 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         let root_is_targeted = manager
             .update_target_workspaces
-            .as_deref()
-            .is_none_or(|t| t.iter().any(|w| w.is_root));
+            .as_ref()
+            .is_none_or(|targets| targets.contains(true, 0, b""));
 
         if subcommand == Subcommand::Update
             && manager.update_requests.is_empty()

@@ -284,7 +284,7 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Synced
 /// Bare `bun update -r` / `bun update --filter`: every targeted root/workspace package.json (named requests take the `pending` branch instead).
 fn edit_update_targets(
     manager: &mut PackageManager,
-    targets: &[super::UpdateTargetWorkspace],
+    targets: &super::UpdateTargets,
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
@@ -305,10 +305,7 @@ fn edit_update_targets(
                 _ => continue,
             };
             let name = names[pkg_id].slice(buf);
-            if !targets
-                .iter()
-                .any(|t| t.matches(name_hash.is_none(), name_hashes[pkg_id], name))
-            {
+            if !targets.contains(name_hash.is_none(), name_hashes[pkg_id], name) {
                 continue;
             }
             selected.push(WorkspaceTarget {

@@ -3975,7 +3975,7 @@ fn picks_latest_tag(
 /// command runs in.
 fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID) -> bool {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    if let Some(targets) = this.update_target_workspaces.as_deref() {
+    if let Some(targets) = this.update_target_workspaces.as_ref() {
         return lockfile.is_dependency_of_workspace_in(targets, dependency_id);
     }
     let in_member = this.workspace_name_hash.is_some();

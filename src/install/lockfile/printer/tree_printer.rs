@@ -715,7 +715,7 @@ pub(crate) fn print<W: Write>(
             // `bun update -r` / `--filter`: the `^` rows of every selected workspace, whether or not the cwd is one of them.
             let mut update_owners: Vec<PackageID> = vec![workspace_package_id];
             if manager.subcommand == Subcommand::Update {
-                if let Some(targets) = manager.update_target_workspaces.as_deref() {
+                if let Some(targets) = manager.update_target_workspaces.as_ref() {
                     let names = slice.items_name();
                     let name_hashes = slice.items_name_hash();
                     let members = (resolutions_list[0].begin()..resolutions_list[0].end())
@@ -727,13 +727,11 @@ pub(crate) fn print<W: Write>(
                         .chain(members)
                         .filter(|&importer| {
                             importer < end
-                                && targets.iter().any(|target| {
-                                    target.matches(
-                                        importer == 0,
-                                        name_hashes[importer as usize],
-                                        names[importer as usize].slice(string_buf),
-                                    )
-                                })
+                                && targets.contains(
+                                    importer == 0,
+                                    name_hashes[importer as usize],
+                                    names[importer as usize].slice(string_buf),
+                                )
                         })
                         .collect();
                 }

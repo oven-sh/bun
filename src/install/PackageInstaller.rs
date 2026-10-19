@@ -15,7 +15,9 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
+use crate::lifecycle_script_runner::{
+    HeldScripts, InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts,
+};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
@@ -888,7 +890,7 @@ impl<'a> PackageInstaller<'a> {
                     skipped_due_to_missing_bin: false,
                 };
 
-                let linked = bin_linker.link(global);
+                bin_linker.link(global);
                 is_behind_link = bin_linker.is_behind_link;
 
                 if can_retry_without_native_binlink_optimization
@@ -907,21 +909,26 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 }
 
-                // The bins link into the platform package, which stands in for the scripts.
-                if can_retry_without_native_binlink_optimization
-                    && linked
-                    && (self.unfinished_scripts.borrow_mut()).take_held(tree_id, dep_id)
-                    && PackageManager::verbose_install()
-                {
-                    bun_core::pretty_errorln!(
-                        "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                        bstr::BStr::new(pkg_names[package_id as usize].slice(string_buf)),
-                    );
-                }
-
-                if !bin_linker.skipped_due_to_missing_bin {
+                let bins_linked = !bin_linker.skipped_due_to_missing_bin;
+                if bins_linked {
                     tree.bins_after_scripts.retain(|&id| id != dep_id);
                 }
+                let mut unfinished = self.unfinished_scripts.borrow_mut();
+                if let Some(held) = unfinished.held_index(tree_id, dep_id) {
+                    if can_retry_without_native_binlink_optimization {
+                        // The redirect stands: the platform package has the bins.
+                        unfinished.held.swap_remove(held);
+                        if PackageManager::verbose_install() {
+                            bun_core::pretty_errorln!(
+                                "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
+                                bstr::BStr::new(pkg_names[package_id as usize].slice(string_buf)),
+                            );
+                        }
+                    } else {
+                        unfinished.held[held as usize].bins_linked = bins_linked;
+                    }
+                }
+                drop(unfinished);
                 if let Some(err) = bin_linker.err {
                     if global {
                         // Print the error instead of logging it. A logged error stops the lockfile
@@ -960,17 +967,14 @@ impl<'a> PackageInstaller<'a> {
         self.enqueue_held_scripts(tree_id, &deferred);
     }
 
-    /// Enqueues the lifecycle scripts of the native binlink packages of `tree_id` that are still
-    /// held after `link_tree_bins`: their bins do not link into a platform package, so nothing
-    /// stands in for the scripts. The `deferred` ones stay held for `BinPass::Remaining`.
-    /// `self.node_modules.path` is that of `tree_id`.
+    /// The packages of `tree_id` that are still held have no redirect: their scripts run.
     fn enqueue_held_scripts(&mut self, tree_id: TreeContextId, deferred: &[DependencyID]) {
         loop {
-            let Some(dependency_id) =
-                (self.unfinished_scripts.borrow_mut()).take_held_in(tree_id, deferred)
+            let Some(held) = (self.unfinished_scripts.borrow_mut()).take_held_in(tree_id, deferred)
             else {
                 return;
             };
+            let dependency_id = held.dependency_id;
             let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id as usize];
             let resolutions = self.resolutions;
             self.enqueue_trusted_scripts(
@@ -982,6 +986,11 @@ impl<'a> PackageInstaller<'a> {
                 &resolutions[package_id as usize],
                 (self.trusted_dependencies_from_update_requests).contains(&package_id),
             );
+            if held.bins_linked {
+                self.trees[tree_id as usize]
+                    .bins_after_scripts
+                    .retain(|&id| id != dependency_id);
+            }
         }
     }
 
@@ -2693,12 +2702,15 @@ impl<'a> PackageInstaller<'a> {
                 }
                 return;
             }
-            // `link_tree_bins` sees if the bins link into the platform package, and decides.
+            // `link_tree_bins` decides: the redirect of the bins stands in for the scripts.
             Some(PostinstallOptimizer::NativeBinlink)
                 if self.bins[package_id as usize].tag != bin::Tag::None =>
             {
-                (self.unfinished_scripts.borrow_mut().held)
-                    .append((self.current_tree_id, dependency_id));
+                (self.unfinished_scripts.borrow_mut().held).append(HeldScripts {
+                    tree_id: self.current_tree_id,
+                    dependency_id,
+                    bins_linked: false,
+                });
                 return;
             }
             // Without a bin, no link shows that the platform package is usable.

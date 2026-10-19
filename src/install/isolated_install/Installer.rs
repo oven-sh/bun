@@ -651,7 +651,37 @@ impl<'a> Installer<'a> {
                 return Some(dep.entry_id);
             }
         }
-        None
+        // `--omit=optional` leaves the platform package out of `deps`.
+        self.awaited_platform_entry(entry_id).filter(|platform| {
+            entry_steps[platform.get() as usize].load(Ordering::Acquire) != Step::Done as u32
+        })
+    }
+
+    /// The platform package entry that the task of a native binlink entry waits for, if any.
+    fn awaited_platform_entry(&self, entry_id: StoreEntryId) -> Option<StoreEntryId> {
+        let pkg_id = self.store.ids(entry_id).pkg_id;
+        if self.lockfile().packages.items_bin()[pkg_id as usize].tag == bin::Tag::None {
+            return None;
+        }
+        let platform = self.maybe_replace_node_modules_path(pkg_id)?;
+        if platform == entry_id || (self.is_member(platform) && !self.is_member(entry_id)) {
+            return None;
+        }
+        let entry_deps = self.store.entries.items_dependencies();
+        let is_leaf = entry_deps[platform.get() as usize].slice().is_empty();
+        let is_dependency = (entry_deps[entry_id.get() as usize].slice().iter())
+            .any(|dep| dep.entry_id == platform);
+        let waits = if is_dependency {
+            // `is_task_blocked` does not wait for a dependency that is an ancestor.
+            is_leaf || !(self.store).is_cycle(entry_id, platform, &mut ArrayHashMap::default())
+        } else {
+            // Waiting for an entry that waits for nothing cannot deadlock.
+            is_leaf
+                && self
+                    .maybe_replace_node_modules_path(self.store.ids(platform).pkg_id)
+                    .is_none()
+        };
+        waits.then_some(platform)
     }
 
     /// Called from main thread
@@ -971,8 +1001,7 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
-    /// Set by `Step::RunPreinstall` on the task thread: the bins of a native binlink entry are
-    /// linked into its platform package, so `Step::Binaries` has none left to link.
+    /// `Step::RunPreinstall` linked the entry's bins into its platform package.
     pub(crate) linked_native_bins: bool,
     /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
@@ -1290,16 +1319,14 @@ impl Task {
         match script_mode {
             Some(PostinstallOptimizer::Ignore) => return Ok(false),
             Some(PostinstallOptimizer::NativeBinlink) => {
-                // The platform package is a dependency, so it is in place or has failed by now.
-                // If the bins link into it, it stands in for the scripts. Without a bin, no
-                // link shows that it is usable.
-                if pkgs.items_bin()[pkg_id as usize].tag != bin::Tag::None
+                // A redirect of the bins into the awaited platform package stands in for the scripts.
+                if installer.awaited_platform_entry(self.entry_id).is_some()
                     && let Some(own_name) = installer
                         .entry_store_node_modules_package_name(self.entry_id)
                         .filter(|name| !name.is_empty())
                 {
                     let mut links = installer.bin_links(self.entry_id);
-                    // An error is reported by `Step::Binaries`, which links again.
+                    // `Step::Binaries` links again after a failure, and reports it.
                     self.linked_native_bins = installer
                         .link_bins(&mut links, pkg_id, own_name, false, false)
                         .unwrap_or(false);
@@ -2343,9 +2370,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Links the bins of `pkg_id`, which is `package_name` in `links.node_modules_path`.
-    /// `Ok(true)`: the package is a native binlink package and its bins link into its platform
-    /// package. Without `fall_back` that is the only link it tries: the bins that the platform
-    /// package does not have stay unlinked, and an error is not reported.
+    /// `Ok(true)`: they link into its platform package. Without `fall_back` nothing else is tried.
     fn link_bins(
         &self,
         links: &mut BinLinks,
@@ -2405,9 +2430,9 @@ impl<'a> Installer<'a> {
             skipped_due_to_missing_bin: false,
         };
 
-        let linked = bin_linker.link(global);
+        bin_linker.link(global);
         let redirect_failed = bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some();
-        let redirected = replacement.is_some() && linked && !redirect_failed;
+        let redirected = replacement.is_some() && !redirect_failed;
 
         if !fall_back {
             links.is_behind_link = bin_linker.is_behind_link;

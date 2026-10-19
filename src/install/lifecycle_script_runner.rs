@@ -410,37 +410,38 @@ pub(crate) type UnfinishedScripts = std::rc::Rc<core::cell::RefCell<Unfinished>>
 pub struct Unfinished {
     /// The tree and the folder name of each package whose scripts are queued or running.
     pub(crate) scripts: Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>,
-    /// Native binlink packages whose scripts wait for `PackageInstaller::link_tree_bins`, which
-    /// drops them if the bins link into the platform package and queues them if not.
-    pub(crate) held:
-        bun_collections::SmallList<(crate::lockfile_real::tree::Id, crate::DependencyID), 4>,
+    /// The native binlink packages whose scripts wait for `PackageInstaller::link_tree_bins`.
+    pub(crate) held: bun_collections::SmallList<HeldScripts, 4>,
+}
+
+#[derive(Clone, Copy)]
+pub struct HeldScripts {
+    pub(crate) tree_id: crate::lockfile_real::tree::Id,
+    pub(crate) dependency_id: crate::DependencyID,
+    /// Its own bins are linked and none of their files was missing.
+    pub(crate) bins_linked: bool,
 }
 
 impl Unfinished {
-    /// Returns true if `dependency_id` was held in `tree_id`. It is not held afterwards.
-    pub(crate) fn take_held(
-        &mut self,
+    pub(crate) fn held_index(
+        &self,
         tree_id: crate::lockfile_real::tree::Id,
         dependency_id: crate::DependencyID,
-    ) -> bool {
-        let Some(index) = (self.held.iter()).position(|&held| held == (tree_id, dependency_id))
-        else {
-            return false;
-        };
-        self.held.swap_remove(index as u32);
-        true
+    ) -> Option<u32> {
+        (self.held.iter())
+            .position(|held| held.tree_id == tree_id && held.dependency_id == dependency_id)
+            .map(|index| index as u32)
     }
 
-    /// Takes one dependency that is held in `tree_id` and is not in `except`.
+    /// Takes one package that is held in `tree_id` and is not in `except`.
     pub(crate) fn take_held_in(
         &mut self,
         tree_id: crate::lockfile_real::tree::Id,
         except: &[crate::DependencyID],
-    ) -> Option<crate::DependencyID> {
-        let index = (self.held.iter()).position(|(tree, dependency_id)| {
-            *tree == tree_id && !except.contains(dependency_id)
-        })?;
-        Some(self.held.swap_remove(index as u32).1)
+    ) -> Option<HeldScripts> {
+        let index = (self.held.iter())
+            .position(|held| held.tree_id == tree_id && !except.contains(&held.dependency_id))?;
+        Some(self.held.swap_remove(index as u32))
     }
 }
 
@@ -1191,11 +1192,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             for (tree_id, folder_name) in unfinished.scripts.iter() {
                 crate::package_installer::remove_placed_package(lockfile, *tree_id, folder_name);
             }
-            for &(tree_id, dependency_id) in unfinished.held.iter() {
-                let folder_name = &lockfile.buffers.dependencies[dependency_id as usize].name;
+            for held in unfinished.held.iter() {
+                let folder_name = &lockfile.buffers.dependencies[held.dependency_id as usize].name;
                 crate::package_installer::remove_placed_package(
                     lockfile,
-                    tree_id,
+                    held.tree_id,
                     lockfile.str(folder_name),
                 );
             }

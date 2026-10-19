@@ -165,11 +165,7 @@ impl List {
             .unwrap_or(false)
     }
 
-    /// What stands in for the lifecycle scripts of a package. `None`: nothing does, they run.
-    /// `Ignore`: they never run. `NativeBinlink`: they do not run if the bin linker links the
-    /// bins of the package into its platform package. Only the linker knows that: a platform
-    /// package in the lockfile may be left out of the install, fail to download, or not have
-    /// the bin. In each of those cases the package needs its own scripts.
+    /// `NativeBinlink`: the scripts are skipped only if the bin linker redirects the bins.
     pub(crate) fn script_mode(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS

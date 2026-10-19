@@ -216,26 +216,21 @@ impl Rm {
                                             let child = ChildPtr::new(cmd, WriterTag::Builtin);
                                             return Builtin::of_mut(interp, cmd)
                                                 .stderr
-                                                .enqueue_fmt(
+                                                .enqueue_parts(
                                                     child,
                                                     Some(Kind::Rm),
-                                                    format_args!(
-                                                        "\"{}\" may not be removed\n",
-                                                        bstr::BStr::new(&resolved_owned)
-                                                    ),
+                                                    &[
+                                                        b"\"",
+                                                        &resolved_owned,
+                                                        b"\" may not be removed\n",
+                                                    ],
                                                     safeguard,
                                                 );
                                         }
-                                        let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
-                                            Some(Kind::Rm),
-                                            format_args!(
-                                                "\"{}\" may not be removed\n",
-                                                bstr::BStr::new(&resolved_owned)
-                                            ),
-                                        )
-                                        .to_vec();
+                                        let buf = Builtin::error_line(
+                                            Kind::Rm,
+                                            &[b"\"", &resolved_owned, b"\" may not be removed\n"],
+                                        );
                                         let _ =
                                             Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                                         return Builtin::done(interp, cmd, 1);
@@ -271,23 +266,17 @@ impl Rm {
                                     wait_write_err: true,
                                 };
                                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+                                return Builtin::of_mut(interp, cmd).stderr.enqueue_parts(
                                     child,
                                     Some(Kind::Rm),
-                                    format_args!(
-                                        "illegal option -- {}\n",
-                                        bstr::BStr::new(&arg[1..])
-                                    ),
+                                    &[b"illegal option -- ", &arg[1..], b"\n"],
                                     safeguard,
                                 );
                             }
-                            let buf = Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
-                                Some(Kind::Rm),
-                                format_args!("illegal option -- {}\n", bstr::BStr::new(&arg[1..])),
-                            )
-                            .to_vec();
+                            let buf = Builtin::error_line(
+                                Kind::Rm,
+                                &[b"illegal option -- ", &arg[1..], b"\n"],
+                            );
                             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                             return Builtin::done(interp, cmd, 1);
                         }
@@ -393,11 +382,10 @@ impl Rm {
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
         let task_err = unsafe { (*task).err.get_mut().take() };
-        // Format the error string before
-        // stashing the error on `exec` (formatting needs &mut interp).
+        // Format the error string before stashing the error on `exec`.
         let errstr: Option<Vec<u8>> = task_err
             .as_ref()
-            .map(|e| Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec());
+            .map(|e| Builtin::task_error_to_string(Kind::Rm, e));
         let (tasks_done, total) = {
             let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 panic!("Invalid state")

@@ -1,5 +1,3 @@
-use core::fmt::Arguments;
-
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
@@ -47,7 +45,7 @@ impl<'a> CssModule<'a> {
                 let _ = alloced;
                 hashes.push(hash(
                     bump,
-                    format_args!("{}", bstr::BStr::new(source)),
+                    &[source],
                     matches!(config.pattern.segments.at(0), Segment::Hash),
                 ));
             }
@@ -152,12 +150,7 @@ impl<'a> CssModule<'a> {
 
         let the_hash = hash(
             bump,
-            format_args!(
-                "{}_{}_{}",
-                bstr::BStr::new(self.hashes[source_index as usize]),
-                bstr::BStr::new(name),
-                bstr::BStr::new(key)
-            ),
+            &[self.hashes[source_index as usize], b"_", name, b"_", key],
             false,
         );
 
@@ -428,6 +421,6 @@ pub enum CssModuleReference<'a> {
 /// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
 /// `css_modules::hash` path.
 #[inline]
-pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
-    bun_base64::wyhash_url_safe(bump, args, at_start)
+pub(crate) fn hash<'a>(bump: &'a Bump, parts: &[&[u8]], at_start: bool) -> &'a [u8] {
+    bun_base64::wyhash_url_safe(bump, parts, at_start)
 }

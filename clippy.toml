@@ -28,8 +28,8 @@ disallowed-methods = [
   { path = "bun_core::output::pretty_errorln", reason = "renders args then tag-walks the rendered bytes; use the pretty_errorln! macro — allow only for runtime-built payloads, with justification" },
   { path = "bun_core::output::warn", reason = "renders args then tag-walks the rendered bytes; use the warn! macro — allow only for runtime-built payloads, with justification" },
   { path = "bun_core::output::debug_warn", reason = "renders args then tag-walks the rendered bytes; use the debug_warn! macro — allow only for runtime-built payloads, with justification" },
-  { path = "alloc::string::String::from_utf8", reason = "keep data as bytes; for display use bstr::BStr, for JS-visible strings use bun_core::String::clone_utf8" },
-  { path = "alloc::string::String::from_utf8_lossy", reason = "silently corrupts non-UTF-8 bytes and allocates; keep data as bytes (bstr::BStr for Display)" },
+  { path = "alloc::string::String::from_utf8", reason = "keep data as bytes; in a message use bstr::BStr, for JS-visible strings use bun_core::String::clone_utf8. Where the bytes become a path, a name, a key or relayed output, append them (extend_from_slice, write_all, concat): formatting them through bstr::BStr writes U+FFFD for each invalid byte" },
+  { path = "alloc::string::String::from_utf8_lossy", reason = "silently corrupts non-UTF-8 bytes and allocates; keep data as bytes. bstr::BStr's Display does the same replacement, so it is for messages only: append bytes (extend_from_slice, write_all, concat) where they become a path, a name, a key or relayed output" },
   # == byte/substring search must go through bun_core::strings (highway, runtime-dispatched SIMD) ==
   # libcore's searchers are scalar or compile-time-gated SSE2/NEON (we build with
   # -Ctarget-cpu=nehalem on x64); highway picks AVX2/AVX-512 at runtime. The

@@ -1,5 +1,3 @@
-use std::io::Write as _;
-
 use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
@@ -601,14 +599,10 @@ impl BuildCommand {
                 && !outfile.is_empty()
                 && !ctx.bundler_options.compile
             {
-                let mut entry_naming = Vec::<u8>::new();
-                write!(
-                    &mut entry_naming,
-                    "./{}",
-                    bstr::BStr::new(bun_paths::basename(outfile))
-                )
-                .expect("unreachable");
-                this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
+                // Concatenate raw bytes. Formatting the name would replace invalid UTF-8 and
+                // write a file with another name.
+                this_transpiler.options.entry_naming =
+                    strings::concat(&[b"./", bun_paths::basename(outfile)]);
                 if let Some(dir) = bun_core::dirname(outfile) {
                     ctx.bundler_options.outdir = dir.into();
                 }
@@ -834,13 +828,11 @@ impl BuildCommand {
 
                 outfile = compile_outfile(outfile);
 
-                let mut outfile_owned: Vec<u8>;
+                let outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
                     && !strings::has_suffix_comptime(outfile, b".exe")
                 {
-                    outfile_owned = Vec::new();
-                    write!(&mut outfile_owned, "{}.exe", bstr::BStr::new(outfile))
-                        .expect("unreachable");
+                    outfile_owned = [outfile, b".exe"].concat();
                     outfile = &outfile_owned;
                 } else if was_renamed_from_index && outfile != b"index" {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
@@ -925,29 +917,19 @@ impl BuildCommand {
 
                             // Use the sourcemap's own dest_path basename if available,
                             // otherwise fall back to {outfile}.map
-                            let mut map_basename_owned: Vec<u8>;
+                            let map_basename_owned: Vec<u8>;
                             let map_basename: &[u8] = if !f.dest_path.is_empty() {
                                 bun_paths::basename(&f.dest_path)
                             } else {
                                 let exe_base = bun_paths::basename(outfile);
-                                map_basename_owned = Vec::new();
-                                if compile_target.os == OperatingSystem::Windows
+                                map_basename_owned = if compile_target.os
+                                    == OperatingSystem::Windows
                                     && !strings::has_suffix_comptime(exe_base, b".exe")
                                 {
-                                    write!(
-                                        &mut map_basename_owned,
-                                        "{}.exe.map",
-                                        bstr::BStr::new(exe_base)
-                                    )
-                                    .expect("unreachable");
+                                    [exe_base, b".exe.map"].concat()
                                 } else {
-                                    write!(
-                                        &mut map_basename_owned,
-                                        "{}.map",
-                                        bstr::BStr::new(exe_base)
-                                    )
-                                    .expect("unreachable");
-                                }
+                                    [exe_base, b".map"].concat()
+                                };
                                 &map_basename_owned
                             };
 

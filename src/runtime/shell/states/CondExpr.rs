@@ -232,7 +232,7 @@ impl CondExpr {
             let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
             if let Some(err) = err {
-                return Self::write_failing_error(interp, this, format_args!("{}\n", err));
+                return Self::write_failing_error(interp, this, &err.to_line());
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
             debug_assert!(interp.failed(), "Expansion child failed without an error");
@@ -285,23 +285,16 @@ impl CondExpr {
     /// write and parks in `WaitingWriteErr` (resumed by
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
-    fn write_failing_error(
-        interp: &Interpreter,
-        this: NodeId,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
+    fn write_failing_error(interp: &Interpreter, this: NodeId, buf: &[u8]) -> Yield {
         use crate::shell::io::OutKind;
         use crate::shell::io_writer;
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        let _ = buf.write_fmt(args);
         if interp.as_condexpr(this).io.stderr.needs_io().is_some() {
             // Only the fd arm transitions state.
             interp.as_condexpr_mut(this).state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
             // `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_condexpr(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
+                return fd.writer.enqueue(child, fd.captured, buf);
             }
             unreachable!()
         }
@@ -317,7 +310,7 @@ impl CondExpr {
                     .shell_mut()
                     .buffered_stderr_mut()
             };
-            stderr.extend_from_slice(&buf);
+            stderr.extend_from_slice(buf);
         }
         let parent = interp.as_condexpr(this).base.parent;
         interp.child_done(parent, this, 1)

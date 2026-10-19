@@ -25,8 +25,6 @@ pub(crate) struct Builtin {
     pub(crate) stdin: BuiltinInput,
     pub(crate) stdout: BuiltinIO,
     pub(crate) stderr: BuiltinIO,
-    /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
-    pub(crate) err_buf: Vec<u8>,
     pub(crate) impl_: Impl,
 }
 
@@ -388,18 +386,21 @@ impl BuiltinIO {
         }
     }
 
-    /// Format with the optional `"{kind}: "` prefix and enqueue on the
-    /// underlying IOWriter.
-    pub(crate) fn enqueue_fmt(
+    /// Enqueue the optional `"{kind}: "` prefix followed by `parts` on the
+    /// underlying IOWriter, as one write. See [`Builtin::error_line`] for
+    /// why the parts are bytes.
+    pub(crate) fn enqueue_parts(
         &mut self,
         child: io_writer::ChildPtr,
         kind: Option<Kind>,
-        args: core::fmt::Arguments<'_>,
+        parts: &[&[u8]],
         _safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         match self {
-            BuiltinIO::Fd(fd) => fd.writer.enqueue_fmt_bltn(child, fd.captured, kind, args),
-            _ => unreachable!("enqueue_fmt() on non-fd output; caller must check needs_io()"),
+            BuiltinIO::Fd(fd) => fd
+                .writer
+                .enqueue_parts_bltn(child, fd.captured, kind, parts),
+            _ => unreachable!("enqueue_parts() on non-fd output; caller must check needs_io()"),
         }
     }
 }
@@ -512,7 +513,6 @@ impl Builtin {
             stdin,
             stdout,
             stderr,
-            err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
 
@@ -533,7 +533,11 @@ impl Builtin {
                     return Some(Self::cmd_write_failing_error(
                         interp,
                         cmd,
-                        format_args!("bun: ambiguous redirect: at `{}`\n", kind.as_str()),
+                        &[
+                            b"bun: ambiguous redirect: at `",
+                            kind.as_str().as_bytes(),
+                            b"`\n",
+                        ],
                     ));
                 }
 
@@ -566,11 +570,7 @@ impl Builtin {
                             return Some(Self::cmd_write_failing_error(
                                 interp,
                                 cmd,
-                                format_args!(
-                                    "bun: {}: {}",
-                                    bstr::BStr::new(sys.message.byte_slice()),
-                                    bstr::BStr::new(path.as_bytes()),
-                                ),
+                                &[b"bun: ", &sys.message.to_utf8(), b": ", path.as_bytes()],
                             ));
                         }
                         Ok(f) => f,
@@ -596,11 +596,7 @@ impl Builtin {
                             return Some(Self::cmd_write_failing_error(
                                 interp,
                                 cmd,
-                                format_args!(
-                                    "bun: {}: {}",
-                                    bstr::BStr::new(sys.message.byte_slice()),
-                                    bstr::BStr::new(path.as_bytes()),
-                                ),
+                                &[b"bun: ", &sys.message.to_utf8(), b": ", path.as_bytes()],
                             ));
                         }
                         Ok(f) => {
@@ -616,11 +612,12 @@ impl Builtin {
                                         return Some(Self::cmd_write_failing_error(
                                             interp,
                                             cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
+                                            &[
+                                                b"bun: ",
+                                                &sys.message.to_utf8(),
+                                                b": ",
+                                                path.as_bytes(),
+                                            ],
                                         ));
                                     }
                                     Ok(f2) => f2,
@@ -802,14 +799,14 @@ impl Builtin {
     /// builtin's, which may already have been redirected). Hoisted here
     /// because `init_redirections` and `Cmd::transition_to_exec` (the
     /// "command not found" / spawn-error paths) are the only callers.
+    ///
+    /// Writes `parts` byte for byte (see [`Builtin::error_line`]).
     pub(crate) fn cmd_write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
-        args: core::fmt::Arguments<'_>,
+        parts: &[&[u8]],
     ) -> Yield {
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        let _ = buf.write_fmt(args);
+        let buf = parts.concat();
         if let Some(_safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             // Only the `Fd` arm transitions state.
             interp.as_cmd_mut(cmd).state = CmdState::WaitingWriteErr;
@@ -932,65 +929,39 @@ impl Builtin {
         Self::shell(interp, cmd).cwd_fd
     }
 
-    /// Format `"{kind}: {fmt}"` into a fresh heap buffer.
+    /// `"{kind}: "` followed by `parts`, byte for byte.
     ///
-    /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
-    /// across the immediate `write_no_io` / `enqueue` call.
-    pub(crate) fn fmt_error_arena<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Option<Kind>,
-        args: core::fmt::Arguments<'_>,
-    ) -> &'a [u8] {
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        if let Some(k) = kind {
-            let _ = write!(&mut buf, "{}: ", k.as_str());
+    /// The parts are bytes, not `fmt::Arguments`: a file name, an argument or
+    /// an environment value is not always UTF-8, and formatting one replaces
+    /// each invalid byte with U+FFFD. Format a number into an
+    /// [`bun_core::fmt::ItoaBuf`] and pass the digits.
+    pub(crate) fn error_line(kind: Kind, parts: &[&[u8]]) -> Vec<u8> {
+        let prefix = kind.as_str().as_bytes();
+        let len = prefix.len() + 2 + parts.iter().map(|part| part.len()).sum::<usize>();
+        let mut line = Vec::with_capacity(len);
+        line.extend_from_slice(prefix);
+        line.extend_from_slice(b": ");
+        for part in parts {
+            line.extend_from_slice(part);
         }
-        let _ = buf.write_fmt(args);
-        let me = Self::of_mut(interp, cmd);
-        me.err_buf = buf;
-        &me.err_buf
+        line
     }
 
     /// Error messages formatted to match bash. Dispatches on the variant;
     /// `Sys` recurses into the system-error formatter.
-    pub(crate) fn shell_err_to_string<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        err: &crate::shell::ShellErr,
-    ) -> &'a [u8] {
+    pub(crate) fn shell_err_to_string(kind: Kind, err: &crate::shell::ShellErr) -> Vec<u8> {
         use crate::shell::ShellErr;
         match err {
             ShellErr::Sys(sys) => {
                 // `"{message}\n"` or `"{message}: {path}\n"`.
+                let message = sys.message.to_utf8();
                 if sys.path.is_empty() {
-                    Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!("{}\n", bstr::BStr::new(sys.message.byte_slice())),
-                    )
+                    Self::error_line(kind, &[&message, b"\n"])
                 } else {
-                    Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!(
-                            "{}: {}\n",
-                            bstr::BStr::new(sys.message.byte_slice()),
-                            sys.path,
-                        ),
-                    )
+                    Self::error_line(kind, &[&message, b": ", &sys.path.to_utf8(), b"\n"])
                 }
             }
-            ShellErr::Custom(s) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(s)),
-            ),
+            ShellErr::Custom(s) => Self::error_line(kind, &[s, b"\n"]),
         }
     }
 
@@ -998,35 +969,23 @@ impl Builtin {
     /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
-    pub(crate) fn task_error_to_string<'a>(
-        interp: &'a Interpreter,
-        cmd: NodeId,
-        kind: Kind,
-        err: &bun_sys::Error,
-    ) -> &'a [u8] {
+    pub(crate) fn task_error_to_string(kind: Kind, err: &bun_sys::Error) -> Vec<u8> {
         if let Some((_code, sys_errno)) = err.get_error_code_tag_name() {
             if let Some(message) = bun_sys::coreutils_error_map::get(sys_errno) {
                 if !err.path.is_empty() {
-                    return Self::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(kind),
-                        format_args!("{}: {}\n", bstr::BStr::new(&err.path[..]), message),
-                    );
+                    return Self::error_line(kind, &[&err.path, b": ", message.as_bytes(), b"\n"]);
                 }
-                return Self::fmt_error_arena(
-                    interp,
-                    cmd,
-                    Some(kind),
-                    format_args!("{}\n", message),
-                );
+                return Self::error_line(kind, &[message.as_bytes(), b"\n"]);
             }
         }
-        Self::fmt_error_arena(
-            interp,
-            cmd,
-            Some(kind),
-            format_args!("unknown error {}\n", err.errno),
+        let mut digits = bun_core::fmt::ItoaBuf::new();
+        Self::error_line(
+            kind,
+            &[
+                b"unknown error ",
+                bun_core::fmt::itoa(&mut digits, err.errno),
+                b"\n",
+            ],
         )
     }
 
@@ -1043,24 +1002,18 @@ impl Builtin {
         set_wait_err: impl FnOnce(),
     ) -> Yield {
         let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(_) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
-            )
-            .to_vec(),
+            ParseError::IllegalOption(_) => {
+                Self::error_line(kind, &[b"illegal option -- ", e.opt(), b"\n"])
+            }
             ParseError::ShowUsage => kind.usage_string().to_vec(),
-            ParseError::Unsupported(_) => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!(
-                    "unsupported option, please open a GitHub issue -- {}\n",
-                    bstr::BStr::new(e.opt())
-                ),
-            )
-            .to_vec(),
+            ParseError::Unsupported(_) => Self::error_line(
+                kind,
+                &[
+                    b"unsupported option, please open a GitHub issue -- ",
+                    e.opt(),
+                    b"\n",
+                ],
+            ),
         };
         set_wait_err();
         Self::write_failing_error(interp, cmd, &buf, 1)
@@ -1077,8 +1030,8 @@ impl Builtin {
     ) -> Yield {
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // Clone buf so the &mut on
-            // `stderr` doesn't overlap a borrow into `err_buf`.
+            // Clone buf so the &mut on `stderr` doesn't overlap a borrow
+            // into the builtin's own state.
             let owned = buf.to_vec();
             return Self::of_mut(interp, cmd)
                 .stderr

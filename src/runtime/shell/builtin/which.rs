@@ -51,25 +51,13 @@ impl Which {
             for i in 0..argc {
                 let arg = Self::arg(interp, cmd, i);
                 match search.resolve(&arg) {
-                    Some(resolved) => {
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            None,
-                            format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        )
-                        .to_vec();
-                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                    Some(mut resolved) => {
+                        resolved.push(b'\n');
+                        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &resolved);
                     }
                     None => {
                         had_not_found = true;
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            Some(Kind::Which),
-                            format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                        )
-                        .to_vec();
+                        let buf = Builtin::error_line(Kind::Which, &[&arg, b" not found\n"]);
                         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                 }
@@ -115,45 +103,33 @@ impl Which {
                     *waiting_write = true;
                 }
                 if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                    return Builtin::of_mut(interp, cmd).stdout.enqueue_parts(
                         child,
                         None,
-                        format_args!("{} not found\n", bstr::BStr::new(&arg)),
+                        &[&arg, b" not found\n"],
                         safeguard,
                     );
                 }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                )
-                .to_vec();
+                let buf = [&arg[..], b" not found\n"].concat();
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
-            Some(resolved) => {
+            Some(mut resolved) => {
                 if let State::MultiArgs { waiting_write, .. } =
                     &mut Self::state_mut(interp, cmd).state
                 {
                     *waiting_write = true;
                 }
                 if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                    return Builtin::of_mut(interp, cmd).stdout.enqueue_parts(
                         child,
                         None,
-                        format_args!("{}\n", bstr::BStr::new(&resolved)),
+                        &[&resolved, b"\n"],
                         safeguard,
                     );
                 }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{}\n", bstr::BStr::new(&resolved)),
-                )
-                .to_vec();
-                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                resolved.push(b'\n');
+                let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &resolved);
                 Self::arg_complete(interp, cmd)
             }
         }

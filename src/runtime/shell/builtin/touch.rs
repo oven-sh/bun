@@ -155,7 +155,7 @@ impl Touch {
         }
         if let Some(e) = task.err.take() {
             let output_task = OutputTask::<Touch>::new(cmd, OutputSrc::Arrlist(Vec::new()));
-            let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Touch, &e).to_vec();
+            let errstr = Builtin::task_error_to_string(Kind::Touch, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }

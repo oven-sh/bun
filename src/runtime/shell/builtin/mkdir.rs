@@ -167,7 +167,7 @@ impl Mkdir {
 
         let output_task = OutputTask::<Mkdir>::new(cmd, OutputSrc::Arrlist(output));
         let errstr: Option<Vec<u8>> = err.map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Mkdir, &e).to_vec();
+            let s = Builtin::task_error_to_string(Kind::Mkdir, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }

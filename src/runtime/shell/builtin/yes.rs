@@ -110,13 +110,7 @@ impl Yes {
             err
         };
         if let Some(e) = err {
-            let buf = Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Yes),
-                format_args!("{}\n", bstr::BStr::new(e.name())),
-            )
-            .to_vec();
+            let buf = Builtin::error_line(Kind::Yes, &[e.name(), b"\n"]);
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.

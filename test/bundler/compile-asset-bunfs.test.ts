@@ -1,6 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -404,6 +405,104 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(expected);
       expect(code).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+});
+
+// On Linux a file name is bytes, not text. The runtime finds an embedded file by a string that comes
+// from JavaScript, so the file is stored under a text name: a byte that is not UTF-8 is stored as
+// U+FFFD. The files are made with Buffer paths: a JavaScript string cannot hold a lone 0xFF byte.
+describe.skipIf(!isLinux)("embedded files whose names are not UTF-8", () => {
+  const asset = (dir: string, name: Buffer[]) => Buffer.concat([Buffer.from(join(dir, "assets") + "/"), ...name]);
+
+  test.concurrent(
+    "a name with many such bytes is embedded, and the file is found by its text name",
+    async () => {
+      using dir = tempDir("bunfs-name-bytes", {
+        "index.ts": /* ts */ `
+          import fs from "node:fs";
+          import path from "node:path";
+          const root = path.join(import.meta.dir, "assets");
+          const read = name => [name, fs.readFileSync(path.join(root, name), "utf8")];
+          console.log(JSON.stringify(fs.readdirSync(root).sort().map(read)));
+        `,
+      });
+      mkdirSync(join(String(dir), "assets"));
+      // The build once reserved one byte for each of these bytes and then wrote three.
+      for (const prefix of ["a-", "b-"]) {
+        const name = [Buffer.from(prefix), Buffer.alloc(200, 0xff), Buffer.from(".txt")];
+        writeFileSync(asset(String(dir), name), `${prefix}kept`);
+      }
+
+      await compile(String(dir), ["--asset", "./assets"]);
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      expect(JSON.parse(stdout)).toEqual(
+        ["a-", "b-"].map(prefix => [`${prefix}${"\ufffd".repeat(200)}.txt`, `${prefix}kept`]),
+      );
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test.concurrent(
+    "two names that differ only in such a byte fail the build",
+    async () => {
+      using dir = tempDir("bunfs-name-collide", { "index.ts": `console.log("unreachable");` });
+      mkdirSync(join(String(dir), "assets"));
+      for (const byte of [0xfe, 0xff]) {
+        writeFileSync(asset(String(dir), [Buffer.from("data-"), Buffer.from([byte]), Buffer.from(".txt")]), "x");
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./assets"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // The message spells the bytes out, so the two names can be told apart.
+      expect(stderr).toContain(String.raw`"assets/data-\xfe.txt"`);
+      expect(stderr).toContain(String.raw`"assets/data-\xff.txt"`);
+      expect(stderr).toContain("would be embedded under one name");
+      expect(code).toBe(1);
+      expect(existsSync(join(String(dir), "app"))).toBe(false);
+    },
+    TIMEOUT,
+  );
+
+  test.concurrent(
+    "an executable whose own name is not UTF-8 starts",
+    async () => {
+      using dir = tempDir("bunfs-outfile-bytes", {
+        "index.ts": `console.log("started");`,
+        "ff.bin": Buffer.from([0xff]),
+      });
+      // `sh` puts the byte into the argument.
+      await using build = Bun.spawn({
+        cmd: ["sh", "-c", `exec "$0" build --compile ./index.ts --outfile="app-$(cat ff.bin)"`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [buildStderr, buildCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error");
+      expect(buildCode).toBe(0);
+
+      await using app = Bun.spawn({
+        cmd: ["sh", "-c", "exec ./app-*"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, code] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("started\n");
+      expect(code).toBe(0);
     },
     TIMEOUT,
   );

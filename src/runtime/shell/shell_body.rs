@@ -2,7 +2,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
@@ -94,14 +93,22 @@ impl ShellErr {
         }
         bun_core::Global::exit(1)
     }
-}
 
-impl fmt::Display for ShellErr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    /// The line the shell writes to stderr for this error: `bun: <message>: <path>\n` or
+    /// `bun: <message>\n`. The bytes are appended, not formatted: a custom message can hold a
+    /// file name, which is not always UTF-8.
+    pub(crate) fn to_line(&self) -> Vec<u8> {
+        let mut line = b"bun: ".to_vec();
         match self {
-            ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
-            ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
+            ShellErr::Sys(e) => {
+                line.extend_from_slice(&e.message.to_utf8());
+                line.extend_from_slice(b": ");
+                line.extend_from_slice(&e.path.to_utf8());
+            }
+            ShellErr::Custom(msg) => line.extend_from_slice(msg),
         }
+        line.push(b'\n');
+        line
     }
 }
 

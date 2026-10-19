@@ -4,6 +4,7 @@
 
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
+use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -1447,6 +1448,17 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
+/// The name an output file is stored under, relative to the prefix. A name is text: the runtime
+/// looks a file up by a string that comes from JavaScript, so a name with bytes that are not UTF-8
+/// could never be found. Such bytes become U+FFFD here, and `to_bytes` counts, compares and writes
+/// this one value.
+fn embedded_name(output_file: &OutputFile) -> Cow<'_, [u8]> {
+    match bstr::ByteSlice::to_str_lossy(module_dest_path(output_file)) {
+        Cow::Borrowed(name) => Cow::Borrowed(name.as_bytes()),
+        Cow::Owned(name) => Cow::Owned(name.into_bytes()),
+    }
+}
+
 /// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and
 /// length, so the graph has to fit in 4 GiB. A debug build can lower the limit through
 /// `BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES` so a test reaches it without a 4 GiB input.
@@ -1476,11 +1488,13 @@ pub(crate) fn to_bytes(
             && (output_file.side.is_none() || output_file.side == Some(options::Side::Server))
     };
 
+    let names: Vec<Cow<'_, [u8]>> = output_files.iter().map(embedded_name).collect();
+
     let mut has_entry_point = false;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
-    for output_file in output_files {
-        string_builder.count_z(&output_file.dest_path);
+    for (output_file, name) in output_files.iter().zip(&names) {
+        string_builder.count_z(name);
         string_builder.count_z(prefix);
         if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
@@ -1535,10 +1549,11 @@ pub(crate) fn to_bytes(
 
     let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
     let mut entry_point_file: Option<&OutputFile> = None;
-    // `Graph::from_bytes` keys files by path; a repeat would shift `entry_point_id`.
-    let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
+    // `Graph::from_bytes` keys files by name; a repeat would shift `entry_point_id`.
+    // The value is the index of the first output file with that name.
+    let mut seen_names: StringArrayHashMap<u32> = StringArrayHashMap::new();
 
-    for output_file in output_files {
+    for (index, (output_file, name)) in output_files.iter().zip(&names).enumerate() {
         if !output_file.output_kind.is_file_in_standalone_mode() {
             continue;
         }
@@ -1547,13 +1562,20 @@ pub(crate) fn to_bytes(
             continue;
         }
 
-        // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
-        if seen_paths
-            .get_or_put(module_dest_path(output_file))?
-            .found_existing
-        {
+        let seen = seen_names.get_or_put(name)?;
+        if seen.found_existing {
+            let first = *seen.value_ptr;
+            // Two paths that differ only in bytes that are not UTF-8 have one name.
+            if module_dest_path(&output_files[first as usize]) != module_dest_path(output_file) {
+                return Err(crate::Error::EmbeddedNameCollision {
+                    first,
+                    second: index as u32,
+                });
+            }
+            // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
             continue;
         }
+        *seen.value_ptr = index as u32;
         if entry_point_file.is_none() && is_entry_point(output_file) {
             entry_point_file = Some(output_file);
         }
@@ -1832,11 +1854,11 @@ pub(crate) fn to_bytes(
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        module.name = string_builder.fmt_append_count_z(format_args!(
-            "{}{}",
-            bstr::BStr::new(prefix),
-            bstr::BStr::new(module_dest_path(output_file))
-        ));
+        let index = output_files
+            .element_offset(*output_file)
+            .expect("module_files borrows from output_files");
+        module.name = string_builder.add_concat(&[prefix, &names[index]]);
+        let _ = string_builder.append_count(b"\0");
         // The bytecode cache was generated under the bytecode output file's
         // path; the runtime must present exactly the same path to hit it.
         if output_file.bytecode_index != u32::MAX {
@@ -2867,6 +2889,13 @@ pub fn to_executable(
         runtime_options,
     ) {
         Ok(b) => b,
+        Err(crate::Error::EmbeddedNameCollision { first, second }) => {
+            return Ok(CompileResult::fail_fmt(format_args!(
+                "{:?} and {:?} would be embedded under one name: a byte that is not UTF-8 is stored as U+FFFD",
+                bstr::BStr::new(module_dest_path(&output_files[first as usize])),
+                bstr::BStr::new(module_dest_path(&output_files[second as usize])),
+            )));
+        }
         Err(e) => {
             return Ok(CompileResult::fail_fmt(format_args!(
                 "failed to generate module graph bytes: {}",

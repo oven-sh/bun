@@ -172,7 +172,7 @@ impl Pipeline {
                     return Some(Self::write_failing_error(
                         interp,
                         this,
-                        format_args!("bun: {}\n", sys_err.message),
+                        &[b"bun: ", &sys_err.message.to_utf8(), b"\n"],
                     ));
                 }
             }
@@ -245,7 +245,7 @@ impl Pipeline {
                     return Some(Self::write_failing_error(
                         interp,
                         this,
-                        format_args!("bun: {}\n", sys_err.message),
+                        &[b"bun: ", &sys_err.message.to_utf8(), b"\n"],
                     ));
                 }
             };
@@ -276,14 +276,8 @@ impl Pipeline {
     /// enqueues an async write and parks in `WaitingWriteErr` (resumed by
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
-    fn write_failing_error(
-        interp: &Interpreter,
-        this: NodeId,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
-        use std::io::Write as _;
-        let mut buf = Vec::new();
-        let _ = buf.write_fmt(args);
+    fn write_failing_error(interp: &Interpreter, this: NodeId, parts: &[&[u8]]) -> Yield {
+        let buf = parts.concat();
         let stderr_fd = match &interp.as_pipeline(this).io.stderr {
             OutKind::Fd(fd) => Some((std::sync::Arc::clone(&fd.writer), fd.captured)),
             OutKind::Pipe | OutKind::Ignore => None,

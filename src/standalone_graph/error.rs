@@ -16,6 +16,9 @@ pub enum Error {
     SourceMapTooLarge,
     #[error("embedded module graph would exceed 4 GiB (its offsets are 32-bit)")]
     ModuleGraphTooLarge,
+    /// Indexes of the two output files.
+    #[error("two files would be embedded under the same name")]
+    EmbeddedNameCollision { first: u32, second: u32 },
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -50,6 +53,7 @@ impl Error {
             Self::ModuleGraphTooLarge => {
                 "embedded module graph would exceed 4 GiB (its offsets are 32-bit)"
             }
+            Self::EmbeddedNameCollision { .. } => "two files would be embedded under the same name",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Http(e) => e.name(),

@@ -707,8 +707,9 @@ impl Expansion {
                 };
                 me.state = ExpansionState::Err(Box::new(shell_err));
             } else {
-                let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                // The pattern is appended as bytes: it is not always UTF-8.
+                let msg = [b"no matches found: ", &me.current_out[..]].concat();
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into())));
             }
             Yield::Next(this).run(interp);
             return;

@@ -408,10 +408,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunk.template.placeholder.hash = Some(hashes[index]);
 
             let mut rel_path: Vec<u8> = Vec::new();
-            // Use the byte-writer (`PathTemplate::print`) directly —
-            // routing through `Display`/`write!` goes via `from_utf8_lossy`,
-            // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path.
+            // `PathTemplate::print` writes bytes: a `[dir]` or `[name]` is not
+            // always UTF-8, and formatting it would write another path.
             // Disk output sanitizes leading `..`; `--compile` keeps it so
             // runtime bunfs references to out-of-root entrypoints resolve.
             chunk

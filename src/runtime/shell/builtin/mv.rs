@@ -94,13 +94,9 @@ impl Mv {
             Tag::Idle => {
                 if let Err(e) = Self::parse_opts(interp, cmd) {
                     let buf: Vec<u8> = match e {
-                        MvParseError::IllegalOption(s) => Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            Some(Kind::Mv),
-                            format_args!("illegal option -- {}\n", bstr::BStr::new(s)),
-                        )
-                        .to_vec(),
+                        MvParseError::IllegalOption(s) => {
+                            Builtin::error_line(Kind::Mv, &[b"illegal option -- ", s, b"\n"])
+                        }
                         MvParseError::ShowUsage => Kind::Mv.usage_string().to_vec(),
                     };
                     return Self::write_failing_error(interp, cmd, &buf, 1);
@@ -156,31 +152,15 @@ impl Mv {
                             if n_sources == 1 {
                                 None
                             } else {
-                                let buf = Builtin::fmt_error_arena(
-                                    interp,
-                                    cmd,
-                                    Some(Kind::Mv),
-                                    format_args!(
-                                        "{}: No such file or directory\n",
-                                        bstr::BStr::new(&target)
-                                    ),
-                                )
-                                .to_vec();
+                                let buf = Builtin::error_line(
+                                    Kind::Mv,
+                                    &[&target, b": No such file or directory\n"],
+                                );
                                 return Self::write_failing_error(interp, cmd, &buf, 1);
                             }
                         } else {
                             let msg = e.msg().unwrap_or(b"unknown error");
-                            let buf = Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
-                                Some(Kind::Mv),
-                                format_args!(
-                                    "{}: {}\n",
-                                    bstr::BStr::new(&target),
-                                    bstr::BStr::new(msg)
-                                ),
-                            )
-                            .to_vec();
+                            let buf = Builtin::error_line(Kind::Mv, &[&target, b": ", msg, b"\n"]);
                             return Self::write_failing_error(interp, cmd, &buf, 1);
                         }
                     }
@@ -197,13 +177,7 @@ impl Mv {
                         MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
                         _ => unreachable!(),
                     };
-                    let buf = Builtin::fmt_error_arena(
-                        interp,
-                        cmd,
-                        Some(Kind::Mv),
-                        format_args!("{} is not a directory\n", bstr::BStr::new(&target)),
-                    )
-                    .to_vec();
+                    let buf = Builtin::error_line(Kind::Mv, &[&target, b" is not a directory\n"]);
                     return Self::write_failing_error(interp, cmd, &buf, 1);
                 }
 
@@ -331,7 +305,7 @@ impl Mv {
                 };
                 // The failing rename's errno becomes the shell exit code.
                 let exit_code = e.errno as ExitCode;
-                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
+                let buf = Builtin::task_error_to_string(Kind::Mv, &e);
                 Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
                 return;
             }

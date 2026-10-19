@@ -73,13 +73,8 @@ impl Ls {
                 let paths_start = match Self::parse_opts(interp, cmd) {
                     Ok(p) => p,
                     Err(opt) => {
-                        let buf: Vec<u8> = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            Some(Kind::Ls),
-                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                        )
-                        .to_vec();
+                        let buf =
+                            Builtin::error_line(Kind::Ls, &[b"illegal option -- ", &opt, b"\n"]);
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }
@@ -208,7 +203,7 @@ impl Ls {
         let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
+            let s = Builtin::task_error_to_string(Kind::Ls, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if exec.err.is_none() {
                     exec.err = Some(e);

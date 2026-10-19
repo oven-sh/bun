@@ -6,10 +6,11 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, mkdirSync, realpathSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
+  isLinux,
   isPosix,
   isRoot,
   isWindows,
@@ -3606,4 +3607,50 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+// An argument is bytes, not text, and a shell writes it as it is, also in an error line. The byte
+// comes from `printf`, which is not a program on Windows: a JavaScript string cannot hold a lone
+// 0xFF byte.
+describe.skipIf(isWindows)("an argument that is not UTF-8 is written byte for byte in an error line", () => {
+  const cases: [command: string, line: (cwd: string) => string][] = [
+    ["$X", () => "bun: command not found: absent-\xff\n"],
+    ["echo $X*", () => "bun: no matches found: absent-\xff*\n"],
+    ["ls -$BYTE", () => "ls: illegal option -- \xff\n"],
+    ["rm -$X", () => "rm: illegal option -- absent-\xff\n"],
+    ["mkdir --$X", () => "mkdir: illegal option -- absent-\xff\n"],
+  ];
+  if (isLinux) {
+    // The text of these lines comes from the file system. A file system of macOS refuses a name
+    // that is not UTF-8 with another error.
+    cases.push(
+      ["ls $X", () => "ls: absent-\xff: No such file or directory\n"],
+      ["rm $X", () => "rm: absent-\xff: No such file or directory\n"],
+      ["cd $X", () => "cd: not a directory: absent-\xff\n"],
+      ["mv $X y", () => "mv: absent-\xff: No such file or directory\n"],
+      ["touch $X/a", cwd => `touch: ${cwd}/absent-\xff/a: No such file or directory\n`],
+      ["mkdir $X/a/b", cwd => `mkdir: ${cwd}/absent-\xff/a/b: No such file or directory\n`],
+      // This line has no line break at its end, so it is the last.
+      ["echo hi > $X/out", () => "bun: No such file or directory: absent-\xff/out"],
+    );
+  }
+  const script =
+    String.raw`BYTE=$(printf '\377'); X=absent-$BYTE; ` + cases.map(([command]) => command).join("; ");
+  // One byte of output is one character of the string, so a failure shows the bytes.
+  const expected = (cwd: string) => cases.map(([, line]) => line(Buffer.from(cwd).toString("latin1"))).join("");
+
+  test("in captured stderr", async () => {
+    using dir = tempDir("shell-error-bytes", {});
+    const cwd = realpathSync(String(dir));
+    const { stderr } = await $`${{ raw: script }}`.cwd(cwd).quiet().nothrow();
+    expect(stderr.toString("latin1")).toBe(expected(cwd));
+  });
+
+  test("in the stderr of `bun exec`", async () => {
+    using dir = tempDir("shell-error-bytes", {});
+    const cwd = realpathSync(String(dir));
+    await using proc = Bun.spawn({ cmd: [bunExe(), "exec", script], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stderr] = await Promise.all([proc.stderr.bytes(), proc.stdout.text(), proc.exited]);
+    expect(Buffer.from(stderr).toString("latin1")).toBe(expected(cwd));
+  });
 });

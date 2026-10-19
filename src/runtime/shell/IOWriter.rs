@@ -191,7 +191,7 @@ struct State {
     writer_idx: usize,
     total_bytes_written: usize,
     /// Set (and never cleared) by `fail_pending_writers`. A writer with a
-    /// stored error is dead: `enqueue`/`enqueue_fmt_bltn` must reject new
+    /// stored error is dead: `enqueue`/`enqueue_parts_bltn` must reject new
     /// chunks with this error instead of queueing them (see
     /// `handle_dead_writer`). The syscall error is kept (not the derived
     /// `SystemError`) so each rejected chunk gets its own freshly-derived
@@ -1015,21 +1015,27 @@ impl IOWriter {
         self.enqueue_internal(child)
     }
 
-    /// Prefix `"{kind}: "` then format.
-    pub(crate) fn enqueue_fmt_bltn(
+    /// Queue `"{kind}: "` followed by `parts` as one write.
+    ///
+    /// The parts are bytes, not `fmt::Arguments`: a file name, an argument or
+    /// an environment value is not always UTF-8, and formatting one replaces
+    /// each invalid byte with U+FFFD.
+    pub(crate) fn enqueue_parts_bltn(
         &self,
         child: ChildPtr,
         bytelist: Option<*mut Vec<u8>>,
         kind: Option<crate::shell::builtin::Kind>,
-        args: core::fmt::Arguments<'_>,
+        parts: &[&[u8]],
     ) -> Yield {
-        use std::io::Write as _;
         let s = self.state();
         let start = s.buf.len();
         if let Some(k) = kind {
-            let _ = write!(&mut s.buf, "{}: ", k.as_str());
+            s.buf.extend_from_slice(k.as_str().as_bytes());
+            s.buf.extend_from_slice(b": ");
         }
-        let _ = s.buf.write_fmt(args);
+        for part in parts {
+            s.buf.extend_from_slice(part);
+        }
         // `buf` is written *before* the dead-writer checks (the bytes are dead
         // on the error path but no `Writer` references them, and an errored
         // writer never drains again).

@@ -343,7 +343,7 @@ impl Cmd {
             };
             interp.deinit_node(child);
             if let Some(err) = err {
-                return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", err));
+                return Builtin::cmd_write_failing_error(interp, this, &[&err.to_line()]);
             }
             let me = interp.as_cmd_mut(this);
             me.exit_code = Some(1);
@@ -507,7 +507,7 @@ impl Cmd {
             return Builtin::cmd_write_failing_error(
                 interp,
                 this,
-                format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
+                &[b"bun: command not found: ", &first_arg, b"\n"],
             );
         };
         // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
@@ -527,10 +527,11 @@ impl Cmd {
                 return Builtin::cmd_write_failing_error(
                     interp,
                     this,
-                    format_args!(
-                        "bun: refusing to pass argument with cmd.exe special characters to a batch file: {}\n",
-                        bstr::BStr::new(&arg)
-                    ),
+                    &[
+                        b"bun: refusing to pass argument with cmd.exe special characters to a batch file: ",
+                        &arg,
+                        b"\n",
+                    ],
                 );
             }
         }
@@ -640,7 +641,7 @@ impl Cmd {
             drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
-            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            return Builtin::cmd_write_failing_error(interp, this, &[&e.to_line()]);
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`
@@ -817,10 +818,7 @@ impl Cmd {
                     return Ok(Some(Builtin::cmd_write_failing_error(
                         interp,
                         this,
-                        format_args!(
-                            "bun: ambiguous redirect: at `{}`\n",
-                            bstr::BStr::new(&argv0)
-                        ),
+                        &[b"bun: ambiguous redirect: at `", &argv0, b"`\n"],
                     )));
                 }
                 let path_buf: Vec<u8> = {
@@ -845,11 +843,7 @@ impl Cmd {
                         return Ok(Some(Builtin::cmd_write_failing_error(
                             interp,
                             this,
-                            format_args!(
-                                "bun: {}: {}",
-                                sys_err.message,
-                                bstr::BStr::new(path.as_bytes())
-                            ),
+                            &[b"bun: ", &sys_err.message.to_utf8(), b": ", path.as_bytes()],
                         )));
                     }
                 };

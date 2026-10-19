@@ -316,7 +316,7 @@ impl Cp {
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
+            let s = Builtin::shell_err_to_string(Kind::Cp, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
@@ -607,6 +607,9 @@ impl ShellCpTask {
     ) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
+        // The operands are appended as bytes: a file name is not always UTF-8.
+        let custom = |parts: &[&[u8]]| Some(ShellErr::Custom(parts.concat().into_boxed_slice()));
+
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();
         // We have to give an absolute path to our cp implementation for it to
@@ -642,22 +645,16 @@ impl ShellCpTask {
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
-            return Some(ShellErr::Custom(
-                format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
-                    .into_bytes()
-                    .into_boxed_slice(),
-            ));
+            return custom(&[&self.src, b" is a directory (not copied)"]);
         }
 
         if !src_is_dir && src.as_bytes() == tgt.as_bytes() {
-            return Some(ShellErr::Custom(
-                format!(
-                    "{0} and {0} are identical (not copied)",
-                    bstr::BStr::new(&self.src)
-                )
-                .into_bytes()
-                .into_boxed_slice(),
-            ));
+            return custom(&[
+                &self.src,
+                b" and ",
+                &self.src,
+                b" are identical (not copied)",
+            ]);
         }
 
         let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
@@ -685,28 +682,16 @@ impl ShellCpTask {
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
-                return Some(ShellErr::Custom(
-                    format!("directory {} does not exist", bstr::BStr::new(&self.tgt))
-                        .into_bytes()
-                        .into_boxed_slice(),
-                ));
+                return custom(&[b"directory ", &self.tgt, b" does not exist"]);
             }
             _copying_many = true;
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
-                return Some(ShellErr::Custom(
-                    format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
-                        .into_bytes()
-                        .into_boxed_slice(),
-                ));
+                return custom(&[&self.src, b" is a directory (not copied)"]);
             }
             if !tgt_exists || !tgt_is_dir {
-                return Some(ShellErr::Custom(
-                    format!("{} is not a directory", bstr::BStr::new(&self.tgt))
-                        .into_bytes()
-                        .into_boxed_slice(),
-                ));
+                return custom(&[&self.tgt, b" is not a directory"]);
             }
             let basename = resolve_path::basename(src.as_bytes());
             tgt = resolve_path::join_z_buf::<platform::Auto>(

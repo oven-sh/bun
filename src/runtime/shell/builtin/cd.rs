@@ -24,11 +24,7 @@ impl Cd {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
         if args.len() > 1 {
-            return Self::write_stderr_non_blocking(
-                interp,
-                cmd,
-                format_args!("too many arguments\n"),
-            );
+            return Self::write_stderr_non_blocking(interp, cmd, &[b"too many arguments\n"]);
         }
 
         if args.is_empty() {
@@ -36,11 +32,7 @@ impl Cd {
             let home = home_str.slice().to_vec();
             home_str.deref();
             if home.is_empty() {
-                return Self::write_stderr_non_blocking(
-                    interp,
-                    cmd,
-                    format_args!("HOME not set\n"),
-                );
+                return Self::write_stderr_non_blocking(interp, cmd, &[b"HOME not set\n"]);
             }
             if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&home) {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &home);
@@ -76,42 +68,30 @@ impl Cd {
             E::ENOTDIR | E::ENOENT => Self::write_stderr_non_blocking(
                 interp,
                 cmd,
-                format_args!("not a directory: {}\n", bstr::BStr::new(new_cwd)),
+                &[b"not a directory: ", new_cwd, b"\n"],
             ),
             E::ENAMETOOLONG => {
-                Self::write_stderr_non_blocking(interp, cmd, format_args!("file name too long\n"))
+                Self::write_stderr_non_blocking(interp, cmd, &[b"file name too long\n"])
             }
             _ => {
                 let errmsg = err.msg().unwrap_or_else(|| err.name());
-                Self::write_stderr_non_blocking(
-                    interp,
-                    cmd,
-                    format_args!(
-                        "{}: {}\n",
-                        bstr::BStr::new(errmsg),
-                        bstr::BStr::new(new_cwd),
-                    ),
-                )
+                Self::write_stderr_non_blocking(interp, cmd, &[errmsg, b": ", new_cwd, b"\n"])
             }
         }
     }
 
-    fn write_stderr_non_blocking(
-        interp: &Interpreter,
-        cmd: NodeId,
-        args: core::fmt::Arguments<'_>,
-    ) -> Yield {
+    fn write_stderr_non_blocking(interp: &Interpreter, cmd: NodeId, parts: &[&[u8]]) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingIo;
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+            return Builtin::of_mut(interp, cmd).stderr.enqueue_parts(
                 child,
                 Some(Kind::Cd),
-                args,
+                parts,
                 safeguard,
             );
         }
-        let buf = Builtin::fmt_error_arena(interp, cmd, Some(Kind::Cd), args).to_vec();
+        let buf = Builtin::error_line(Kind::Cd, parts);
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)

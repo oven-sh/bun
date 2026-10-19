@@ -200,8 +200,7 @@ impl Cat {
                 let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
                     Ok(fd) => fd,
                     Err(e) => {
-                        let buf =
-                            Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
+                        let buf = Builtin::task_error_to_string(Kind::Cat, &e);
                         // The reader was already taken to `None` above.
                         return Self::write_failing_error(interp, cmd, &buf, 1);
                     }

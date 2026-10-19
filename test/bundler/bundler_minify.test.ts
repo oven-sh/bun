@@ -2443,7 +2443,7 @@ test.each(["transformSync", "transform"] as const)(
 // name, as in the `minify/NoBundleDefaultExport*` cases above, so one of them
 // takes the name `a` if that name is pinned and not reserved. The declaration
 // at the end is the control: its name is a module-scope binding and is kept.
-test.each(["transformSync", "transform"] as const)(
+test.concurrent.each(["transformSync", "transform"] as const)(
   "minify.identifiers: %s gives no local the name of a default-exported function or class expression",
   async method => {
     const names = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];

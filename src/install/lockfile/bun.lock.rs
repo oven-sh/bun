@@ -3169,32 +3169,30 @@ fn load(
                 cursor += 1;
                 let pkg_path = pkg_rows[row as usize].key.slice();
 
-                if pkg_id == 0 {
-                    // The dependencies of the root were already resolved above.
-                    continue;
-                }
-
                 let res = &pkg_resolutions[pkg_id as usize];
                 let deps = pkg_deps[pkg_id as usize];
                 let own_list = (own_lists.binary_search_by_key(&row, |&(row, _)| row).ok())
                     .map(|at| own_lists[at].1);
 
                 // (dependency list, bind its dependencies, reach rows through them)
-                let lists: [(DependencySlice, bool, bool); 2] =
-                    if res.tag == ResolutionTag::Workspace && own_row(pkg_id).is_some() {
-                        // The dependencies of this workspace were already resolved above, from its
-                        // own name. Its dependencies are also printed below each other key that
-                        // it is printed at. A v0 bun.lock lists them in the row and binds none.
-                        let own_name = pkg_names[pkg_id as usize].slice(string_buf);
-                        if lockfile_version != Version::V0 && pkg_path == own_name {
-                            continue;
-                        }
-                        [(own_list.unwrap_or(deps), false, true), Default::default()]
-                    } else if let Some(own_list) = own_list {
-                        [(own_list, false, true), (deps, true, false)]
-                    } else {
-                        [(deps, true, true), Default::default()]
-                    };
+                let lists: [(DependencySlice, bool, bool); 2] = if pkg_id == 0 {
+                    // A link to the project itself. The dependencies of the root were already
+                    // resolved above, and they are also printed below this key.
+                    [(deps, false, true), Default::default()]
+                } else if res.tag == ResolutionTag::Workspace && own_row(pkg_id).is_some() {
+                    // The dependencies of this workspace were already resolved above, from its
+                    // own name. Its dependencies are also printed below each other key that
+                    // it is printed at. A v0 bun.lock lists them in the row and binds none.
+                    let own_name = pkg_names[pkg_id as usize].slice(string_buf);
+                    if lockfile_version != Version::V0 && pkg_path == own_name {
+                        continue;
+                    }
+                    [(own_list.unwrap_or(deps), false, true), Default::default()]
+                } else if let Some(own_list) = own_list {
+                    [(own_list, false, true), (deps, true, false)]
+                } else {
+                    [(deps, true, true), Default::default()]
+                };
 
                 // find resolutions. iterate up to root through the pkg path.
                 for (list, bind, reach) in lists {
@@ -3205,12 +3203,16 @@ fn load(
                         if dep.version.tag == DependencyVersionTag::Uninitialized {
                             continue 'deps;
                         }
+                        // Only its own row stands for a workspace that the root lists.
+                        if pkg_id == 0 && dep.behavior.is_workspace() {
+                            continue 'deps;
+                        }
                         let reach = reach && !is_unresolved(dep_id);
 
                         let ranged = version_based_peer_range(dep, catalogs, overrides, string_buf);
                         // A registry package's peer prefers a published version in range over a workspace
                         // of that name, because its dependent may use the published one.
-                        if res.tag == ResolutionTag::Workspace
+                        if (res.tag == ResolutionTag::Workspace || pkg_id == 0)
                             && let Some(member) =
                                 ranged.and_then(|(range, name_hash)| workspace_in(range, name_hash))
                         {

@@ -15332,9 +15332,7 @@ class V4c {
       expect(exitCode).toBe(1);
     });
 
-    // Without k1.js, a.js reports 16 errors, the same as tsc 7.0.2. Later tests cover C1, T1, K1 and K2 separately. C2
-    // and T2 are only parsed and bound here.
-    test("syntax errors in one JavaScript file hide the JSDoc errors in another", async () => {
+    test("reports errors for `new` with `@this`, a mismatched `@extends`, `@typedef {T=}` and JSDoc `const` assertions", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,
         "a.js": `export {};
@@ -15366,16 +15364,25 @@ const k2b = /** @satisfies {const} @type {const} */ (1);
 const k2c = /** @satisfies {const} */ (1);
 const k2d = /** @type {const} */ (/** @satisfies {Missing} */ (1));
 `,
-        "k1.js": `// K1: \`await\` in an arrow function that is not async, in an async function
-export async function w() { const f = () => (await { a: 1 }); }
-`,
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "k1.js(2,52): error TS1005: ')' expected.
-        k1.js(2,57): error TS1003: Identifier expected.
-        k1.js(2,59): error TS1005: ':' expected.
-        k1.js(2,60): error TS1005: ',' expected."
+        "a.js(2,63): error TS7006: Parameter 'v' implicitly has an 'any' type.
+        a.js(6,13): error TS7006: Parameter 'v' implicitly has an 'any' type.
+        a.js(6,23): error TS2339: Property 'v' does not exist on type '{ k: string; }'.
+        a.js(7,1): error TS2554: Expected 1 arguments, but got 0.
+        a.js(7,1): error TS7009: 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
+        a.js(8,1): error TS7009: 'new' expression, whose target lacks a construct signature, implicitly has an 'any' type.
+        a.js(10,15): error TS8023: JSDoc '@extends G0' does not match the 'extends B0' clause.
+        a.js(14,25): error TS1235: A namespace declaration is only allowed at the top level of a namespace or module.
+        a.js(21,26): error TS2322: Type '{ a: number; }' is not assignable to type 'string'.
+        a.js(22,34): error TS2353: Object literal may only specify known properties, and 'a' does not exist in type 'string[]'.
+        a.js(23,26): error TS2322: Type '{ a: number; }' is not assignable to type 'string'.
+        a.js(25,61): error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.
+        a.js(26,18): error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.
+        a.js(27,29): error TS2304: Cannot find name 'const'.
+        a.js(28,51): error TS2304: Cannot find name 'Missing'.
+        a.js(28,63): error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
       `);
       expect(exitCode).toBe(1);
     });

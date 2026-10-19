@@ -645,7 +645,7 @@ fn modifiers_in_scope<'a>(
     scope: Option<Scope<'a>>,
 ) -> u32 {
     let mut modifiers = 0;
-    if wanted & GLOBAL != 0 && matches!(scope.map(Scope::kind), Some(ScopeKind::Global | ScopeKind::Module)) {
+    if wanted & GLOBAL != 0 && scope.is_some_and(|it| it.kind() == ScopeKind::Global || it.is_top_level_of_module()) {
         modifiers |= GLOBAL;
     }
     if wanted & EXPORTED != 0 && has_export_reference(name, scope) {

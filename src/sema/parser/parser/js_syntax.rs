@@ -25,7 +25,7 @@ fn error_of_js_declaration(
     })
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `jsErrorAtRange`. An end of 0: the end of the token at the start. `what`: the `{0}` of the
     /// message, if it has one. Nothing inside a type is reported.
     #[cold]
@@ -148,7 +148,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         match stmt.kind {
             // `parseAmbientExternalModuleDeclaration` does not perform this check.
             StmtKind::Module(m) if !matches!(self.f[m].name, ModuleName::Ident(_)) => return,
-            StmtKind::Class(_) => self.check_js_decorators(stmt.modifiers, true),
+            StmtKind::Class(_) => self.check_js_decorators(self.f.stmt_modifiers(id), true),
             StmtKind::Var(_)
             | StmtKind::Fn(_)
             | StmtKind::Interface(_)
@@ -160,12 +160,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | StmtKind::ExportNamed(_)
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportDefault(_)
-            | StmtKind::ExportAssign(_) => self.check_js_decorators(stmt.modifiers, false),
+            | StmtKind::ExportAssign(_) => {
+                self.check_js_decorators(self.f.stmt_modifiers(id), false);
+            }
             // Nor does `parseNamespaceExportDeclaration`.
             _ => return,
         }
         if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
-            self.check_js_modifiers(stmt.modifiers, false);
+            self.check_js_modifiers(self.f.stmt_modifiers(id), false);
         }
         if let Some((at, code, what)) = error_of_js_declaration(&self.f, &stmt) {
             self.js_error(at, code, what);

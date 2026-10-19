@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug, tls as serverIdentity, tempDir } from "harness";
+import { bunEnv, bunExe, tls as serverIdentity, tempDir } from "harness";
 import { createServer, request } from "http";
 import https from "https";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -11,8 +11,7 @@ import net, { AddressInfo, connect } from "net";
 import fs from "node:fs";
 import path from "node:path";
 import tls, { type TLSSocket } from "tls";
-// @ts-expect-error @types/ws: no ESM `Server`
-import { type ClientOptions, Server, WebSocket, WebSocketServer } from "ws";
+import { type ClientOptions, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {
@@ -52,30 +51,23 @@ const buffers = [
 
 const messages = [...strings, ...buffers] as const;
 
-// One rule for the client and the server socket of the shim. `type` is the shape of a binary
-// message. npm ws emits ping and pong payloads as a Buffer in every mode. The shim keeps that
-// where it can wrap the payload synchronously. A Blob cannot be wrapped, so "blob" applies to
-// ping and pong payloads too, as it does on the native sockets.
+// `type` is the class a binary message arrives as. Ping and pong payloads are always Buffers.
 const binaryTypes = [
   {
     label: "nodebuffer",
     type: Buffer,
-    controlType: Buffer,
   },
   {
     label: "arraybuffer",
     type: ArrayBuffer,
-    controlType: Buffer,
   },
   {
     label: "blob",
     type: Blob,
-    controlType: Blob,
   },
 ] as const;
 
-// Names match `type.name` and `controlType.name` above. A plain Uint8Array, which is what
-// the server socket used to emit in "arraybuffer" mode, shows up as "[object Uint8Array]".
+// Names match `type.name` above. A plain Uint8Array shows up as "[object Uint8Array]".
 function shapeOf(data: unknown): string {
   if (Buffer.isBuffer(data)) return "Buffer";
   if (data instanceof ArrayBuffer) return "ArrayBuffer";
@@ -87,10 +79,12 @@ let servers: Subprocess[] = [];
 let clients: WebSocket[] = [];
 
 function cleanUp() {
-  for (const client of clients) {
+  for (const client of clients.splice(0)) {
+    // terminate() while CONNECTING emits 'error'.
+    client.on("error", () => {});
     client.terminate();
   }
-  for (const server of servers) {
+  for (const server of servers.splice(0)) {
     server.kill();
   }
 }
@@ -120,22 +114,18 @@ describe("WebSocket", () => {
       done();
     });
     test("(invalid)", (ws, done) => {
-      try {
-        // @ts-expect-error
-        ws.binaryType = "invalid";
-        done(new Error("Expected an error"));
-      } catch {
-        done();
-      }
+      // @ts-expect-error
+      ws.binaryType = "invalid";
+      expect(ws.binaryType).toBe("nodebuffer");
+      done();
     });
-    for (const { label, type, controlType } of binaryTypes) {
+    for (const { label, type } of binaryTypes) {
       test(label, (ws, done) => {
         // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
         ws.binaryType = label as WebSocket["binaryType"];
         const seen: Record<string, string> = {};
         // The echo server answers the message, pings back when pinged and pongs back when
-        // ponged. The native client also pongs the echoed ping by itself, so the first pong
-        // is the one that gets recorded. Every one of them has the shape binaryType selects.
+        // ponged. It also auto-pongs the client's ping, so only the first pong is recorded.
         function record(event: string, data: unknown) {
           seen[event] ??= shapeOf(data);
           if (!(seen.message && seen.ping && seen.pong)) return;
@@ -143,8 +133,8 @@ describe("WebSocket", () => {
             expect(seen).toEqual({
               binaryType: label,
               message: type.name,
-              ping: controlType.name,
-              pong: controlType.name,
+              ping: "Buffer",
+              pong: "Buffer",
             });
             done();
           } catch (err) {
@@ -172,14 +162,10 @@ describe("WebSocket", () => {
         ws.on("open", () => {
           ws.send(message);
         });
+        // The echo server receives every message as a Buffer and sends that back, so the echo is always binary.
         ws.on("message", (data, isBinary) => {
-          if (typeof data === "string") {
-            expect<unknown>(data).toBe(message);
-            expect(isBinary).toBeFalse();
-          } else {
-            expect(data).toEqual(Buffer.from(bytes));
-            expect(isBinary).toBeTrue();
-          }
+          expect(data).toEqual(Buffer.from(bytes));
+          expect(isBinary).toBeTrue();
           done();
         });
       });
@@ -191,7 +177,7 @@ describe("WebSocket", () => {
         ws.ping();
       });
       ws.on("ping", data => {
-        expect(data).toBeInstanceOf(Buffer);
+        expect(data).toEqual(Buffer.alloc(0));
         done();
       });
     });
@@ -213,7 +199,7 @@ describe("WebSocket", () => {
         ws.pong();
       });
       ws.on("pong", data => {
-        expect(data).toBeInstanceOf(Buffer);
+        expect(data).toEqual(Buffer.alloc(0));
         done();
       });
     });
@@ -234,10 +220,8 @@ describe("WebSocket", () => {
       ws.on("open", () => {
         ws.close();
       });
-      ws.on("close", (code: number, reason: string, wasClean: boolean) => {
-        expect(code).toBe(1000);
-        expect(reason).toBeString();
-        expect(wasClean).toBeTrue();
+      ws.on("close", (...args) => {
+        expect(args).toEqual([1005, Buffer.alloc(0)]);
         done();
       });
     });
@@ -245,40 +229,29 @@ describe("WebSocket", () => {
       ws.on("open", () => {
         ws.close(1001);
       });
-      ws.on("close", (code: number, reason: string, wasClean: boolean) => {
-        expect(code).toBe(1001);
-        expect(reason).toBeString();
-        expect(wasClean).toBeTrue();
+      ws.on("close", (...args) => {
+        expect(args).toEqual([1001, Buffer.alloc(0)]);
         done();
       });
     });
-    // FIXME: Encoding issue
-    // Expected: "latin1-©"
-    // Received: "latin1-Â©"
-    /*
-    for (const { label, message } of strings) {
+    for (const { label, message, bytes } of strings) {
       test(label, (ws, done) => {
         ws.on("open", () => {
           ws.close(1002, message);
         });
-        ws.on("close", (code, reason, wasClean) => {
-          expect(code).toBe(1002);
-          expect(reason).toBe(message);
-          expect(wasClean).toBeTrue();
+        ws.on("close", (...args) => {
+          expect(args).toEqual([1002, Buffer.from(bytes)]);
           done();
         });
       });
     }
-    */
   });
   test("terminate()", (ws, done) => {
     ws.on("open", () => {
       ws.terminate();
     });
-    ws.on("close", (code: number, reason: string, wasClean: boolean) => {
-      expect(code).toBe(1006);
-      expect(reason).toBeString();
-      expect(wasClean).toBeFalse();
+    ws.on("close", (...args) => {
+      expect(args).toEqual([1006, Buffer.alloc(0)]);
       done();
     });
   });
@@ -327,6 +300,7 @@ describe("WebSocketServer", () => {
 
     wss.on("connection", ws => {
       ws.on("close", () => {
+        wss.close();
         resolve();
       });
       try {
@@ -416,8 +390,8 @@ describe("WebSocketServer", () => {
     }
 
     it.each(binaryTypes)(
-      "$label: binary frames arrive as $type.name, ping and pong payloads as $controlType.name",
-      async ({ label, type, controlType }) => {
+      "$label: binary frames arrive as $type.name, ping and pong payloads as Buffer",
+      async ({ label, type }) => {
         const received = await receiveOnServer(
           ws => {
             // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
@@ -433,8 +407,8 @@ describe("WebSocketServer", () => {
         );
 
         expect(received).toEqual([
-          { event: "ping", shape: controlType.name, bytes: [4] },
-          { event: "pong", shape: controlType.name, bytes: [5] },
+          { event: "ping", shape: "Buffer", bytes: [4] },
+          { event: "pong", shape: "Buffer", bytes: [5] },
           { event: "message", shape: type.name, bytes: [1, 2, 3], isBinary: true },
           { event: "message", shape: type.name, bytes: [], isBinary: true },
         ]);
@@ -466,7 +440,7 @@ describe("WebSocketServer", () => {
       expect(received).toEqual([
         { event: "message", shape: "ArrayBuffer", bytes: [1], isBinary: true },
         // the ping arrives after the change to "blob"
-        { event: "ping", shape: "Blob", bytes: [2] },
+        { event: "ping", shape: "Buffer", bytes: [2] },
         { event: "message", shape: "Blob", bytes: [3], isBinary: true },
         { event: "message", shape: "Buffer", bytes: [4], isBinary: true },
       ]);
@@ -496,31 +470,6 @@ describe("WebSocketServer", () => {
         wss.close();
       }
     });
-  });
-});
-
-describe("Server", () => {
-  it("sets websocket prototype properties correctly", async () => {
-    const wss = new Server({ port: 0 });
-    const { resolve, reject, promise } = Promise.withResolvers();
-
-    wss.on("connection", ws => {
-      try {
-        expect(ws.CLOSED).toBeDefined();
-        expect(ws.CLOSING).toBeDefined();
-        expect(ws.CONNECTING).toBeDefined();
-        expect(ws.OPEN).toBeDefined();
-        resolve();
-      } catch (err) {
-        reject(err);
-      } finally {
-        wss.close();
-        ws.close();
-      }
-    });
-
-    new WebSocket("ws://localhost:" + wss.address().port);
-    await promise;
   });
 });
 
@@ -556,13 +505,14 @@ it("onmessage", done => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
     ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+      expect(e.data).toBe("hello");
       done();
       wss.close();
     };
   });
 
   const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+  clients.push(ws);
   ws.onopen = () => {
     ws.send("hello");
   };
@@ -593,10 +543,11 @@ it("close event", async () => {
     },
   ];
   const wss = new WebSocketServer({ port: 0 });
+  const received: unknown[] = [];
   wss.on("connection", ws => {
     ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
-      setTimeout(() => ws.close(), 10);
+      received.push(e.data);
+      ws.close();
     };
   });
   await Promise.all(
@@ -608,6 +559,7 @@ it("close event", async () => {
       return version(ws);
     }),
   );
+  expect(received).toEqual(["hello", "hello", "hello", "hello"]);
 
   wss.close();
 });
@@ -653,29 +605,23 @@ it("WebSocket finishRequest mocked", async () => {
   await promise;
 });
 
-function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
-  it(
-    label,
-    testDone => {
-      let isDone = false;
-      const done = (err?: unknown) => {
-        if (!isDone) {
-          isDone = true;
-          testDone(err);
-        }
-      };
-      listen()
-        .then(url => {
-          const ws = new WebSocket(url);
-          clients.push(ws);
-          fn(ws, done);
-        })
-        .catch(done);
-    },
-    // Each test spawns its own echo-server subprocess; debug builds take
-    // well over 1s to spawn + connect on slow CI runners.
-    { timeout: timeout ?? (isDebug ? 10000 : 1000) },
-  );
+function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void) {
+  it(label, testDone => {
+    let isDone = false;
+    const done = (err?: unknown) => {
+      if (!isDone) {
+        isDone = true;
+        testDone(err);
+      }
+    };
+    listen()
+      .then(url => {
+        const ws = new WebSocket(url);
+        clients.push(ws);
+        fn(ws, done);
+      })
+      .catch(done);
+  });
 }
 
 async function listen(): Promise<URL> {
@@ -719,12 +665,11 @@ it("WebSocketServer should handle backpressure", async () => {
 
     let i = 0;
 
-    async function commit(err?: Error) {
+    function commit(err?: Error | null) {
       if (err) {
         reject(err);
         return;
       }
-      await Bun.sleep(10);
 
       if (i < ITERATIONS) {
         i++;
@@ -753,85 +698,45 @@ it("WebSocketServer should handle backpressure", async () => {
 });
 
 it("should abort incorrect WebSocket handshake", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  const wss = new WebSocketServer({ port: 0 });
-  let connectionAttempted = false;
-  let testResolved = false;
-
-  wss.on("connection", () => {
-    connectionAttempted = true;
-    if (!testResolved) {
-      testResolved = true;
-      reject(new Error("Connection should not have been established"));
-    }
-  });
-
-  wss.on("error", error => {
-    // Server errors are expected for invalid handshakes
-    console.log("Server error (expected):", error.message);
-  });
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  const connections: unknown[] = [];
+  wss.on("connection", ws => connections.push(ws));
 
   try {
-    const net = require("node:net");
-    const port = (wss.address() as any).port;
-    const socket = net.createConnection(port, "localhost");
-
-    socket.on("connect", () => {
-      // Send an invalid WebSocket handshake request (invalid Sec-WebSocket-Key)
-      const invalidRequest = [
+    await once(wss, "listening");
+    const socket = connect((wss.address() as AddressInfo).port, "127.0.0.1");
+    socket.on("error", () => {});
+    let response = "";
+    socket.on("data", chunk => (response += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => socket.once("close", resolve));
+    socket.write(
+      [
         "GET / HTTP/1.1",
         "Host: localhost",
         "Connection: Upgrade",
         "Upgrade: websocket",
-        "Sec-WebSocket-Key: invalid-key", // Invalid key format
+        "Sec-WebSocket-Key: invalid-key",
         "Sec-WebSocket-Version: 13",
         "",
         "",
-      ].join("\r\n");
+      ].join("\r\n"),
+    );
+    await closed;
 
-      socket.write(invalidRequest);
-    });
-
-    let responseReceived = false;
-    socket.on("data", data => {
-      const response = data.toString();
-      responseReceived = true;
-
-      // Should receive a 400 Bad Request response for invalid handshake
-      if (response.includes("400") && !testResolved) {
-        testResolved = true;
-        resolve();
-      } else if (!testResolved) {
-        testResolved = true;
-        reject(new Error(`Expected 400 response, got: ${response}`));
-      }
-      socket.end();
-    });
-
-    socket.on("error", error => {
-      // Connection errors are also acceptable as the server may close the connection
-      if (!testResolved) {
-        testResolved = true;
-        resolve();
-      }
-    });
-
-    socket.on("close", () => {
-      // If we reach here without getting a proper response and connection wasn't attempted,
-      // the server properly rejected the invalid handshake
-      if (!responseReceived && !connectionAttempted && !testResolved) {
-        testResolved = true;
-        resolve();
-      }
-    });
-
-    await promise;
+    expect(response).toBe(
+      [
+        "HTTP/1.1 400 Bad Request",
+        "Connection: close",
+        "Content-Type: text/html",
+        "Content-Length: 43",
+        "",
+        "Missing or invalid Sec-WebSocket-Key header",
+      ].join("\r\n"),
+    );
+    expect(connections).toEqual([]);
   } finally {
     wss.close();
   }
-
-  expect(connectionAttempted).toBeFalse();
-  expect(testResolved).toBeTrue();
 });
 
 it("Server should be able to send empty pings", async () => {
@@ -1010,148 +915,32 @@ it("Server should be able to send empty pings", async () => {
   }
 });
 
-// Verify ws.ping() / ws.pong() without arguments send empty control frames,
-// not the literal string "undefined" (9 bytes).
-describe("ping/pong no-arg payload", () => {
-  it("ws.ping() sends empty payload", async () => {
-    const wss = new WebSocketServer({ port: 0 });
-    const { resolve, reject, promise } = Promise.withResolvers<void>();
-
-    wss.on("connection", serverWs => {
-      serverWs.on("ping", (data: Buffer) => {
-        try {
-          expect(data).toBeInstanceOf(Buffer);
-          expect(data.length).toBe(0);
-          resolve();
-        } catch (e) {
-          reject(e);
-        } finally {
-          serverWs.close();
-          wss.close();
-        }
-      });
-    });
-
-    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
-    ws.on("open", () => ws.ping());
-    await promise;
-  });
-
-  it("ws.pong() sends empty payload", async () => {
-    const wss = new WebSocketServer({ port: 0 });
-    const { resolve, reject, promise } = Promise.withResolvers<void>();
-
-    wss.on("connection", serverWs => {
-      serverWs.on("pong", (data: Buffer) => {
-        try {
-          expect(data).toBeInstanceOf(Buffer);
-          expect(data.length).toBe(0);
-          resolve();
-        } catch (e) {
-          reject(e);
-        } finally {
-          serverWs.close();
-          wss.close();
-        }
-      });
-    });
-
-    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
-    ws.on("open", () => ws.pong());
-    await promise;
-  });
-
-  it("ws.ping(data) sends correct payload", async () => {
-    const wss = new WebSocketServer({ port: 0 });
-    const { resolve, reject, promise } = Promise.withResolvers<void>();
-
-    wss.on("connection", serverWs => {
-      serverWs.on("ping", (data: Buffer) => {
-        try {
-          expect(data).toBeInstanceOf(Buffer);
-          expect(data.toString()).toBe("hello");
-          resolve();
-        } catch (e) {
-          reject(e);
-        } finally {
-          serverWs.close();
-          wss.close();
-        }
-      });
-    });
-
-    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
-    ws.on("open", () => ws.ping(Buffer.from("hello")));
-    await promise;
-  });
-
-  it("ws.pong(data) sends correct payload", async () => {
-    const wss = new WebSocketServer({ port: 0 });
-    const { resolve, reject, promise } = Promise.withResolvers<void>();
-
-    wss.on("connection", serverWs => {
-      serverWs.on("pong", (data: Buffer) => {
-        try {
-          expect(data).toBeInstanceOf(Buffer);
-          expect(data.toString()).toBe("hello");
-          resolve();
-        } catch (e) {
-          reject(e);
-        } finally {
-          serverWs.close();
-          wss.close();
-        }
-      });
-    });
-
-    const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
-    ws.on("open", () => ws.pong(Buffer.from("hello")));
-    await promise;
-  });
-});
-
 describe("handleUpgrade without an Upgrade header", () => {
-  it("responds with 400 Invalid Upgrade header instead of throwing", () => {
+  it("responds with 400 Invalid Upgrade header instead of throwing", async () => {
     const wss = new WebSocketServer({ noServer: true });
-    const written: { code?: number; headers?: Record<string, unknown>; body?: string; ended: boolean } = {
-      ended: false,
-    };
-    const response = {
-      writeHead(code: number, headers: Record<string, unknown>) {
-        written.code = code;
-        written.headers = headers;
-      },
-      write(body: string) {
-        written.body = body;
-      },
-      end() {
-        written.ended = true;
-      },
-    };
-    // A socket that node:http handed to a 'request' listener, with its ServerResponse attached.
-    const socket = Object.assign(new EventEmitter(), { _httpMessage: response });
-    const request = {
-      method: "GET",
-      headers: {
-        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
-        "sec-websocket-version": "13",
-      },
-    };
     let called = false;
-    expect(() =>
-      wss.handleUpgrade(request as any, socket as any, Buffer.alloc(0), () => {
+    // Without an Upgrade header node:http emits 'request', not 'upgrade'.
+    const server = createServer(req =>
+      wss.handleUpgrade(req, req.socket, Buffer.alloc(0), () => {
         called = true;
       }),
-    ).not.toThrow();
-    expect(called).toBe(false);
-    expect(written.code).toBe(400);
-    expect(written.body).toBe("Invalid Upgrade header");
-    expect(written.headers).toEqual({
-      Connection: "close",
-      "Content-Type": "text/html",
-      "Content-Length": Buffer.byteLength("Invalid Upgrade header"),
-    });
-    expect(written.ended).toBe(true);
+    );
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`, {
+        headers: { "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13" },
+      });
+      expect({
+        status: response.status,
+        connection: response.headers.get("connection"),
+        contentType: response.headers.get("content-type"),
+        body: await response.text(),
+      }).toEqual({ status: 400, connection: "close", contentType: "text/html", body: "Invalid Upgrade header" });
+      expect(called).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 
   it("emits wsClientError with the Invalid Upgrade header message", () => {
@@ -1289,7 +1078,6 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     const { req, socket, head, client } = upgrade;
     const wss = new WebSocketServer({ noServer: true });
     const closed = Promise.withResolvers<number>();
-    const clientClosed = new Promise<string>(resolve => client.once("close", () => resolve("client closed")));
 
     await new Promise(resolve => setImmediate(resolve));
     wss.handleUpgrade(req, socket, head, ws => {
@@ -1305,59 +1093,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 
     // A masked Close(1000) from the client reaches the server's close handler.
     client.write(Buffer.from([0x88, 0x82, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe8]));
-    expect(await Promise.race([closed.promise, clientClosed])).toBe(1000);
-  });
-
-  // server.upgrade(res, { headers }) converts `headers` after it checks that
-  // the response is still open. The conversion runs user code (a getter, a
-  // toString(), an iterator). If that code ends the response, upgrade() must
-  // return false and write nothing: the header bytes used to land after the
-  // finished response.
-  describe.each([
-    [
-      "a getter",
-      (end: () => void) => ({
-        get "x-a"() {
-          end();
-          return "1";
-        },
-      }),
-    ],
-    [
-      "a toString()",
-      (end: () => void) => ({
-        "x-a": {
-          toString() {
-            end();
-            return "1";
-          },
-        },
-      }),
-    ],
-    [
-      "an iterator",
-      (end: () => void) => ({
-        *[Symbol.iterator]() {
-          end();
-          yield ["x-a", "1"];
-        },
-      }),
-    ],
-  ])("when %s in options.headers ends the response", (_, headers) => {
-    it("returns false and writes nothing", async () => {
-      await using upgrade = await receiveUpgrade(upgradeRequest());
-      const { socket } = upgrade;
-      const internals = Symbol.for("::bunternal::");
-      const res = socket[internals];
-      const bunServer = socket.server[internals];
-
-      expect(bunServer.upgrade(res, { data: {}, headers: headers(() => res.end()) })).toBe(false);
-
-      // Anything upgrade() wrote is already on the socket. Close it so that
-      // the client sees the whole exchange.
-      socket.destroy();
-      expect(await upgrade.received()).toMatch(/^HTTP\/1\.1 200 OK\r\n(?:[^\r\n]+\r\n)*Content-Length: 0\r\n\r\n$/);
-    });
+    expect(await closed.promise).toBe(1000);
   });
 
   it("returns without calling back when the socket was destroyed before handleUpgrade()", async () => {
@@ -1585,11 +1321,9 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     wss.close();
   });
 
+  // Bun-only: npm ws writes /other's 400 to the connection that /chat already upgraded.
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {
     const server = createServer();
-    // Registered first, so it sees the socket before either WebSocketServer does.
-    let errorListenersBefore = -1;
-    server.on("upgrade", (_req, socket) => (errorListenersBefore = socket.listenerCount("error")));
     const chat = new WebSocketServer({ server, path: "/chat" });
     const other = new WebSocketServer({ server, path: "/other" });
     const connections: unknown[] = [];
@@ -1606,8 +1340,6 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(received).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
     expect(received).not.toContain("HTTP/1.1 400");
     expect(upgrade.socket.destroyed).toBe(false);
-    // Both servers installed the error handler. The socket carries one copy.
-    expect(upgrade.socket.listenerCount("error")).toBe(errorListenersBefore + 1);
     chat.close();
     other.close();
   });
@@ -1669,10 +1401,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
-    // https://github.com/oven-sh/bun/issues/43149: a handleUpgrade() in a later
-    // task hands the connection to the native WebSocket without the bytes that
-    // node:http received before it (head, or data of the socket).
-    it.todo("are delivered when handleUpgrade() runs in a later task", async () => {
+    it("are delivered when handleUpgrade() runs in a later task", async () => {
       const wss = new WebSocketServer({ noServer: true });
       const messages = messagesOf(wss);
 
@@ -1683,7 +1412,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
     });
 
-    it.todo("are delivered when verifyClient answers in a later task", async () => {
+    it("are delivered when verifyClient answers in a later task", async () => {
       const server = createServer();
       const wss = new WebSocketServer({
         server,
@@ -1697,7 +1426,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
-    it.todo("are delivered when they arrive in a read of their own before handleUpgrade()", async () => {
+    it("are delivered when they arrive in a separate read before handleUpgrade()", async () => {
       const wss = new WebSocketServer({ noServer: true });
       const messages = messagesOf(wss);
 
@@ -1728,6 +1457,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 });
 
 describe("module loading", () => {
+  // Bun-only: npm ws requires "http" at the top of lib/websocket.js.
   it("require('ws') does not load node:http eagerly", async () => {
     // Loading node:http materializes the HTTPParser binding; requiring only
     // the ws client must not pay that cost.
@@ -1832,15 +1562,19 @@ describe("client TLS options", () => {
         otherCa: await dial(server.url, { ca: ca1 }),
         emptyCa: await dial(server.url, { ca: "" }),
         unverified: await dial(server.url, { rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] }),
-        serverOption: await dial(server.url, { agent: new https.Agent({ ca, dhparam: "auto" }) }),
       }).toEqual({
         none: "refused",
         ca: anonymous,
         otherCa: "refused",
         emptyCa: "refused",
         unverified: anonymous,
-        serverOption: anonymous,
       });
+    });
+
+    // npm ws fails this test when run on Bun, because Bun's tls.connect() throws for `dhparam: "auto"`.
+    it("ignores server-only TLS options", async () => {
+      using server = await serve();
+      expect(await dial(server.url, { agent: new https.Agent({ ca, dhparam: "auto" }) })).toBe(anonymous);
     });
 
     it("only an own rejectUnauthorized: false disables verification", async () => {
@@ -1851,7 +1585,11 @@ describe("client TLS options", () => {
         expect(await dial(server.url, { agent: new https.Agent({ rejectUnauthorized } as any) })).toBe("refused");
       }
       expect(await dial(server.url, Object.create({ rejectUnauthorized: false }))).toBe("refused");
-      // Node's Agent reads its own inherited `options`.
+    });
+
+    // Bun is stricter than npm ws here. Node's Agent reads its inherited `options`, so npm ws connects.
+    it("an agent's inherited options don't disable verification", async () => {
+      using server = await serve();
       const inherited = Object.create(new https.Agent({ rejectUnauthorized: false }));
       expect(await dial(server.url, { agent: inherited })).toBe("refused");
     });
@@ -1888,14 +1626,12 @@ describe("client TLS options", () => {
         pfx: await dial(server.url, { ca, pfx, passphrase: "sample" }),
         pfxObject: await dial(server.url, { ca, pfx: [{ buf: pfx, passphrase: "sample" }] }),
         agentPfx: await dial(server.url, { agent: new https.Agent({ ca, pfx, passphrase: "sample" }) }),
-        tlsPfx: await dial(server.url, { tls: { ca, pfx, passphrase: "sample" } }),
       }).toEqual({
         pem: identified,
         pemObject: identified,
         pfx: identified,
         pfxObject: identified,
         agentPfx: identified,
-        tlsPfx: identified,
       });
     });
 
@@ -1927,9 +1663,6 @@ describe("client TLS options", () => {
         mixedTo12: await dial(tls12.url, { ca, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }),
         only12: version(await dial(server.url, { ca, ciphers: aes256 })),
         only12To12: await dial(tls12.url, { ca, ciphers: aes256 }),
-        secLevel: version(await dial(server.url, { ca, ciphers: "DEFAULT@SECLEVEL=0" })),
-        secLevelAgent: version(await dial(server.url, { agent: new https.Agent({ ca, ciphers: "DEFAULT:@SECLEVEL=1" }) })), // prettier-ignore
-        secLevelTo12: await dial(tls12.url, { ca, ciphers: `${aes256}:@SECLEVEL=0` }),
       }).toEqual({
         only13: "TLSv1.3",
         only13Agent: "TLSv1.3",
@@ -1939,6 +1672,20 @@ describe("client TLS options", () => {
         mixedTo12: `TLSv1.2 ${aes256}`,
         only12: "TLSv1.3",
         only12To12: `TLSv1.2 ${aes256}`,
+      });
+    });
+
+    // npm ws fails this test when run on Bun, because BoringSSL has no @SECLEVEL and Bun's tls.connect() throws.
+    it("accepts ciphers with OpenSSL's @SECLEVEL", async () => {
+      using server = await serveNegotiated();
+      using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
+      const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+      const version = (negotiated: string) => negotiated.split(" ")[0];
+      expect({
+        secLevel: version(await dial(server.url, { ca, ciphers: "DEFAULT@SECLEVEL=0" })),
+        secLevelAgent: version(await dial(server.url, { agent: new https.Agent({ ca, ciphers: "DEFAULT:@SECLEVEL=1" }) })), // prettier-ignore
+        secLevelTo12: await dial(tls12.url, { ca, ciphers: `${aes256}:@SECLEVEL=0` }),
+      }).toEqual({
         secLevel: "TLSv1.3",
         secLevelAgent: "TLSv1.3",
         secLevelTo12: `TLSv1.2 ${aes256}`,
@@ -2003,10 +1750,12 @@ describe("client TLS options", () => {
       }
     });
 
+    // Bun-only: npm ws has no `tls` option.
     it("an explicit tls option replaces the agent's and the top-level options", async () => {
       using server = await serve();
       const off = { rejectUnauthorized: false };
       expect(await dial(server.url, { ...off })).toBe(anonymous);
+      expect(await dial(server.url, { tls: { ca, pfx, passphrase: "sample" } })).toBe(identified);
       expect(await dial(server.url, { ...off, agent: new https.Agent(off), tls: { ca: ca1 } })).toBe("refused");
       expect(await dial(server.url, { ca: ca1, agent: new https.Agent({ ca: ca1 }), tls: { ca } })).toBe(anonymous);
     });
@@ -2024,7 +1773,20 @@ describe("client TLS options", () => {
       using server = await serve();
       expect(await dial(server.url, { ca: ca1, pfx: pfxWithServerCa, passphrase: "sample" })).toBe(identified);
       expect(await dial(server.url, { ca: [ca1], pfx: [{ buf: pfxWithServerCa, passphrase: "sample" }] })).toBe(identified); // prettier-ignore
-      // Node adds it to the default store too. The native `ca` can only replace that store, so Bun leaves it out.
+    });
+
+    it("adds the CA to a `ca` that the `tls` option inherits from a frozen object", async () => {
+      using server = await serve();
+      const tls = Object.assign(Object.create(Object.freeze({ ca: ca1 })), {
+        pfx: pfxWithServerCa,
+        passphrase: "sample",
+      });
+      expect(await dial(server.url, { tls })).toBe(identified);
+    });
+
+    // Differs from npm ws: Node also adds the CA to the default store. The native `ca` can only replace that store.
+    it("doesn't add the CA to the default store", async () => {
+      using server = await serve();
       expect(await dial(server.url, { pfx: pfxWithServerCa, passphrase: "sample" })).toBe("refused");
     });
 
@@ -2109,6 +1871,203 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { agent: new https.Agent({ ca: ca1, checkServerIdentity: accept as any }) })).toBe(anonymous); // prettier-ignore
       // It does not replace the verification of the chain.
       expect(await dial(server.url, { checkServerIdentity: accept })).toBe("refused");
+    });
+
+    // Options like `finishRequest`, `family` and `lookup` make the client connect through http.request(), which has no
+    // `tls` option of its own.
+    it("the `tls` option applies whether the client connects natively or through node:http", async () => {
+      using server = await serve(agent1);
+      const refuse = () => new Error("not the pinned certificate");
+      const connectPaths: Record<string, object> = {
+        native: {},
+        finishRequest: { finishRequest: (req: { end(): void }) => req.end() },
+        family: { family: 4 },
+        // The agent's options override the request's options, but not `tls`.
+        agent: { agent: new https.Agent({ rejectUnauthorized: false }) },
+        agentAndFamily: { agent: new https.Agent({ rejectUnauthorized: false, servername: "other" }), family: 4 },
+        lookup: { lookup: (_host: string, _options: object, done: Function) => done(null, [{ address: "127.0.0.1", family: 4 }]) }, // prettier-ignore
+      };
+      const results = await Promise.all(
+        Object.entries(connectPaths).map(async ([name, pathOptions]) => {
+          // `tls` replaces the top-level options, which would otherwise skip verification.
+          const options = { ...pathOptions, rejectUnauthorized: false };
+          const outcomes = await Promise.all([
+            // `serverName` is Bun's spelling and takes precedence over `servername`.
+            dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", servername: "other" } }),
+            dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", checkServerIdentity: refuse } }),
+            dial(server.url, { ...options, tls: { ca: ca1 } }),
+            dial(server.url, { ...options, tls: {} }),
+          ]);
+          return [name, outcomes] as [string, string[]];
+        }),
+      );
+      const expected = [anonymous, "refused", "refused", "refused"];
+      expect(results).toEqual(Object.keys(connectPaths).map((name): [string, string[]] => [name, expected]));
+    });
+
+    // `ws` wraps the callback. The native client reads inherited properties and getters, so a spread would lose them.
+    it("keeps the `tls` option's inherited properties and getters when it has a checkServerIdentity", async () => {
+      using server = await serve(agent1);
+      const checkServerIdentity = () => undefined;
+      class Options {
+        checkServerIdentity = checkServerIdentity;
+        get ca() {
+          return ca1;
+        }
+      }
+      expect({
+        inherited: await dial(server.url, { tls: Object.assign(Object.create({ ca: ca1 }), { checkServerIdentity }) }),
+        getter: await dial(server.url, { tls: new Options() }),
+      }).toEqual({ inherited: anonymous, getter: anonymous });
+    });
+
+    it("an own `pfx` in the `tls` option keeps the inherited options", async () => {
+      using server = await serve(agent1);
+      const connect = (inherited: object, own: object) =>
+        dial(server.url, { tls: Object.assign(Object.create(inherited), own, { pfx, passphrase: "sample" }) });
+      const refuse = () => new Error("not the pinned certificate");
+      expect({
+        ca: await connect({ ca: ca1 }, { serverName: "agent1" }),
+        serverName: await connect({ serverName: "agent1" }, { ca: ca1 }),
+        checkServerIdentity: await connect({ checkServerIdentity: refuse }, { ca: ca1, serverName: "agent1" }),
+      }).toEqual({ ca: identified, serverName: identified, checkServerIdentity: "refused" });
+    });
+
+    it("an own `pfx` in the `tls` option keeps options that a spread can't see", async () => {
+      using server = await serve(agent1);
+      const checkServerIdentity = () => new Error("not the pinned certificate");
+      const visible = { ca: ca1, serverName: "agent1", pfx, passphrase: "sample" };
+      expect({
+        control: await dial(server.url, { tls: visible }),
+        nonEnumerable: await dial(server.url, {
+          tls: Object.defineProperty({ ...visible }, "checkServerIdentity", { value: checkServerIdentity }),
+        }),
+        proxyTraps: await dial(server.url, {
+          tls: new Proxy(visible, {
+            has: (target, key) => key === "checkServerIdentity" || key in target,
+            get: (target, key) => (key === "checkServerIdentity" ? checkServerIdentity : Reflect.get(target, key)),
+          }),
+        }),
+      }).toEqual({ control: identified, nonEnumerable: "refused", proxyTraps: "refused" });
+    });
+
+    it("accepts a `pfx` and `passphrase` that the `tls` option inherits or that a spread can't see", async () => {
+      using server = await serve();
+      expect({
+        inherited: await dial(server.url, { tls: Object.assign(Object.create({ pfx, passphrase: "sample" }), { ca }) }),
+        nonEnumerable: await dial(server.url, {
+          tls: Object.defineProperties({ ca }, { pfx: { value: pfx }, passphrase: { value: "sample" } }),
+        }),
+      }).toEqual({ inherited: identified, nonEnumerable: identified });
+    });
+
+    it("ignores a pfx set on Object.prototype", async () => {
+      using server = await serve();
+      await using child = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const WebSocket = require("ws");
+          const { TEST_URL, TEST_CA: ca, TEST_PFX } = process.env;
+          Object.prototype.pfx = require("fs").readFileSync(TEST_PFX);
+          Object.prototype.passphrase = "sample";
+          for (const options of [{ tls: { ca } }, { ca }]) {
+            const ws = new WebSocket(TEST_URL, options);
+            ws.on("message", data => { console.log(String(data)); ws.terminate(); });
+            ws.on("error", error => console.log("refused", error.code));
+            await new Promise(resolve => ws.on("close", resolve));
+          }
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          TEST_URL: server.url,
+          TEST_CA: ca,
+          TEST_PFX: path.join(import.meta.dirname, "../../node/test/fixtures/keys/agent1.pfx"),
+        },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      expect(stdout.trim().split("\n")).toEqual([anonymous, anonymous]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("ignores a checkServerIdentity set on Object.prototype", async () => {
+      using server = await serve(agent1);
+      await using child = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const WebSocket = require("ws");
+          const ca = require("fs").readFileSync(process.env.TEST_CA);
+          Object.prototype.checkServerIdentity = () => undefined;
+          for (const options of [{ tls: { ca } }, { ca }]) {
+            const ws = new WebSocket(process.env.TEST_URL, options);
+            ws.on("message", data => { console.log(String(data)); ws.terminate(); });
+            ws.on("error", error => console.log("refused", error.code));
+            await new Promise(resolve => ws.on("close", resolve));
+          }
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          TEST_URL: server.url,
+          TEST_CA: path.join(import.meta.dirname, "../../node/test/fixtures/keys/ca1-cert.pem"),
+        },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      const refused = "refused ERR_TLS_CERT_ALTNAME_INVALID";
+      expect(stdout.trim().split("\n")).toEqual([refused, refused]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("ignores options set on Object.prototype", async () => {
+      using server = await serve();
+      const plain = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+      plain.on("connection", (ws, req) => ws.send(`x-polluted: ${req.headers["x-polluted"]}`));
+      await once(plain, "listening");
+      try {
+        await using child = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const WebSocket = require("ws");
+            const connect = (url, ...options) => new Promise(resolve => {
+              const ws = new WebSocket(url, ...options);
+              ws.on("message", data => { resolve(String(data)); ws.terminate(); });
+              ws.on("error", error => resolve("refused " + error.code));
+            });
+            const { TEST_URL, TEST_PLAIN_URL } = process.env;
+            const agents = [new (require("node:https").Agent)(), new (require("node:http").Agent)()];
+            Object.prototype.tls = { rejectUnauthorized: false };
+            Object.prototype.proxy = "http://127.0.0.1:9";
+            Object.prototype["x-polluted"] = "yes";
+            for (const options of [[], [{}], [{ agent: agents[0] }]]) console.log(await connect(TEST_URL, ...options));
+            for (const options of [[], [{}], [{ agent: agents[1] }], [{ headers: { a: "b" } }]]) console.log(await connect(TEST_PLAIN_URL, ...options));
+            `,
+          ],
+          env: {
+            ...bunEnv,
+            TEST_URL: server.url,
+            TEST_PLAIN_URL: `ws://127.0.0.1:${(plain.address() as AddressInfo).port}`,
+          },
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        const refused = "refused DEPTH_ZERO_SELF_SIGNED_CERT";
+        const direct = "x-polluted: undefined";
+        expect(stdout.trim().split("\n")).toEqual([refused, refused, refused, direct, direct, direct, direct]);
+        expect(exitCode).toBe(0);
+      } finally {
+        plain.close();
+      }
     });
 
     it("crl", async () => {

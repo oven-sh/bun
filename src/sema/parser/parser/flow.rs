@@ -87,7 +87,7 @@ fn property_of_record(
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     // ───────────────────────────── tokens ─────────────────────────────
 
     /// Whether the token is the name `word`, which is no keyword of TypeScript's.
@@ -702,7 +702,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.push_unnamed_parameter(start, ty, flags);
         }
         let (name, pos, end) = self.word();
-        let pat = self.f.pat(PatKind::Ident(name), pos, end);
+        let pat = self.add_pat(PatKind::Ident(name), pos, end);
         if self.eat(T::Question) {
             flags |= Flags::OPTIONAL;
         }
@@ -1248,7 +1248,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return StmtId::NONE;
             }
         };
-        self.f.exprs.pop();
+        self.pop_expr();
         self.s.modifiers.push(Modifier {
             kind: ModifierKind::Keyword(flag),
             pos: start.pos,
@@ -1466,12 +1466,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 let (name, name_pos, end) = self.word();
                 let kind = match extends.is_none() {
                     true => ExprKind::Ident(name),
-                    false => ExprKind::Dot {
-                        obj: extends,
-                        name,
-                        name_pos,
-                        chain: Chain::No,
-                    },
+                    false => self.f.dot((extends, Chain::No), (name, name_pos), end),
                 };
                 extends = self.add_expr(kind, first, end);
                 if !self.eat(T::Dot) {
@@ -1858,8 +1853,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !is_constructor(self, expr) {
                 return None;
             }
-            self.f.exprs.pop();
-            (constructor, type_args) = (expr, written);
+            self.pop_expr();
+            (constructor, type_args) = (expr, self.f.list_at(written));
         } else if !is_constructor(self, expression) {
             return None;
         }
@@ -1878,13 +1873,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let base = self.s.ids.len();
         self.s.ids.push(braces.0);
         let args = self.take_ids(base);
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee: head,
             args,
             type_args,
             close_pos: u32::MAX,
             chain: Chain::No,
-            template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::New(call), start)
     }
@@ -1908,7 +1903,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if args.len() < 2 || head.idx() + 1 != self.f.exprs.len() {
             return head;
         }
-        self.f.exprs.pop();
+        self.pop_expr();
         let mut left: ExprId = self.f.id_at(args, 0);
         let start = self.f.exprs.get(left.idx()).map_or(pos, |it| it.pos);
         for i in 1..args.len() {
@@ -2109,14 +2104,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 loop {
                     let (obj, chain) = (pattern, Chain::No);
                     if self.eat(T::Dot) {
-                        let (name, name_pos) = self.identifier_name();
-                        let kind = ExprKind::Dot {
-                            obj,
-                            name,
-                            name_pos,
-                            chain,
-                        };
-                        pattern = self.finish_expr(kind, start);
+                        let name = self.identifier_name();
+                        pattern = self.finish_dot((obj, chain), name, start);
                     } else if self.eat(T::OpenBracket) {
                         if !matches!(self.token(), T::Number | T::BigInt | T::String) {
                             self.fail();

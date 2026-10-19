@@ -1,6 +1,6 @@
 use crate::rules::no_wrapper_object_types::GlobalFunctions;
 use bun_lint::prelude::*;
-use bun_lint::types::SymbolFlags;
+use bun_lint::types::{SymbolFlags, TypeFlags};
 use bun_lint::types::utils::is_builtin_symbol_like;
 use bun_lint::utils::ts_scope::is_reference_to_global_function;
 
@@ -23,6 +23,7 @@ fn is_global_candidate(object: Expr) -> bool {
 }
 
 fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Ident(name) => Some(name),
         // A `ChainExpression` for ESLint.
@@ -43,6 +44,8 @@ fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
 fn is_function_type(node: Expr) -> bool {
     let ty = node.ty();
     ty.is_unresolved()
+        // An `any` could be anything. Upstream treats it as a string.
+        || node.file().language().stands_alone && ty.has_flags(TypeFlags::ANY)
         || ty.get_symbol().is_some_and(|symbol| symbol.has_flags(SymbolFlags::FUNCTION | SymbolFlags::METHOD))
         || is_builtin_symbol_like(ty, FUNCTION_CONSTRUCTOR)
         || !ty.get_call_signatures().is_empty()
@@ -61,6 +64,7 @@ fn is_bind(node: Expr, is_oxlint: bool) -> bool {
 }
 
 fn is_function(node: Expr, is_oxlint: bool) -> bool {
+    let node = node.with_jsdoc_cast();
     match node.kind() {
         ExprKind::Fn(_) => true,
         ExprKind::String(_)

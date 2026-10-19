@@ -37,7 +37,7 @@ fn signature_context(flags: Flags) -> u32 {
     context
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(
         &mut self,
@@ -235,6 +235,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH | ctx::OUTSIDE_BODIES;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
+        let had_await_identifier = self.has_await_identifier;
         // Only a block whose `{` is put up with has none.
         let open_at = self.expect(T::OpenBrace).then_some(open);
         if self.token() == T::String {
@@ -244,6 +245,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let list = self.statements_until_close_brace();
         self.close_scope();
         self.context = saved;
+        self.has_await_identifier = had_await_identifier;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);
         if self.token() == T::Equals {
             self.equals_after_block();
@@ -834,7 +836,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if second.is_modifier() && second != T::Async {
                 let is_before_identifier = self.look_ahead(|p| {
                     p.next();
-                    p.is_identifier()
+                    p.is_name_of_first_parameter()
                 });
                 if is_before_identifier {
                     self.next();
@@ -846,7 +848,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             // "If we had '(' followed by something that's not an identifier, then this definitely
             // wasn't a lambda."
-            if !self.is_identifier() && second != T::This {
+            if !self.is_name_of_first_parameter() && second != T::This {
                 return Tristate::False;
             }
             self.next();
@@ -892,6 +894,20 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 _ => Tristate::False,
             }
         }
+    }
+
+    /// `isIdentifier`, after the `(` that may start an arrow function. TypeScript first parses a top-level statement of
+    /// a module outside the await context, where `(await) => {}` is an arrow function. A parameter name doesn't trigger
+    /// a reparse of the statement. See `top_level_statement`.
+    fn is_name_of_first_parameter(&mut self) -> bool {
+        if self.token() == T::Await
+            && self.has_context(ctx::AWAIT)
+            && self.await_context_of_module() != 0
+        {
+            self.has_await_in_name = true;
+            return true;
+        }
+        self.is_identifier()
     }
 
     /// `parseParenthesizedArrowFunctionExpression`. `is_one`: what the tokens ahead have said.
@@ -1092,7 +1108,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         start: u32,
         allow_return_type: bool,
     ) -> ExprId {
-        let pat = self.f.pat(PatKind::Ident(name), pos, end);
+        let pat = self.add_pat(PatKind::Ident(name), pos, end);
         let param = self.f.add_param(Param {
             pat,
             ty: TypeNodeId::NONE,

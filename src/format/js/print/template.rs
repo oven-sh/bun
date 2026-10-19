@@ -8,10 +8,10 @@ use crate::css::embed;
 use crate::cursor::around_node_at;
 use crate::ir::width::string_width_as;
 use crate::js::utils::call_expression::is_test_each_pattern;
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::tailwindcss::{
     InTailwindContext, context_of_function, has_white_space, sorted_template_text,
 };
+use crate::js::utils::typecast::has_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -33,12 +33,24 @@ fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
+/// Prettier's `isJestEachTemplateLiteral`, and the test of `printJestEachTemplateLiteral` that the table has a header.
+fn is_jest_each_template_literal<'a>(e: Expr<'a>, template: Template<'a>) -> bool {
+    matches!(e.parent(), Node::Expr(parent)
+        if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
+            if call.template() == Some(e) && is_test_each_pattern(call.callee())))
+        && !template.raw(0).trim_ascii().is_empty()
+}
+
 /// `` `a${b}c` ``
+#[inline(never)]
 pub(crate) fn write_template_literal<'a>(
     e: Expr<'a>,
     template: Template<'a>,
     f: &mut Formatter<'a>,
 ) {
+    if is_jest_each_template_literal(e, template) {
+        return EachTemplateTable::from_template(template, f).fmt(f);
+    }
     let context = f.context().tailwind_context();
     let content = format_with(|f| {
         if !can_be_in_another_language(e, f)
@@ -71,25 +83,13 @@ pub(crate) fn write_embedded_template_expression<'a>(
     }
 }
 
-/// ``a /* comment */ ⏎ `b` ``: for oxfmt every comment between a tag and its template leads the template. For Prettier
-/// one that ends its line trails the tag.
-fn comments_behind_tag_lead_the_template(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// `` tag`a${b}c` ``
+/// `` tag`a${b}c` ``. Prettier's `printTaggedTemplateExpression`.
+#[inline(never)]
 pub(crate) fn write_tagged_template_expression<'a>(
     e: Expr<'a>,
     call: Call<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let tag_end = call
-        .type_args()
-        .angle_brackets_span()
-        .map_or_else(|| call.callee().span().end, |it| it.end);
-    let leads_template = comments_behind_tag_lead_the_template(f);
-    let view_limit =
-        (leads_template && !f.is_quiet()).then(|| f.comments_mut().limit_comments_up_to(tag_end));
     write!(
         f,
         [
@@ -97,40 +97,24 @@ pub(crate) fn write_tagged_template_expression<'a>(
             type_arguments(call.type_args(), Node::Expr(e))
         ]
     );
-    if let Some(view_limit) = view_limit {
-        f.comments_mut().restore_view_limit(view_limit);
-    }
     let Some(quasi) = call.template() else {
         return;
     };
-
-    let comments = f.comments().comments_before(quasi.span().start);
-    if let Some(first) = comments.first() {
-        match f
-            .source_text()
-            .contains_newline(Span::before(tag_end, first.span))
-        {
+    if !f.is_quiet()
+        && let Some(comment) = f.comments().of_node(quasi.as_ast_nodes()).leading.first()
+    {
+        let tag_end = (call.type_args().angle_brackets_span())
+            .map_or_else(|| call.callee().span().end, |it| it.end);
+        match (f.source_text()).contains_newline(Span::before(tag_end, comment.span())) {
             true => write!(f, soft_line_break()),
             false => write!(f, space()),
         }
     }
-    let comments = FormatLeadingComments::Comments(comments);
-    match leads_template {
-        true => write!(f, [comments, line_suffix_boundary()]),
-        false => write!(f, [line_suffix_boundary(), comments]),
-    }
-
-    let ExprKind::Template(template) = quasi.kind() else {
-        return;
-    };
-    // Without a header it is not a table.
-    let content = format_with(|f| {
-        match is_test_each_pattern(call.callee()) && !template.raw(0).trim_ascii().is_empty() {
-            true => EachTemplateTable::from_template(template, f).fmt(f),
-            false => write_template_literal(quasi, template, f),
-        }
-    });
-    InTailwindContext(context_of_function(call.callee(), f), content).fmt(f);
+    let context = context_of_function(call.callee(), f);
+    write!(
+        f,
+        [line_suffix_boundary(), InTailwindContext(context, quasi)]
+    );
 }
 
 /// `` `a${B}c` `` in a type
@@ -329,29 +313,18 @@ enum Place {
     After(TemplateElementIndention),
 }
 
+/// Prettier's `hasComment(node)`. oxfmt only looks at the comments of expressions.
+fn type_has_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    !f.is_quiet() && !f.options().flavor.is_oxfmt() && f.comments().has_comments(ty.as_ast_nodes())
+}
+
 impl<'a> Format<'a> for FormatTemplateExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let mut has_comment_in_expression = false;
-
-        let interned_expression = match self.expression {
+        let (has_comment, interned_expression) = match self.expression {
             TemplateExpression::Expression(e) => {
-                has_comment_in_expression = !f.is_quiet()
-                    && (f.comments().has_comment_before(e.span().start)
-                        || f.comments()
-                            .has_comment_in_range(e.span().end, self.interpolation.end));
-                f.intern(&format_with(|f| {
-                    match e.kind() {
-                        ExprKind::Jsx(_) => e.fmt(f),
-                        _ => FormatNodeWithoutTrailingComments(&e).fmt(f),
-                    }
-                    if !f.is_quiet() {
-                        let trailing_comments =
-                            f.comments().comments_before(self.interpolation.end);
-                        FormatTrailingComments::Comments(trailing_comments).fmt(f);
-                    }
-                }))
+                (!f.is_quiet() && has_comments(e, f), f.intern(&e))
             }
-            TemplateExpression::TSType(t) => f.intern(&t),
+            TemplateExpression::TSType(t) => (type_has_comment(t, f), f.intern(&t)),
         };
         let Some(element) = interned_expression else {
             return write!(f, "${}");
@@ -374,26 +347,26 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             }
             TemplateElementLayout::SingleLine => f.write_without_soft_lines(&content),
             TemplateElementLayout::Fit => {
-                let indent = matches!(self.expression, TemplateExpression::Expression(e) if {
-                    // Prettier's `stripChainElementWrappers`
-                    let mut stripped = e;
-                    while let ExprKind::NonNull(inner) = stripped.kind() {
-                        stripped = inner;
-                    }
-                    has_comment_in_expression
-                        || matches!(stripped.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
-                        || matches!(
-                            e.as_ast_nodes(),
-                            AstNodes::ConditionalExpression(_)
-                                | AstNodes::SequenceExpression(_)
-                                | AstNodes::TSAsExpression(_)
-                                | AstNodes::TSSatisfiesExpression(_)
-                                | AstNodes::BinaryExpression(_)
-                                | AstNodes::LogicalExpression(_)
-                                | AstNodes::PrivateInExpression(_)
-                                | AstNodes::IdentifierReference(_)
-                        )
-                });
+                let indent = has_comment
+                    || matches!(self.expression, TemplateExpression::Expression(e) if {
+                        // Prettier's `stripChainElementWrappers`
+                        let mut stripped = e;
+                        while let ExprKind::NonNull(inner) = stripped.kind() {
+                            stripped = inner;
+                        }
+                        matches!(stripped.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+                            || matches!(
+                                e.as_ast_nodes(),
+                                AstNodes::ConditionalExpression(_)
+                                    | AstNodes::SequenceExpression(_)
+                                    | AstNodes::TSAsExpression(_)
+                                    | AstNodes::TSSatisfiesExpression(_)
+                                    | AstNodes::BinaryExpression(_)
+                                    | AstNodes::LogicalExpression(_)
+                                    | AstNodes::PrivateInExpression(_)
+                                    | AstNodes::IdentifierReference(_)
+                            )
+                    });
                 match indent {
                     true => write!(f, soft_block_indent(&content)),
                     false => write!(f, content),

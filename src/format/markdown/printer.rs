@@ -1,6 +1,7 @@
 //! The document of a Markdown text: Prettier's `src/language-markdown/print/*.js`.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
+use super::parse::{Syntax, leaves_paragraph};
 use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
     ordered_item_info,
@@ -67,6 +68,41 @@ fn verbatim_line<'a>() -> Doc<'a> {
     Doc::DedentToRoot(Box::new(hardline()))
 }
 
+/// True if `doc` prints on more than one line at any line width.
+fn has_line_break(doc: &Doc<'_>) -> bool {
+    let mut rest = vec![doc];
+    while let Some(doc) = rest.pop() {
+        match doc {
+            Doc::Line(Line::Hard | Line::Literal) => return true,
+            Doc::Text(text) if bun_core::strings::contains_char(text, b'\n') => return true,
+            Doc::Array(parts) | Doc::Fill(parts) => rest.extend(parts),
+            Doc::Indent(contents)
+            | Doc::Align(_, contents)
+            | Doc::Dedent(contents)
+            | Doc::DedentToRoot(contents)
+            | Doc::MarkAsRoot(contents)
+            | Doc::Group { contents, .. }
+            | Doc::LineSuffix(contents) => rest.push(contents),
+            Doc::IfBreak {
+                break_contents,
+                flat_contents,
+                ..
+            } => rest.extend([&**break_contents, &**flat_contents]),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Returns the line break to print after `line`, which is printed verbatim. A `hardline` would trim trailing spaces and
+/// tabs, so a line that ends with one gets a literal line break.
+fn line_break_after<'a>(line: &[u8]) -> Doc<'a> {
+    match line.last() {
+        Some(b' ' | b'\t') => mark_as_root(literalline()),
+        _ => hardline(),
+    }
+}
+
 fn spaces<'a>(count: usize) -> Doc<'a> {
     Doc::Text(Cow::Owned(vec![b' '; count]))
 }
@@ -87,7 +123,8 @@ fn replace_end_of_line<'a>(text: &'a [u8], separator: impl Fn() -> Doc<'a>) -> D
 }
 
 /// Code that has been formatted, line by line. A line break in a text, which is marked by a `\r`, is a literal
-/// line: see `FormatOptions::is_in_markdown`.
+/// line: see `FormatOptions::is_in_markdown`. So is a line break after a space or a tab, because a formatter only
+/// prints trailing whitespace that must be kept.
 fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
     let mut parts = Vec::new();
     let mut is_after_literal_line_break = false;
@@ -99,7 +136,7 @@ fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
                 hardline()
             });
         }
-        is_after_literal_line_break = line.ends_with(b"\r");
+        is_after_literal_line_break = matches!(line.last(), Some(b'\r' | b' ' | b'\t'));
         parts.push(Doc::from(line.strip_suffix(b"\r").unwrap_or(line).to_vec()));
     }
     Doc::Array(parts)
@@ -861,7 +898,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     /// Whether a line that starts with `word` could be taken for something else: a quote, a list, a heading.
-    fn may_start_block(word: &[u8]) -> bool {
+    pub(crate) fn may_start_block(word: &[u8]) -> bool {
         match word {
             [b'>', ..] | [b'*' | b'+' | b'-'] => true,
             [b'#', ..] => word.len() <= 6 && word.iter().all(|&byte| byte == b'#'),
@@ -959,6 +996,57 @@ impl<'a> Printer<'a, '_> {
         parts.finish()
     }
 
+    /// True if `tokens[index]`, or the HTML after `sentence` when `index` is past the end, would stop being part of the
+    /// paragraph if wrapping put it at the start of a line. Prettier breaks the line there anyway. A `=` before a long
+    /// URL then ends up alone on its line, which turns the lines above it into a heading. A fence turns everything
+    /// after it into code.
+    fn must_not_start_line(&self, sentence: &Node, tokens: &[Token], index: usize) -> bool {
+        let word = match (tokens.get(index), self.node(sentence.next)) {
+            (Some(word), _) => self.str(word.value),
+            (None, Some(html)) if html.kind == Kind::Html => self.str(html.value),
+            _ => return false,
+        };
+        let word =
+            &word[..bun_core::strings::index_of_char_usize(word, b'\n').unwrap_or(word.len())];
+        let is_candidate = match word {
+            [b'<', ..] | [b'`', b'`', b'`', ..] | [b'~', b'~', b'~', ..] | [b'$', b'$', ..] => true,
+            [first @ (b'=' | b'-' | b'_' | b'*'), rest @ ..] => rest.iter().all(|it| it == first),
+            _ => false,
+        };
+        let syntax = match (self.is_mdx, self.options.flavor.is_oxfmt()) {
+            (true, _) => Syntax::Mdx,
+            (false, true) => Syntax::TwoLines,
+            (false, false) => Syntax::TwoLinesOfMarkdown,
+        };
+        if !is_candidate || !leaves_paragraph(None, word, syntax) {
+            return false;
+        }
+        if leaves_paragraph(None, &[word, b" a"].concat(), syntax) {
+            return true;
+        }
+        // `word` only ends the paragraph if it's alone on its line, which happens if the next word doesn't fit.
+        let mut width = self.indentation + word.len();
+        let mut at = index + 1;
+        while let (Some(_), Some(next)) = (tokens.get(at), tokens.get(at + 1)) {
+            let next = self.str(next.value);
+            width += 1 + crate::ir::width::string_width_as(next, self.options.flavor) as usize;
+            if width > self.options.line_width.value() as usize {
+                return true;
+            }
+            // Keep measuring if the word after `next` can't be wrapped onto a new line.
+            let goes_on = match (tokens.get(at + 2), tokens.get(at + 3)) {
+                (Some(_), Some(then)) => Self::may_start_block(self.str(then.value)),
+                (Some(_), None) => false,
+                (None, _) => sentence.next != NONE,
+            };
+            if !goes_on {
+                return false;
+            }
+            at += 2;
+        }
+        true
+    }
+
     /// Prettier's `printSentence`
     fn print_sentence(&mut self, id: NodeId, node: &Node) -> Doc<'a> {
         if node.number == preprocess::PLAIN {
@@ -981,9 +1069,10 @@ impl<'a> Printer<'a, '_> {
             let is_next_fake_setext_line = token.kind == TokenKind::Newline
                 && next.is_some_and(|it| self.str(it.value) == b"-")
                 && (after_next.is_none() || is_newline(after_next));
-            let joins = next.is_some_and(|it| Self::may_start_block(self.str(it.value)))
+            let joins = (next.is_some_and(|it| Self::may_start_block(self.str(it.value)))
                 && !after_next.is_some_and(|it| it.kind == TokenKind::NoSpace)
-                && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line);
+                && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line))
+                || (can_break && self.must_not_start_line(node, tokens, index + 1));
             let prose_wrap = if joins {
                 ProseWrap::Never
             } else {
@@ -1418,6 +1507,44 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
+    /// True if a `*` delimiter of `node`, an emphasis, touches a literal `*`, and the text around `node` has another
+    /// `*` run that the literal one could pair with. In `**a*(*)` the first and last `*` are literal because the run of
+    /// two and the run of one add up to three. Printed as `*_a_(*)`, they would pair up.
+    fn is_cut_from_longer_run(&self, node: &Node) -> bool {
+        let byte_at = |at: usize| self.original.get(at).copied();
+        let is_text = |id: NodeId| matches!(self.kind(id), Some(Kind::Sentence | Kind::Text));
+        let (start, end) = (node.start as usize, node.end as usize);
+        let is_in_run = (start > 0 && byte_at(start - 1) == Some(b'*') && is_text(node.previous))
+            || (byte_at(end) == Some(b'*') && is_text(node.next));
+        if self.is_mdx || byte_at(start) != Some(b'*') || !is_in_run {
+            return false;
+        }
+        let is_star = |byte: &&u8| **byte == b'*';
+        let (before, after) = self.original.split_at_checked(start).unwrap_or_default();
+        let run_start = start - before.iter().rev().take_while(is_star).count();
+        let after = after.get(end - start..).unwrap_or_default();
+        let run_end = end + after.iter().take_while(is_star).count();
+        let is_blank = |byte: Option<u8>| matches!(byte, None | Some(b' ' | b'\t' | b'\n'));
+        self.tree
+            .children(node.parent)
+            .filter(|&id| is_text(id))
+            .any(|sibling| {
+                let Some(sibling) = self.node(sibling) else {
+                    return false;
+                };
+                let mut is_escaped = false;
+                (sibling.start as usize..sibling.end as usize).any(|at| {
+                    let is_other_star = byte_at(at) == Some(b'*')
+                        && !is_escaped
+                        && !(run_start..run_end).contains(&at)
+                        && !(is_blank(at.checked_sub(1).and_then(byte_at))
+                            && is_blank(byte_at(at + 1)));
+                    is_escaped = byte_at(at) == Some(b'\\') && !is_escaped;
+                    is_other_star
+                })
+            })
+    }
+
     /// Prettier's `printMdast`
     fn print_mdast(&mut self, id: NodeId, node: &'a Node) -> Doc<'a> {
         if self.is_in_label {
@@ -1446,6 +1573,7 @@ impl<'a> Printer<'a, '_> {
             Kind::Emphasis => {
                 let style: &'a [u8] = if self.is_autolink(node.first_child)
                     || self.keeps_marker(node)
+                    || self.is_cut_from_longer_run(node)
                 {
                     self.source(node).get(..1).unwrap_or(b"_")
                 } else {
@@ -1522,7 +1650,11 @@ impl<'a> Printer<'a, '_> {
                 docs!["> ", Doc::Align(Alignment::Text("> "), Box::new(children))]
             }
             Kind::Heading => {
-                if !self.is_mdx && self.is_setext_heading(node) {
+                let children = self.print_children(id);
+                // In MDX a setext heading is printed as `## text`. That form ends at the first line break, so a heading
+                // that still has one keeps its underline. Prettier never gets here: remark-parse 8 reads two lines of
+                // text above `---` as a paragraph and a thematic break.
+                if self.is_setext_heading(node) && (!self.is_mdx || has_line_break(&children)) {
                     let last_line = &self.original[self.tree.line_start(node.end.saturating_sub(1))
                         as usize
                         ..node.end as usize];
@@ -1531,11 +1663,11 @@ impl<'a> Printer<'a, '_> {
                     let underline = &last_line[find(b'=')
                         .max(find(b'-'))
                         .unwrap_or_else(|| last_line.len().saturating_sub(1))..];
-                    return docs![self.print_children(id), hardline(), underline];
+                    return docs![children, hardline(), underline];
                 }
                 docs![
                     [&b"######"[..node.number.min(6) as usize], b" "].concat(),
-                    self.print_children(id)
+                    children
                 ]
             }
             Kind::Code => self.print_code(id, node, None),
@@ -1809,10 +1941,9 @@ impl<'a> Printer<'a, '_> {
 
     /// What the fence of the block of code `node` is made of.
     fn fence_unit(&self, node: &Node) -> u8 {
-        // oxfmt: behind backticks there can be no backtick.
+        // A backtick fence can't have a backtick in its info string. Prettier prints one anyway and breaks the fence.
         let has_backtick = |text: Str| bun_core::strings::contains_char(self.str(text), b'`');
-        let is_backtick_in_info = self.options.flavor.is_oxfmt()
-            && (has_backtick(node.second) || has_backtick(node.third));
+        let is_backtick_in_info = has_backtick(node.second) || has_backtick(node.third);
         if self.is_in_template || is_backtick_in_info {
             b'~'
         } else {
@@ -1820,31 +1951,57 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// `formatted`: the code, if it has been formatted, and for oxfmt the longest run of what the fence is made of in
-    /// it: Prettier looks at the code as it was.
-    fn print_code(
-        &self,
-        id: NodeId,
-        node: &Node,
-        formatted: Option<(Doc<'a>, Option<usize>)>,
-    ) -> Doc<'a> {
+    /// Prints `code` verbatim. Trailing spaces and tabs are part of the code. Prettier and oxfmt put a `hardline` after
+    /// every line, which trims them.
+    fn code_as_written(&self, code: &'a [u8], is_indented: bool) -> Doc<'a> {
+        if !is_indented
+            && self.indentation == 0
+            && !self.is_in_template
+            && !self.options.is_in_markdown
+        {
+            return Doc::from(code);
+        }
+        let mut parts = Vec::new();
+        let mut previous: &[u8] = b"";
+        for (index, line) in bun_core::strings::split(code, b"\n").enumerate() {
+            if index > 0 {
+                parts.push(line_break_after(previous));
+            }
+            parts.push(Doc::from(line));
+            previous = line;
+        }
+        Doc::Array(parts)
+    }
+
+    /// `formatted` is set if the code was formatted. It's the code, including the line break after it, and the length
+    /// of the longest run of the fence character in it.
+    fn print_code(&self, id: NodeId, node: &Node, formatted: Option<(Doc<'a>, usize)>) -> Doc<'a> {
         let value = self.str(node.value);
         if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
-            return align_with_spaces(4, docs!["    ", replace_end_of_line(value, hardline)]);
+            // Whatever is printed next starts with a `hardline`, which would trim the last line. A last line that is
+            // only whitespace isn't part of the code, so trimming it is fine.
+            let end = match &value[value.trim_ascii_end().len()..] {
+                b"" => Doc::EMPTY,
+                blanks if bun_core::strings::contains_char(blanks, b'\n') => Doc::EMPTY,
+                _ => Doc::KeepBlanks,
+            };
+            let code = docs!["    ", self.code_as_written(value, true), end];
+            return align_with_spaces(4, code);
         }
         let style_unit = self.fence_unit(node);
-        let (formatted, run) = match formatted {
-            Some((formatted, run)) => (Some(formatted), run),
-            None => (None, None),
+        let (code, run) = match formatted {
+            Some(formatted) => formatted,
+            None => (
+                docs![self.code_as_written(value, false), line_break_after(value)],
+                max_continuous_count(value, style_unit),
+            ),
         };
-        let run = run.unwrap_or_else(|| max_continuous_count(value, style_unit));
         let style = vec![style_unit; (run + 1).max(3)];
         docs![
             style.clone(),
             self.print_info(node),
             hardline(),
-            formatted.unwrap_or_else(|| self.lines(value, false)),
-            hardline(),
+            code,
             style
         ]
     }
@@ -1900,8 +2057,14 @@ impl<'a> Printer<'a, '_> {
             code,
             width,
         })?;
-        let formatted = bun_core::strings::trim_js_whitespace_end(&formatted);
-        let run = is_oxfmt.then(|| max_continuous_count(formatted, self.fence_unit(node)));
+        let formatted = super::front_matter::trim_end_to_last_line(&formatted);
+        let end = line_break_after(formatted);
+        // Prettier only measures the original code. Embedded Markdown that had `~~~` fences has backtick fences now.
+        let unit = self.fence_unit(node);
+        let run = match is_oxfmt {
+            true => max_continuous_count(formatted, unit),
+            false => max_continuous_count(formatted, unit).max(max_continuous_count(code, unit)),
+        };
         let is_as_it_is = self.indentation == 0
             && !self.is_in_template
             && !self.options.is_in_markdown
@@ -1914,7 +2077,7 @@ impl<'a> Printer<'a, '_> {
         Some(mark_as_root(self.print_code(
             id,
             node,
-            Some((formatted, run)),
+            Some((docs![formatted, end], run)),
         )))
     }
 
@@ -1929,7 +2092,7 @@ impl<'a> Printer<'a, '_> {
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
         let value = &self.original[front_matter.value.0..front_matter.value.1];
-        let value = bun_core::strings::trim_js_whitespace_end(
+        let value = super::front_matter::trim_end_to_last_line(
             bun_core::strings::trim_js_whitespace_start(value),
         );
         let formatted = match value {
@@ -1949,14 +2112,14 @@ impl<'a> Printer<'a, '_> {
         let Some(formatted) = formatted else {
             return Doc::from(raw);
         };
-        let formatted = bun_core::strings::trim_js_whitespace_end(&formatted);
+        let formatted = super::front_matter::trim_end_to_last_line(&formatted);
         mark_as_root(docs![
             &raw[..3],
             language,
             hardline(),
             match formatted.is_empty() {
                 true => Doc::EMPTY,
-                false => docs![lines_of(formatted), hardline()],
+                false => docs![lines_of(formatted), line_break_after(formatted)],
             },
             &raw[raw.len() - 3..]
         ])

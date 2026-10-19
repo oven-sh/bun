@@ -273,7 +273,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     }
 
     /// Reports `message` about the file as a whole, at no place in it: a diagnostic of oxlint without a label. Where a format
-    /// wants numbers it has line 0 and column 0, and there is no excerpt.
+    /// wants numbers it has line 0 and column 0, and there is no excerpt. With no config it's at the start of the file.
     #[inline]
     pub fn report_file(&self, message: Message) -> Report<'a> {
         let nowhere = Position {
@@ -761,6 +761,23 @@ impl<'a> Report<'a> {
     pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         // The text is there when the report is made.
         self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
+    }
+
+    /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
+    /// [`Report::fix_dangerously`]. `--fix` must not change a program's behavior or break type checking, whatever the
+    /// original tool's `--fix` does. `is_safe` is only called if the fix is read, so it can afford to look at scopes.
+    pub fn fix_where_safe<F: IntoFix>(
+        self,
+        is_safe: impl FnOnce() -> bool,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
+        if !self.reads_fixes() {
+            return self;
+        }
+        match is_safe() {
+            true => self.fix(fix),
+            false => self.fix_dangerously(fix),
+        }
     }
 
     /// oxlint's `diagnostic_with_dangerous_suggestion`.

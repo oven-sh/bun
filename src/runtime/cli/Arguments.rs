@@ -738,6 +738,7 @@ fn parse_options(
         },
         unknown_long_flags_are_positional: false,
         unknown_long_flags_are_errors: false,
+        ignored_long_flags: clap::IgnoredLongFlags::default(),
     }
 }
 

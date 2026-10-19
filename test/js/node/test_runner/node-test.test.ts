@@ -895,9 +895,9 @@ describe("run() starts each file with the runtime flags of its caller", () => {
         ]),
         result({}, [bunExe(), "--smol", "-", "-l", "verbose", "--no-addons"], { stdin: script }),
       ]);
-      const held = { probes: [{ ...unflagged, execArgv: ["--smol"] }], fail: 0 };
+      const held = { probes: [{ ...unflagged, execArgv: ["--smol"] }], fail: 0, exitCode: 0 };
       expect(evaluated).toMatchObject(held);
-      expect(fromStdin).toMatchObject({ ...held, exitCode: 0 });
+      expect(fromStdin).toMatchObject(held);
     },
     60_000,
   );

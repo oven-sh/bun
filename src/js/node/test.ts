@@ -443,8 +443,7 @@ function reportCancelledFile(
 }
 
 // Bound by the first file of the first run(): importing node:test costs nothing for it.
-type FileFlags = (cwd: string) => [beforeTest: string[], afterTest: string[]];
-let fileFlags: FileFlags | undefined;
+let fileFlags: ((cwd: string) => string[][]) | undefined;
 
 function isCAStoreFlag(arg: string) {
   return arg === "--use-system-ca" || arg === "--use-openssl-ca" || arg === "--use-bundled-ca";
@@ -466,7 +465,7 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  fileFlags ??= $newRustFunction("jest.rs", "jsNodeTestFileFlags", 1) as FileFlags;
+  fileFlags ??= $bindgen("jest.bind.ts", "nodeTestFileFlags");
   let [beforeTest, afterTest] = fileFlags(opts.cwd as string);
   const execArgv = opts.execArgv as string[];
   let choosesCAStore = false;

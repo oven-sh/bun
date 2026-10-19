@@ -580,29 +580,19 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     }
 }
 
-/// `run()` of `node:test` calls this for each file with its `cwd`: see `node_test_file_flags`.
-pub(crate) fn js_node_test_file_flags(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+/// `run()` of `node:test` calls this for each file with its `cwd`: `[before, after]` of `test`.
+pub(crate) fn node_test_file_flags(cwd: &[u8]) -> [Vec<Box<[u8]>>; 2] {
     use crate::cli::arguments;
 
-    let [child_directory] = callframe.arguments_as_array::<1>();
-    let child_directory = child_directory.to_utf8(global)?;
-    let options = &global.bun_vm().transpiler.options.transform_options;
-    let flags = arguments::node_test_file_flags(
+    let options = &VirtualMachine::get().transpiler.options.transform_options;
+    arguments::node_test_file_flags(
         arguments::NodeTestCaller {
             no_addons: options.allow_addons == Some(false),
             no_ffi_cc: options.allow_ffi_cc == Some(false),
             startup_directory: options.absolute_working_dir.as_deref(),
         },
-        &child_directory,
-    );
-    JSValue::create_array_from_iter(global, flags.iter(), |side| {
-        JSValue::create_array_from_iter(global, side.iter(), |flag| {
-            bun_string_jsc::create_utf8_for_js(global, flag)
-        })
-    })
+        cwd,
+    )
 }
 
 pub(crate) mod on_unhandled_rejection {

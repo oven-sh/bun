@@ -451,6 +451,7 @@ impl ConvertedTable {
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
         };
         let mut positionals = 0;
         loop {

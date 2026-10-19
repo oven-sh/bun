@@ -4,7 +4,7 @@
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
 use crate::configs::{Flavor, is_category, plugin_shorthand};
-use crate::paths;
+use crate::{fs, paths};
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
@@ -570,6 +570,8 @@ pub struct Options {
     pub ignore_path: Option<Vec<u8>>,
     /// `ignorePath` of bunfig.toml as it is written there: to oxlint it is a name, for every directory.
     pub ignore_file_name_of_bunfig: Option<Vec<u8>>,
+    /// Filled by [`Options::load_pipes`].
+    pub(crate) pipes: fs::NamedPipes,
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
@@ -668,6 +670,7 @@ impl Default for Options {
             silent: false,
             ignore_path: None,
             ignore_file_name_of_bunfig: None,
+            pipes: fs::NamedPipes::default(),
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,
@@ -706,7 +709,11 @@ pub(crate) fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError
 }
 
 fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<(), UsageError> {
-    let Some(entries) = bun_lint::linter::parse_levn_object(value) else {
+    let entries = match name {
+        b"rule" => bun_lint::linter::parse_levn_rules(value),
+        _ => bun_lint::linter::parse_levn_object(value),
+    };
+    let Some(entries) = entries else {
         return error(&[
             b"Invalid value for option '",
             name,
@@ -802,7 +809,7 @@ impl Options {
                 for (at, place) in self.rules_of_bunfig.iter_mut().enumerate() {
                     if (self.rule.get(at)).is_some_and(|it| said.iter().any(|said| said.0 == it.0))
                     {
-                        place.setting = Json::Null;
+                        place.setting = None;
                     }
                 }
                 merge(&mut self.rule, said);
@@ -1029,6 +1036,18 @@ impl Options {
         self
     }
 
+    /// Reads any named pipes passed to `--config` and `--ignore-path`. See [`fs::NamedPipes::load`].
+    pub(crate) fn load_pipes(&mut self, cwd: &[u8]) -> Result<(), Vec<u8>> {
+        let mut named = Vec::new();
+        if !self.is_config_of_bunfig {
+            named.extend(self.config.clone());
+        }
+        if self.ignore_file_name_of_bunfig.is_none() {
+            named.extend(self.ignore_path.clone());
+        }
+        self.pipes.load(cwd, &named)
+    }
+
     /// `rules`, with where bunfig.toml has them: `places`. The rules read the paths and the patterns in their options from the
     /// working directory. In what the file has they are written from where the file is.
     pub(crate) fn from_the_working_directory(
@@ -1044,7 +1063,8 @@ impl Options {
         };
         for (at, (id, setting)) in rules.iter_mut().enumerate() {
             // `--rule` may have replaced this entry.
-            if places.get(at).is_none_or(|it| it.setting != *setting) {
+            let written = places.get(at).and_then(|it| it.setting.as_ref());
+            if written != Some(&*setting) {
                 continue;
             }
             let (prefix, name) = parse_rule_id(id);

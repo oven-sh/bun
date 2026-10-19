@@ -93,7 +93,7 @@ impl Checker<'_, '_> {
             }
             _ => s,
         };
-        or_file_scope(self.bound(file).stmt_scope[inside.idx()])
+        or_file_scope(self.bound(file).scope_of_stmt(inside))
     }
 
     fn enclosing_scope_of_variable(&self, file: FileId, d: VarDeclId) -> ScopeId {
@@ -105,9 +105,9 @@ impl Checker<'_, '_> {
         or_file_scope(match self.hir(file)[s].kind {
             // The variable of a `catch` clause is in the scope the clause creates, like its block.
             StmtKind::Try { param, handler, .. } if param == d && handler.is_some() => {
-                bound.stmt_scope[handler.idx()]
+                bound.scope_of_stmt(handler)
             }
-            _ => bound.stmt_scope[s.idx()],
+            _ => bound.scope_of_stmt(s),
         })
     }
 
@@ -117,11 +117,9 @@ impl Checker<'_, '_> {
         if let Some(&computed_name) = self.bound(file).expr_scope.get(&e) {
             return computed_name;
         }
-        match self.bound(file).expr_parent[e.idx()] {
+        match self.bound(file).parent_of_expr(e) {
             Parent::MemberKey(m) => self.enclosing_scope_of_member(file, m),
-            Parent::PropKey(_, p) | Parent::MethodKey(p) => {
-                self.enclosing_scope_of_property(file, p)
-            }
+            Parent::PropKey(p) | Parent::MethodKey(p) => self.enclosing_scope_of_property(file, p),
             Parent::PatKey(p) => self.enclosing_scope_of_pat(file, self.hir(file)[p].value),
             _ => ScopeId(0),
         }
@@ -169,11 +167,11 @@ impl Checker<'_, '_> {
         {
             return Ok(or_file_scope(scope));
         }
-        Ok(match bound.expr_parent[at.idx()] {
-            Parent::Expr(outer) | Parent::PropKey(outer, _) if outer.is_some() => {
+        Ok(match bound.parent_of_expr(at) {
+            Parent::Expr(outer) if outer.is_some() => {
                 return Err(outer);
             }
-            Parent::Prop(p) if bound.prop_owner[p.idx()].is_some() => {
+            Parent::Prop(p) | Parent::PropKey(p) if bound.prop_owner[p.idx()].is_some() => {
                 return Err(bound.prop_owner[p.idx()]);
             }
             Parent::Stmt(s) if s.is_some() => self.enclosing_scope_of_statement(file, s),
@@ -199,22 +197,20 @@ impl Checker<'_, '_> {
                 if let StmtKind::Switch { cases, .. } = hir[s].kind
                     && let Some(first) = cases.iter().find_map(|c| hir.ids(hir[c].body).next())
                 {
-                    return Ok(or_file_scope(bound.stmt_scope[first.idx()]));
+                    return Ok(or_file_scope(bound.scope_of_stmt(first)));
                 }
-                or_file_scope(bound.stmt_scope[s.idx()])
+                or_file_scope(bound.scope_of_stmt(s))
             }
             // `node.Parent` of the expression itself is the `ExpressionWithTypeArguments`, which is not in the expression.
             Parent::ClassExtends(c) => or_file_scope(match bound.expr_scope.get(&at) {
                 Some(&base_expression) if is_around => base_expression,
                 _ => bound.class_scope[c.idx()],
             }),
-            Parent::Decorator(c, owner) => match owner {
-                DecoratorOwner::Class(_) => or_file_scope(bound.class_scope[c.idx()]),
-                DecoratorOwner::Member(m) => self.enclosing_scope_of_member(file, m),
-                DecoratorOwner::Param(p) => {
-                    self.enclosing_scope_of_function(file, bound.param_fn[p.idx()])
-                }
-            },
+            Parent::ClassDecorator(c) => or_file_scope(bound.class_scope[c.idx()]),
+            Parent::MemberDecorator(m) => self.enclosing_scope_of_member(file, m),
+            Parent::ParamDecorator(p) => {
+                self.enclosing_scope_of_function(file, bound.param_fn[p.idx()])
+            }
             Parent::Module(m) => or_file_scope(bound.module_scope[m.idx()]),
             Parent::Expr(_) | Parent::Prop(_) | Parent::Stmt(_) | Parent::File | Parent::None => {
                 ScopeId(0)
@@ -282,7 +278,7 @@ impl Checker<'_, '_> {
             Decl::ImportEquals(i) => bound.import_equals_scope[i.idx()],
             Decl::ExportSpec(spec) => bound.export_scope[hir[spec].export.idx()],
             Decl::ExportStarAs(s) | Decl::ExportExpr(s) | Decl::UmdGlobal(s) => {
-                bound.stmt_scope[s.idx()]
+                bound.scope_of_stmt(s)
             }
             Decl::ImportDefault(i) | Decl::ImportNamespace(i) => bound.import_scope[i.idx()],
             Decl::ImportSpec(spec) => bound.import_scope[hir[spec].import.idx()],

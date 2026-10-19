@@ -201,7 +201,7 @@ pub fn replace_package_manager_run(
                     if strings::has_prefix_comptime(&script[start..], b"npm run ") {
                         append_bun_run(copy_script);
                         entry_i += b"npm run ".len();
-                        let rewritten = append_npm_run_flags(copy_script, &script[entry_i..]);
+                        let rewritten = append_npm_run_flags(copy_script, script, entry_i)?;
                         if rewritten == 0 {
                             copy_script.push(b' ');
                         }
@@ -253,21 +253,29 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
-/// npm takes `-w` / `--workspaces` / `-s` anywhere before `--`, `bun run` only in front. Returns the `args` consumed.
-fn append_npm_run_flags(out: &mut Vec<u8>, args: &[u8]) -> usize {
+/// npm takes `-w` / `--workspaces` / `-s` anywhere before `--`, `bun run` only in front. Returns how much of `script[at..]` it read.
+fn append_npm_run_flags(
+    out: &mut Vec<u8>,
+    script: &[u8],
+    at: usize,
+) -> Result<usize, crate::Error> {
     use bun_core::strings;
 
+    let (before, args) = script.split_at(at);
     let end = strings::index_of_any(args, b";&|\r\n").unwrap_or(args.len());
     let command = args[..end].trim_ascii_end();
     if strings::index_of_any(command, b"'\"()$`\\#").is_some() {
-        return 0;
+        return Ok(0);
     }
+    // In a quoted string this can be one of several commands, and the one with the closing quote is not read.
+    let quoted =
+        strings::count_char(before, b'"') % 2 == 1 || strings::count_char(before, b'\'') % 2 == 1;
 
     let mut flags: Vec<u8> = Vec::new();
     let mut rest: Vec<u8> = Vec::new();
     let mut selects_workspaces = false;
-    let (mut silent, mut if_present, mut other_flag, mut named) = (false, false, false, false);
-    let mut own = command;
+    let (mut silent, mut if_present, mut other_flag) = (false, false, false);
+    let (mut own, mut name_end) = (command, None);
     let mut tokens = strings::tokenize_any(command, b" \t");
     while let Some(token) = tokens.next() {
         let workspace = match token {
@@ -287,8 +295,8 @@ fn append_npm_run_flags(out: &mut Vec<u8>, args: &[u8]) -> usize {
                 flags.extend_from_slice(b" --silent");
                 continue;
             }
-            // The caller reads the script's arguments, and a command among them, like any other text.
-            b"--" | b"npm" | b"npx" | b"pnpm" | b"pnpx" | b"yarn" if token == b"--" || named => {
+            // The caller reads the script's arguments like any other text.
+            b"--" => {
                 own = command[..token.as_ptr().addr() - command.as_ptr().addr()].trim_ascii_end();
                 break;
             }
@@ -298,12 +306,13 @@ fn append_npm_run_flags(out: &mut Vec<u8>, args: &[u8]) -> usize {
             {
                 Some(workspace) => Some(workspace),
                 None => {
-                    match token[0] {
-                        b'-' => other_flag = true,
-                        _ => named = true,
-                    }
                     rest.push(b' ');
                     rest.extend_from_slice(token);
+                    if token[0] == b'-' {
+                        other_flag = true;
+                    } else if name_end.is_none() {
+                        name_end = Some(rest.len());
+                    }
                     continue;
                 }
             },
@@ -314,7 +323,7 @@ fn append_npm_run_flags(out: &mut Vec<u8>, args: &[u8]) -> usize {
                 && workspace[0] != b'-'
                 && strings::index_of_any(workspace, b"<>").is_none()
         }) else {
-            return 0;
+            return Ok(0);
         };
         selects_workspaces = true;
         flags.extend_from_slice(b" --filter=");
@@ -327,12 +336,15 @@ fn append_npm_run_flags(out: &mut Vec<u8>, args: &[u8]) -> usize {
     }
 
     // `bun run` hands another option of npm to the script, and alone its `--if-present` also runs a file or a binary.
-    if !selects_workspaces && (if_present || other_flag || !silent) {
-        return 0;
+    if !selects_workspaces && (quoted || if_present || other_flag || !silent) {
+        return Ok(0);
     }
+    let name_end = name_end.unwrap_or(rest.len());
     out.extend_from_slice(&flags);
-    out.extend_from_slice(&rest);
-    own.len()
+    out.extend_from_slice(&rest[..name_end]);
+    // A command among the words behind the script's name is rewritten like any other text.
+    replace_package_manager_run(out, &rest[name_end..])?;
+    Ok(own.len())
 }
 
 /// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`

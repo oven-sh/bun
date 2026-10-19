@@ -820,8 +820,10 @@ describe.concurrent("bun run", () => {
     });
 
     // An `npm run` among the words of the script is rewritten too, in front of `--` and behind it.
+    // In front of `--`, a `-s` behind it is still a flag of the first `npm run`.
     it.each([
       ["npm run --silent print npm run print", "$ bun run --silent print bun run print\n"],
+      ["npm run print npm run print -s", "$ bun run --silent print bun run print\n"],
       ["npm run -s print -- npm run print", "$ bun run --silent print -- bun run print\n"],
     ])("%s rewrites both commands", async (start, rewritten) => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
@@ -834,15 +836,22 @@ describe.concurrent("bun run", () => {
     });
 
     it.each([
-      ["npm run hello -w app -s", "$ bun run --filter=app --silent hello\n"],
-      ["npm run hello -ws -s", "$ bun run --workspaces --silent hello\n"],
-      ["npm run hello -ws --if-present", "$ bun run --workspaces --if-present hello\n"],
-    ])("%s puts the flags in front of the name", async (start, rewritten) => {
+      ["npm run hello -w app -s", "$ bun run --filter=app --silent hello\n", "workspace-ok\n"],
+      ["npm run hello -ws -s", "$ bun run --workspaces --silent hello\n", "workspace-ok\n"],
+      ["npm run hello -ws --if-present", "$ bun run --workspaces --if-present hello\n", "workspace-ok\n"],
+      ["npm run hello npm run x -w app", "$ bun run --filter=app hello bun run x\n", "workspace-ok bun run x\n"],
+    ])("%s puts the flags in front of the name", async (start, rewritten, output) => {
       const { dir, stdout, stderr, exitCode } = await runStart(start);
       using _ = dir;
       expect(stderr.split("\n")[0] + "\n").toBe(rewritten);
-      expect(stdout).toContain("workspace-ok\n");
+      expect(stdout).toContain(output);
       expect(exitCode).toBe(0);
+    });
+
+    it("does not move `-s` in a quoted string", async () => {
+      const { dir, stdout, exitCode } = await runStart('echo "npm run -s print && npm run -s print"');
+      using _ = dir;
+      expect({ stdout, exitCode }).toEqual({ stdout: "bun run -s print && bun run -s print\n", exitCode: 0 });
     });
 
     it.each(["run --filter app start", "run --parallel start", "run --sequential start", "run --shell=bun start"])(

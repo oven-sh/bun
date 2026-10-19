@@ -1019,7 +1019,8 @@ impl Checker<'_, '_> {
         if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
             return;
         }
-        if self.referenced_properties.insert(symbol) {
+        // A discarded task may have been stopped (`stop_if_discarded`), and the recheck of its file gets here again.
+        if !self.task.is_lost() && self.referenced_properties.insert(symbol) {
             self.p.properties_referenced_before.lock().insert(symbol);
         }
     }

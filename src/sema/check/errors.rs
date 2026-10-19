@@ -233,7 +233,7 @@ impl Checker<'_, '_> {
         self.refused_expressions.clear();
         self.side_effect_free.get_mut().clear();
         self.context_sensitive_functions.get_mut().clear();
-        self.work_trap = WORK_TRAP_DISARMED;
+        self.work_trap = self.idle_work_trap();
         self.limits_in_earlier_files += self.limits + self.instantiation_limit_hits;
         self.limits = 0;
         // tsgo never resets it, so each of its checkers reports nothing that needs the type of a

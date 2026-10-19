@@ -1054,6 +1054,9 @@ bun_core::declare_scope!(SemaCycles, hidden);
 /// The value of `Checker::work_trap` that `Checker::work` never reaches.
 const WORK_TRAP_DISARMED: u64 = u64::MAX;
 
+/// See `Checker::stop_if_discarded`. The number changes how long a check takes, never its result.
+const QUERIES_BETWEEN_LOOKS: u64 = 256;
+
 /// See `Checker::begin_scope`.
 #[must_use]
 struct Scope {
@@ -2032,7 +2035,7 @@ pub struct Checker<'p, 's> {
     /// forgets, as `FlowMemo::types_with_facts` does: it begins one more for the same question, which computes nothing new.
     scopes_begun: u64,
     /// `enter` takes its slow path when `work` has this value: the next value of `work` while `refused_expressions` is not empty,
-    /// `WORK_TRAP_DISARMED` otherwise.
+    /// `idle_work_trap` otherwise.
     work_trap: u64,
     /// The file, start and end of the expressions in which a query was refused for lack of native stack. See `refuse_for_lack_of_stack`.
     refused_expressions: Vec<(FileId, u32, u32)>,
@@ -2208,12 +2211,45 @@ impl<'p, 's> Checker<'p, 's> {
             self.deepest_stack.set(used);
         }
         if used > self.stack_limit {
+            if self.is_stopped() {
+                return true;
+            }
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
             self.note_gave_up("the native stack");
             return true;
         }
         false
+    }
+
+    /// True after `stop_if_discarded` has stopped the task.
+    #[inline]
+    fn is_stopped(&self) -> bool {
+        self.stack_limit == 0
+    }
+
+    /// Stops the task if it's discarded. A discarded task used to finish its statement first, and one statement can take
+    /// most of a second. Nothing that it computes is kept: it writes to no shared table (`Task::lose`), and it never commits
+    /// again. From now on `is_stack_low` returns true, so every query is refused and the statement unwinds the way it
+    /// does when the stack runs out. The file doesn't count as incomplete: the driver rechecks it.
+    ///
+    /// `enter` calls this every `QUERIES_BETWEEN_LOOKS` queries.
+    fn stop_if_discarded(&mut self) {
+        if !self.task.commits() || self.is_stopped() {
+            return;
+        }
+        self.lose_what_has_missed_a_ring();
+        if self.task.is_lost() {
+            self.stack_limit = 0;
+        }
+    }
+
+    /// Returns the value of `work_trap` while no query is refused.
+    pub(super) fn idle_work_trap(&self) -> u64 {
+        match self.task.commits() && !self.task.is_believed() {
+            true => self.work + QUERIES_BETWEEN_LOOKS,
+            false => WORK_TRAP_DISARMED,
+        }
     }
 
     /// `is_stack_low` for the printer. It elides what is nested too deeply, which loses no error, so the check has not run out of
@@ -2311,6 +2347,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[cold]
     #[inline(never)]
     fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
+        self.stop_if_discarded();
         if self.unwind_to != usize::MAX {
             if self.work == self.unwind_work && self.stack.len() > self.unwind_to {
                 self.unwind_work = self.work + 1;
@@ -2333,7 +2370,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Every later `enter` takes this path.
         self.work_trap = if self.refused_expressions.is_empty() && !is_low {
-            WORK_TRAP_DISARMED
+            self.idle_work_trap()
         } else {
             self.work + 1
         };
@@ -2462,7 +2499,7 @@ impl<'p, 's> Checker<'p, 's> {
         let restart_with = self.restart_with.take().filter(|_| is_unwinding);
         self.unwind_to = usize::MAX;
         self.work_trap = if self.refused_expressions.is_empty() {
-            WORK_TRAP_DISARMED
+            self.idle_work_trap()
         } else {
             self.work + 1
         };

@@ -186,7 +186,10 @@ impl Checker<'_, '_> {
                 rank,
                 start: d.start,
             });
-            (self.p.emit_helper_errors_of_earlier_files.lock()).extend(reported);
+            // As for `properties_referenced_before`.
+            if !self.task.is_lost() {
+                (self.p.emit_helper_errors_of_earlier_files.lock()).extend(reported);
+            }
         }
     }
 

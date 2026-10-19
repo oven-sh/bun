@@ -721,6 +721,7 @@ fn is_like_new(task: &mut Task) -> bool {
         cycle_since_rest,
         logged_at_cycles,
         logged_at_rest,
+        compared_with_cycles,
         committed,
         waits,
         at_once,
@@ -748,6 +749,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && cycle_since_rest.get().is_none()
         && logged_at_cycles.borrow().is_empty()
         && logged_at_rest.get() == [0; 2]
+        && compared_with_cycles.get() == [0; 2]
         && committed.get() == [0; 2]
         && waits.get() == [Duration::ZERO; 3]
         && at_once.get() == 0
@@ -818,6 +820,7 @@ fn a_task_that_ended_is_like_a_new_task() {
     check(&|task| task.cycle_since_rest.set(Some([0; 2])));
     check(&|task| task.logged_at_cycles.borrow_mut().push([[0; 2]; 2]));
     check(&|task| task.logged_at_rest.set([0, 1]));
+    check(&|task| task.compared_with_cycles.set([0, 1]));
     check(&|task| task.count_committed(0, 1));
     check(&|task| task.count_waits([Duration::ZERO, Duration::ZERO, Duration::from_nanos(1)]));
     check(&|task| task.at_once.set(1));

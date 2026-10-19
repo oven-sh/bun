@@ -814,8 +814,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             return Err(InvalidPnpmLockfile);
         }
 
-        // Pruned lockfiles (`turbo prune`) can leave peer-suffixed keys in `packages:`. pnpm reads
-        // the key without a suffix, so that entry is the package wherever it stands.
+        // Pruned lockfiles (`turbo prune`) can leave peer-suffixed keys in `packages:`.
         let stripped = remove_suffix(key_str);
         let is_exact = stripped.len() == key_str.len();
         let entry = packages_by_key.get_or_put(stripped)?;

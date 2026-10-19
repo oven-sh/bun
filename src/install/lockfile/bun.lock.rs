@@ -99,9 +99,7 @@ pub enum Version {
     /// - a git `.bun-tag` must be a safe path/checkout component (the same
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
-    /// - the entries of one package name one tarball: the same integrity, or
-    ///   else the same tarball URL and git ref (below v2 this is a warning
-    ///   and the first entry is used)
+    /// - the entries of one package have no `PinConflict` (below v2 that is a warning, and the first entry is used)
     V2 = 2,
 
     /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
@@ -213,15 +211,16 @@ impl Stringifier {
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_metas: &[Meta] = pkgs.items_meta();
 
-        // bun.lockb does not fold, so it can hold two packages of one name and resolution. Their
-        // entries fold when bun.lock is read, and from v2 on they have to name one tarball.
+        // bun.lockb does not fold: two of its packages of one name and resolution are one package once bun.lock is read.
         let is_written = |id: PackageID| resolution_buf.contains(&id);
         let conflicts = |a: PackageID, b: PackageID| {
             let (a_res, b_res) = (&pkg_resolutions[a as usize], &pkg_resolutions[b as usize]);
-            let mut a_integrity = pkg_metas[a as usize].integrity;
-            let b_integrity = &pkg_metas[b as usize].integrity;
+            let (a_integrity, b_integrity) = (
+                &pkg_metas[a as usize].integrity,
+                &pkg_metas[b as usize].integrity,
+            );
             a_res.eql(b_res, buf, buf)
-                && BinaryLockfile::pin_conflict(a_res, &mut a_integrity, b_res, b_integrity, buf)
+                && BinaryLockfile::pin_conflict(a_res, a_integrity, b_res, b_integrity, buf)
                     .is_some()
                 && is_written(a)
                 && is_written(b)

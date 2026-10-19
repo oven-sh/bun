@@ -2581,19 +2581,15 @@ impl Lockfile {
         })
     }
 
-    /// What `entry` disagrees on with the package that an earlier entry of its name and resolution
-    /// appended. `Resolution::eql` leaves out the npm tarball URL and, beside a commit, the git
-    /// ref. Entries with one hash are one tarball, whatever URL each of them names. When nothing
-    /// conflicts, `kept_integrity` takes the hash of `entry` if it has none or a weaker algorithm's.
+    /// What two entries with `eql` resolutions disagree on: `eql` leaves out the npm tarball URL and, beside a commit, the git ref.
     pub(crate) fn pin_conflict(
         kept: &Resolution,
-        kept_integrity: &mut crate::Integrity,
+        kept_integrity: &crate::Integrity,
         entry: &Resolution,
         entry_integrity: &crate::Integrity,
         buf: &[u8],
     ) -> Option<PinConflict> {
-        let has_integrity = entry_integrity.tag.is_supported();
-        if has_integrity {
+        if entry_integrity.tag.is_supported() {
             if kept_integrity == entry_integrity {
                 return None;
             }
@@ -2601,7 +2597,7 @@ impl Lockfile {
                 return Some(PinConflict::Integrity);
             }
         }
-        let conflict = match entry.tag {
+        match entry.tag {
             ResolutionTag::Npm => {
                 (!entry.npm().url.eql(kept.npm().url, buf, buf)).then_some(PinConflict::TarballUrl)
             }
@@ -2614,19 +2610,10 @@ impl Lockfile {
                 (!same_ref).then_some(PinConflict::GitRef)
             }
             _ => None,
-        };
-        if conflict.is_none()
-            && has_integrity
-            && (!kept_integrity.tag.is_supported() || entry_integrity.tag.0 > kept_integrity.tag.0)
-        {
-            *kept_integrity = *entry_integrity;
         }
-        conflict
     }
 
-    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`. An entry of a package
-    /// that is already there folds into it: the caller decides what a `PinConflict` between the
-    /// two means.
+    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
     pub(crate) fn append_package_dedupe(
         &mut self,
         pkg: &mut Package,
@@ -2640,13 +2627,19 @@ impl Lockfile {
                 .find(|&&id| pkg.resolution.eql(&resolutions[id as usize], buf, buf))
             {
                 let kept = resolutions[existing_id as usize];
-                let conflict = Self::pin_conflict(
-                    &kept,
-                    &mut self.packages.items_meta_mut()[existing_id as usize].integrity,
-                    &pkg.resolution,
-                    &pkg.meta.integrity,
-                    buf,
-                );
+                let kept_integrity =
+                    &mut self.packages.items_meta_mut()[existing_id as usize].integrity;
+                let integrity = &pkg.meta.integrity;
+                let conflict =
+                    Self::pin_conflict(&kept, kept_integrity, &pkg.resolution, integrity, buf);
+                // Entries that agree are one tarball: the package keeps the strongest hash that any of them has.
+                if conflict.is_none()
+                    && integrity.tag.is_supported()
+                    && (!kept_integrity.tag.is_supported()
+                        || integrity.tag.0 > kept_integrity.tag.0)
+                {
+                    *kept_integrity = *integrity;
+                }
                 pkg.meta.id = existing_id;
                 return Ok((existing_id, conflict));
             }

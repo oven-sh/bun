@@ -403,7 +403,7 @@ private:
             }
             /* Same for bytes that arrive behind a finished response that closes the
              * connection while its body is still draining (onWritable closes then). */
-            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) [[unlikely]] {
+            if (httpResponseData->template isDrainingBeforeClose<IsNodeHttp>() && !httpResponseData->isConnectRequest) [[unlikely]] {
                 us_socket_unref(s);
                 return s;
             }
@@ -445,7 +445,7 @@ private:
              * has not drained stays open, and the parser holds this request's
              * framing, so later bytes must not reach it. Before the timeout reset,
              * so that socket still times out. */
-            if (httpResponseData->isDrainingBeforeClose()) [[unlikely]] {
+            if (httpResponseData->template isDrainingBeforeClose<IsNodeHttp>()) [[unlikely]] {
                 /* node:http stops without the latch: llhttp does not see the response, so a later read is no parse error. */
                 if constexpr (!IsNodeHttp) {
                     httpResponseData->sawConnectionClose = true;

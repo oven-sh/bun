@@ -265,9 +265,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * buffered bytes drain. Nothing received from here on is a request this
      * connection may answer (RFC 9112 9.6), and after a close-delimited body the
      * peer would read whatever we send as more body. The same holds while the FIN
-     * of a node:http socket.end() waits for those bytes. */
+     * of a node:http socket.end() waits for those bytes. Only node:http sets that
+     * bit, so the Bun.serve instantiation keeps its single compare. */
+    template <bool IsNodeHttp>
     bool isDrainingBeforeClose() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) && !(state & HTTP_RESPONSE_PENDING);
+        if constexpr (IsNodeHttp) {
+            return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_SHUTDOWN_AFTER_DRAIN)) && !(state & HTTP_RESPONSE_PENDING);
+        }
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
     }
 
     /* node:http: the body of the request in flight is still arriving. A tunnel has no body: its parser state only marks the head as read. */

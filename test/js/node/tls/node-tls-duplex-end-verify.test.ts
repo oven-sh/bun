@@ -2,6 +2,7 @@
 // Runs under node:test, so the same file runs on node (`node --test`) and on bun (`bun test`).
 import assert from "node:assert";
 import fs from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import { Duplex, duplexPair } from "node:stream";
 import { test } from "node:test";
@@ -1439,6 +1440,42 @@ for (const rejectUnauthorized of [true, false]) {
     }
   });
 }
+
+// A write that waits for the handshake fails with it, and the socket reports the handshake: the close of the handle
+// alone has no cause to give either of them.
+async function failsWithItsWaitingWrite(client: tls.TLSSocket) {
+  const written = new Promise(resolve => client.write("early", resolve));
+  // Node reads the end of the stream first.
+  const events = (await eventsUntilClose(client)).filter(event => event !== "end");
+  assert.deepStrictEqual(events, DISCONNECTED_IN_HANDSHAKE.slice(1));
+  assert.ok((await written) instanceof Error);
+}
+
+test("over a Duplex: a close_notify in answer to the ClientHello is the error of a socket with a write that waits for the handshake", async () => {
+  const transport = transportWithPeer(answerFirstFlight(transport => transport.push(CLOSE_NOTIFY)));
+  await failsWithItsWaitingWrite(tls.connect({ socket: transport, servername: "agent1", rejectUnauthorized: false }));
+});
+
+test("on a TCP socket: a FIN in answer to the ClientHello is the error of a socket with a write that waits for the handshake", async () => {
+  const peer = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.end());
+  }) as Listening<net.Server>;
+  await new Promise<void>(listening => peer.listen(0, "127.0.0.1", listening));
+  try {
+    const address = { port: peer.address().port, host: "127.0.0.1", rejectUnauthorized: false };
+    await failsWithItsWaitingWrite(tls.connect(address));
+
+    // The request of node:https is such a write.
+    const request = https.request(address);
+    const failed = new Promise<NodeJS.ErrnoException>(resolve => request.once("error", resolve));
+    request.end();
+    const err = await failed;
+    assert.strictEqual(`error ${err.code}: ${err.message}`, DISCONNECTED_IN_HANDSHAKE[1]);
+  } finally {
+    peer.close();
+  }
+});
 
 test("on a TCP socket: a close_notify in place of the client's last TLS 1.2 flight is a 'tlsClientError'", async () => {
   const server = tls.createServer({ key, cert, maxVersion: "TLSv1.2" });

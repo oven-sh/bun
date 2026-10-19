@@ -2212,7 +2212,10 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
 /* `fin_ends_handshake` is 0 only from the writable event, which the read path
  * re-enters while a handshake is in progress: the socket keeps reading after
  * our FIN or close_notify, and the peer's next flight can still complete that
- * handshake. For every other caller a half-closed socket's handshake is over. */
+ * handshake. For every other caller a half-closed socket's handshake is over.
+ * Not when ssl_raw_write sent that FIN for a send that the kernel refused: that
+ * handshake stays pending, and us_internal_ssl_close or ssl_close_after_rejected_send
+ * reports the reset, unless what the peer had sent fails it first. */
 static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
   /* The OpenSSL error queue is per-thread and another socket's failure (a
    * server and a client commonly share this thread) may have left entries on
@@ -2234,7 +2237,7 @@ static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) 
 
   if (us_socket_is_closed(s) || s->ssl_fatal_error ||
       (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) ||
-      (fin_ends_handshake && us_internal_ssl_is_shut_down(s))) {
+      (fin_ends_handshake && UNLIKELY(us_internal_ssl_is_shut_down(s)) && !s->ssl_send_rejected)) {
     ssl_trigger_handshake(s, 0);
     return;
   }

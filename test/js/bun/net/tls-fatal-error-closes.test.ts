@@ -7,12 +7,14 @@
 //
 // Two engines: openssl.c drives a socket, SSLWrapper drives TLS over a Duplex, a CONNECT tunnel or a named pipe.
 import { RedisClient, SQL } from "bun";
+import { socketFaultInjection as socketFault } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
-import { tls as cert } from "harness";
+import { bunEnv, bunExe, tls as cert, isLinux, isWindows, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import https from "node:https";
 import net from "node:net";
+import { join } from "node:path";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
@@ -483,3 +485,47 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("a bad record on an established %
     });
   });
 });
+
+// A handshake whose ClientHello the kernel refuses to send is over as well. The engine ends the write side at once and
+// closes the connection from the next writable event of the socket, with the reset as the reason of the failed
+// handshake. An owner that gets to the engine before that event used to hear of a handshake that failed for no reason,
+// which is the report of a handshake that the owner's own shutdown() ended: `handshake(false, null)`, a WebSocket
+// error with no cause, and an Error with no message for the command of a RedisClient.
+//
+// The fixture has the rows. A peer that closes the connection as it accepts it makes the kernel refuse a real send().
+// The fault rule makes any send() fail.
+const refusals = [
+  ...(isLinux ? ["peer-closed"] : []),
+  ...(socketFault.available() && !isWindows ? ["ECONNRESET", "EPIPE"] : []),
+];
+test.skipIf(refusals.length === 0).each(refusals)(
+  "a ClientHello that the kernel refuses to send is a reset for its owner (%s)",
+  async refusal => {
+    using dir = tempDir("tls-refused", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-refused-client-hello-fixture.ts"), refusal],
+      env: { ...bunEnv, TLS_FIXTURE_UNIX_PATH: join(String(dir), "peer.sock") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const reset = "Client network socket disconnected before secure TLS connection was established";
+    expect({ rows: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      rows: [
+        "Bun.connect, no write, then nothing: handshake(false, ECONNRESET) close(ECONNRESET)",
+        "Bun.connect, no write, then terminate: handshake(false, ECONNRESET) close()",
+        "Bun.connect, no write, then end: handshake(false, ECONNRESET) close()",
+        "Bun.connect, write in open, then nothing: handshake(false, ECONNRESET) close(ECONNRESET)",
+        "Bun.connect, write in open, then terminate: handshake(false, ECONNRESET) close()",
+        "Bun.connect, write in open, then end: handshake(false, ECONNRESET) close()",
+        ...(refusal === "peer-closed"
+          ? []
+          : [`WebSocket: error(ECONNRESET, WebSocket connection to 'URL' failed: TLS handshake failed: ${reset})`]),
+        `node:tls, write before connect: write callback(ERR_SOCKET_CLOSED) error(ECONNRESET, ${reset})`,
+        `RedisClient: close() onclose(ERR_REDIS_CONNECTION_CLOSED) set rejected(ECONNRESET, ${reset})`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

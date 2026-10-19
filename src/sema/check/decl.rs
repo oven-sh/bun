@@ -38,6 +38,24 @@ enum Read {
     Only(usize),
 }
 
+impl Read {
+    /// True if the result has the parameter at `index`.
+    fn has(self, index: usize) -> bool {
+        match self {
+            Read::First(_) => true,
+            Read::Only(only) => index == only,
+        }
+    }
+
+    /// True if the caller reads the type of the parameter at `index`, which isn't a rest parameter.
+    fn asks_for(self, index: usize) -> bool {
+        match self {
+            Read::First(count) => index < count,
+            Read::Only(only) => index == only,
+        }
+    }
+}
+
 /// The enclosing type parameters that a piece of type syntax may reference.
 #[derive(Default)]
 struct Mentioned {
@@ -4677,7 +4695,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// tsgo has assigned `links.resolvedType` of the first `count` of `params`, the parameters of
-    /// `sig`. Recorded for those about which `is_parameter_type_resolved` is asked: `sig` is an
+    /// `sig`. Recorded for those about which `keep_closed_types_of_target` asks: `sig` is an
     /// instantiation that has type parameters, and its mapper has left no type variable in a type
     /// that is declared with some.
     pub(super) fn note_parameter_types_resolved(
@@ -4752,22 +4770,6 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return None,
         };
         Some(self.types().intern_sig(target))
-    }
-
-    /// `links.resolvedType != nil` for the parameter of `sig` at `index`, when `instantiateSymbol`
-    /// gets to it. `params`: the parameters of `sig`. `hasCorrectArity` comes before
-    /// `getSignatureInstantiation`, and `getMinArgumentCount` asks for the type of a rest parameter
-    /// and of the required parameters, from the last one down to one that does not accept `void`.
-    fn is_parameter_type_resolved(
-        &mut self,
-        sig: SigId,
-        params: &[SigParam],
-        index: usize,
-    ) -> bool {
-        self.resolved_parameter_types.contains(&(sig, index as u32))
-            || params[index].rest
-            || index < Self::min_args(params)
-                && index + 1 >= self.min_argument_count_asked(Some(sig), params)
     }
 
     /// `kept` is the stored result of `sig_params(sig)`.
@@ -4864,11 +4866,12 @@ impl<'p, 's> Checker<'p, 's> {
         read: Read,
     ) -> Vec<SigParam, &'s Arena> {
         let hir = self.hir(file);
-        let (indices, count) = match read {
-            Read::First(count) => (0..hir[func].params.len(), count),
-            Read::Only(index) => (index..index + 1, 0),
+        let len = hir[func].params.len();
+        let capacity = match read {
+            Read::First(_) => len,
+            Read::Only(_) => 1,
         };
-        let mut out = Vec::with_capacity_in(indices.len(), self.arena);
+        let mut out = Vec::with_capacity_in(capacity, self.arena);
         // `getImmediatelyInvokedFunctionExpression`: the argument count of the call of an
         // immediately invoked function expression.
         let bound = self.bound(file);
@@ -4877,89 +4880,236 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|call| hir[call].args.len());
         // `getMinArgumentCount`: it has no minimum argument count.
         let is_untyped_in_js = self.is_untyped_signature_in_js_file(file, func);
-        // `m.MapsThisOnly()`
-        let maps_this_only = matches!(
-            self.types().mapping(mapper),
-            &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
-        );
-        // `instantiateSignatureEx` instantiates the parameters of `signature.target`.
-        let target = target.map(|target| (target, self.sig_params_with_first(target, count)));
-        for i in indices {
-            let node = hir[func].params.at(i);
-            let param = &hir[node];
-            let name = match hir[param.pat].kind {
-                PatKind::Ident(name) => name,
-                _ => Atom::NONE,
-            };
-            // `paramSymbol.ValueDeclaration`
-            let p = self.declaration_of_parameter_symbol(file, func, node);
-            let value_declaration = &hir[p];
-            // TypeScript resolves the type of a parameter when there is an argument to check
-            // against it.
-            // The one caller of an immediately invoked function expression has `actual` of them.
-            let has_argument = actual.is_some_and(|actual| i < actual);
-            if !has_argument {
-                self.eager.push(self.stack.len());
+        let maps_this_only = self.maps_this_only(mapper);
+        // All of them, if there is a target.
+        let mut declared: SmallVec<[SigParam; 8]> = SmallVec::new();
+        for i in 0..len {
+            if !read.has(i) && target.is_none() {
+                continue;
             }
-            let declared = self.type_of_param(file, p);
-            if !has_argument {
-                self.eager.pop();
+            let parameter = self.declared_parameter(file, func, i, actual, is_untyped_in_js);
+            if read.has(i) {
+                let is_asked = read.asks_for(i);
+                let ty = self.instantiate_parameter(&parameter, mapper, maps_this_only, is_asked);
+                out.push(SigParam { ty, ..parameter });
             }
-            // `isOptionalParameter`: it has no other caller, so a parameter that gets no argument
-            // is optional.
-            let is_omitted = actual.is_some_and(|actual| i >= actual)
-                && param.ty.is_none()
-                && !param.flags.contains(Flags::REST);
-            let optional =
-                param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_omitted;
-            // `getTypeOfParameter`: for callers, an optional parameter also accepts `undefined`.
-            let declared = if value_declaration.flags.contains(Flags::OPTIONAL)
-                || value_declaration.default.is_some()
-                || is_omitted
-            {
-                self.optional(declared)
-            } else {
-                declared
-            };
-            // `instantiateSymbol` returns a symbol that `isThisless` itself, whatever its type is:
-            // `isThislessVariableLikeDeclaration`.
-            let is_kept = maps_this_only
-                && match value_declaration.ty.is_some() {
-                    true => super::errors_unused::is_thisless_type(hir, value_declaration.ty),
-                    false => value_declaration.default.is_none(),
-                };
-            let mut ty = if is_kept {
-                declared
-            } else if i < count
-                || matches!(read, Read::Only(_))
-                || param.flags.contains(Flags::REST)
-            {
-                self.instantiate(declared, mapper)
-            } else {
-                self.instantiation_if_known(declared, mapper)
-                    .unwrap_or(TypeId::UNRESOLVED)
-            };
-            // And one whose type is resolved and cannot contain type variables. Of any other it
-            // goes back to the declared parameter and combines the mappers.
-            if let Some((target, of_target)) = &target
-                && let Some(open) = of_target.get(i).map(|open| open.ty)
-                && open != ty
-                && open != TypeId::UNRESOLVED
-                && !self.could_contain_type_variables(open)
-                && self.is_parameter_type_resolved(*target, of_target, i)
-            {
-                ty = open;
+            if target.is_some() {
+                declared.push(parameter);
             }
-            out.push(SigParam {
-                name,
-                ty,
-                optional: optional || is_untyped_in_js && !param.flags.contains(Flags::REST),
-                rest: param.flags.contains(Flags::REST),
-                is_required_rest: false,
-                declaration: Some((file, p)),
-            });
+        }
+        if let Some(target) = target {
+            self.keep_closed_types_of_target(target, &declared, read, &mut out);
         }
         out
+    }
+
+    /// `m.MapsThisOnly()`
+    fn maps_this_only(&self, mapper: MapperId) -> bool {
+        matches!(
+            self.types().mapping(mapper),
+            &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
+        )
+    }
+
+    /// Returns the parameter of `func` at `i` with its declared type. `actual` and `is_untyped_in_js`: see
+    /// `sig_params_of_declaration`.
+    fn declared_parameter(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        i: usize,
+        actual: Option<usize>,
+        is_untyped_in_js: bool,
+    ) -> SigParam {
+        let hir = self.hir(file);
+        let node = hir[func].params.at(i);
+        let param = &hir[node];
+        let name = match hir[param.pat].kind {
+            PatKind::Ident(name) => name,
+            _ => Atom::NONE,
+        };
+        // `paramSymbol.ValueDeclaration`
+        let p = self.declaration_of_parameter_symbol(file, func, node);
+        let value_declaration = &hir[p];
+        // TypeScript resolves the type of a parameter when there is an argument to check
+        // against it.
+        // The one caller of an immediately invoked function expression has `actual` of them.
+        let has_argument = actual.is_some_and(|actual| i < actual);
+        if !has_argument {
+            self.eager.push(self.stack.len());
+        }
+        let declared = self.type_of_param(file, p);
+        if !has_argument {
+            self.eager.pop();
+        }
+        // `isOptionalParameter`: it has no other caller, so a parameter that gets no argument
+        // is optional.
+        let is_omitted = actual.is_some_and(|actual| i >= actual)
+            && param.ty.is_none()
+            && !param.flags.contains(Flags::REST);
+        let optional =
+            param.flags.contains(Flags::OPTIONAL) || param.default.is_some() || is_omitted;
+        // `getTypeOfParameter`: for callers, an optional parameter also accepts `undefined`.
+        let declared = if value_declaration.flags.contains(Flags::OPTIONAL)
+            || value_declaration.default.is_some()
+            || is_omitted
+        {
+            self.optional(declared)
+        } else {
+            declared
+        };
+        SigParam {
+            name,
+            ty: declared,
+            optional: optional || is_untyped_in_js && !param.flags.contains(Flags::REST),
+            rest: param.flags.contains(Flags::REST),
+            is_required_rest: false,
+            declaration: Some((file, p)),
+        }
+    }
+
+    /// Returns the type of `declared`, a result of `declared_parameter`, in a signature that has `mapper`.
+    /// `UNRESOLVED` if it isn't known and neither `is_asked` nor a rest parameter.
+    fn instantiate_parameter(
+        &mut self,
+        declared: &SigParam,
+        mapper: MapperId,
+        maps_this_only: bool,
+        is_asked: bool,
+    ) -> TypeId {
+        // `instantiateSymbol` returns a symbol that `isThisless` itself, whatever its type is:
+        // `isThislessVariableLikeDeclaration`.
+        if maps_this_only && let Some((file, p)) = declared.declaration {
+            let hir = self.hir(file);
+            let value_declaration = &hir[p];
+            let is_kept = match value_declaration.ty.is_some() {
+                true => super::errors_unused::is_thisless_type(hir, value_declaration.ty),
+                false => value_declaration.default.is_none(),
+            };
+            if is_kept {
+                return declared.ty;
+            }
+        }
+        if is_asked || declared.rest {
+            return self.instantiate(declared.ty, mapper);
+        }
+        self.instantiation_if_known(declared.ty, mapper)
+            .unwrap_or(TypeId::UNRESOLVED)
+    }
+
+    /// True if `could_contain_type_variables(instantiate(ty, mapper))` is known to hold without instantiating. False if
+    /// it doesn't hold, or if finding out takes the instantiation or more than `levels` levels of `ty`.
+    fn stays_open(&self, ty: TypeId, mapper: MapperId, levels: u32) -> bool {
+        let types = self.types();
+        match types.instantiation_class(ty) {
+            InstantiationClass::Unchanged => return false,
+            InstantiationClass::TypeParameter => {
+                return self.could_contain_type_variables(types.map(mapper, ty).unwrap_or(ty));
+            }
+            InstantiationClass::Other if levels == 0 => return false,
+            InstantiationClass::Other => {}
+        }
+        match self.data(ty) {
+            // The instantiation has the instantiated type arguments.
+            TypeData::Ref {
+                args: TypeArguments::Given(arguments),
+                ..
+            } => (arguments.iter()).any(|&argument| self.stays_open(argument, mapper, levels - 1)),
+            TypeData::Fns { mapper: own, .. } => {
+                (types.mapping(*own).iter()).any(|pair| self.stays_open(pair.1, mapper, levels - 1))
+            }
+            TypeData::Anon {
+                origin,
+                mapper: own,
+            } if !matches!(origin, Origin::Mapped(..)) => {
+                (types.mapping(*own).iter()).any(|pair| self.stays_open(pair.1, mapper, levels - 1))
+            }
+            // Only `any` and `unknown` take a type variable or an object type out of a union.
+            TypeData::Union(members) => {
+                let stays_below_the_top = |&member: &TypeId| match types.instantiation_class(member)
+                {
+                    InstantiationClass::Unchanged => true,
+                    InstantiationClass::TypeParameter => {
+                        let actual = types.map(mapper, member).unwrap_or(member);
+                        self.flags(actual) & (tf::ANY | tf::UNKNOWN) == 0
+                    }
+                    InstantiationClass::Other => types.is_plain_object(member),
+                };
+                members.iter().all(stays_below_the_top)
+                    && (members.iter()).any(|&member| self.stays_open(member, mapper, levels - 1))
+            }
+            _ => false,
+        }
+    }
+
+    /// `instantiateSignatureEx` instantiates the parameters of `signature.target`, and `instantiateSymbol` returns one
+    /// of them itself if its type is resolved (`links.resolvedType != nil`) and cannot contain type variables. Of any
+    /// other it goes back to the declared parameter and combines the mappers, which is what `out` has.
+    ///
+    /// `hasCorrectArity` comes before `getSignatureInstantiation`, and `getMinArgumentCount` asks for the type of a rest
+    /// parameter and of the required parameters, from the last one down to one that does not accept `void`.
+    ///
+    /// `declared`: all parameters, from `declared_parameter`. Only the types that decide are instantiated for `target`.
+    fn keep_closed_types_of_target(
+        &mut self,
+        target: SigId,
+        declared: &[SigParam],
+        read: Read,
+        out: &mut [SigParam],
+    ) {
+        let (SigData::Decl { mapper, .. } | SigData::Construct { mapper, .. }) =
+            *self.types().sig(target)
+        else {
+            return;
+        };
+        let maps_this_only = self.maps_this_only(mapper);
+        let required = Self::min_args(declared);
+        let mut asked = None;
+        for (at, own) in out.iter_mut().enumerate() {
+            let i = match read {
+                Read::First(_) => at,
+                Read::Only(only) => only,
+            };
+            // Every mapper leaves it as it is, or this one leaves a type variable in it.
+            if self.types().instantiation_class(declared[i].ty) == InstantiationClass::Unchanged
+                || self.stays_open(declared[i].ty, mapper, 3)
+            {
+                continue;
+            }
+            let mut is_resolved =
+                declared[i].rest || (self.resolved_parameter_types).contains(&(target, i as u32));
+            if !is_resolved && i < required {
+                let asked = *asked.get_or_insert_with(|| {
+                    let of_target: SmallVec<[SigParam; 8]> = (declared.iter().enumerate())
+                        .map(|(index, parameter)| SigParam {
+                            ty: match parameter.rest || index + 1 == required {
+                                true => self.instantiate_parameter(
+                                    parameter,
+                                    mapper,
+                                    maps_this_only,
+                                    true,
+                                ),
+                                false => TypeId::UNRESOLVED,
+                            },
+                            ..*parameter
+                        })
+                        .collect();
+                    self.min_argument_count_asked(Some(target), &of_target)
+                });
+                is_resolved = i + 1 >= asked;
+            }
+            if !is_resolved {
+                continue;
+            }
+            let is_asked = read.asks_for(i);
+            let open = self.instantiate_parameter(&declared[i], mapper, maps_this_only, is_asked);
+            if open != own.ty
+                && open != TypeId::UNRESOLVED
+                && !self.could_contain_type_variables(open)
+            {
+                own.ty = open;
+            }
+        }
     }
 
     /// `getReturnTypeOfSignature`

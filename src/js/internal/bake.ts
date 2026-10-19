@@ -28,6 +28,7 @@ Bun v${Bun.version} (bake)
 
 Usage:
   bun bake [options]
+  bun bake build [--outdir <dir>]   Builds the app into dist/. Run it with: bun dist/server.js
 
 Serves the app in the working directory, with hot reloading:
 
@@ -89,7 +90,8 @@ function routeOfPage(file: string): string {
   return route;
 }
 
-async function loadPages(pagesDir: string): Promise<Page[]> {
+/** The `.html` pages in `pagesDir`, with their URLs, without loading them. */
+function findHtmlPages(pagesDir: string): Omit<Page, "bundle">[] {
   let files: string[];
   try {
     files = [...new Bun.Glob("**/*.html").scanSync({ cwd: pagesDir, onlyFiles: true, followSymlinks: true })];
@@ -99,7 +101,7 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
   }
   files.sort((a, b) => a.localeCompare(b));
 
-  const pages: Page[] = [];
+  const pages: Omit<Page, "bundle">[] = [];
   const fileOfRoute: Record<string, string> = { __proto__: null } as any;
   for (const relative of files) {
     const file = path.join(pagesDir, relative);
@@ -119,8 +121,14 @@ async function loadPages(pagesDir: string): Promise<Page[]> {
     fileOfRoute[route] = file;
     // Encoded as browsers send it: non-ASCII characters and spaces are, `&` and `=` are not.
     const url = new URL("/" + route, "http://localhost").pathname;
-    pages.push({ route, url, file, bundle: (await import(file)).default });
+    pages.push({ route, url, file });
   }
+  return pages;
+}
+
+async function loadPages(pagesDir: string): Promise<Page[]> {
+  const pages = findHtmlPages(pagesDir) as Page[];
+  for (const page of pages) page.bundle = (await import(page.file)).default;
   return pages;
 }
 
@@ -146,7 +154,7 @@ type Config = {
 };
 
 /** The plugins of `bake.config.ts`: its default export is a config, or a function that returns one. */
-async function loadConfig(cwd: string): Promise<Config> {
+async function loadConfig(cwd: string, mode: "development" | "production" = "development"): Promise<Config> {
   let file: string;
   try {
     file = Bun.resolveSync("./bake.config", cwd);
@@ -160,7 +168,7 @@ async function loadConfig(cwd: string): Promise<Config> {
   const key = file + "\0" + Bun.hash(await Bun.file(file).bytes());
   // A promise, a function, or a function that returns a promise: each gives the config.
   let config = await (await import(file)).default;
-  if ($isCallable(config)) config = await config({ mode: "development" });
+  if ($isCallable(config)) config = await config({ mode });
   if (config === null || typeof config !== "object") {
     throw new BakeError(`"${name}" must have a default export: a config object, or a function that returns one.`, true);
   }
@@ -511,6 +519,24 @@ async function start() {
 
 /** `bun bake`. Prints a `BakeError` as one line, then exits or waits for a change. */
 async function main() {
+  if (argv[1] === "build") {
+    try {
+      await require("internal/bake_build").build({
+        BakeError,
+        display,
+        loadConfig,
+        findHtmlPages,
+        componentPages,
+        checkPageClashes,
+        checkReactForPages,
+      });
+    } catch (error) {
+      if (!(error instanceof BakeError)) throw error;
+      console.error(`error: ${error.message}`);
+      process.exit(1);
+    }
+    return;
+  }
   try {
     await start();
   } catch (error) {

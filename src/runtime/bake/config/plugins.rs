@@ -95,3 +95,112 @@ pub(crate) fn check_framework(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     result?;
     Ok(JSValue::UNDEFINED)
 }
+
+/// `pagesFramework()`: the default framework of `.tsx` and `.jsx` pages, as the `framework` object
+/// that a plugin would give, with its built-in modules as `code`. `bun bake build` builds it as it
+/// builds the framework of a plugin.
+pub(crate) fn pages_framework(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    use crate::bake::BuiltInModule;
+    let vm = global.bun_vm().as_mut();
+    let framework = crate::bake::Framework::bake_pages(&mut vm.transpiler.resolver);
+    let strings = |list: &[bun_core::Utf8Bytes<'static>]| {
+        JSValue::create_array_from_iter(global, list.iter(), |item| {
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, item)
+        })
+    };
+    let routers = JSValue::create_array_from_iter(
+        global,
+        framework.file_system_router_types.iter(),
+        |fsr| {
+            let router = JSValue::create_empty_object(global, 9);
+            let string = |bytes: &[u8]| bun_jsc::bun_string_jsc::create_utf8_for_js(global, bytes);
+            router.put(global, b"root", string(&fsr.root)?);
+            router.put(global, b"prefix", string(&fsr.prefix)?);
+            if let Some(style) = fsr.style.name() {
+                router.put(global, b"style", string(style)?);
+            }
+            router.put(global, b"serverEntryPoint", string(&fsr.entry_server)?);
+            if let Some(client) = &fsr.entry_client {
+                router.put(global, b"clientEntryPoint", string(client)?);
+            }
+            router.put(global, b"extensions", strings(&fsr.extensions)?);
+            router.put(global, b"ignoreDirs", strings(&fsr.ignore_dirs)?);
+            router.put(
+                global,
+                b"ignoreUnderscores",
+                JSValue::from(fsr.ignore_underscores),
+            );
+            router.put(global, b"layouts", JSValue::from(fsr.allow_layouts));
+            if fsr.client_pages {
+                let client_pages = JSValue::create_empty_object(global, 1);
+                client_pages.put(global, b"serverExports", strings(&fsr.server_exports)?);
+                router.put(global, b"clientPages", client_pages);
+            }
+            Ok(router)
+        },
+    )?;
+    let modules = JSValue::create_array_from_iter(
+        global,
+        framework
+            .built_in_modules
+            .keys()
+            .iter()
+            .zip(framework.built_in_modules.values()),
+        |(name, module)| {
+            let entry = JSValue::create_empty_object(global, 2);
+            entry.put(
+                global,
+                b"import",
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, name)?,
+            );
+            let (key, value): (&[u8], &[u8]) = match module {
+                BuiltInModule::Import(path) => (b"path", path),
+                BuiltInModule::Code(code) => (b"code", code),
+            };
+            entry.put(
+                global,
+                key,
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, value)?,
+            );
+            Ok(entry)
+        },
+    )?;
+    let result = JSValue::create_empty_object(global, 2);
+    result.put(global, b"fileSystemRouterTypes", routers);
+    result.put(global, b"builtInModules", modules);
+    Ok(result)
+}
+
+/// `serveStaticEnv()`: the `env` of `[serve.static]` in bunfig.toml, as the `env` option of
+/// `Bun.build()`: `"inline"`, `"disable"`, a prefix such as `"PUBLIC_*"`, or `undefined` when not set.
+/// The dev server inlines the same variables into the browser code.
+pub(crate) fn serve_static_env(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_options_types::schema::api::DotEnvBehavior;
+    let o = &global
+        .bun_vm()
+        .as_mut()
+        .transpiler
+        .options
+        .transform_options;
+    let value: Vec<u8> = match o.serve_env_behavior {
+        DotEnvBehavior::prefix => {
+            let mut prefix = o.serve_env_prefix.as_deref().unwrap_or_default().to_vec();
+            prefix.push(b'*');
+            prefix
+        }
+        DotEnvBehavior::load_all => b"inline".to_vec(),
+        DotEnvBehavior::disable => b"disable".to_vec(),
+        _ => return Ok(JSValue::UNDEFINED),
+    };
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global, &value)
+}
+
+/// `productionServerCode()`: the source of `src/runtime/bake/production/server.ts`, which `bun bake
+/// build` bundles into `dist/server.js`.
+pub(crate) fn production_server_code(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let code = bun_core::runtime_embed_file!(Src, "runtime/bake/production/server.ts");
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global, code.as_bytes())
+}

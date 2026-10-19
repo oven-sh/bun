@@ -28,6 +28,16 @@ bun_core::comptime_string_map! {
 const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
+    /// The string that selects this style in a framework object. A function has none.
+    pub(crate) fn name(self) -> Option<&'static [u8]> {
+        match self {
+            Style::NextjsPages => Some(b"nextjs-pages"),
+            Style::NextjsAppUi => Some(b"nextjs-app-ui"),
+            Style::NextjsAppRoutes => Some(b"nextjs-app-routes"),
+            Style::JavascriptDefined => None,
+        }
+    }
+
     pub(crate) fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = value.to_bun_string(global)?;

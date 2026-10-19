@@ -1507,3 +1507,108 @@ test.concurrent("bun bake reports two pages with the same URL pattern, and keeps
   expect(output.text).toContain("app/pages/[b].tsx");
   expect(proc.exitCode).toBeNull();
 });
+
+/** Runs `bun dist/server.js` in `dir` on a free port, and returns its URL. */
+async function startBuild(dir: string) {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "dist/server.js"],
+    env: { ...env, PORT: "0" },
+    cwd: dir,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of proc.stdout) {
+    text += decoder.decode(chunk, { stream: true });
+    const url = text.match(/Listening on (http:\/\/\S+)/)?.[1];
+    if (url) return { proc, url };
+  }
+  throw new Error("dist/server.js exited: " + text + (await proc.stderr.text()));
+}
+
+test.concurrent("bun bake build builds the pages and app/server.ts into dist/server.js", async () => {
+  using dir = tempDir("bake-build", {
+    "app/secret.ts": `export const secret = "server-only-secret";`,
+    "app/pages/_layout.tsx": `
+      import "./site.css";
+      export default function Layout({ children }) { return <main className="layout">{children}</main>; }
+    `,
+    "app/pages/site.css": `.layout { color: rebeccapurple; }`,
+    "app/pages/index.tsx": `export default function Home() { return <h1>{"home"}</h1>; }`,
+    "app/pages/counter.tsx": `
+      import { secret } from "../secret.ts";
+      let renders = 0;
+      export const getServerSideProps = async () => ({ props: { renders: ++renders, length: secret.length } });
+      export default function Counter({ renders, length }) { return <p>{"ssr " + renders + " " + length}</p>; }
+    `,
+    "app/pages/blog/[slug].tsx": `
+      let renders = 0;
+      export const getStaticPaths = async () => ({ paths: [{ params: { slug: "a" } }], fallback: "blocking" });
+      export const getStaticProps = async ({ params }) => ({ props: { slug: params.slug, renders: ++renders } });
+      export default function Post({ slug, renders }) { return <p>{"post " + slug + " " + renders}</p>; }
+    `,
+    "app/server.ts": `export default { routes: { "/api/ping": () => new Response("pong") } };`,
+    "public/robots.txt": "from-public",
+  });
+  linkReact(String(dir));
+
+  await using build = spawnBake(String(dir), ["bake", "build"]);
+  const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildErr).toBe("");
+  expect(buildOut).toContain("Built 3 pages into dist/");
+  expect(buildExit).toBe(0);
+
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+  const text = async (path: string) => (await get(url, path)).replaceAll("<!-- -->", "");
+
+  const home = await text("/");
+  expect(home).toContain(`<main class="layout"><h1>home</h1></main>`);
+  const [, script] = home.match(/<script type="module" src="(\/_bun\/[^"]+\.js)"/) ?? [];
+  const [, style] = home.match(/<link rel="stylesheet" href="(\/_bun\/[^"]+\.css)"/) ?? [];
+  expect(await get(url, style)).toContain(".layout{color:#639}");
+
+  // getServerSideProps renders on each request; getStaticProps once per path, also for a path
+  // that getStaticPaths did not list (fallback: "blocking").
+  expect(await text("/counter")).toContain("<p>ssr 1 18</p>");
+  expect(await text("/counter")).toContain("<p>ssr 2 18</p>");
+  expect(await text("/blog/a")).toContain("<p>post a 1</p>");
+  expect(await text("/blog/a")).toContain("<p>post a 1</p>");
+  expect(await text("/blog/b")).toContain("<p>post b 2</p>");
+
+  expect(await get(url, "/api/ping")).toBe("200 pong");
+  expect(await get(url, "/robots.txt")).toBe("200 from-public");
+
+  // The browser code of a page has no data function and none of the server-only imports.
+  const counterScript = (await text("/counter")).match(/<script type="module" src="(\/_bun\/[^"]+\.js)"/)![1];
+  const browserCode = (await get(url, script)) + (await get(url, counterScript));
+  expect(browserCode).not.toContain("server-only-secret");
+  expect(browserCode).not.toContain("getServerSideProps");
+});
+
+test.concurrent("bun bake build keeps a page with revalidate for that many seconds", async () => {
+  using dir = tempDir("bake-build-revalidate", {
+    "app/pages/index.tsx": `
+      let renders = 0;
+      export const getStaticProps = async () => ({ props: { renders: ++renders }, revalidate: 1 });
+      export default function Home({ renders }) { return <p>{"render " + renders}</p>; }
+    `,
+  });
+  linkReact(String(dir));
+
+  await using build = spawnBake(String(dir), ["bake", "build"]);
+  expect(await build.exited).toBe(0);
+  const { proc, url } = await startBuild(String(dir));
+  await using _ = proc;
+  const text = async () => (await get(url, "/")).replaceAll("<!-- -->", "");
+
+  expect(await text()).toContain("render 1");
+  expect(await text()).toContain("render 1");
+  // After a second the kept page is sent once more while it renders again, then the new one.
+  const start = Date.now();
+  let latest = "";
+  while (!latest.includes("render 2") && Date.now() - start < 10_000) latest = await text();
+  expect(latest).toContain("render 2");
+});

@@ -83,17 +83,38 @@ impl JSFrameworkRouter {
         ))
         .into();
 
-        let types: Box<[Type]> = Box::new([Type {
-            abs_root: abs_root.clone(),
-            ignore_underscores: false,
-            extensions: Box::new([
+        // The options of a router of a framework (`fileSystemRouterTypes[n]`) that pick its files.
+        let strings = |name: &str| -> JsResult<Option<Box<[Box<[u8]>]>>> {
+            let Some(list) = opts.get(global, name)? else {
+                return Ok(None);
+            };
+            let mut out = Vec::new();
+            let mut it = list.array_iterator(global)?;
+            while let Some(item) = it.next()? {
+                out.push(Box::<[u8]>::from(item.to_utf8(global)?.slice()));
+            }
+            Ok(Some(out.into_boxed_slice()))
+        };
+        let extensions = strings("extensions")?.unwrap_or_else(|| {
+            Box::new([
                 b".tsx".as_slice().into(),
                 b".ts".as_slice().into(),
                 b".jsx".as_slice().into(),
                 b".js".as_slice().into(),
-            ]),
+            ])
+        });
+        let ignore_dirs = strings("ignoreDirs")?.unwrap_or_else(|| Type::default().ignore_dirs);
+        let ignore_underscores = opts
+            .get_boolean_strict(global, "ignoreUnderscores")?
+            .unwrap_or(false);
+        let allow_layouts = opts.get_boolean_strict(global, "layouts")?.unwrap_or(true);
+        let types: Box<[Type]> = Box::new([Type {
+            abs_root: abs_root.clone(),
+            ignore_underscores,
+            ignore_dirs,
+            extensions,
             style,
-            allow_layouts: true,
+            allow_layouts,
             client_pages: false,
             // Unused by JSFrameworkRouter
             client_file: None,

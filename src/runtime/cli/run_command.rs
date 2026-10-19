@@ -2802,6 +2802,27 @@ impl RunCommand {
             if no_clear_screen {
                 ctx.debug.no_clear_screen = true;
             }
+            // `bun bake build` builds once: none of the reloading below.
+            if ctx
+                .passthrough
+                .first()
+                .is_some_and(|arg| &arg[..] == b"build")
+            {
+                if check
+                    || ctx.debug.watch_flag
+                    || ctx.debug.hot_reload != cli::command::HotReload::None
+                {
+                    pretty_errorln!(
+                        "<r><red>error<r>: \"bun bake build\" builds once. Remove --check, --watch and --hot."
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+                if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
+                    Self::boot_failed_exit(ctx, b"bake", &err);
+                }
+                return Ok(true);
+            }
             if ctx.debug.watch_flag {
                 pretty_errorln!(
                     "<r><red>error<r>: \"bun bake\" reloads app/server.ts on its own. Remove --watch."

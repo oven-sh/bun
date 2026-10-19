@@ -42,8 +42,20 @@ function sameParams(a: Params, b: Params) {
 
 const notFound = () => new Response("Not Found", { status: 404, headers: { "content-type": "text/plain" } });
 
-/** The props of the page, or the response that replaces it. */
-async function loadData(page: PageModule, params: Params, request: Request): Promise<object | Response> {
+/**
+ * How long a server may keep the page and send it again, as `Cache-Control` (as Next.js sets it): a
+ * page with `getServerSideProps` never, one with `revalidate: N` for N seconds, and any other for a
+ * year. `bun bake build`'s server keeps it in memory; `bun bake` renders every request.
+ */
+const keepForever = "s-maxage=31536000, stale-while-revalidate";
+const keepNever = "private, no-cache, no-store, max-age=0, must-revalidate";
+
+/** The props of the page and its `Cache-Control`, or the response that replaces it. */
+async function loadData(
+  page: PageModule,
+  params: Params,
+  request: Request,
+): Promise<{ props: object; cacheControl: string } | Response> {
   let result: DataResult;
   let name: string;
   if (typeof page.getServerSideProps === "function") {
@@ -60,10 +72,16 @@ async function loadData(page: PageModule, params: Params, request: Request): Pro
     name = "getStaticProps";
     result = await page.getStaticProps({ params });
   } else {
-    return {};
+    return { props: {}, cacheControl: keepForever };
   }
   if (result && typeof result === "object") {
-    if ("props" in result) return result.props;
+    if ("props" in result) {
+      let cacheControl = keepForever;
+      if (name === "getServerSideProps") cacheControl = keepNever;
+      else if (typeof result.revalidate === "number")
+        cacheControl = `s-maxage=${result.revalidate}, stale-while-revalidate`;
+      return { props: result.props, cacheControl };
+    }
     if ("notFound" in result && result.notFound) return notFound();
     if ("redirect" in result && result.redirect) {
       const { destination, permanent } = result.redirect;
@@ -81,8 +99,9 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
     throw new TypeError("A page must have a default export: the React component of the page.");
   }
   const params = meta.params ?? {};
-  const props = await loadData(page, params, request);
-  if (props instanceof Response) return props;
+  const data = await loadData(page, params, request);
+  if (data instanceof Response) return data;
+  const { props, cacheControl } = data;
 
   let element = <Page params={params} {...props} />;
   // The first layout is the inner-most.
@@ -95,7 +114,11 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
   }
 
   // `client.tsx` reads these to hydrate the same tree.
-  const data = { params, props, hasData: page.getServerSideProps !== undefined || page.getStaticProps !== undefined };
+  const hydration = {
+    params,
+    props,
+    hasData: page.getServerSideProps !== undefined || page.getStaticProps !== undefined,
+  };
   const stream = await renderToReadableStream(
     <html>
       <head>
@@ -111,7 +134,7 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
         <script
           id="__bun_bake_data"
           type="application/json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(data).replaceAll("<", "\\u003c") }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(hydration).replaceAll("<", "\\u003c") }}
         />
       </head>
       <body>
@@ -121,5 +144,7 @@ export async function render(request: Request, meta: RouteMetadata): Promise<Res
     // React writes these with the shell, ahead of any pending Suspense boundary.
     { signal: request.signal, bootstrapModules: [...meta.modules] },
   );
-  return new Response(stream, { headers: { "content-type": "text/html; charset=utf-8" } });
+  return new Response(stream, {
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": cacheControl },
+  });
 }

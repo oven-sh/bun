@@ -56,6 +56,21 @@ impl<'a> JsThread<'a> {
     pub fn context(&self) -> &'a crate::ScriptExecutionContext {
         self.context
     }
+
+    /// Calls the callback that a job's completion reports to. The call goes through the VM's
+    /// own global, whichever global the job was scheduled from: that is where a throw in
+    /// `callback` is reported as uncaught.
+    #[inline(never)]
+    pub fn run_callback(&self, callback: crate::JSValue, arguments: &[crate::JSValue]) {
+        let vm = self.vm();
+        vm.event_loop_mut().run_callback(
+            crate::ContextId::NONE,
+            callback,
+            vm.global(),
+            crate::JSValue::UNDEFINED,
+            arguments,
+        );
+    }
 }
 
 impl JSGlobalObject {
@@ -218,7 +233,9 @@ pub trait JobContext: Sized + 'static {
     fn run(off: &mut Self::OffThread, done: Completion<Self>) -> Option<Completion<Self>>;
 
     /// JS thread, VM still running script: the completion. Both halves are
-    /// handed over to use and drop normally.
+    /// handed over to use and drop normally. `cx.global()` is the global the
+    /// job was scheduled from, so what `then` builds belongs to the realm of
+    /// the native function that was called.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
 
     /// JS thread, the VM's stop phase (possibly more than once): make a job
@@ -312,6 +329,56 @@ impl JobList {
     }
 }
 
+/// The global a job was scheduled from, when that is not its VM's own: a
+/// `ShadowRealm`'s, or one that `bun test --isolate` has retired. Only the
+/// VM's own global lives as long as the VM, so this keeps the global
+/// GC-protected.
+pub(crate) struct Realm(crate::GlobalRef);
+
+impl Realm {
+    fn new(global: &JSGlobalObject) -> Self {
+        global.to_js_value().protect();
+        Self(crate::GlobalRef::new(global))
+    }
+}
+
+impl Drop for Realm {
+    fn drop(&mut self) {
+        self.0.to_js_value().unprotect();
+    }
+}
+
+/// The [`Realm`]s of a VM's live jobs, by job (JS thread only). Empty in a VM
+/// that schedules every job from its own global.
+#[derive(Default)]
+pub(crate) struct JobRealms(bun_collections::ArrayHashMap<NonNull<JobHeader>, Realm>);
+
+impl JobRealms {
+    /// `job` was scheduled from `global`, which is not its VM's own.
+    #[cold]
+    #[inline(never)]
+    fn record(job: *mut JobHeader, global: &JSGlobalObject) {
+        let job = NonNull::new(job).expect("job");
+        global
+            .bun_vm()
+            .job_realms
+            .with_mut(|realms| bun_core::handle_oom(realms.0.put(job, Realm::new(global))));
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.0.count() == 0
+    }
+
+    /// The realm of `job`, which is about to end: the caller holds it until the job is gone.
+    #[cold]
+    #[inline(never)]
+    fn take(&mut self, job: *mut JobHeader) -> Option<Realm> {
+        let job = NonNull::new(job)?;
+        self.0.fetch_swap_remove(&job).map(|(_, realm)| realm)
+    }
+}
+
 /// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
@@ -346,6 +413,7 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
+        let (global, vm) = (cx.global(), cx.vm());
         let mut keep_alive = KeepAlive::default();
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
@@ -373,6 +441,9 @@ impl<C: JobContext> Job<C> {
             off,
             js,
         }));
+        if !core::ptr::eq(global, vm.global) {
+            JobRealms::record(job.cast::<JobHeader>(), global);
+        }
         // SAFETY: live until completed/released on this thread; the pool owns it now.
         unsafe {
             if C::CANCELLABLE {
@@ -476,6 +547,42 @@ impl<C: JobContext> Drop for Completion<C> {
 pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
     let vm = global.bun_vm();
+    if !vm.job_realms.get().is_empty() {
+        // SAFETY: fn contract.
+        return unsafe { complete_in_its_realm(header, vm, global) };
+    }
+    // SAFETY: fn contract.
+    unsafe { complete_in(header, vm, global) }
+}
+
+/// [`complete_erased`] where some live job of `vm` has a [`Realm`].
+///
+/// # Safety
+/// As [`complete_erased`], with `header` the job's.
+#[cold]
+#[inline(never)]
+unsafe fn complete_in_its_realm(
+    header: *mut JobHeader,
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+) -> JsResult<()> {
+    // Held until `then` has returned, or until the fence has released the job.
+    let realm = vm.job_realms.with_mut(|realms| realms.take(header));
+    let global = realm.as_ref().map_or(global, |realm| &*realm.0);
+    // SAFETY: fn contract.
+    unsafe { complete_in(header, vm, global) }
+}
+
+/// Runs the completion of the job behind `header` with `global` for its `cx.global()`.
+///
+/// # Safety
+/// As [`complete_erased`], with `header` the job's.
+#[inline(always)]
+unsafe fn complete_in(
+    header: *mut JobHeader,
+    vm: &VirtualMachine,
+    global: &JSGlobalObject,
+) -> JsResult<()> {
     // One scheduled by a file `bun test --isolate` has since retired: the swap was that file's
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
@@ -499,6 +606,12 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
 /// As [`complete_erased`].
 pub unsafe fn release_unrun_erased(ptr: *mut ()) {
     let header = ptr.cast::<JobHeader>();
+    let realms = &VirtualMachine::get().job_realms;
+    // Held until the job is gone.
+    let _realm = match realms.get().is_empty() {
+        true => None,
+        false => realms.with_mut(|realms| realms.take(header)),
+    };
     // SAFETY: as above.
     unsafe { ((*header).release_unrun)(header) }
 }

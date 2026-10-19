@@ -362,6 +362,8 @@ pub struct VirtualMachine {
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
+    /// The globals of the live pool jobs that were not scheduled from [`global`](Self::global).
+    pub(crate) job_realms: crate::JsCell<crate::job::JobRealms>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
@@ -3286,6 +3288,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).child_workers).write(Vec::new());
+            addr_of_mut!((*vm).job_realms).write(Default::default());
             addr_of_mut!((*vm).handle)
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
@@ -5618,6 +5621,9 @@ impl VirtualMachine {
         // `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));
+
+        // Empty after a teardown: every job ended in its wait, while the heap was alive.
+        drop(self.job_realms.take());
 
         // A graph context whose release was still queued: teardown stopped what it owned.
         for (_, context) in core::mem::take(&mut self.graph_contexts).iter() {

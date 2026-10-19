@@ -149,13 +149,7 @@ macro_rules! extern_crypto_job {
                     // JS; free the ctx first, then invoke.
                     drop(this);
                     produced?;
-                    global.bun_vm().event_loop_mut().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        callback.get(),
-                        global,
-                        JSValue::UNDEFINED,
-                        args.as_slice(),
-                    );
+                    cx.run_callback(callback.get(), args.as_slice());
                     Ok(())
                 }
             }
@@ -286,13 +280,7 @@ pub(crate) mod random {
                     }
                 }
             }
-            global.bun_vm().event_loop_mut().run_callback(
-                bun_event_loop::ContextId::NONE,
-                js.callback.get(),
-                global,
-                JSValue::UNDEFINED,
-                &[JSValue::NULL, js.value.value()],
-            );
+            cx.run_callback(js.callback.get(), &[JSValue::NULL, js.value.value()]);
             Ok(())
         }
     }
@@ -1108,7 +1096,6 @@ mod _impl {
 
         fn then(this: Self, js: ScryptJs, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
-            let event_loop = global.bun_vm().event_loop_mut();
             let callback = js.callback.get();
 
             if let Some(err) = this.err {
@@ -1134,23 +1121,11 @@ mod _impl {
                         )
                         .to_js()
                 };
-                event_loop.run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    JSValue::UNDEFINED,
-                    &[exception],
-                );
+                cx.run_callback(callback, &[exception]);
                 return Ok(());
             }
 
-            event_loop.run_callback(
-                bun_event_loop::ContextId::NONE,
-                callback,
-                global,
-                JSValue::UNDEFINED,
-                &[JSValue::UNDEFINED, js.buf.get()],
-            );
+            cx.run_callback(callback, &[JSValue::UNDEFINED, js.buf.get()]);
             Ok(())
         }
     }
@@ -1488,39 +1463,20 @@ mod _impl {
 
         fn then(mut this: Self, js: Argon2Js, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
-            let event_loop = global.bun_vm().event_loop_mut();
             let callback = js.callback.get();
             if this.failed {
                 let exception =
                     global.create_error_instance(format_args!("Argon2 derivation failed"));
-                event_loop.run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    JSValue::UNDEFINED,
-                    &[exception],
-                );
+                cx.run_callback(callback, &[exception]);
                 return Ok(());
             }
             let output = core::mem::take(&mut this.output);
             // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
             match JSValue::create_buffer(global, output.leak()) {
-                Ok(buf) => event_loop.run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    JSValue::UNDEFINED,
-                    &[JSValue::UNDEFINED, buf],
-                ),
+                Ok(buf) => cx.run_callback(callback, &[JSValue::UNDEFINED, buf]),
                 // The result could not be built (allocation failure): that is
                 // this derivation's error.
-                Err(err) => event_loop.run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global,
-                    JSValue::UNDEFINED,
-                    &[global.take_error(err)],
-                ),
+                Err(err) => cx.run_callback(callback, &[global.take_error(err)]),
             }
             Ok(())
         }

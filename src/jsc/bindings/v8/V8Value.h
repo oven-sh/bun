@@ -25,6 +25,7 @@ public:
     BUN_EXPORT bool IsBigInt() const;
     BUN_EXPORT bool IsUint8Array() const;
     BUN_EXPORT Maybe<uint32_t> Uint32Value(Local<Context> context) const;
+    BUN_EXPORT Maybe<int32_t> Int32Value(Local<Context> context) const;
 
     BUN_EXPORT MaybeLocal<String> ToString(Local<Context> context) const;
     BUN_EXPORT MaybeLocal<Integer> ToInteger(Local<Context> context) const;

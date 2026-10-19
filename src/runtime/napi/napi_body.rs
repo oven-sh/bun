@@ -3549,6 +3549,20 @@ mod v8_api {
         pub(super) fn _ZN4node16EmitAsyncDestroyEPN2v87IsolateENS_13async_contextE() -> *mut c_void;
         pub(super) fn _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_8FunctionEEEiPNS3_INS0_5ValueEEENS_13async_contextE()
         -> *mut c_void;
+        pub(super) fn _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEEPKciPNS3_INS0_5ValueEEENS_13async_contextE()
+        -> *mut c_void;
+        pub(super) fn _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_6StringEEEiPNS3_INS0_5ValueEEENS_13async_contextE()
+        -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_6ObjectEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer4DataEN2v85LocalINS1_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer4DataEN2v85LocalINS1_6ObjectEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer6LengthEN2v85LocalINS1_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer6LengthEN2v85LocalINS1_6ObjectEEE() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer4CopyEPN2v87IsolateEPKcm() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer3NewEPN2v87IsolateEm() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer3NewEPN2v87IsolateEPcmPFvS4_PvES5_() -> *mut c_void;
+        pub(super) fn _ZN4node6Buffer3NewEPN2v87IsolateEPcm() -> *mut c_void;
         pub(super) fn _ZN2v84base9TimeTicks3NowEv() -> *mut c_void;
         pub(super) fn _ZN2v86Number3NewEPNS_7IsolateEd() -> *mut c_void;
         pub(super) fn _ZNK2v86Number5ValueEv() -> *mut c_void;
@@ -3686,6 +3700,7 @@ mod v8_api {
         pub(super) fn _ZNK2v88Function19GetScriptLineNumberEv() -> *mut c_void;
         pub(super) fn _ZNK2v88Function21GetScriptColumnNumberEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZNK2v85Int325ValueEv() -> *mut c_void;
         pub(super) fn _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv() -> *mut c_void;
         pub(super) fn _ZNK2v812ScriptOrigin12ResourceNameEv() -> *mut c_void;
@@ -3821,6 +3836,30 @@ mod v8_api {
         pub(super) fn node_EmitAsyncDestroy() -> *mut c_void;
         #[link_name = "?MakeCallback@node@@YA?AV?$MaybeLocal@VValue@v8@@@v8@@PEAVIsolate@3@V?$Local@VObject@v8@@@3@V?$Local@VFunction@v8@@@3@HPEAV?$Local@VValue@v8@@@3@Uasync_context@1@@Z"]
         pub(super) fn node_MakeCallback() -> *mut c_void;
+        #[link_name = "?MakeCallback@node@@YA?AV?$MaybeLocal@VValue@v8@@@v8@@PEAVIsolate@3@V?$Local@VObject@v8@@@3@PEBDHPEAV?$Local@VValue@v8@@@3@Uasync_context@1@@Z"]
+        pub(super) fn node_MakeCallback_method() -> *mut c_void;
+        #[link_name = "?MakeCallback@node@@YA?AV?$MaybeLocal@VValue@v8@@@v8@@PEAVIsolate@3@V?$Local@VObject@v8@@@3@V?$Local@VString@v8@@@3@HPEAV?$Local@VValue@v8@@@3@Uasync_context@1@@Z"]
+        pub(super) fn node_MakeCallback_symbol() -> *mut c_void;
+        #[link_name = "?HasInstance@Buffer@node@@YA_NV?$Local@VValue@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_HasInstance_Value() -> *mut c_void;
+        #[link_name = "?HasInstance@Buffer@node@@YA_NV?$Local@VObject@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_HasInstance_Object() -> *mut c_void;
+        #[link_name = "?Data@Buffer@node@@YAPEADV?$Local@VValue@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Data_Value() -> *mut c_void;
+        #[link_name = "?Data@Buffer@node@@YAPEADV?$Local@VObject@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Data_Object() -> *mut c_void;
+        #[link_name = "?Length@Buffer@node@@YA_KV?$Local@VValue@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Length_Value() -> *mut c_void;
+        #[link_name = "?Length@Buffer@node@@YA_KV?$Local@VObject@v8@@@v8@@@Z"]
+        pub(super) fn node_Buffer_Length_Object() -> *mut c_void;
+        #[link_name = "?Copy@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEBD_K@Z"]
+        pub(super) fn node_Buffer_Copy() -> *mut c_void;
+        #[link_name = "?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@_K@Z"]
+        pub(super) fn node_Buffer_New_length() -> *mut c_void;
+        #[link_name = "?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEAD_KP6AX1PEAX@Z3@Z"]
+        pub(super) fn node_Buffer_New_callback() -> *mut c_void;
+        #[link_name = "?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEAD_K@Z"]
+        pub(super) fn node_Buffer_New_data() -> *mut c_void;
         #[link_name = "?Now@TimeTicks@base@v8@@SA?AV123@XZ"]
         pub(super) fn v8_base_TimeTicks_Now() -> *mut c_void;
         #[link_name = "?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z"]
@@ -4039,6 +4078,8 @@ mod v8_api {
         pub(super) fn v8_Function_GetScriptColumnNumber() -> *mut c_void;
         #[link_name = "?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
         pub(super) fn v8_Value_ToInt32() -> *mut c_void;
+        #[link_name = "?Int32Value@Value@v8@@QEBA?AV?$Maybe@H@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_Int32Value() -> *mut c_void;
         #[link_name = "?Value@Int32@v8@@QEBAHXZ"]
         pub(super) fn v8_Int32_Value() -> *mut c_void;
         #[link_name = "?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ"]
@@ -5064,6 +5105,18 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZN4node13EmitAsyncInitEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_6StringEEEd,
             _ZN4node16EmitAsyncDestroyEPN2v87IsolateENS_13async_contextE,
             _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_8FunctionEEEiPNS3_INS0_5ValueEEENS_13async_contextE,
+            _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEEPKciPNS3_INS0_5ValueEEENS_13async_contextE,
+            _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_6StringEEEiPNS3_INS0_5ValueEEENS_13async_contextE,
+            _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_5ValueEEE,
+            _ZN4node6Buffer11HasInstanceEN2v85LocalINS1_6ObjectEEE,
+            _ZN4node6Buffer4DataEN2v85LocalINS1_5ValueEEE,
+            _ZN4node6Buffer4DataEN2v85LocalINS1_6ObjectEEE,
+            _ZN4node6Buffer6LengthEN2v85LocalINS1_5ValueEEE,
+            _ZN4node6Buffer6LengthEN2v85LocalINS1_6ObjectEEE,
+            _ZN4node6Buffer4CopyEPN2v87IsolateEPKcm,
+            _ZN4node6Buffer3NewEPN2v87IsolateEm,
+            _ZN4node6Buffer3NewEPN2v87IsolateEPcmPFvS4_PvES5_,
+            _ZN4node6Buffer3NewEPN2v87IsolateEPcm,
             _ZN2v84base9TimeTicks3NowEv,
             _ZN2v86Number3NewEPNS_7IsolateEd, _ZNK2v86Number5ValueEv,
             _ZN2v86Number12NewFromInt32EPNS_7IsolateEi,
@@ -5159,6 +5212,7 @@ pub(crate) fn fix_dead_code_elimination() {
             _ZNK2v88Function19GetScriptLineNumberEv,
             _ZNK2v88Function21GetScriptColumnNumberEv,
             _ZNK2v85Value7ToInt32ENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value10Int32ValueENS_5LocalINS_7ContextEEE,
             _ZNK2v85Int325ValueEv,
             _ZNK2v812ScriptOrigin24VerifyHostDefinedOptionsEv,
             _ZNK2v812ScriptOrigin12ResourceNameEv,
@@ -5244,6 +5298,18 @@ pub(crate) fn fix_dead_code_elimination() {
             node_EmitAsyncInit,
             node_EmitAsyncDestroy,
             node_MakeCallback,
+            node_MakeCallback_method,
+            node_MakeCallback_symbol,
+            node_Buffer_HasInstance_Value,
+            node_Buffer_HasInstance_Object,
+            node_Buffer_Data_Value,
+            node_Buffer_Data_Object,
+            node_Buffer_Length_Value,
+            node_Buffer_Length_Object,
+            node_Buffer_Copy,
+            node_Buffer_New_length,
+            node_Buffer_New_callback,
+            node_Buffer_New_data,
             v8_base_TimeTicks_Now,
             v8_Number_New,
             v8_Number_Value,
@@ -5353,6 +5419,7 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Function_GetScriptLineNumber,
             v8_Function_GetScriptColumnNumber,
             v8_Value_ToInt32,
+            v8_Value_Int32Value,
             v8_Int32_Value,
             v8_ScriptOrigin_VerifyHostDefinedOptions,
             v8_ScriptOrigin_ResourceName,

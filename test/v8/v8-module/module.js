@@ -72,6 +72,67 @@ module.exports = debugMode => {
         } catch (e) {
           console.log("threw:", e.message);
         }
+        try {
+          console.log("Int32Value:", nativeModule.perform_int32_value(value));
+        } catch (e) {
+          console.log("Int32Value threw:", e.message);
+        }
+      }
+    },
+
+    test_node_buffer() {
+      const buffers = nativeModule.create_node_buffers();
+      for (let i = 0; i < 4; i++) {
+        const buffer = buffers[i];
+        console.log(Buffer.isBuffer(buffer), buffer.length, buffer.toString());
+      }
+      const cases = [
+        ["Buffer", Buffer.from("hi")],
+        ["Uint8Array", new Uint8Array([1, 2, 3])],
+        ["subarray", new Uint8Array([1, 2, 3, 4]).subarray(1, 3)],
+        ["Uint16Array", new Uint16Array([0x0102])],
+        ["DataView", new DataView(new Uint8Array([5, 6, 7]).buffer, 1)],
+        ["empty", Buffer.alloc(0)],
+        ["ArrayBuffer", new ArrayBuffer(2)],
+        ["string", "str"],
+        ["number", 1],
+        ["object", {}],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        nativeModule.inspect_node_buffer(value);
+      }
+    },
+
+    // Bun only: the free callback runs once the Buffers are collected.
+    test_node_buffer_free_callback() {
+      nativeModule.create_node_buffers_with_free_callback();
+      Bun.gc(true);
+      console.log("freed:", nativeModule.get_node_buffer_free_calls() > 0);
+    },
+
+    test_node_make_callback_by_name() {
+      const target = {
+        double(n) {
+          return n * 2;
+        },
+        isTarget() {
+          return this === target;
+        },
+        notAFunction: 42,
+        throws() {
+          throw new Error("method threw");
+        },
+      };
+      for (const name of ["double", "isTarget", "missing", "notAFunction", "throws"]) {
+        for (const cString of [false, true]) {
+          console.log(`====== ${name}${cString ? " (const char*)" : ""}`);
+          try {
+            console.log("result:", nativeModule.make_callback_by_name(target, name, cString));
+          } catch (e) {
+            console.log("threw:", e.message);
+          }
+        }
       }
     },
 

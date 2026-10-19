@@ -48,6 +48,38 @@ BUN_EXPORT v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
     v8::Local<v8::Value>* argv,
     async_context asyncContext);
 
+BUN_EXPORT v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
+    v8::Local<v8::Object> recv,
+    const char* method,
+    int argc,
+    v8::Local<v8::Value>* argv,
+    async_context asyncContext);
+
+BUN_EXPORT v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
+    v8::Local<v8::Object> recv,
+    v8::Local<v8::String> symbol,
+    int argc,
+    v8::Local<v8::Value>* argv,
+    async_context asyncContext);
+
+namespace Buffer {
+
+typedef void (*FreeCallback)(char* data, void* hint);
+
+BUN_EXPORT bool HasInstance(v8::Local<v8::Value> val);
+BUN_EXPORT bool HasInstance(v8::Local<v8::Object> val);
+BUN_EXPORT char* Data(v8::Local<v8::Value> val);
+BUN_EXPORT char* Data(v8::Local<v8::Object> val);
+BUN_EXPORT size_t Length(v8::Local<v8::Value> val);
+BUN_EXPORT size_t Length(v8::Local<v8::Object> val);
+
+BUN_EXPORT v8::MaybeLocal<v8::Object> Copy(v8::Isolate* isolate, const char* data, size_t len);
+BUN_EXPORT v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, size_t length);
+BUN_EXPORT v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, char* data, size_t length, FreeCallback callback, void* hint);
+BUN_EXPORT v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, char* data, size_t length);
+
+} // namespace Buffer
+
 typedef void (*addon_register_func)(
     v8::Local<v8::Object> exports,
     v8::Local<v8::Value> module,

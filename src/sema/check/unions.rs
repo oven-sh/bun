@@ -9,13 +9,38 @@ type DeclarationPosition = (bool, FileId, u32);
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
-/// What `add_types_to_intersection` finds out about a type if it only has to read the flags of its members.
-#[derive(Copy, Clone)]
+/// What the flags of an intersection's members say about it.
+#[derive(Copy, Clone, Default)]
 struct MembersByFlags {
-    /// The flags that the members add to `includes`.
+    /// `includes` in `addTypeToIntersection`.
     includes: u32,
-    /// The member that has one of the `tf::UNIT` flags.
+    /// The first member that has one of the `tf::UNIT` flags.
     unit: Option<TypeId>,
+}
+
+impl MembersByFlags {
+    /// `ty`, which has `flags`, as the only member. The missing type is the member `undefined`.
+    fn of(ty: TypeId, flags: u32) -> MembersByFlags {
+        let unit = match ty {
+            TypeId::MISSING => TypeId::UNDEFINED,
+            _ => ty,
+        };
+        MembersByFlags {
+            includes: flags & tf::INCLUDES_MASK,
+            unit: (flags & tf::UNIT != 0).then_some(unit),
+        }
+    }
+
+    /// Adds the members of `other`.
+    fn add(&mut self, other: MembersByFlags) {
+        // No value has two different unit types. Setting the `object` flag next to the unit flags signals that to
+        // `has_disjoint_domains`.
+        if other.unit.is_some() && other.unit != self.unit && self.includes & tf::UNIT != 0 {
+            self.includes |= tf::NON_PRIMITIVE;
+        }
+        self.includes |= other.includes;
+        self.unit = self.unit.or(other.unit);
+    }
 }
 
 /// How much `create_union` read to build its result.
@@ -1461,57 +1486,53 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `addTypesToIntersection`, `addTypeToIntersection`. Preserves the order, which matters for overloads, and only
-    /// removes duplicates. Returns `includes` plus the flags that the types add.
+    /// removes duplicates. Returns `found` plus what the types add.
     fn add_types_to_intersection(
         &mut self,
         set: &mut Flat,
-        mut includes: u32,
+        mut found: MembersByFlags,
         types: &[TypeId],
-    ) -> u32 {
+    ) -> MembersByFlags {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
-                includes = self.add_types_to_intersection(set, includes, inner);
+                found = self.add_types_to_intersection(set, found, inner);
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
             if self.is_empty_anonymous_object_type(ty) {
-                if includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
-                    includes |= tf::INCLUDES_EMPTY_OBJECT;
+                if found.includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
+                    found.includes |= tf::INCLUDES_EMPTY_OBJECT;
                     set.push(ty);
                 }
                 continue;
             }
             let flags = self.flags(ty);
+            let one = MembersByFlags::of(ty, flags);
             if flags & (tf::ANY | tf::UNKNOWN) != 0 {
                 if ty == TypeId::UNRESOLVED {
-                    includes |= tf::INCLUDES_UNRESOLVED;
+                    found.includes |= tf::INCLUDES_UNRESOLVED;
                 }
                 if self.is_error_type(ty) {
-                    includes |= tf::INCLUDES_ERROR;
+                    found.includes |= tf::INCLUDES_ERROR;
                 }
                 if ty == TypeId::WILDCARD {
-                    includes |= tf::INCLUDES_WILDCARD;
+                    found.includes |= tf::INCLUDES_WILDCARD;
                 }
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {
-                let ty = if ty == TypeId::MISSING {
-                    includes |= tf::INCLUDES_MISSING_TYPE;
-                    TypeId::UNDEFINED
-                } else {
-                    ty
-                };
-                if !set.contains(&ty) {
-                    // No value has two different unit types. Setting the `object` flag next to the unit flags signals
-                    // that to `intersection_ex`.
-                    if flags & tf::UNIT != 0 && includes & tf::UNIT != 0 {
-                        includes |= tf::NON_PRIMITIVE;
-                    }
-                    set.push(ty);
+                let member = one.unit.unwrap_or(ty);
+                if member != ty {
+                    found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
+                if !set.contains(&member) {
+                    set.push(member);
+                }
+                found.add(one);
+                continue;
             }
-            includes |= flags & tf::INCLUDES_MASK;
+            found.includes |= one.includes;
         }
-        includes
+        found
     }
 
     /// `getIntersectionTypeEx`, with an alias.
@@ -1587,7 +1608,8 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let mut set = Flat::with_capacity(types.len());
-        let includes = self.add_types_to_intersection(&mut set, 0, types);
+        let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
+        let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {
                 TypeId::SILENT_NEVER
@@ -1757,10 +1779,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(members) => &members[..],
             _ => std::slice::from_ref(&ty),
         };
-        let mut found = MembersByFlags {
-            includes: 0,
-            unit: None,
-        };
+        let mut found = MembersByFlags::default();
         for &member in members {
             let flags = self.flags(member);
             let is_read_by_flags = match self.data(member) {
@@ -1768,16 +1787,10 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::Ref { .. } | TypeData::Tuple { .. } => true,
                 _ => flags & (tf::OBJECT | tf::ANY | tf::UNKNOWN | tf::NEVER) == 0,
             };
-            if !is_read_by_flags || flags & tf::UNIT != 0 && found.unit.is_some() {
+            if !is_read_by_flags {
                 return None;
             }
-            if flags & tf::UNIT != 0 {
-                found.unit = Some(match member {
-                    TypeId::MISSING => TypeId::UNDEFINED,
-                    _ => member,
-                });
-            }
-            found.includes |= flags & tf::INCLUDES_MASK;
+            found.add(MembersByFlags::of(member, flags));
         }
         Some(found)
     }
@@ -1870,10 +1883,7 @@ impl<'p, 's> Checker<'p, 's> {
         for i in 0..size {
             let mut n = i;
             // `add_types_to_intersection` of the combination, or `None` if it takes more than the flags.
-            let mut combined = strict.then_some(MembersByFlags {
-                includes: 0,
-                unit: None,
-            });
+            let mut combined = strict.then(MembersByFlags::default);
             for j in (0..set.len()).rev() {
                 let mut chosen = 0;
                 if let TypeData::Union(alternatives) = self.data(set[j]) {
@@ -1883,14 +1893,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let start = starts.get(j).copied().unwrap_or(0);
                 let one = by_flags.get(start + chosen).copied().flatten();
-                combined = combined.zip(one).map(|(all, one)| MembersByFlags {
-                    // No value has two different unit types: see `add_types_to_intersection`.
-                    includes: match (all.unit, one.unit) {
-                        (Some(a), Some(b)) if a != b => tf::NON_PRIMITIVE,
-                        _ => 0,
-                    } | all.includes
-                        | one.includes,
-                    unit: all.unit.or(one.unit),
+                combined = combined.zip(one).map(|(mut all, one)| {
+                    all.add(one);
+                    all
                 });
             }
             if combined.is_some_and(|it| Self::has_disjoint_domains(it.includes, strict)) {

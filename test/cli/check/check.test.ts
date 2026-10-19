@@ -4293,6 +4293,73 @@ export {};
       `);
     });
 
+    test("keeps exactly the combinations of two unions' members that some value is in", async () => {
+      using dir = project({
+        "a.ts": `
+// One tuple for each member of a union, so that an error message lists the members.
+type Rows<T> = T extends unknown ? [T] : never;
+declare function rows<const A, const B>(a: A, b: B): Rows<A & B>;
+declare const enum Color { Red, Green }
+declare const tag: unique symbol;
+type Left = "a" | "b" | 1 | 2n | true | Color.Red | typeof tag | null | { x: 1 };
+type LeftOrEmpty = "b" | null | undefined | {};
+type Right = "a" | "c" | 1 | 3n | false | Color.Red | Color.Green | typeof tag | undefined | { y: 2 } | \`a\${string}\`;
+declare const left: Left, leftOrEmpty: LeftOrEmpty, right: Right;
+
+const product: never = rows(left, right);
+const swapped: never = rows(right, left);
+const withEmpty: never = rows(leftOrEmpty, right);
+const freshLiteral: never = rows("a", right);
+const freshObject: never = rows({ x: "a" }, right);
+const empty: never = rows({}, right);
+const nothing: never = rows(null, right);
+
+function generic<T, U>(
+  keys: Rows<(("a" | "b" | 1) & keyof T) & (("a" | "c" | 1) & keyof U)>,
+  nullable: Rows<(("a" & keyof T) | null | undefined) & (("a" & keyof U) | ("b" & keyof U) | null)>,
+  three: Rows<(("a" | "b") & keyof T) & (("a" | "b") & keyof U) & ("b" | { z: 3 })>,
+) {
+  const n0: never = keys;
+  const n1: never = nullable;
+  const n2: never = three;
+}
+
+function optional(o: { p?: "a" | { x: 1 } }, both: { p?: "a" | { x: 1 } } & { p: undefined }) {
+  const n0: never = rows(o.p, right);
+  // The type of a missing property against undefined.
+  const n1: never = both.p;
+}
+export {};
+`,
+      });
+      const { stdout } = await check(dir, ["--noErrorTruncation", "--exactOptionalPropertyTypes"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,7): error TS2322: Type '["a"] | [1] | [unique symbol] | [Color.Red] | ["a" & { y: 2; }] | ["b" & { y: 2; }] | [1 & { y: 2; }] | [2n & { y: 2; }] | [true & { y: 2; }] | [unique symbol & { y: 2; }] | [Color.Red & { y: 2; }] | [{ x: 1; } & "c"] | [{ x: 1; } & 1] | [{ x: 1; } & 3n] | [{ x: 1; } & false] | [{ x: 1; } & unique symbol] | [{ x: 1; } & Color.Red] | [{ x: 1; } & Color.Green] | [{ x: 1; } & { y: 2; }] | [{ x: 1; } & \`a\${string}\`]' is not assignable to type 'never'.
+          Type '["a"]' is not assignable to type 'never'.
+        a.ts(13,7): error TS2322: Type '["a"] | [1] | [unique symbol] | [Color.Red] | ["c" & { x: 1; }] | [1 & { x: 1; }] | [3n & { x: 1; }] | [false & { x: 1; }] | [unique symbol & { x: 1; }] | [Color.Red & { x: 1; }] | [Color.Green & { x: 1; }] | [{ y: 2; } & "a"] | [{ y: 2; } & "b"] | [{ y: 2; } & 1] | [{ y: 2; } & 2n] | [{ y: 2; } & true] | [{ y: 2; } & unique symbol] | [{ y: 2; } & Color.Red] | [{ y: 2; } & { x: 1; }] | [\`a\${string}\` & { x: 1; }]' is not assignable to type 'never'.
+          Type '["a"]' is not assignable to type 'never'.
+        a.ts(14,7): error TS2322: Type '[undefined] | ["c"] | [1] | [3n] | [false] | [unique symbol] | [Color.Red] | [Color.Green] | [{ y: 2; }] | [\`a\${string}\`] | ["b" & { y: 2; }]' is not assignable to type 'never'.
+          Type '[undefined]' is not assignable to type 'never'.
+        a.ts(15,7): error TS2322: Type '["a"] | ["a" & { y: 2; }]' is not assignable to type 'never'.
+          Type '["a"]' is not assignable to type 'never'.
+        a.ts(16,7): error TS2322: Type '[{ readonly x: "a"; } & "c"] | [{ readonly x: "a"; } & 1] | [{ readonly x: "a"; } & 3n] | [{ readonly x: "a"; } & false] | [{ readonly x: "a"; } & unique symbol] | [{ readonly x: "a"; } & Color.Red] | [{ readonly x: "a"; } & Color.Green] | [{ readonly x: "a"; } & { y: 2; }] | [{ readonly x: "a"; } & \`a\${string}\`]' is not assignable to type 'never'.
+          Type '[{ readonly x: "a"; } & "c"]' is not assignable to type 'never'.
+        a.ts(17,7): error TS2322: Type '["c"] | [1] | [3n] | [false] | [unique symbol] | [Color.Red] | [Color.Green] | [{ y: 2; }] | [\`a\${string}\`]' is not assignable to type 'never'.
+          Type '["c"]' is not assignable to type 'never'.
+        a.ts(25,9): error TS2322: Type 'Rows<"a" & keyof T & keyof U> | Rows<1 & keyof T & keyof U>' is not assignable to type 'never'.
+          Type 'Rows<"a" & keyof T & keyof U>' is not assignable to type 'never'.
+            Type '["a"]' is not assignable to type 'never'.
+        a.ts(26,9): error TS2322: Type '[null] | Rows<"a" & keyof T & keyof U>' is not assignable to type 'never'.
+          Type '[null]' is not assignable to type 'never'.
+        a.ts(27,9): error TS2322: Type 'Rows<"b" & keyof T & keyof U> | Rows<"a" & keyof T & keyof U & { z: 3; }> | Rows<"b" & keyof T & keyof U & { z: 3; }>' is not assignable to type 'never'.
+          Type 'Rows<"b" & keyof T & keyof U>' is not assignable to type 'never'.
+            Type '["b"]' is not assignable to type 'never'.
+        a.ts(31,9): error TS2322: Type '[undefined] | ["a"] | ["a" & { y: 2; }] | [{ x: 1; } & "c"] | [{ x: 1; } & 1] | [{ x: 1; } & 3n] | [{ x: 1; } & false] | [{ x: 1; } & unique symbol] | [{ x: 1; } & Color.Red] | [{ x: 1; } & Color.Green] | [{ x: 1; } & { y: 2; }] | [{ x: 1; } & \`a\${string}\`]' is not assignable to type 'never'.
+          Type '[undefined]' is not assignable to type 'never'.
+        a.ts(33,9): error TS2322: Type 'undefined' is not assignable to type 'never'."
+      `);
+    });
+
     // In-progress comparisons are kept in a list that's searched linearly up to 32 entries.
     test.each([3, 31, 32, 33, 34, 70])("compares two rings of %i mutually referencing interfaces", async count => {
       const ring = (last: string) =>

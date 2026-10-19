@@ -99,6 +99,12 @@ pub(super) struct SideEffects {
     reliability: u8,
 }
 
+impl SideEffects {
+    pub(super) fn has_instantiations(&self) -> bool {
+        self.instantiations != 0 || self.computed != 0
+    }
+}
+
 /// The checker's counters at `Checker::begin_measuring`.
 struct BeforeDerivation {
     instantiation_count: u32,

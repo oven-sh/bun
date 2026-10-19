@@ -122,6 +122,30 @@ pub(super) struct Reference {
 }
 
 impl Reference {
+    /// Returns `None` for a reference that walks treat in a way of its own: one with a root other than a name or `this`,
+    /// with a key whose name isn't known, or with a comma, `satisfies` or assignment inside.
+    fn key_at_labels(&self) -> Option<ReferenceKey> {
+        let root = match self.root {
+            Root::Symbol(symbol) => (1, symbol.0),
+            Root::Global(name) => (2, name.0),
+            Root::This => (3, 0),
+            _ => return None,
+        };
+        if !self.has_key || self.unkeyed.min(self.satisfies).min(self.assigned) != usize::MAX {
+            return None;
+        }
+        let names = self.path.iter().map(|step| match step.name.get() {
+            AccessedName::Some(name) => Some(name),
+            AccessedName::None | AccessedName::Unresolved(_) => None,
+        });
+        Some(ReferenceKey {
+            root,
+            names: names.collect::<Option<_>>()?,
+            accesses: self.accesses,
+            has_expression: self.at.is_some(),
+        })
+    }
+
     /// A reference that isn't an expression in the source: `root`, or `root.a.b`.
     fn synthetic(file: FileId, root: Root, path: SmallVec<[Step; 4]>, node: Node) -> Reference {
         Reference {
@@ -238,6 +262,49 @@ pub(super) struct FlowMemo {
     latest_order_dependent_assignment_marks: std::cell::Cell<Option<(FileId, bool)>>,
     /// `last_assignment_pos`, where no later walk changes it.
     last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
+    /// Not in tsgo. See `Checker::type_at_branch_label_with_memo`. The file that the two tables are for, how many times
+    /// they have been emptied, a number for each reference that reached a branch label, and the types.
+    labels_of: Option<FileId>,
+    times_labels_forgotten: u32,
+    references_at_labels: FxHashMap<ReferenceKey, u32>,
+    types_at_labels: FxHashMap<LabelKey, AtLabel>,
+    /// Counts what the walk in progress did that depends on where its reference is in the file, not only on what it
+    /// refers to.
+    reads_of_position: u32,
+    /// Counts the loop labels whose type was computed and not read from `flow_loop_cache`.
+    loops_computed: u64,
+}
+
+/// What two references have in common if every walk treats them alike, apart from `FlowMemo::reads_of_position`.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ReferenceKey {
+    /// 1 and the symbol, 2 and the global name, or 3 for `this`.
+    root: (u32, u32),
+    names: SmallVec<[Atom; 4]>,
+    accesses: usize,
+    has_expression: bool,
+}
+
+/// A branch label, and the state of a walk that arrives there.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct LabelKey {
+    label: FlowId,
+    /// From `FlowMemo::references_at_labels`.
+    reference: u32,
+    declared: TypeId,
+    initial: TypeId,
+    start: Start,
+    /// `Crossing`'s variant, and how many more functions a `Crossing::Times` lets the walk leave.
+    crossing: (u8, u32),
+}
+
+/// The type at a branch label, and what computing it again would add to the counters.
+#[derive(Copy, Clone)]
+struct AtLabel {
+    ty: TypeId,
+    steps: u32,
+    flow_invocations: u32,
+    repeated: links::SideEffects,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -435,7 +502,7 @@ enum AtAssignment {
 }
 
 /// How far the initial type of a walk has been determined.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Start {
     /// From `Walk::initial`.
     Known,
@@ -470,6 +537,9 @@ struct Walk {
     depth: u32,
     /// The depth reached `MAX_FLOW_DEPTH` (`flowAnalysisDisabled`), so the result is errorType.
     too_deep: bool,
+    /// `FlowMemo::times_labels_forgotten` and the reference's number in `FlowMemo::references_at_labels`, which is
+    /// `None` if it gets none. The outer `None` until a branch label needs it.
+    number_at_labels: Option<(u32, Option<u32>)>,
 }
 
 const MAX_STEPS: u32 = 2_000_000;
@@ -798,6 +868,7 @@ impl Walk {
             steps: 0,
             depth: 0,
             too_deep: false,
+            number_at_labels: None,
         }
     }
 }
@@ -2225,6 +2296,7 @@ impl<'p, 's> Checker<'p, 's> {
         let file = reference.file;
         let hir = self.hir(file);
         if !reference.path.is_empty() {
+            self.flow_memo.reads_of_position += 1;
             if reference.at.is_none() {
                 return false;
             }
@@ -2483,6 +2555,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// `container != f.flowContainer` at the start of a function. The part that depends on the
     /// variable is evaluated once per walk.
     fn settle_crossing(&mut self, walk: &mut Walk) -> bool {
+        // In the function that declares the variable, the result is the same wherever the expression is.
+        if let Crossing::PastLastAssignment(symbol, e) = walk.crossing
+            && self.is_closed_over(walk.reference.file, symbol, e)
+        {
+            self.flow_memo.reads_of_position += 1;
+        }
         walk.crossing = self.settled_crossing(walk.reference.file, walk.crossing);
         match walk.crossing {
             Crossing::Times(times) if walk.crossed < times => {
@@ -5874,7 +5952,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.flow_invocation_count += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
+        let outer_reads_of_position = self.flow_memo.reads_of_position;
         let evolved = self.flow_type(walk, flow);
+        self.flow_memo.reads_of_position = outer_reads_of_position;
         self.walk_declared = outer;
         // The walk that completes a loop continues with the entries its back edges left in
         // `sharedFlows`. The next walk finds the loop in `flowLoopCache` and may compute a
@@ -6728,6 +6808,158 @@ impl<'p, 's> Checker<'p, 's> {
         self.evolving_array(element)
     }
 
+    /// Returns the key of `walk`'s state at `label`, or `None` if the type there isn't kept: `type_at_branch_label` may
+    /// then depend on more than the key.
+    fn label_key(&mut self, walk: &mut Walk, label: FlowId) -> Option<LabelKey> {
+        let file = walk.reference.file;
+        // While a loop is analyzed, types are computed from the incomplete type at its label.
+        if !self.flow_loops.is_empty()
+            || !walk.reduced.is_empty()
+            || self.is_automatic_type(walk.declared)
+            || self.bound(file).has_types_that_depend_on_order()
+        {
+            return None;
+        }
+        // It depends on where the reference is, so the key has the result.
+        if walk.start == Start::Unsettled {
+            self.settle_start(walk);
+        }
+        let memo = &mut self.flow_memo;
+        if memo.labels_of != Some(file) {
+            memo.labels_of = Some(file);
+            memo.times_labels_forgotten += 1;
+            memo.references_at_labels.clear();
+            memo.types_at_labels.clear();
+        }
+        let reference = match walk.number_at_labels {
+            Some((times, number)) if times == memo.times_labels_forgotten => number,
+            _ => {
+                let number = walk.reference.key_at_labels().map(|key| {
+                    let next = memo.references_at_labels.len() as u32;
+                    *memo.references_at_labels.entry(key).or_insert(next)
+                });
+                walk.number_at_labels = Some((memo.times_labels_forgotten, number));
+                number
+            }
+        }?;
+        Some(LabelKey {
+            label,
+            reference,
+            declared: walk.declared,
+            initial: walk.initial,
+            start: walk.start,
+            crossing: match walk.crossing {
+                Crossing::No => (0, 0),
+                Crossing::Yes => (1, 0),
+                Crossing::Times(times) => (2, times.saturating_sub(walk.crossed)),
+                // Until it's settled, the walk is in the function that the expression is in. So is the label, and for
+                // a given variable that determines the result.
+                Crossing::UpToDeclaration(..) => (3, 0),
+                Crossing::PastLastAssignment(..) => (4, 0),
+            },
+        })
+    }
+
+    /// Not in tsgo. Returns `type_at_branch_label`, from `FlowMemo::types_at_labels` if the walk of an equal reference got
+    /// a final type at `label` before. Without the table, every reference after the label walks back to the start of
+    /// the function, so a function with n statements like `if (x.a) { .. }` takes n * n steps.
+    fn type_at_branch_label_with_memo(
+        &mut self,
+        walk: &mut Walk,
+        label: FlowId,
+        antecedents: &[FlowId],
+    ) -> FlowType {
+        let Some(key) = self.label_key(walk, label) else {
+            return self.type_at_branch_label(walk, antecedents);
+        };
+        if let Some(&known) = self.flow_memo.types_at_labels.get(&key)
+            && self.repeat(&known.repeated)
+        {
+            walk.steps = walk.steps.saturating_add(known.steps);
+            self.flow_invocation_count += u64::from(known.flow_invocations);
+            return FlowType::new(known.ty, false);
+        }
+        let before = (
+            self.flow_memo.reads_of_position,
+            self.flow_memo.loops_computed,
+            self.flow_memo.times_labels_forgotten,
+        );
+        let (steps, flow_invocations) = (walk.steps, self.flow_invocation_count);
+        let (at_label, stored, repeated) =
+            self.derive_measured(|c| c.type_at_branch_label(walk, antecedents), |_, _| true);
+        let after = (
+            self.flow_memo.reads_of_position,
+            self.flow_memo.loops_computed,
+            self.flow_memo.times_labels_forgotten,
+        );
+        if let (Some(_), Some(repeated)) = (stored, repeated)
+            // The first walk may instantiate what later walks find in a table.
+            && !repeated.has_instantiations()
+            && before == after
+            && !at_label.incomplete
+            && !walk.too_deep
+            && walk.steps < MAX_STEPS
+            && let Ok(flow_invocations) =
+                u32::try_from(self.flow_invocation_count - flow_invocations)
+        {
+            let known = AtLabel {
+                ty: at_label.ty,
+                steps: walk.steps - steps,
+                flow_invocations,
+                repeated,
+            };
+            self.flow_memo.types_at_labels.insert(key, known);
+        }
+        at_label
+    }
+
+    /// `getTypeAtFlowBranchLabel`
+    fn type_at_branch_label(&mut self, walk: &mut Walk, antecedents: &[FlowId]) -> FlowType {
+        let file = walk.reference.file;
+        let bound = self.bound(file);
+        let mut incomplete = false;
+        let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        // The path that bypasses a `switch` when no case matched. It doesn't exist if
+        // the `switch` is exhaustive. That's only computed when it would change the
+        // result, because the computation can re-enter here.
+        let mut bypass = None;
+        let mut settled = false;
+        for &edge in antecedents {
+            if bypass.is_none()
+                && let Flow::Switch { stmt, from, to, .. } = bound.flow[edge.idx()]
+                && from == to
+            {
+                bypass = Some((edge, stmt));
+                continue;
+            }
+            let t = self.flow_type(walk, edge);
+            if t.ty == walk.declared && self.starts_as_declared(walk) {
+                types.clear();
+                types.push(t.ty);
+                incomplete = false;
+                settled = true;
+                break;
+            }
+            if !types.contains(&t.ty) {
+                types.push(t.ty);
+            }
+            incomplete |= t.incomplete;
+        }
+        if !settled && let Some((edge, stmt)) = bypass {
+            let t = self.flow_type(walk, edge);
+            if !t.ty.is_never() && !types.contains(&t.ty) && !self.is_exhaustive_switch(file, stmt)
+            {
+                incomplete |= t.incomplete;
+                if t.ty == walk.declared && self.starts_as_declared(walk) {
+                    types.clear();
+                    incomplete = false;
+                }
+                types.push(t.ty);
+            }
+        }
+        FlowType::new(self.union_or_evolving(&types, walk), incomplete)
+    }
+
     /// `getTypeAtFlowNode`
     fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> FlowType {
         if walk.too_deep {
@@ -6890,49 +7122,9 @@ impl<'p, 's> Checker<'p, 's> {
                         flow = only;
                         continue;
                     }
-                    // `getTypeAtFlowBranchLabel`
-                    let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
-                    // The path that bypasses a `switch` when no case matched. It doesn't exist if
-                    // the `switch` is exhaustive. That's only computed when it would change the
-                    // result, because the computation can re-enter here.
-                    let mut bypass = None;
-                    let mut settled = false;
-                    for &edge in antecedents {
-                        if bypass.is_none()
-                            && let Flow::Switch { stmt, from, to, .. } = bound.flow[edge.idx()]
-                            && from == to
-                        {
-                            bypass = Some((edge, stmt));
-                            continue;
-                        }
-                        let t = self.flow_type(walk, edge);
-                        if t.ty == walk.declared && self.starts_as_declared(walk) {
-                            types.clear();
-                            types.push(t.ty);
-                            incomplete = false;
-                            settled = true;
-                            break;
-                        }
-                        if !types.contains(&t.ty) {
-                            types.push(t.ty);
-                        }
-                        incomplete |= t.incomplete;
-                    }
-                    if !settled && let Some((edge, stmt)) = bypass {
-                        let t = self.flow_type(walk, edge);
-                        if !t.ty.is_never()
-                            && !types.contains(&t.ty)
-                            && !self.is_exhaustive_switch(file, stmt)
-                        {
-                            incomplete |= t.incomplete;
-                            if t.ty == walk.declared && self.starts_as_declared(walk) {
-                                types.clear();
-                                incomplete = false;
-                            }
-                            types.push(t.ty);
-                        }
-                    }
-                    break FlowType::new(self.union_or_evolving(&types, walk), incomplete).ty;
+                    let at_label = self.type_at_branch_label_with_memo(walk, flow, antecedents);
+                    incomplete = at_label.incomplete;
+                    break at_label.ty;
                 }
                 Flow::Loop { start, len } => {
                     let edges = bound.edges(start, len);
@@ -6983,6 +7175,7 @@ impl<'p, 's> Checker<'p, 's> {
                             break FlowType::new(so_far, true).ty;
                         }
                     }
+                    self.flow_memo.loops_computed += 1;
                     let entry = self.flow_type(walk, edges[0]);
                     // The result is incomplete only if the first antecedent is.
                     incomplete = entry.incomplete;
@@ -7356,7 +7549,12 @@ impl<'p, 's> Checker<'p, 's> {
             FlowTarget::Expr(e) => self.get_assigned_type(file, e, walk.back_edges != 0),
         };
         match walk.reference.at.some() {
-            Some(at) => self.get_narrowable_type_for_reference(file, at, ty, CheckMode::empty()),
+            Some(at) => {
+                if self.has_type_variables(ty) {
+                    self.flow_memo.reads_of_position += 1;
+                }
+                self.get_narrowable_type_for_reference(file, at, ty, CheckMode::empty())
+            }
             None => ty,
         }
     }

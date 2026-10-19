@@ -1731,7 +1731,7 @@ export function isCaseSensitiveFS(): boolean {
       fs.writeFileSync(join(dir, "A"), "");
       caseSensitiveFS = fs.readdirSync(dir).length === 2;
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   }
   return caseSensitiveFS;

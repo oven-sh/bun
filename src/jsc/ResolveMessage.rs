@@ -75,6 +75,10 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
     &specifier[..end]
 }
 
+/// Start of the hint `fmt` appends when a file differs from the specifier
+/// only in case.
+const CASE_HINT_PREFIX: &[u8] = b". Did you mean '";
+
 impl ResolveMessage {
     // `#[JsClass]` emits `ResolveMessageClass__construct` calling this.
     pub fn constructor(
@@ -194,7 +198,8 @@ impl ResolveMessage {
                     {
                         let _ = write!(
                             &mut out,
-                            ". Did you mean '{}'? File names are case-sensitive on this filesystem",
+                            "{}{}'? File names are case-sensitive on this filesystem",
+                            BStr::new(CASE_HINT_PREFIX),
                             BStr::new(&actual),
                         );
                     }
@@ -366,10 +371,18 @@ impl ResolveMessage {
     fn node_message(&self) -> Option<Vec<u8>> {
         use bstr::BStr;
         let (kind, specifier, referrer) = self.node_error_shape()?;
+        // The case hint `fmt` appended to the original text, if any.
+        let text: &[u8] = &self.msg.data.text;
+        let hint = strings::index_of(text, CASE_HINT_PREFIX).map_or(&b""[..], |i| &text[i..]);
         let mut out = Vec::new();
         match kind {
             ImportKind::Require | ImportKind::RequireResolve => {
-                let _ = write!(&mut out, "Cannot find module '{}'", BStr::new(specifier));
+                let _ = write!(
+                    &mut out,
+                    "Cannot find module '{}'{}",
+                    BStr::new(specifier),
+                    BStr::new(hint)
+                );
                 if let Some(referrer) = referrer {
                     let _ = write!(&mut out, "\nRequire stack:\n- {}", BStr::new(referrer));
                 }
@@ -386,9 +399,10 @@ impl ResolveMessage {
                 } else {
                     let _ = write!(
                         &mut out,
-                        "Cannot find module '{}' imported from {}",
+                        "Cannot find module '{}' imported from {}{}",
                         BStr::new(specifier),
                         BStr::new(referrer),
+                        BStr::new(hint),
                     );
                 }
             }

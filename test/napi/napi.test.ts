@@ -1304,6 +1304,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
+        // One fixture loops until a termination stops it: a child that is not stopped must not stay behind.
+        timeout: 30_000,
+        killSignal: "SIGKILL",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stdout.trim(), stderr, exitCode };

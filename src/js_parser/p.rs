@@ -5067,7 +5067,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = self.load_name_from_ref(alias);
                 let in_use =
                     names_in_use.get_or_insert_with(|| NamesInUse::of(&*self, stmts, defines));
-                if !self.is_only_declaration(alias, binding.loc)
+                // Each `var` of a name makes a symbol. One more `var` of the name links the symbol before it to its own.
+                if self.symbols[alias.inner_index() as usize].has_link()
                     || in_use
                         .linked_symbols
                         .binary_search(&alias.inner_index())
@@ -5115,25 +5116,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .binary_search_by_key(&declare_loc.start, |alias| alias.0.start)
             .ok()?;
         Some((index as u32, self.require_aliases[index].1))
-    }
-
-    /// Whether the binding at `loc` made its symbol and is the last declaration of it in the module scope.
-    fn is_only_declaration(&self, r#ref: Ref, loc: bun_ast::Loc) -> bool {
-        let symbol = &self.symbols[r#ref.inner_index() as usize];
-        let name = symbol.original_name.slice();
-        // A `var` after another declaration of the name reuses that symbol, named by the source text there.
-        let made_the_symbol = usize::try_from(loc.start)
-            .ok()
-            .and_then(|start| self.source.contents.get(start..))
-            .is_some_and(|text| core::ptr::eq(text.as_ptr(), name.as_ptr()));
-        made_the_symbol
-            && !symbol.has_link()
-            // Each declaration of the name writes its own `loc` here.
-            && self
-                .module_scope()
-                .members
-                .get(name)
-                .is_some_and(|member| member.ref_.eql(r#ref) && member.loc == loc)
     }
 
     /// Hashed generated-symbol name; arena-owned for symbol lifetime.
@@ -7348,7 +7330,7 @@ struct NamesInUse<'a> {
     exported: Vec<&'a [u8]>,
     /// The first part of each dot define, sorted.
     define_roots: Vec<&'a [u8]>,
-    /// Symbols that a `var` of a nested block is hoisted onto through a link, sorted.
+    /// Symbols that another declaration links to: a `var` of the same name before it, or in a nested block. Sorted.
     linked_symbols: Vec<u32>,
 }
 

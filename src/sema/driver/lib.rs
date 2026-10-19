@@ -3541,23 +3541,46 @@ fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
 
 /// `SortAndDeduplicateDiagnostics`
 fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
+    sort_and_deduplicate_with(diagnostics, Vec::new());
+}
+
+/// `sort_and_deduplicate`, of `diagnostics` and `of_files` together. Each list of `of_files` has the diagnostics of one
+/// path, at least one, in order.
+fn sort_and_deduplicate_with(diagnostics: &mut Vec<Diagnostic>, of_files: Vec<Vec<Diagnostic>>) {
     // The path decides first. So the diagnostics of each file are sorted by themselves, and the files by their paths: of
     // tens of thousands of diagnostics most comparisons would be of two long paths that begin alike.
     let mut files: FxHashMap<&[u8], usize> = FxHashMap::default();
-    let file_of = diagnostics.iter().map(|d| {
+    let paths = diagnostics.iter().map(|d| &d.path);
+    let paths = paths.chain(of_files.iter().map(|list| &list[0].path));
+    let file_of = paths.map(|path| {
         let next = files.len();
-        *files.entry(typescript_path(&d.path)).or_insert(next)
+        *files.entry(typescript_path(path)).or_insert(next)
     });
     let file_of: Vec<usize> = file_of.collect();
-    let mut by_file: Vec<Vec<Diagnostic>> = Vec::new();
-    by_file.resize_with(files.len(), Vec::new);
+    let (file_of, file_of_list) = file_of.split_at(diagnostics.len());
+    // The lists of a file, and whether they are one list that's in order.
+    let mut by_file: Vec<(Vec<Diagnostic>, bool)> = Vec::new();
+    by_file.resize_with(files.len(), Default::default);
     drop(files);
-    for (d, file) in diagnostics.drain(..).zip(file_of) {
-        by_file[file].push(d);
+    for (d, &file) in diagnostics.drain(..).zip(file_of) {
+        by_file[file].0.push(d);
     }
-    by_file.shared_sort_by(|a, b| typescript_path(&a[0].path).cmp(typescript_path(&b[0].path)));
-    for mut of_file in by_file {
-        of_file.shared_sort_by(compare_diagnostics);
+    for (mut list, &file) in of_files.into_iter().zip(file_of_list) {
+        let (all, is_in_order) = &mut by_file[file];
+        match all.is_empty() {
+            true => (*all, *is_in_order) = (list, true),
+            false => {
+                all.append(&mut list);
+                *is_in_order = false;
+            }
+        }
+    }
+    by_file.shared_sort_by(|a, b| typescript_path(&a.0[0].path).cmp(typescript_path(&b.0[0].path)));
+    diagnostics.reserve_exact(by_file.iter().map(|it| it.0.len()).sum());
+    for (mut of_file, is_in_order) in by_file {
+        if !is_in_order {
+            of_file.shared_sort_by(compare_diagnostics);
+        }
         diagnostics.append(&mut of_file);
     }
     // `compactAndMergeRelatedInfos`
@@ -4042,9 +4065,10 @@ fn check_named_files(
             .to_check
             .fetch_add(to_check.len(), Ordering::Relaxed);
     }
-    let found: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
+    // A list for each file, sorted. One long list would be moved every time it grows, while the other threads wait.
+    let found: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     // `GetDeclarationDiagnostics`
-    let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
+    let emit_diagnostics: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
     let inference_walks = Guarded::new([0u64; INFERENCE_WALK_COUNTS.len()]);
@@ -4058,7 +4082,7 @@ fn check_named_files(
             std::borrow::Cow::Borrowed(&module.hir.text[..])
         }
     };
-    let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Diagnostic>>| {
+    let show = |file: FileId, errors: Vec<Explained>, found: &Guarded<Vec<Vec<Diagnostic>>>| {
         if errors.is_empty() || request.plan_options.reports_nothing_about_files {
             return;
         }
@@ -4066,7 +4090,7 @@ fn check_named_files(
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
         let counted = Counted::default();
-        let shown: Vec<Diagnostic> = errors
+        let mut shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
                 let related = e
@@ -4136,7 +4160,8 @@ fn check_named_files(
         if let Some(progress) = request.progress {
             progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
         }
-        found.lock().extend(shown);
+        shown.shared_sort_by(compare_diagnostics);
+        found.lock().push(shown);
     };
     // What `Request::after_file` is called after.
     let wanted = match request.plan_options.reports_nothing_about_files {
@@ -4213,7 +4238,7 @@ fn check_named_files(
             .drain(..)
             .map(|one| Guarded::new(Some(one)))
             .collect();
-        host.parallel(unfinished.len(), &|i| {
+        let finish = |i: usize| {
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(written) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].file_name().to_vec();
@@ -4225,6 +4250,11 @@ fn check_named_files(
                 let declaration = program.finish_file(file, declaration);
                 show(file, declaration, &emit_diagnostics);
             }
+        };
+        // The files with thousands of errors are next to each other, so a thread takes files that are far apart.
+        let groups = unfinished.len().min(1024);
+        host.parallel(groups, &|group| {
+            (group..unfinished.len()).step_by(groups).for_each(finish);
         });
     };
     let bytes_of = |index: usize| size(to_check[index]) as usize;
@@ -4753,8 +4783,11 @@ fn check_named_files(
             check_files(Requested::Declaration, false);
             found.lock().clear();
         }
-        std::mem::take(&mut *emit_diagnostics.lock())
+        let of_files = std::mem::take(&mut *emit_diagnostics.lock());
+        of_files.into_iter().flatten().collect()
     };
+    // What `show` has made of the files, besides `report.diagnostics`.
+    let mut of_files: Vec<Vec<Diagnostic>> = Vec::new();
     'stages: {
         if stops {
             let suspects: Vec<FileId> = (0..program.files.modules.len())
@@ -4782,7 +4815,7 @@ fn check_named_files(
                     let is_incremental = options.is_incremental || options.is_build;
                     report.listed_files = explain_files(is_incremental && !lists_files_only);
                 }
-                report.diagnostics.extend(syntactic);
+                report.diagnostics.extend(syntactic.into_iter().flatten());
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
@@ -4808,7 +4841,7 @@ fn check_named_files(
         let emits_first = options.emits_first && !options.no_emit_on_error;
         for type_checked in [!emits_first, emits_first] {
             check_files(wanted, type_checked);
-            report.diagnostics.append(&mut found.lock());
+            of_files.append(&mut found.lock());
             // What a checker reports without a file after this is never asked for.
             if type_checked {
                 report.diagnostics.extend(global_errors());
@@ -4818,9 +4851,11 @@ fn check_named_files(
         let is_error = |d: &Diagnostic| d.category == Category::Error;
         if !stops
             || emits_despite_errors
-            || !report.diagnostics[always_reported..].iter().any(is_error)
+            || !(report.diagnostics[always_reported..].iter())
+                .chain(of_files.iter().flatten())
+                .any(is_error)
         {
-            report.diagnostics.append(&mut emit_diagnostics.lock());
+            of_files.append(&mut emit_diagnostics.lock());
         }
         // `iterateBaseline`: a caller that writes output for every file also does so for the files
         // that are not checked.
@@ -4859,7 +4894,7 @@ fn check_named_files(
     let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));
     report.diagnostics.extend(cannot_read);
     report.unreadable.extend(unreadable);
-    sort_and_deduplicate(&mut report.diagnostics);
+    sort_and_deduplicate_with(&mut report.diagnostics, of_files);
     report.check_time = checking.elapsed();
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {

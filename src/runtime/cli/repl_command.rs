@@ -26,7 +26,7 @@ mod repl;
 use repl::Repl;
 
 use crate::Command;
-use crate::cli::Arguments;
+use crate::cli::{Arguments, run_command};
 
 pub(crate) struct ReplCommand;
 
@@ -47,12 +47,15 @@ impl ReplCommand {
     ) -> Result<(), crate::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
+            // A `preload` key replaces `ctx.preloads`, which holds the flags by now.
+            let from_flags = core::mem::take(&mut ctx.preloads);
             Arguments::load_config_path(
                 Command::Tag::RunCommand,
                 true,
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
+            ctx.preloads = from_flags;
         }
 
         jsc::initialize(jsc::InitializeOptions {
@@ -221,6 +224,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             vm.global_exit();
         }
 
+        if !vm.preload.is_empty() {
+            run_preloads_or_exit(vm);
+        }
+
         if !this.eval_script.is_empty() || this.eval_and_print {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
@@ -277,6 +284,37 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
         Ok(())
     }
+}
+
+/// Runs the `--preload` / `-r` / `--import` files before the first input. A preload that fails ends
+/// the process as it ends `bun -e`: nothing is read or evaluated after it.
+#[cold]
+#[inline(never)]
+fn run_preloads_or_exit(vm: &mut VirtualMachine) {
+    // SAFETY: `vm` is the live per-thread VM, and the API lock is held.
+    let rejected = match unsafe { crate::jsc_hooks::load_preloads(vm) } {
+        Ok(promise) => promise,
+        Err(err) => run_command::entry_point_load_failed(vm, &err.into()),
+    };
+    if rejected.is_null() {
+        return;
+    }
+    // SAFETY: a live GC cell that the module loader returned.
+    let promise = unsafe { &mut *rejected };
+    let reason = promise.result(vm.jsc_vm());
+    promise.set_handled();
+    if !vm.uncaught_exception(vm.global(), reason, true) {
+        run_command::exit_with_unhandled_note(vm);
+    }
+    // An `uncaughtException` listener took it: exit with `process.exitCode` once the loop is empty.
+    vm.tick();
+    while vm.is_event_loop_alive() {
+        vm.tick();
+        vm.auto_tick_active();
+    }
+    vm.on_before_exit();
+    vm.on_exit();
+    vm.global_exit();
 }
 
 // Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.

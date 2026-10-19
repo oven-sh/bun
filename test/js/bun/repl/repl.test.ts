@@ -22,16 +22,18 @@ async function runRepl(
     cwd?: string;
     /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
     home?: string;
+    /** Arguments after `bun repl`. */
+    args?: string[];
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number; outputs: string[] }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { env = {}, cwd } = options;
+  const { env = {}, cwd, args = [] } = options;
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
   using tempHome = tempDir("repl-home", {});
   const home = options.home ?? String(tempHome);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: [bunExe(), "repl", ...args],
     stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
@@ -1099,6 +1101,117 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("true\n");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("--preload", () => {
+    const preloaded = { "pre.js": `console.log("preload ran"); globalThis.fromPreload = 1;` };
+
+    test.each([
+      ["--preload", "./pre.js"],
+      ["-r", "./pre.js"],
+      ["--require", "./pre.js"],
+      ["--import", "./pre.js"],
+      ["--preload=./pre.js"],
+    ])("%s runs the file before the first input", async (...args) => {
+      using dir = tempDir("repl-preload", preloaded);
+      const { stdout, outputs, stderr, exitCode } = await runRepl(["typeof fromPreload", ".exit"], {
+        cwd: String(dir),
+        args,
+      });
+      expect(outputs).toEqual(['"number"']);
+      expect(stdout).toStartWith("preload ran\nWelcome to Bun");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("runs before a -p script", async () => {
+      using dir = tempDir("repl-preload-print", preloaded);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", "--preload", "./pre.js", "-p", "typeof fromPreload"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: 'preload ran\n"number"\n', stderr: "", exitCode: 0 });
+    });
+
+    test("runs the files in order, and waits for a top-level await", async () => {
+      using dir = tempDir("repl-preload-order", {
+        "first.mjs": `await new Promise(resolve => setImmediate(resolve)); globalThis.order = ["first"];`,
+        "second.js": `globalThis.order.push("second");`,
+      });
+      const { stdout, outputs, stderr, exitCode } = await runRepl(["order.join()", ".exit"], {
+        cwd: String(dir),
+        args: ["--preload", "./first.mjs", "-r", "./second.js"],
+      });
+      expect(outputs).toEqual(['"first,second"']);
+      expect(stdout).toStartWith("Welcome to Bun");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a preload in bunfig.toml does not replace the flag", async () => {
+      using dir = tempDir("repl-preload-bunfig", {
+        ...preloaded,
+        "bunfig.toml": `preload = ["./from-bunfig.js"]\n`,
+        "from-bunfig.js": `globalThis.fromBunfig = 1;`,
+      });
+      const { outputs, stderr, exitCode } = await runRepl(["typeof fromPreload", ".exit"], {
+        cwd: String(dir),
+        args: ["--preload", "./pre.js"],
+      });
+      expect(outputs).toEqual(['"number"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // As `bun -e` and `node -i`: a preload that fails ends the process, and no input is read.
+    test.each([
+      {
+        name: "a file that does not exist",
+        files: {},
+        args: ["--preload", "./missing.js"],
+        stdout: "",
+        stderr: /^error: preload not found "\.\/missing\.js"/,
+        exitCode: 1,
+      },
+      {
+        name: "a file that throws",
+        files: { "throws.js": `throw new Error("preload boom");` },
+        args: ["--preload", "./throws.js"],
+        stdout: "",
+        stderr: /^error: preload boom$/m,
+        exitCode: 1,
+      },
+      {
+        name: "a file that calls process.exit",
+        files: { "exits.js": `process.exit(7);` },
+        args: ["--preload", "./exits.js"],
+        stdout: "",
+        stderr: /^$/,
+        exitCode: 7,
+      },
+      {
+        name: "a throw that an uncaughtException listener takes",
+        files: {
+          "listens.js": `process.on("uncaughtException", error => { console.log("listener got", error.message); process.exitCode = 5; });`,
+          "throws.js": `throw new Error("preload boom");`,
+          "third.js": `console.log("third ran");`,
+        },
+        args: ["--preload", "./listens.js", "--preload", "./throws.js", "--preload", "./third.js"],
+        stdout: "listener got preload boom\n",
+        stderr: /^$/,
+        exitCode: 5,
+      },
+    ])("$name ends the process before the first prompt", async ({ files, args, stdout, stderr, exitCode }) => {
+      using dir = tempDir("repl-preload-fails", files);
+      const result = await runRepl(['console.log("input was read")', ".exit"], { cwd: String(dir), args });
+      expect(result.stdout).toBe(stdout);
+      expect(result.stderr).toMatch(stderr);
+      expect(result.exitCode).toBe(exitCode);
     });
   });
 });

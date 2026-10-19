@@ -56,8 +56,15 @@ use std::time::{Duration, Instant};
 /// thread than the one that allocated it, and the allocator defers such frees.
 #[derive(Default)]
 pub struct ThreadCaches {
-    idle: Guarded<Vec<(ThreadId, RecentAtoms, bun_sema_parser::ThreadCaches)>>,
+    idle: Guarded<Vec<CachesOfThread>>,
 }
+
+type CachesOfThread = (
+    ThreadId,
+    RecentAtoms,
+    bun_sema_parser::ThreadCaches,
+    bun_sema::bind::ThreadCaches,
+);
 
 impl ThreadCaches {
     /// Lends the calling thread its set until the guard is dropped.
@@ -69,6 +76,7 @@ impl ThreadCaches {
                     std::thread::current().id(),
                     RecentAtoms::take(),
                     bun_sema_parser::ThreadCaches::take(),
+                    bun_sema::bind::ThreadCaches::take(),
                 );
                 self.0.idle.lock().push(set);
             }
@@ -78,19 +86,21 @@ impl ThreadCaches {
         let own = idle.iter().position(|set| set.0 == thread);
         let own = own.map(|at| idle.swap_remove(at));
         drop(idle);
-        if let Some((_, atoms, parser)) = own {
+        if let Some((_, atoms, parser, binder)) = own {
             atoms.install();
             parser.install();
+            binder.install();
         }
         Lent(self)
     }
 
-    /// Frees the parser's buffers, which have the capacity of the largest file a thread has parsed. Call outside a
-    /// parallel region.
+    /// Frees the buffers of the parser and the binder, which have the capacity of the largest file a thread has loaded.
+    /// Call outside a parallel region.
     pub(crate) fn drop_parser_caches(&self) {
         drop(bun_sema_parser::ThreadCaches::take());
+        drop(bun_sema::bind::ThreadCaches::take());
         for set in self.idle.lock().iter_mut() {
-            set.2 = Default::default();
+            (set.2, set.3) = Default::default();
         }
     }
 }

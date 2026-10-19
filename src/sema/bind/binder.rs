@@ -115,7 +115,7 @@ pub(super) struct Buffers {
 }
 
 thread_local! {
-    /// A linter binds one file at a time and is done with it before it starts the next.
+    /// A thread binds one file at a time and is done with it before it starts the next.
     static BUFFERS: std::cell::Cell<Option<Box<Buffers>>> = const { std::cell::Cell::new(None) };
 }
 
@@ -125,6 +125,10 @@ pub(super) fn take_buffers() -> Box<Buffers> {
 
 pub(super) fn return_buffers(buffers: Box<Buffers>) {
     BUFFERS.set(Some(buffers));
+}
+
+pub(super) fn replace_buffers(buffers: Option<Box<Buffers>>) -> Option<Box<Buffers>> {
+    BUFFERS.replace(buffers)
 }
 
 /// Returns `list` filled with `len` copies of `value`.
@@ -261,7 +265,7 @@ impl<'f, 's> Binder<'f, 's> {
         Self::run_in(f, options, atoms, &mut Buffers::default())
     }
 
-    fn run_in(
+    pub(super) fn run_in(
         f: &'f File<'s>,
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,

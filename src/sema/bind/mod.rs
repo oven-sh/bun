@@ -2993,7 +2993,29 @@ pub fn bind<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
-    binder::Binder::run(file, options, atoms).into_arena(arena)
+    let mut buffers = binder::take_buffers();
+    let mut built = binder::Binder::run_in(file, options, atoms, &mut buffers);
+    let bound = built.move_to_arena(arena);
+    buffers.b = built;
+    binder::return_buffers(buffers);
+    bound
+}
+
+/// The lists that one `bind` call leaves for the next one on the thread. A pool thread outlives a check, so the check
+/// owns them, and a thread holds them only while it works for that check.
+#[derive(Default)]
+pub struct ThreadCaches(Option<Box<binder::Buffers>>);
+
+impl ThreadCaches {
+    /// Takes the caches from the calling thread.
+    pub fn take() -> ThreadCaches {
+        ThreadCaches::default().install()
+    }
+
+    /// Installs the caches on the calling thread. Returns the previous ones.
+    pub fn install(self) -> ThreadCaches {
+        ThreadCaches(binder::replace_buffers(self.0))
+    }
 }
 
 /// The lists of the last file bound on this thread, so that the next file can reuse their capacity.

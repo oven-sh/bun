@@ -240,14 +240,16 @@ devTest("files that bun wrote require through import.meta, in a route", {
       import { name } from "../dist/lib.js";
       import { port } from "../dist/index.js";
       import { greet } from "../dist/helper.js";
+      import { sep } from "../dist/paths.js";
       export default function (req, meta) {
-        return new Response(greet() + " " + name + " " + port());
+        return new Response(greet() + " " + name + " " + port() + " " + sep());
       }
     `,
     ...writtenByBun,
+    "dist/paths.js": `// @bun\nvar __require = import.meta.require;\nfunction sep() {\n  return __require("path").posix.sep;\n}\nexport {\n  sep\n};\n`,
   },
   async test(dev) {
-    await dev.fetch("/").equals("hello world 3000");
+    await dev.fetch("/").equals("hello world 3000 /");
   },
 });
 // A string that does not resolve stays a call. The dev server builds the file again when the file is there.
@@ -269,6 +271,32 @@ devTest("a file that bun wrote requires a file that is not there yet", {
       await dev.write("dist/settings.js", `export const port = 3000;`);
     });
     await c.expectMessage("port 3000");
+  },
+});
+// The same behind an `onResolve` plugin that has no answer: the file with the call is still a file of the page.
+devTest("a file that bun wrote requires a file that is not there, behind a plugin", {
+  framework: minimalFramework,
+  pluginFile: `
+    export default [
+      {
+        name: "no answer",
+        setup(build) {
+          build.onResolve({ filter: /settings/ }, () => undefined);
+        },
+      },
+    ];
+  `,
+  files: {
+    "routes/index.ts": `
+      import { port } from "../dist/index.js";
+      export default function (req, meta) {
+        return new Response("port " + port());
+      }
+    `,
+    "dist/index.js": `// @bun\nfunction port() {\n  try {\n    return import.meta.require("./settings.js").port;\n  } catch {\n    return "none";\n  }\n}\nexport {\n  port\n};\n`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("port none");
   },
 });
 devTest("hmr handles rapid consecutive edits", {

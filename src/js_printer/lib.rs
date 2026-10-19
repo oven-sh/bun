@@ -3432,6 +3432,12 @@ pub(crate) mod __gated_printer {
                         );
                     }
                     E::Special::ImportMetaRequire(_) => {
+                        // Only in output that cannot evaluate `import.meta.require`.
+                        debug_assert!(match self.options.module_type {
+                            bundle_opts::Format::Esm => !IS_BUN_PLATFORM,
+                            bundle_opts::Format::Iife => false,
+                            bundle_opts::Format::Cjs | bundle_opts::Format::InternalBakeDev => true,
+                        });
                         self.print_expr(
                             Expr {
                                 data: ExprData::ERequireCallTarget,

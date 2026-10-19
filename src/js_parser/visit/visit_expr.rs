@@ -2547,7 +2547,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = p.new_expr(E::Null {}, e.loc);
             return true;
         }
-        call.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
         if let Some(first) = call.args.slice().first()
             && !matches!(first.data, Data::EString(..))
         {

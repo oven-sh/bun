@@ -322,7 +322,8 @@ error: Hello World`,
         import { h } from "./lib/typescript.ts";
         import { i } from "./lib/crlf.js";
         import { j } from "./lib/hashbang-crlf.js";
-        console.log(a, b, c, d, e, f, g, h, i, j);
+        import { k } from "./lib/bytecode.js";
+        console.log(a, b, c, d, e, f, g, h, i, j, k);
       `,
       "/lib/renamed.js": `var { require: require2 } = import.meta;\nexport const a = require2("./a.cjs").x;`,
       "/lib/formatted.js": `// a banner\nimport "./a.cjs";\nvar { require } = import.meta;\nexport const b = require("./b.cjs").x;`,
@@ -334,6 +335,7 @@ error: Hello World`,
       "/lib/typescript.ts": `var {require}=import.meta;const value: { x: string } = require("./h.cjs");\nexport const h: string = value.x;`,
       "/lib/crlf.js": `// @bun\r\nvar __require = import.meta.require;\r\nexport const i = __require("./i.cjs").x;\r\n`,
       "/lib/hashbang-crlf.js": `#!/usr/bin/env bun\r\n// @bun\r\nvar __require = import.meta.require;\r\nexport const j = __require("./j.cjs").x;\r\n`,
+      "/lib/bytecode.js": `// @bun @bytecode\nvar __require = import.meta.require;\nexport const k = __require("./k.cjs").x;`,
       "/lib/a.cjs": `exports.x = "a";`,
       "/lib/b.cjs": `exports.x = "b";`,
       "/lib/c.cjs": `exports.x = "c";`,
@@ -344,9 +346,10 @@ error: Hello World`,
       "/lib/h.cjs": `exports.x = "h";`,
       "/lib/i.cjs": `exports.x = "i";`,
       "/lib/j.cjs": `exports.x = "j";`,
+      "/lib/k.cjs": `exports.x = "k";`,
     },
     target: "bun",
-    run: { stdout: "a b c0 d e f g h i j" },
+    run: { stdout: "a b c0 d e f g h i j k" },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("import.meta");
     },
@@ -491,6 +494,8 @@ error: Hello World`,
         import "./other-line.js";
         import "./banner-first.js";
         import "./blank-first.js";
+        import "./hashbang-only.js";
+        import "./hashbang-banner.js";
         import "./defined-name.js";
         import "./defined-property.js";
       `,
@@ -507,6 +512,8 @@ error: Hello World`,
       "/no-bun-line.js": `var __require = import.meta.require;\nconsole.log("no bun line", __require("./dep.cjs").x);\nexport {};`,
       "/other-line.js": `//@bun\nvar __require = import.meta.require;\nconsole.log("other line", __require("./dep.cjs").x);\nexport {};`,
       "/banner-first.js": `// a banner\n// @bun\nvar __require = import.meta.require;\nconsole.log("banner first", __require("./dep.cjs").x);\nexport {};`,
+      "/hashbang-only.js": `#!/usr/bin/env bun\nvar __require = import.meta.require;\nconsole.log("hashbang only", __require("./dep.cjs").x);\nexport {};`,
+      "/hashbang-banner.js": `#!/usr/bin/env bun\n// a banner\n// @bun\nvar __require = import.meta.require;\nconsole.log("hashbang banner", __require("./dep.cjs").x);\nexport {};`,
       "/blank-first.js": Buffer.from(
         `\n// @bun\nvar __require = import.meta.require;\nconsole.log("blank first", __require("./dep.cjs").x);\nexport {};`,
       ),
@@ -533,6 +540,8 @@ error: Hello World`,
         "other line left",
         "banner first left",
         "blank first left",
+        "hashbang only left",
+        "hashbang banner left",
         "defined name left",
         "defined property left function",
       ].join("\n"),
@@ -615,6 +624,21 @@ error: Hello World`,
       },
     });
   }
+  // The value that nothing uses goes, like the `import.meta.require` that it stands for. The output then has no `__require`.
+  itBundled("bun/RequireNotWrittenByBunForNodeUnused", {
+    files: {
+      "/entry.js": /* js */ `
+        import.meta.require;
+        var unused = import.meta.require;
+        console.log("built");
+      `,
+    },
+    target: "node",
+    run: { runtime: "node", stdout: "built" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("equire");
+    },
+  });
   // An assignment to `import.meta.require` and a `delete` of it stay on `import.meta`. They do not reach the `__require` of the bundle.
   itBundled("bun/RequireNotWrittenByBunForNodeAssigned", {
     files: {
@@ -832,6 +856,23 @@ error: Hello World`,
     allowUnresolved: [],
     bundleErrors: {
       "/entry.js": ["This require() expression will not be bundled because the argument is not a string literal"],
+    },
+  });
+  // A call that cannot run is no call.
+  itBundled("bun/ImportMetaRequireRejectUnresolvedDeadCode-node", {
+    files: {
+      "/entry.js": /* js */ `
+        const name = "./run-time" + Math.random().toString().slice(0, 0) + ".cjs";
+        if (false) console.log(import.meta.require(name).x);
+        console.log(/* @__PURE__ */ import.meta.require("node:path") ? "built" : "");
+        /* @__PURE__ */ import.meta.require("./not-there.cjs");
+      `,
+    },
+    target: "node",
+    allowUnresolved: [],
+    run: { runtime: "node", stdout: "built" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("not-there");
     },
   });
   itBundled("bun/RequireWrittenByBunDefineWins", {
@@ -1086,10 +1127,16 @@ error: Hello World`,
     },
   });
   // The bundler does not read a `// @bun @bun-cjs` file as a module. A call onto one stays for run time, where Bun reads it.
-  for (const [kind, path, manifest] of [
-    ["js", "index.js", `{ "name": "lib", "main": "dist/index.js" }`],
-    ["cjs", "index.cjs", `{ "name": "lib", "main": "dist/index.cjs" }`],
-    ["commonjs-package", "index.js", `{ "name": "lib", "main": "dist/index.js", "type": "commonjs" }`],
+  for (const [kind, path, manifest, line] of [
+    ["js", "index.js", `{ "name": "lib", "main": "dist/index.js" }`, "// @bun @bun-cjs"],
+    ["cjs", "index.cjs", `{ "name": "lib", "main": "dist/index.cjs" }`, "// @bun @bun-cjs"],
+    [
+      "commonjs-package",
+      "index.js",
+      `{ "name": "lib", "main": "dist/index.js", "type": "commonjs" }`,
+      "// @bun @bun-cjs",
+    ],
+    ["bytecode", "index.js", `{ "name": "lib", "main": "dist/index.js" }`, "// @bun @bytecode @bun-cjs"],
   ] as const) {
     itBundled(`bun/RequireWrittenByBunOntoCjsForBun-${kind}`, {
       files: {
@@ -1098,7 +1145,7 @@ error: Hello World`,
         "/dist/lib.js": `var {require}=import.meta;export const name = require("lib").name;\n`,
         "/node_modules/lib/package.json": manifest,
         ["/node_modules/lib/dist/" + path]:
-          `// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {console.log("lib: loaded");\nmodule.exports = { answer: 42, name: "lib" };\n})`,
+          `${line}\n(function(exports, require, module, __filename, __dirname) {console.log("lib: loaded");\nmodule.exports = { answer: 42, name: "lib" };\n})`,
       },
       target: "bun",
       run: { stdout: "lib: loaded\napp: 42 lib" },

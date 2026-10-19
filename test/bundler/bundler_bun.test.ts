@@ -516,18 +516,23 @@ error: Hello World`,
         const ws = isBun ? import.meta.require("ws") : null;
         const sqlite = isBun ? import.meta.require("bun:sqlite") : null;
         const optional = isBun ? import.meta.require("a-package-that-is-not-installed") : null;
+        const local = isBun ? import.meta.require("./lib/left.cjs") : null;
         const load = import.meta.require;
-        console.log(ws, sqlite, optional, typeof load, typeof load("node:path").sep);
+        console.log(ws, sqlite, optional, local, typeof load, typeof load("node:path").sep);
       `,
       "/written-by-bun.js": `// @bun\nvar __require = import.meta.require;\nconsole.log(typeof __require("node:path").sep, __require("./lib/bundled.cjs").x);`,
       "/lib/bundled.cjs": `exports.x = "bundled";`,
+      "/lib/left.cjs": `exports.x = "left";`,
     },
     target: "node",
-    run: { runtime: "node", stdout: "string bundled\nnull null null function string" },
+    run: { runtime: "node", stdout: "string bundled\nnull null null null function string" },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain("import.meta.require");
       expect(out).toContain('__require("ws")');
+      // Only a file that Bun wrote has its calls read. This one stays a lookup at run time.
+      expect(out).toContain('__require("./lib/left.cjs")');
+      expect(out).not.toContain('"left"');
     },
   });
   // A file that is not there at build time leaves the call for run time, as before the call was read.

@@ -1234,7 +1234,7 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
     // count stops when its probes have passed more than 4 slots per pixel.
     // It keeps the pixels it counted, and the boxes hold the other pixels
     // one by one.
-    describe("colours built to share slots", () => {
+    describe.concurrent("colours built to share slots", () => {
       // The key whose hash is `x`, or the next one that is not fully
       // transparent: every fully transparent pixel counts as one colour.
       const withHash = (() => {

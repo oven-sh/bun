@@ -2659,9 +2659,6 @@ pub mod parse_worker {
             .and_then(|f| f.client_page_server_exports(task.path.text))
             .filter(|names| !names.is_empty())
         {
-            // TypeScript trims imports whose bindings went unused; JavaScript does not by default. Turn
-            // it on, so an import that only a deleted export used goes with it.
-            opts.features.trim_unused_imports = true;
             for name in server_exports {
                 bun_core::handle_oom(
                     opts.features

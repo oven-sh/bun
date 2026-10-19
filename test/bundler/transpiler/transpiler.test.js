@@ -2374,6 +2374,20 @@ export default class {
       expect(output.includes("liveFS")).toBe(true);
     });
 
+    it("drops an import that only an eliminated export used", () => {
+      const code = `
+        import { db } from "./db";
+        export function loader() { return db.query(); }
+        export default function Page() { return 1; }
+      `;
+      for (const loader of ["js", "ts"]) {
+        const elim = new Bun.Transpiler({ loader, exports: { eliminate: ["loader"] } });
+        const output = elim.transformSync(code);
+        expect(output).not.toContain("./db");
+        expect(elim.scan(code).imports.map(i => i.path)).not.toContain("./db");
+      }
+    });
+
     it.todo("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';

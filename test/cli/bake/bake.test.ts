@@ -1193,10 +1193,10 @@ test.concurrent("a framework with clientPages puts the pages of a route in its b
 
 test.concurrent("the browser build of a page leaves out the serverExports of its framework", async () => {
   using dir = tempDir("bake-command-server-exports", {
-    "app/secret.ts": `export const secret = "server-only-secret";`,
+    "app/secret.js": `export const secret = "server-only-secret";`,
     // `getServerSideProps` is not a server export of this framework, so it stays.
-    "app/pages/index.ts": `
-      import { secret } from "../secret.ts";
+    "app/pages/index.js": `
+      import { secret } from "../secret.js";
       export const loader = () => secret.length;
       export const getServerSideProps = () => "kept-export";
       export default () => "home-page-module";
@@ -1214,7 +1214,7 @@ test.concurrent("the browser build of a page leaves out the serverExports of its
             style: "nextjs-pages",
             serverEntryPoint: "./render/server.ts",
             clientEntryPoint: "./render/client.ts",
-            extensions: [".ts"],
+            extensions: [".js"],
             clientPages: { serverExports: ["loader"] },
           }],
         },
@@ -1400,6 +1400,39 @@ test.concurrent("the default framework sends the browser bundle before a slow Su
   for (let r = await reader.read(); !r.done; r = await reader.read()) html += decoder.decode(r.value, { stream: true });
   expect(html).toContain("late content");
 });
+
+test.concurrent(
+  "bun bake keeps an unused import of a page in the browser, and drops the imports of getStaticProps and getStaticPaths",
+  async () => {
+    using dir = tempDir("bake-command-page-data-static", {
+      "app/secret.js": `export const secret = "server-only-secret";`,
+      "app/paths.js": `export const paths = ["only-for-paths"];`,
+      "app/register.js": `globalThis.registered = "side-effect-kept"; export default 1;`,
+      "app/pages/[slug].jsx": `
+      import { secret } from "../secret.js";
+      import { paths } from "../paths.js";
+      import registered from "../register.js";
+      export const getStaticPaths = async () => ({ paths: paths.map(slug => ({ params: { slug } })), fallback: "blocking" });
+      export const getStaticProps = async ({ params }) => ({ props: { length: secret.length } });
+      export default function Post({ length }) {
+        return <h1>{"length " + length}</h1>;
+      }
+    `,
+    });
+    linkReact(String(dir));
+
+    await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+    const url = await getServerUrl(proc);
+
+    const html = await (await fetch(new URL("/x", url))).text();
+    expect(html).toContain("<h1>length 18</h1>");
+    const bundleUrl = html.match(/<script type="module" src="([^"]+)"/)![1];
+    const bundle = await (await fetch(new URL(bundleUrl, url))).text();
+    expect(bundle).not.toContain("server-only-secret");
+    expect(bundle).not.toContain("only-for-paths");
+    expect(bundle).toContain("side-effect-kept");
+  },
+);
 
 test.concurrent("bun bake leaves the server-only imports of a .jsx page out of its browser bundle", async () => {
   using dir = tempDir("bake-command-page-data-jsx", {

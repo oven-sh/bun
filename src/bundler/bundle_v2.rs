@@ -504,15 +504,17 @@ pub mod bv2_impl {
                 }
             }
 
-            /// The `serverExports` of the `clientPages` router whose folder holds `path`.
+            /// The `serverExports` of the `clientPages` router whose folder holds `path`: the
+            /// deepest, when the folders of routers are nested.
             pub(crate) fn client_page_server_exports(&self, path: &[u8]) -> Option<&[Box<[u8]>]> {
                 self.client_page_dirs
                     .iter()
-                    .find(|cp| {
+                    .filter(|cp| {
                         path.len() > cp.dir.len()
                             && path.starts_with(&cp.dir)
                             && bun_core::path_sep::is_sep_any(path[cp.dir.len()])
                     })
+                    .max_by_key(|cp| cp.dir.len())
                     .map(|cp| &*cp.server_exports)
             }
         }

@@ -595,7 +595,7 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
     test.concurrent.each(transports)(
       "over %s, a client that still uploads gets the whole response, then the FIN, and ends its upload later",
       async transport => {
-        using dir = tempDir("node-http-end-drain", {});
+        using dir = tempDir("end-drain", {});
         const piece = Buffer.concat([Buffer.from("10000\r\n"), Buffer.alloc(65536, "u"), Buffer.from("\r\n")]);
         const { promise: ended, resolve: onEnd } = Promise.withResolvers<number>();
         const serverSocket = watchServerSocket();
@@ -611,7 +611,7 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
         server.keepAliveTimeout = 60_000;
         const { client, outcome, body } = await connect(
           server,
-          transport === "TCP" ? undefined : path.join(String(dir), "http.sock"),
+          transport === "TCP" ? undefined : path.join(String(dir), "s.sock"),
         );
         try {
           client.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");

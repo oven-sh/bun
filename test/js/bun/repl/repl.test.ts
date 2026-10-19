@@ -2011,6 +2011,174 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  describe("a line that holds line breaks or control bytes", () => {
+    // The history file keeps a line break inside an entry as CR.
+    const threeRows = "function three() {\r  return 3\r}\n";
+    const drawn = ["> function three() {", "...   return 3", "... }"];
+
+    test("a recalled multi-line entry is redrawn in place at every key (#27560)", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        await waitForScreen(s => s.rows.at(-1) === "> ");
+        for (const typed of ["if (1) {", "1", "2", "3"]) {
+          send(`${typed}\n`);
+          await waitForScreen(s => s.rows.at(-1) === "... " && s.rows.at(-2)!.endsWith(typed));
+        }
+        send("}\n");
+        const top = (await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "undefined")).rows.length - 1;
+
+        send("\x1b[A");
+        let screen = await waitForScreen(s => s.rows.length > top + 1 && s.rows.at(-1) === "... }");
+        expect(screen.rows.slice(top)).toEqual(["> if (1) {", "... 1", "... 2", "... 3", "... }"]);
+
+        // Each Backspace removes one byte: a character, or the line break in front of a row.
+        for (const expected of [
+          ["> if (1) {", "... 1", "... 2", "... 3", "... "],
+          ["> if (1) {", "... 1", "... 2", "... 3"],
+          ["> if (1) {", "... 1", "... 2", "... "],
+          ["> if (1) {", "... 1", "... 2"],
+          ["> if (1) {", "... 1", "... "],
+          ["> if (1) {", "... 1"],
+          ["> if (1) {", "... "],
+        ]) {
+          send("\x7f");
+          screen = await waitForScreen(
+            s => s.cursor.row === top + expected.length - 1 && s.cursor.col === expected.at(-1)!.length,
+          );
+          expect(screen.rows.slice(top)).toEqual(expected);
+        }
+      });
+    });
+
+    test("typing in the first row of a recalled entry keeps the rows below it", async () => {
+      using home = tempDir("repl-rows-first-row", { ".bun_repl_history": threeRows });
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... }");
+          expect(screen.rows.slice(top)).toEqual(drawn);
+          await waitForScreen(s => s.cursor.row === top + 2 && s.cursor.col === "... }".length);
+
+          send("x");
+          screen = await waitForScreen(s => s.rows.at(-1) === "... }x");
+          expect(screen.rows.slice(top)).toEqual([...drawn.slice(0, 2), "... }x"]);
+          send("\x7f");
+          screen = await waitForScreen(s => s.rows.at(-1) === "... }");
+          expect(screen.rows.slice(top)).toEqual(drawn);
+
+          // Ctrl+A: the cursor goes up to the prompt's row.
+          send("\x01" + "0;");
+          screen = await waitForScreen(s => s.rows[top] === "> 0;function three() {");
+          expect(screen.rows.slice(top)).toEqual(["> 0;function three() {", ...drawn.slice(1)]);
+          await waitForScreen(s => s.cursor.row === top && s.cursor.col === "> 0;".length);
+
+          // Enter from the first row: the result goes below the last row.
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "undefined");
+          expect(screen.rows.slice(top)).toEqual(["> 0;function three() {", ...drawn.slice(1), "undefined", "> "]);
+        },
+        { home: String(home) },
+      );
+    });
+
+    test("Ctrl+C and Down leave a recalled multi-line entry cleanly", async () => {
+      using home = tempDir("repl-rows-leave", { ".bun_repl_history": threeRows });
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send("typed");
+          await waitForScreen(s => s.rows.at(-1) === "> typed");
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... }");
+          expect(screen.rows.slice(top)).toEqual(drawn);
+          // Down: back to the line that was being typed, on one row.
+          send("\x1b[B");
+          screen = await waitForScreen(s => s.rows[top] === "> typed");
+          expect(screen.rows.slice(top)).toEqual(["> typed"]);
+
+          send("\x1b[A");
+          await waitForScreen(s => s.rows.at(-1) === "... }");
+          send("\x03");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "... }^C");
+          expect(screen.rows.slice(top)).toEqual([...drawn.slice(0, 2), "... }^C", "> "]);
+        },
+        { home: String(home) },
+      );
+    });
+
+    test("a row of a recalled entry wraps at the terminal width", async () => {
+      const cols = 20;
+      // "... " and the 16 characters of the second line fill a row exactly. The third line takes 25 columns.
+      using home = tempDir("repl-rows-wrap", {
+        ".bun_repl_history": "[\r  1111, 2222, 3,\r  44444, 55555, 6666,\r]\n",
+      });
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+          const rows = ["> [", "...   1111, 2222, 3,", "...   44444, 55555, ", "6666,"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... ]");
+          expect(screen.rows.slice(top)).toEqual([...rows, "... ]"]);
+
+          send(".length");
+          screen = await waitForScreen(s => s.rows.at(-1) === "... ].length");
+          expect(screen.rows.slice(top)).toEqual([...rows, "... ].length"]);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          expect(screen.rows.slice(top)).toEqual([...rows, "... ].length", "6", "> "]);
+        },
+        { home: String(home), cols },
+      );
+    });
+
+    test("a recalled entry with a comment row is redrawn in place with colors", async () => {
+      using home = tempDir("repl-rows-colors", { ".bun_repl_history": "// first\r// second\r40 + 2\n" });
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "❯ ")).rows.length - 1;
+          const rows = ["❯ // first", "... // second", "... 40 + 2"];
+
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1) === "... 40 + 2");
+          expect(screen.rows.slice(top)).toEqual(rows);
+          send("0");
+          screen = await waitForScreen(s => s.rows.at(-1) === "... 40 + 20");
+          expect(screen.rows.slice(top)).toEqual([...rows.slice(0, 2), "... 40 + 20"]);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "60");
+          expect(screen.rows.slice(top)).toEqual([...rows.slice(0, 2), "... 40 + 20", "60", "❯ "]);
+        },
+        { home: String(home), env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+
+    test("a recalled entry with a TAB and an escape sequence is drawn as text", async () => {
+      using home = tempDir("repl-rows-control-bytes", { ".bun_repl_history": '"a\tb\x1b[31m"\n' });
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          // The TAB goes to the next tab stop, column 8. ESC is drawn as ^[ and does not reach the terminal.
+          send("\x1b[A");
+          let screen = await waitForScreen(s => s.rows.at(-1)!.endsWith('31m"'));
+          expect(screen.rows.slice(top)).toEqual(['> "a    b^[[31m"']);
+          await waitForScreen(s => s.cursor.row === top && s.cursor.col === '> "a    b^[[31m"'.length);
+
+          // The bytes of the entry are what they were.
+          send(".length\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "8");
+          expect(screen.rows.slice(top)).toEqual(['> "a    b^[[31m".length', "8", "> "]);
+        },
+        { home: String(home) },
+      );
+    });
+  });
+
   test(".editor mode collects lines until Ctrl+D", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send(".editor\n");
@@ -2333,6 +2501,14 @@ describe.concurrent("REPL history file", () => {
     expect(second.outputs[1]).toEndWith("\n     2  three()");
     expect(second.stderr).toBe("");
     expect(second.exitCode).toBe(0);
+  });
+
+  test(".history shows the rows of an entry under each other", async () => {
+    using dir = tempDir("repl-history-listing", { ".bun_repl_history": "function three() {\r  return 3\r}\n" });
+    const { outputs, stderr, exitCode } = await runRepl([".history", ".exit"], { home: String(dir) });
+    expect(outputs).toEqual(["Command History:\n     1  function three() {\n          return 3\n        }"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("reads a file with CRLF line endings", async () => {

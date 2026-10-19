@@ -429,6 +429,9 @@ impl History {
 struct LineEditor {
     buffer: Vec<u8>,
     cursor: usize,
+    /// The buffer can hold a control byte: a line break of a recalled entry, a TAB. Only the
+    /// four functions that put bytes into the buffer change it, and a deletion leaves it set.
+    has_control_bytes: bool,
 }
 
 impl LineEditor {
@@ -436,18 +439,21 @@ impl LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
+            has_control_bytes: false,
         }
     }
 
     fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
+        self.has_control_bytes = false;
     }
 
     fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
+        self.has_control_bytes = text.iter().copied().any(is_control_byte);
         Ok(())
     }
 
@@ -458,6 +464,7 @@ impl LineEditor {
             self.buffer.insert(self.cursor, ch);
         }
         self.cursor += 1;
+        self.has_control_bytes |= is_control_byte(ch);
         Ok(())
     }
 
@@ -469,6 +476,7 @@ impl LineEditor {
                 .splice(self.cursor..self.cursor, slice.iter().copied());
         }
         self.cursor += slice.len();
+        self.has_control_bytes |= slice.iter().copied().any(is_control_byte);
         Ok(())
     }
 
@@ -913,6 +921,9 @@ fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
     ReplResult::SkipEval
 }
 
+/// The column where `.history` starts the text of an entry, behind its number.
+const HISTORY_LISTING_INDENT: usize = 8;
+
 fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
     repl.print(format_args!(
         "\n{}Command History:{}\n",
@@ -927,12 +938,20 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
     for (i, entry) in repl.history.entries[start..].iter().enumerate() {
         let i = i + start;
         repl.print(format_args!(
-            "  {}{:>4}{}  {}\n",
+            "  {}{:>4}{}  ",
             Color::DIM,
             i + 1,
-            Color::RESET,
-            BStr::new(entry)
+            Color::RESET
         ));
+        // Nothing wraps here: the terminal does that for a listing.
+        let drawn = DrawnRows::new(entry, entry.len(), usize::MAX, HISTORY_LISTING_INDENT);
+        for (index, row) in drawn.rows.iter().enumerate() {
+            if index > 0 {
+                repl.print(format_args!("\n{:1$}", "", HISTORY_LISTING_INDENT));
+            }
+            repl.write(row);
+        }
+        repl.write(b"\n");
     }
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
@@ -1005,6 +1024,91 @@ impl Layout {
             self.pos.next_row()
         } else {
             self.pos
+        }
+    }
+
+    /// A line break inside the line: the next row starts behind the continuation prompt. A full
+    /// row is not wrapped first, because the terminal drops its deferred wrap at a line break.
+    fn line_break(&mut self) {
+        self.pos = ScreenPos {
+            row: self.pos.row + 1,
+            col: CONTINUATION_PROMPT_WIDTH,
+        };
+    }
+}
+
+/// A byte of the line that is not drawn as itself.
+#[inline]
+fn is_control_byte(byte: u8) -> bool {
+    byte < 0x20 || byte == 0x7f
+}
+
+const CONTINUATION_PROMPT_WIDTH: usize = 4;
+const TAB_STOP: usize = 8;
+
+/// A line that holds control bytes, as it is drawn. Each line break starts a row. A TAB is the
+/// spaces up to the next tab stop, and any other control byte is its caret form (`^[` for ESC),
+/// so the terminal gets no byte that moves its cursor in a way `Layout` does not follow.
+struct DrawnRows {
+    rows: Vec<Vec<u8>>,
+    /// The row that holds the cursor, and the cursor's byte offset in the text of that row.
+    cursor: (usize, usize),
+}
+
+impl DrawnRows {
+    /// `first_col` is the column where the text of the first row starts.
+    fn new(line: &[u8], cursor: usize, width: usize, first_col: usize) -> DrawnRows {
+        let mut rows: Vec<Vec<u8>> = vec![Vec::new()];
+        let mut cursor_at = (0, 0);
+        // Follows the columns, for the tab stops.
+        let mut layout = Layout {
+            width,
+            pos: ScreenPos {
+                row: 0,
+                col: first_col,
+            },
+        };
+        let mut rest = line;
+        let mut offset = 0;
+        loop {
+            let plain_len = rest
+                .iter()
+                .copied()
+                .position(is_control_byte)
+                .unwrap_or(rest.len());
+            let (plain, after) = rest.split_at(plain_len);
+            let row = rows.len() - 1;
+            if (offset..=offset + plain_len).contains(&cursor) {
+                cursor_at = (row, rows[row].len() + (cursor - offset));
+            }
+            rows[row].extend_from_slice(plain);
+            layout.advance(plain);
+            let Some((&control, after)) = after.split_first() else {
+                break;
+            };
+            match control {
+                b'\n' => {
+                    rows.push(Vec::new());
+                    layout.line_break();
+                }
+                b'\t' => {
+                    let spaces = &[b' '; TAB_STOP];
+                    let spaces = &spaces[..TAB_STOP - layout.next().col % TAB_STOP];
+                    rows[row].extend_from_slice(spaces);
+                    layout.advance(spaces);
+                }
+                _ => {
+                    let caret = [b'^', control ^ 0x40];
+                    rows[row].extend_from_slice(&caret);
+                    layout.advance(&caret);
+                }
+            }
+            offset += plain_len + 1;
+            rest = after;
+        }
+        DrawnRows {
+            rows,
+            cursor: cursor_at,
         }
     }
 }
@@ -1401,13 +1505,17 @@ impl<'a> Repl<'a> {
     // Prompt and Display
     // ========================================================================
 
+    fn continuation_prompt(&self) -> &'static [u8] {
+        if self.use_colors {
+            concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes()
+        } else {
+            b"... "
+        }
+    }
+
     fn get_prompt(&self) -> &'static [u8] {
         if self.input_mode != InputMode::Normal {
-            if self.use_colors {
-                return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
-            } else {
-                return b"... ";
-            }
+            return self.continuation_prompt();
         }
 
         if self.use_colors {
@@ -1419,7 +1527,7 @@ impl<'a> Repl<'a> {
 
     fn get_prompt_length(&self) -> usize {
         if self.input_mode != InputMode::Normal {
-            return 4; // "... "
+            return CONTINUATION_PROMPT_WIDTH;
         }
         2 // "> " or "\u{276f} "
     }
@@ -1466,21 +1574,7 @@ impl<'a> Repl<'a> {
         // Write prompt
         self.write(prompt);
 
-        // Write line with syntax highlighting
-        if self.use_colors && !line.is_empty() && line.len() <= 2048 {
-            self.write_highlighted(line);
-        } else {
-            self.write(line);
-        }
-
-        let ghost = self.drawn_suggestion();
-        if !ghost.is_empty() {
-            self.write(Color::DIM.as_bytes());
-            self.write(ghost);
-            self.write(Color::RESET.as_bytes());
-        }
-
-        let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
+        let highlighted = self.use_colors && !line.is_empty() && line.len() <= 2048;
         let mut layout = Layout {
             width,
             pos: ScreenPos {
@@ -1488,9 +1582,50 @@ impl<'a> Repl<'a> {
                 col: prompt_len,
             },
         };
-        layout.advance(before_cursor);
-        let mut cursor = layout.advance(after_cursor);
+        let mut cursor;
+        if self.line_editor.has_control_bytes {
+            let drawn = DrawnRows::new(line, self.line_editor.cursor, width, prompt_len);
+            let (cursor_row, cursor_offset) = drawn.cursor;
+            cursor = ScreenPos::default();
+            for (index, row) in drawn.rows.iter().enumerate() {
+                if index > 0 {
+                    self.write(b"\n");
+                    self.write(self.continuation_prompt());
+                    layout.line_break();
+                }
+                // By row: the highlighter does not write the line break that ends a `//` comment.
+                if highlighted && !row.is_empty() {
+                    self.write_highlighted(row);
+                } else {
+                    self.write(row);
+                }
+                if index == cursor_row {
+                    let (before_cursor, after_cursor) = row.split_at(cursor_offset);
+                    layout.advance(before_cursor);
+                    cursor = layout.advance(after_cursor);
+                } else {
+                    layout.advance(row);
+                }
+            }
+        } else {
+            // Write line with syntax highlighting
+            if highlighted {
+                self.write_highlighted(line);
+            } else {
+                self.write(line);
+            }
+            let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
+            layout.advance(before_cursor);
+            cursor = layout.advance(after_cursor);
+        }
         let end = layout.next();
+
+        let ghost = self.drawn_suggestion();
+        if !ghost.is_empty() {
+            self.write(Color::DIM.as_bytes());
+            self.write(ghost);
+            self.write(Color::RESET.as_bytes());
+        }
         if !ghost.is_empty() {
             // Only drawn with the cursor at the end of the line, so the cursor sits on the ghost.
             cursor = layout.advance(ghost);

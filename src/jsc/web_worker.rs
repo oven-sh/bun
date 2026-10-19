@@ -14,7 +14,7 @@
 //! touches the parent's `Worker` object or a thread-affine ref.
 //!
 //! Thread lifecycle (`thread_main`):
-//!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
+//!   1. `start_vm()`  — env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
 //!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
@@ -110,10 +110,7 @@ pub struct WebWorker {
     /// `shutdown()`.
     vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
-    // The VM's allocator IS this arena.
-    arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Cloned env for the worker VM; boxed on the global heap because the arena
-    /// does not run `Drop`. Reclaimed in `shutdown()`.
+    /// Cloned env for the worker VM. Reclaimed in `shutdown()`.
     worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
@@ -434,7 +431,6 @@ impl WebWorker {
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
             status: Cell::new(Status::Start),
-            arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
@@ -662,7 +658,7 @@ impl WebWorker {
         self.spin();
     }
 
-    /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.
+    /// Phase 1: build the worker's VirtualMachine and publish `vm`.
     ///
     /// Returns the published VM pointer; `Ok(null)` means the early-terminate
     /// checkpoint already ran `shutdown()`.
@@ -676,9 +672,6 @@ impl WebWorker {
             env_loader,
             proxy_env_slots,
         } = init;
-
-        // worker-thread only field; no other thread reads `arena`.
-        self.arena.set(Some(bun_alloc::Arena::new()));
 
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
@@ -710,13 +703,6 @@ impl WebWorker {
             // SAFETY: init_worker returns a valid heap-allocated VM ptr;
             // not yet published, so this `&mut` is exclusive.
             let vm_ref = unsafe { &mut *vm };
-            // arena initialised above; worker-thread only field. `with_mut`
-            // scopes a `&mut Option<Arena>` to the closure; we extract the raw
-            // address (escaping as `*mut`, no borrow) for the VM backref.
-            vm_ref.arena = self
-                .arena
-                .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
-
             *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
 
             vm_ref.is_main_thread = false;
@@ -945,8 +931,6 @@ impl WebWorker {
             && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
-            // `Arena = bumpalo::Bump` has no collect; global mimalloc
-            // handles reclamation.
             let _ = vm.global().vm().run_gc(false);
         }
 
@@ -1016,8 +1000,6 @@ impl WebWorker {
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
 
-        // worker-thread only field; no other thread reads `arena`.
-        let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
@@ -1036,7 +1018,7 @@ impl WebWorker {
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
+        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`).
         if !env_loader.is_null() {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
@@ -1046,7 +1028,6 @@ impl WebWorker {
         // before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.
         Bun__freeSharedHeaderBufferForThreadExit();
-        drop(arena.take());
         log!(
             "[{}] shutdown: thread state freed",
             self.execution_context_id
@@ -1232,7 +1213,7 @@ fn on_unhandled_rejection(
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy
-    // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and report
+    // the `JSC::VM`, free the Bun `VirtualMachine`, and report
     // `workerGlobalScopeDestroyed`, then return through
     // `VirtualMachine::uncaught_exception` (which writes
     // `is_handling_uncaught_exception = false` on the freed VM), through live

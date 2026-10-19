@@ -338,6 +338,13 @@ unsafe fn init_runtime_state(
     // the low tier (`VirtualMachine::init` writes it immediately before calling
     // this hook), so no uws wiring is repeated here.
 
+    let transpiler_arena = Box::new(if opts.worker_ptr.is_null() {
+        // Only Worker VMs are unbounded in number; the rest skip `mi_heap_new`/`mi_heap_destroy`.
+        bun_alloc::Arena::borrowing_default()
+    } else {
+        bun_alloc::Arena::new()
+    });
+
     // Note: `heap::alloc` is paired with `heap::take` in
     // [`deinit_runtime_state`] below — called from `VirtualMachine::deinit` /
     // worker `destroy()` via the `RuntimeHooks::deinit_runtime_state` slot.
@@ -353,10 +360,7 @@ unsafe fn init_runtime_state(
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
-        // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
-        // allocations use the same heap as the global allocator and skip the
-        // `mi_heap_new`/`mi_heap_destroy` pair.
-        transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
+        transpiler_arena,
         owned_env_loader: opts.owned_env_loader.take(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the

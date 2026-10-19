@@ -1715,6 +1715,7 @@ impl<'s> Checker<'_, 's> {
         let hir = self.hir(file);
         let ty = self.type_of_expr(file, e);
         if ty == TypeId::ERROR {
+            cold_path();
             self.reach_flow_depth_limit_again(file, e);
         }
         // `checkExpressionEx`
@@ -1723,6 +1724,7 @@ impl<'s> Checker<'_, 's> {
             _ => ty,
         };
         if self.is_const_enum_object(ty) {
+            cold_path();
             self.check_const_enum_access(file, e, ty);
         }
         match hir[e].kind {

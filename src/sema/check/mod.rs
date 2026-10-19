@@ -121,6 +121,7 @@ use spans::token_end;
 use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::hash::{Hash, Hasher};
+use std::hint::cold_path;
 use std::sync::atomic::AtomicBool;
 use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
@@ -2302,10 +2303,9 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(crate) fn is_stack_low(&self) -> bool {
         let used = self.stack_base.saturating_sub(stack_pointer());
-        if used > self.deepest_stack.get() {
-            self.deepest_stack.set(used);
-        }
+        self.deepest_stack.set(used.max(self.deepest_stack.get()));
         if used > self.stack_limit {
+            cold_path();
             self.ran_out_of_stack.set(true);
             self.times_cut_short.set(self.times_cut_short.get() + 1);
             self.note_gave_up("the native stack");
@@ -2357,7 +2357,7 @@ impl<'p, 's> Checker<'p, 's> {
         // check runs again while it's in progress.
         if !(matches!(q, Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
             && self.in_progress[class as usize] != 0
-            && let Some(i) = self.stack[from..].iter().rposition(|x| *x == q)
+            && let Some(i) = self.position_in_progress(q, from)
             && self.on_reentry(q, i + from)
         {
             return false;
@@ -2399,6 +2399,13 @@ impl<'p, 's> Checker<'p, 's> {
             held_back: self.task.held_back(),
         });
         true
+    }
+
+    /// Returns the position of the innermost `q` in `stack[from..]`.
+    #[cold]
+    #[inline(never)]
+    fn position_in_progress(&self, q: Query, from: usize) -> Option<usize> {
+        self.stack[from..].iter().rposition(|x| *x == q)
     }
 
     /// The slow path of the first test in `enter`. Returns false if `q` isn't rejected.
@@ -3155,6 +3162,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.may_be_in_flight(q) {
             return;
         }
+        cold_path();
         let frames = self.frames.iter_mut().zip(&self.stack);
         for (frame, _) in frames.filter(|x| *x.1 == q) {
             frame.is_stored_by_nested_visit = true;
@@ -3488,14 +3496,17 @@ impl<'p, 's> Checker<'p, 's> {
         let frame = self.frames.pop().unwrap();
         self.in_progress[frame.class as usize] -= 1;
         if self.in_progress[frame.class as usize] != 0 && (!frame.tainted || frame.circular) {
+            cold_path();
             self.note_result(q);
         }
         self.left_a_cycle = if self.stale_resolutions.is_empty() {
             frame.circular
         } else {
+            cold_path();
             self.pop_type_resolution(q, frame.circular)
         };
         if self.reported.len() > frame.reported_from as usize {
+            cold_path();
             self.settle_reported(frame, q);
         }
         if frame.tainted {
@@ -3575,6 +3586,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn check_mode(&self) -> CheckMode {
         if self.is_rechecking() {
+            cold_path();
             self.mode_of_recheck
         } else {
             CheckMode::empty()
@@ -3853,6 +3865,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.provisional.is_empty() {
             return None;
         }
+        cold_path();
         self.provisional_hit(q)
     }
 

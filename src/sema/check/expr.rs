@@ -11,6 +11,7 @@ use super::shape::{Access, Found};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
+use std::hint::cold_path;
 use std::ops::ControlFlow;
 
 /// See `Checker::pattern_implying_contextual_type`.
@@ -98,6 +99,7 @@ impl<'p, 's> Checker<'p, 's> {
         if check_mode.is_empty() || e.is_none() {
             return self.check_expression_worker(file, e);
         }
+        cold_path();
         let check_mode = self.check_mode_passed_to(file, e, check_mode);
         self.check_expression_ex(file, e, check_mode)
     }
@@ -385,9 +387,11 @@ impl<'p, 's> Checker<'p, 's> {
         // class's members were requested and their index signatures re-enter it, it's checked
         // again, and this time it finds the members resolved (`resolveDeclaredMembers`).
         if let Some(&(floor, ..)) = self.declared_index_infos_in_progress.last() {
+            cold_path();
             visible_from = visible_from.max(floor);
         }
         if !self.contextual_binding_patterns.is_empty() {
+            cold_path();
             if let Some(floor) = self.contextual_pattern_floor(file, e) {
                 is_uncached = true;
                 visible_from = visible_from.max(floor.min(self.stack.len()));
@@ -407,15 +411,17 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return known;
         }
-        if !self.reporting_nonexistent.is_empty()
-            && let Some(ty) = self.type_of_access_being_reported(file, e)
-        {
-            return ty;
+        if !self.reporting_nonexistent.is_empty() {
+            cold_path();
+            if let Some(ty) = self.type_of_access_being_reported(file, e) {
+                return ty;
+            }
         }
-        if self.is_flow_loop_or_exhaustive_state_in_progress()
-            && let Some(ty) = self.recheck_in_flow_loop(file, e, is_rechecked)
-        {
-            return ty;
+        if self.is_flow_loop_or_exhaustive_state_in_progress() {
+            cold_path();
+            if let Some(ty) = self.recheck_in_flow_loop(file, e, is_rechecked) {
+                return ty;
+            }
         }
         let hir = self.hir(file);
         match hir[e].kind {
@@ -448,6 +454,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let ty = self.type_of_entered_expr(file, e, is_rechecked);
                 if is_checked_once && self.is_reference_to_recheck() {
+                    cold_path();
                     let _ = self.leave(Query::Expr(file, e));
                     return self.type_of_expr_on_cache_miss(file, e, true);
                 }
@@ -462,6 +469,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Err(open) = left
                     && !is_uncached
                 {
+                    cold_path();
                     self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
                 }
                 (ty, left.ok().filter(|_| is_final))
@@ -478,6 +486,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else if !self.expressions_cached_with_errors_discarded.is_empty()
                 && self.task.file == Some(file)
             {
+                cold_path();
                 // An outer check of `e`, around the one that assigned first, did report its errors.
                 self.expressions_cached_with_errors_discarded
                     .retain(|&it| it != e);
@@ -631,6 +640,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_rechecked {
             return self.type_of_expr_uncached(file, e);
         }
+        cold_path();
         let outer = self.begin_recheck();
         let ty = self.type_of_expr_uncached(file, e);
         self.end_recheck(outer);

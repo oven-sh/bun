@@ -1,6 +1,7 @@
 use super::*;
 use crate::atom::known;
 use crate::util::number_repeated;
+use std::hint::cold_path;
 
 /// A label while the file is being bound.
 struct Label {
@@ -1016,7 +1017,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn set_flow_node_referenced(&mut self, flow: FlowId) {
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         if word >= self.referenced.len() {
-            std::hint::cold_path();
+            cold_path();
             self.referenced.resize(word + 1, 0);
             self.b.flow_shared.resize(word + 1, 0);
         }
@@ -4628,6 +4629,7 @@ impl<'f, 's> Binder<'f, 's> {
         // everything inside them, and `f<T>` counts as a type.
         let scope_change_of = self.scope_change_of;
         if scope_change_of.is_some() {
+            cold_path();
             let answer = match self.f[id].kind {
                 ExprKind::Binary {
                     op: BinOp::Nullish, ..
@@ -4650,6 +4652,7 @@ impl<'f, 's> Binder<'f, 's> {
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
         if self.f.is_js && matches!(self.f[id].kind, ExprKind::Call(_)) {
+            cold_path();
             match assignment_declaration_kind(self.f, id) {
                 JsDeclarationKind::ObjectDefinePropertyValue => {
                     self.expando_assignments.push((id, self.scope));

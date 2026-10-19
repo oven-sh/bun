@@ -650,6 +650,7 @@ impl<'p, 's> Checker<'p, 's> {
         if (self.instantiation_depth >= 100 || self.instantiation_count >= 5_000_000)
             && !self.reset_instantiation_count_if_idle()
         {
+            cold_path();
             return self.instantiation_too_deep();
         }
         let active = self.active_mappers.find(mapper);

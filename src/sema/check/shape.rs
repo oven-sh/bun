@@ -5635,7 +5635,10 @@ impl<'p, 's> Checker<'p, 's> {
                 adds_undefined = prop.flags & optionality == PropFlags::OPTIONAL;
                 let linked_type = match self.instantiated_symbol_links.is_empty() {
                     true => None,
-                    false => self.link_of_instantiated_symbol(prop, *sym, outer, false),
+                    false => {
+                        cold_path();
+                        self.link_of_instantiated_symbol(prop, *sym, outer, false)
+                    }
                 };
                 has_resolved_type = linked_type.is_some();
                 match linked_type {
@@ -5704,8 +5707,10 @@ impl<'p, 's> Checker<'p, 's> {
             base
         };
         let ty = if prop.flags.contains(PropFlags::WIDEN) {
+            cold_path();
             self.get_widened_type(ty)
         } else if prop.flags.contains(PropFlags::REGULAR) {
+            cold_path();
             self.regular_type_of_resolved_object_literal(ty)
         } else {
             ty
@@ -7126,6 +7131,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn next_base_constraint(&mut self, ty: TypeId) -> Option<TypeId> {
         // `computeBaseConstraint` of a type parameter assigns `tp.constraint`.
         if !self.unresolved_renamed_params.is_empty() {
+            cold_path();
             self.unresolved_renamed_params.remove(&ty);
         }
         let data = self.data(ty);

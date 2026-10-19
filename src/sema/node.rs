@@ -1847,7 +1847,9 @@ impl<'s> File<'s> {
         let known = self.known_kinds().get(node.idx());
         match known.map(|kind| kind.load(Ordering::Relaxed)) {
             None | Some(0) => self.compute_kind(node),
-            Some(kind) => Kind::ALL.get(kind as usize).map_or(Kind::Unknown, |&kind| kind),
+            Some(kind) => Kind::ALL
+                .get(kind as usize)
+                .map_or(Kind::Unknown, |&kind| kind),
         }
     }
 
@@ -3042,9 +3044,23 @@ impl File<'_> {
         }
     }
 
+    /// True if `node` is an expression other than a function or a class. Most steps of a walk up to a container are
+    /// over such a node, and this is cheaper than `kind`.
+    #[inline]
+    fn is_plain_expression(&self, node: Node) -> bool {
+        let bases = &self.bases.0;
+        node.0.wrapping_sub(bases[0]) < bases[1] - bases[0]
+            && !matches!(
+                self[ExprId(node.0 - bases[0])].kind,
+                ExprKind::Fn(_) | ExprKind::Class(_)
+            )
+    }
+
     /// `GetContainingClass`
     pub fn get_containing_class(&self, node: Node) -> Node {
-        self.find_ancestor(self.parent(node), |n| self.kind(n).is_class_like())
+        self.find_ancestor(self.parent(node), |n| {
+            !self.is_plain_expression(n) && self.kind(n).is_class_like()
+        })
     }
 
     /// `getContainingClassExcludingClassDecorators`
@@ -3133,6 +3149,9 @@ impl File<'_> {
     ) -> Node {
         use Kind::*;
         loop {
+            while self.is_plain_expression(node) {
+                node = self.parent(node);
+            }
             match self.kind(node) {
                 Unknown => return Node::NONE,
                 ComputedPropertyName => {
@@ -3202,6 +3221,10 @@ impl File<'_> {
         let mut in_binding_initializer = false;
         loop {
             let parent = self.parent(node);
+            if self.is_plain_expression(parent) {
+                node = parent;
+                continue;
+            }
             let kind = self.kind(parent);
             if parent.is_none() || kind.is_function_like() {
                 return false;

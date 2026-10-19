@@ -364,7 +364,10 @@ impl SharedFlows {
         match self.inline_entries.iter().find(|known| known.0 == flow) {
             Some(known) => Some(known.1),
             None if self.overflow_entries.is_empty() => None,
-            None => self.overflow_entries.get(&flow).copied(),
+            None => {
+                cold_path();
+                self.overflow_entries.get(&flow).copied()
+            }
         }
     }
 
@@ -2718,6 +2721,7 @@ impl<'p, 's> Checker<'p, 's> {
         let file = reference.file;
         // Every comparison resolves the name of the reference's outermost key.
         if reference.unresolved.get() != 0 || self.has_order_dependent_assignment_marks(file) {
+            cold_path();
             return true;
         }
         let memo = &self.flow_memo;
@@ -6703,6 +6707,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeAtFlowNode`
     fn flow_type(&mut self, walk: &mut Walk, start: FlowId) -> FlowType {
         if walk.too_deep {
+            cold_path();
             return FlowType::new(TypeId::ERROR, false);
         }
         let file = walk.reference.file;
@@ -6721,10 +6726,12 @@ impl<'p, 's> Checker<'p, 's> {
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
+                cold_path();
                 break walk.declared;
             }
             walk.depth = depth + 1 + pending.len() as u32 + passed;
             if walk.depth > MAX_FLOW_DEPTH {
+                cold_path();
                 walk.too_deep = true;
                 break TypeId::ERROR;
             }
@@ -7204,6 +7211,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Both resolve each access's name before they look at a declaration.
         if reference.unresolved.get() != 0 && !matches!(target, FlowTarget::Expr(_)) {
+            cold_path();
             let len = reference.path.len();
             for step in (len - reference.accesses..len).rev() {
                 self.name_of_step(reference, step);

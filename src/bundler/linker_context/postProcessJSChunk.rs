@@ -230,6 +230,7 @@ pub(crate) fn post_process_js_chunk(
                 source_index: Index::INVALID,
                 original_path: b"",
                 flags: ImportRecordFlags::default(),
+                unreadable_attributes_loc: bun_ast::Loc::EMPTY,
             });
         }
 

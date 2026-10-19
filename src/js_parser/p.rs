@@ -1452,8 +1452,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let import_record_index =
                 self.add_import_record(ImportKind::Dynamic, arg.loc, str_.slice(self.arena));
 
-            if let Some(loader) = state.import_loader {
-                self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
+            // Only `BundleV2` reads the loader of an `import()` record.
+            if self.options.bundle {
+                match E::ImportLoader::from_options(&state.import_options, self.arena) {
+                    E::ImportLoader::Attribute(loader) => {
+                        self.import_records.items_mut()[import_record_index as usize].loader =
+                            Some(loader);
+                    }
+                    E::ImportLoader::Unreadable { reason, loc } => {
+                        self.import_records.items_mut()[import_record_index as usize]
+                            .set_unreadable_attributes(reason, loc);
+                    }
+                    E::ImportLoader::None => {}
+                }
             }
 
             self.import_records.items_mut()[import_record_index as usize]
@@ -5277,6 +5288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             source_index: bun_ast::Index::INVALID,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
+            unreadable_attributes_loc: bun_ast::Loc::EMPTY,
         });
         u32::try_from(index).expect("int cast")
     }

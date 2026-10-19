@@ -9,6 +9,7 @@ use bun_alloc::AllocError;
 use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
+use crate::import_record::UnreadableAttributes;
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
@@ -2377,35 +2378,171 @@ impl Import {
     pub fn is_import_record_null(&self) -> bool {
         self.import_record_index == u32::MAX
     }
+}
 
-    pub fn import_record_loader(&self) -> Option<crate::Loader> {
-        let crate::ExprData::EObject(obj) = &self.options.data else {
-            return None;
-        };
-        let with = Object::get(obj, b"with").or_else(|| Object::get(obj, b"assert"))?;
-        let crate::ExprData::EObject(with_obj) = &with.data else {
-            return None;
-        };
-        let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+/// The loader that the options of `import(specifier, options)` select, as far as a
+/// bundler can read them without running the program.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ImportLoader {
+    /// No `type` attribute that names a loader.
+    None,
+    Attribute(crate::Loader),
+    /// Only the runtime knows the attributes. `loc` is the expression that hides them.
+    Unreadable {
+        reason: UnreadableAttributes,
+        loc: crate::Loc,
+    },
+}
 
-        if !str_.is_utf16 {
-            if let Some(loader) = crate::Loader::from_string(&str_.data) {
-                if loader == crate::Loader::Sqlite {
-                    let Some(embed) = Object::get(with_obj, b"embed") else {
-                        return Some(loader);
-                    };
-                    let Some(embed_str) = embed.data.as_e_string() else {
-                        return Some(loader);
-                    };
-                    if embed_str.eql_comptime(b"true") {
-                        return Some(crate::Loader::SqliteEmbedded);
-                    }
-                }
-                return Some(loader);
-            }
+impl ImportLoader {
+    /// Reads `options` the way the runtime reads it when the call runs: `with` is
+    /// looked up on the object, and `type` is one of its own properties.
+    #[inline]
+    pub fn from_options(options: &Expr, bump: &Bump) -> ImportLoader {
+        // `import(specifier)`
+        if matches!(options.data, crate::ExprData::EMissing(_)) {
+            return ImportLoader::None;
         }
+        Self::from_second_argument(options, bump)
+    }
 
-        None
+    fn from_second_argument(options: &Expr, bump: &Bump) -> ImportLoader {
+        let object = match &options.data {
+            crate::ExprData::EObject(object) => object,
+            crate::ExprData::EUndefined(_) => return ImportLoader::None,
+            _ => {
+                return ImportLoader::Unreadable {
+                    reason: UnreadableAttributes::OptionsNotObjectLiteral,
+                    loc: options.loc,
+                };
+            }
+        };
+        match plain_property(object, b"with", true) {
+            Ok(Some(with)) => attributes_loader(with, bump),
+            Ok(None) => match Object::get(object, b"assert") {
+                Some(assert) => assert_loader(assert, bump),
+                None => ImportLoader::None,
+            },
+            Err(loc) => ImportLoader::Unreadable {
+                reason: UnreadableAttributes::PropertyNotPlain,
+                loc,
+            },
+        }
+    }
+}
+
+/// The runtime ignores `assert`, so one that cannot be read selects nothing.
+#[cold]
+fn assert_loader(assert: Expr, bump: &Bump) -> ImportLoader {
+    match attributes_loader(assert, bump) {
+        loader @ ImportLoader::Attribute(_) => loader,
+        _ => ImportLoader::None,
+    }
+}
+
+#[inline(always)]
+fn attributes_loader(attributes: Expr, bump: &Bump) -> ImportLoader {
+    let attributes = match &attributes.data {
+        crate::ExprData::EObject(attributes) => attributes,
+        crate::ExprData::EUndefined(_) => return ImportLoader::None,
+        _ => {
+            return ImportLoader::Unreadable {
+                reason: UnreadableAttributes::WithNotObjectLiteral,
+                loc: attributes.loc,
+            };
+        }
+    };
+    let type_ = match plain_property(attributes, b"type", false) {
+        // A member of a TypeScript enum in the same file is a constant.
+        Ok(Some(type_)) => type_.unwrap_inlined(),
+        Ok(None) => return ImportLoader::None,
+        Err(loc) => {
+            return ImportLoader::Unreadable {
+                reason: UnreadableAttributes::PropertyNotPlain,
+                loc,
+            };
+        }
+    };
+    let crate::ExprData::EString(type_str) = &type_.data else {
+        return ImportLoader::Unreadable {
+            reason: UnreadableAttributes::TypeNotStringLiteral,
+            loc: type_.loc,
+        };
+    };
+    if type_str.is_utf16 {
+        return ImportLoader::None;
+    }
+    // A folded `"te" + "xt"` is a rope.
+    let Some(loader) = crate::Loader::from_string(&type_str.flattened(bump).data) else {
+        return ImportLoader::None;
+    };
+    if loader == crate::Loader::Sqlite
+        && Object::get(attributes, b"embed")
+            .and_then(|embed| embed.data.as_e_string())
+            .is_some_and(|embed| embed.eql_comptime(b"true"))
+    {
+        return ImportLoader::Attribute(crate::Loader::SqliteEmbedded);
+    }
+    ImportLoader::Attribute(loader)
+}
+
+/// The value of `name` after the object literal is evaluated, when the definition that
+/// wins is a plain `name: value`. `Err` is the property that only the runtime can read.
+/// `inherits`: the lookup follows the prototype, so `__proto__: value` can supply `name`.
+#[inline(always)]
+fn plain_property(
+    obj: &Object,
+    name: &'static [u8],
+    inherits: bool,
+) -> Result<Option<Expr>, crate::Loc> {
+    // `key == literal`, with the comparison of a plain UTF-8 key inline.
+    #[inline(always)]
+    fn key_is(key: &EString, literal: &'static [u8]) -> bool {
+        if key.next.is_none() && !key.is_utf16 {
+            *key.data == *literal
+        } else {
+            key.eql_comptime(literal)
+        }
+    }
+
+    let mut found = Ok(None);
+    let mut proto = None;
+    for prop in obj.properties.slice() {
+        // A `[key]: value` or a spread can define `name`. Neither gets here today:
+        // `e_import` reads only options that have no side effects.
+        let (key, key_str) = match &prop.key {
+            Some(key) => match &key.data {
+                crate::ExprData::EString(key_str) => (key, key_str),
+                // `1: value` does not define `name`.
+                _ if key.is_primitive_literal() => continue,
+                _ => return Err(key.loc),
+            },
+            None => return Err(prop.value.map_or(crate::Loc::EMPTY, |value| value.loc)),
+        };
+        let is_plain = prop.kind == G::PropertyKind::Normal
+            && !prop.flags.contains(crate::flags::Property::IsMethod);
+        if key_is(key_str, name) {
+            // A later definition replaces an earlier one.
+            found = match prop.value {
+                Some(value) if is_plain => Ok(Some(value)),
+                _ => Err(key.loc),
+            };
+        } else if inherits
+            && is_plain
+            && !prop.flags.contains(crate::flags::Property::IsComputed)
+            && !prop.flags.contains(crate::flags::Property::WasShorthand)
+            && key_is(key_str, b"__proto__")
+        {
+            // `__proto__: null` leaves nothing to inherit.
+            proto = prop
+                .value
+                .filter(|value| !matches!(value.data, crate::ExprData::ENull(_)))
+                .map(|_| key.loc);
+        }
+    }
+    match (found, proto) {
+        (Ok(None), Some(loc)) => Err(loc),
+        (found, _) => found,
     }
 }
 

@@ -130,6 +130,21 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
     })
 }
 
+/// Like [`expression_statement_needs_semicolon`], for a statement that is copied verbatim from the source starting at
+/// `start`. The copied text can start with a parenthesis that the printer would have dropped. Prettier's output for
+/// `a = b⏎// prettier-ignore⏎(c).d()` calls `b`.
+pub(crate) fn ignored_statement_needs_semicolon<'a>(
+    statement: Stmt<'a>,
+    start: u32,
+    f: &Formatter<'a>,
+) -> bool {
+    let StmtKind::Expr(expression) = statement.kind() else {
+        return false;
+    };
+    expression_statement_needs_semicolon(statement, expression, f)
+        || (f.source_text().byte_at(start) == Some(b'(') && can_follow_a_statement(statement))
+}
+
 /// Whether the last comment before the token at `position` looks like a type cast, with or without a `(` after it.
 pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> bool {
     (f.comments().comments_directly_before(position).last())

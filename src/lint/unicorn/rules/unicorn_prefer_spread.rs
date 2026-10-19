@@ -4,6 +4,7 @@ use bun_lint_oxlint::ast_util::could_be_asi_hazard;
 use crate::unicorn::TYPED_ARRAYS;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::visible::{is_global, is_visibly_iterable};
 
 /// Enforces the use of the spread operator (`...`) over outdated patterns.
 pub struct PreferSpread;
@@ -70,7 +71,15 @@ impl Rule for PreferSpread {
         };
         let report = cx.report(e, PREFER_SPREAD).data("bad_method", bad_method);
         if let Some(expr_to_spread) = spread {
-            report.fix(|fixer| {
+            // `Array.from` also accepts `{ length: 2 }`, which can't be spread. Buffers, strings and blobs have a
+            // `slice` too, and `slice` keeps an array's holes, which a spread doesn't. The printer drops comments.
+            let is_safe = || {
+                name.is("from")
+                    && is_global(object, "Array")
+                    && is_visibly_iterable(expr_to_spread)
+                    && e.file().comments_in(e).next().is_none()
+            };
+            report.fix_where_safe(is_safe, |fixer| {
                 let mut codegen = Codegen::default();
                 codegen.code.extend_from_slice(if could_be_asi_hazard(e) { ";[..." } else { "[..." }.as_bytes());
                 // The parentheses around it are not printed.

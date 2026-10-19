@@ -128,7 +128,7 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
   },
 );
 
-// With the packages in the cache and no node_modules, the hoisted linker gives them to the pool.
+// With the packages in the cache and no node_modules, the hoisted linker hands them to the thread pool.
 test.skipIf(!isLinux || isMusl || isASAN || !cc)(
   "the hoisted linker links a new node_modules when no worker of the thread pool can be started",
   async () => {
@@ -172,7 +172,7 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
     expect((await readdir(join(String(dir), "node_modules"))).sort()).toEqual(["one", "two"]);
     expect(exitCode).toBe(0);
 
-    // What is replaced is deleted on the pool too.
+    // Replaced packages are deleted on the thread pool too.
     for (const prefix of [[], ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"']]) {
       for (const name of ["one", "two"]) {
         await rm(join(String(dir), "node_modules", name, "package.json"));

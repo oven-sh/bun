@@ -32,7 +32,8 @@ impl Rule for PreferDomNodeTextContent {
             && !member.is_jsx_tag_name()
             && !member.is_in_type_query()
         {
-            cx.report(name, PREFER_TEXT_CONTENT).fix(|fixer| fixer.replace(name, "textContent"));
+            // `innerText` skips text hidden by CSS and turns `<br>` into line breaks. `textContent` doesn't.
+            cx.report(name, PREFER_TEXT_CONTENT).fix_dangerously(|fixer| fixer.replace(name, "textContent"));
         }
     }
 

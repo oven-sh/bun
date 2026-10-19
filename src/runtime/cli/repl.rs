@@ -1085,7 +1085,8 @@ impl<'a> Repl<'a> {
 
         #[cfg(unix)]
         {
-            SIGINT_WAKES.store(bun_uws::Loop::get(), core::sync::atomic::Ordering::Release);
+            // SAFETY: the main thread's loop lives for the rest of the process.
+            unsafe { SIGINT_WAKES.set(bun_uws::Loop::get()) };
 
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
             let _ = self
@@ -2855,21 +2856,15 @@ static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
 /// The loop that wait parks in. The poll retries on EINTR, so the signal does not end it:
 /// `sigint_handler` wakes it.
 #[cfg(unix)]
-static SIGINT_WAKES: core::sync::atomic::AtomicPtr<bun_uws::Loop> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static SIGINT_WAKES: bun_uws::LoopWaker = bun_uws::LoopWaker::unset();
 
-/// Async-signal-safe: atomics and one write to the loop's wakeup fd.
+/// Async-signal-safe: atomics and the loop's wakeup.
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     use core::sync::atomic::Ordering;
     if SIGINT_ARMED.load(Ordering::Acquire) {
         SIGINT_DURING_WAIT.store(true, Ordering::Release);
-        let loop_ = SIGINT_WAKES.load(Ordering::Acquire);
-        if !loop_.is_null() {
-            // SAFETY: the loop is process-lifetime, and the raw extern is the
-            // thread-safe entry point (no `&mut Loop` formed off the main thread).
-            unsafe { bun_uws::us_wakeup_loop(loop_) };
-        }
+        SIGINT_WAKES.wake();
     }
 }
 

@@ -136,7 +136,7 @@ pub fn update_package_json_and_install_with_manager(
         original_cwd,
     )?;
 
-    // `bun patch` prepares the patch first; its caller exits.
+    // `bun patch` prepares the patch first, and its caller exits.
     if manager.any_failed_to_install
         && !matches!(manager.options.patch_features, PatchFeatures::Patch)
     {
@@ -227,13 +227,15 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
-    // Not `bun update <path>`: its rejection hints at a `bun add <path>` run from the cwd.
+    // `bun update <path>` is excluded, because its error message suggests running `bun add <path>`
+    // from the cwd.
     if subcommand == Subcommand::Add {
         updates =
             super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
     }
 
-    // Before the entry is read: migrating a lockfile rewrites the cached root package.json.
+    // This has to come before the entry is read, because migrating a lockfile rewrites the cached
+    // root package.json.
     let patch_commit: Option<PatchCommitResult> =
         if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
             patch_package::do_patch_commit(manager, log_level)?
@@ -473,7 +475,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-/// After the install: what the root `node_modules` still holds of what the command took out.
+/// Runs after the install. Removes what's left in the root `node_modules` of the packages that the
+/// command removed.
 pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         return;
@@ -481,7 +484,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     let subcommand = manager.subcommand;
     let placed: Option<Vec<Box<[u8]>>> = match subcommand {
         Subcommand::Remove => None,
-        // `-d` with `--production`: the install skips the group the entry is in now.
+        // `-d` with `--production`: the install skips the group that the entry is in now.
         Subcommand::Add
             if manager.options.do_.contains(Do::INSTALL_PACKAGES)
                 && !manager
@@ -506,7 +509,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         if request.name.is_empty() {
             continue;
         }
-        // Only top-level folders are removed; nested copies are left alone.
+        // Only top-level folders are removed. Nested copies are left alone.
         let left = match &placed {
             Some(placed) => placed
                 .binary_search_by(|name| name.as_ref().cmp(request.name))
@@ -521,7 +524,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         if !left {
             continue;
         }
-        // Not through a link at `@scope`.
+        // Don't go through a symlink at `@scope`.
         if let Some((scope, _)) = strings::split_once_char(request.name, b'/')
             && crate::prune::remove_planted_link(
                 &bun_sys::Dir::cwd(),
@@ -686,7 +689,8 @@ pub fn update_package_json_and_install_and_cli(
     Ok(())
 }
 
-// The folder as it reads inside double quotes: a space stays, a POSIX shell wants `\` doubled.
+// Formats the folder for use inside double quotes: a space is kept as it is, and a `\` is doubled
+// for a POSIX shell.
 struct ShellPathFormatter<'a> {
     folder: &'a [u8],
 }

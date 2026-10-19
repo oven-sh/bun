@@ -248,6 +248,8 @@ struct Context<'c, 'a> {
     pending: Vec<Id>,
     /// There is a tag or an anchor.
     has_properties: bool,
+    /// Message and position of an `Unexpected` error, if it has them.
+    refusal: Option<SyntaxError>,
     stack: &'c Stack,
 }
 
@@ -627,6 +629,17 @@ impl<'a> Context<'_, 'a> {
     ) -> Result<Id> {
         let rest = self.text.get(token.start as usize..).unwrap_or_default();
         let header = &rest[..strings::index_of_any(rest, b" \t\n").unwrap_or(rest.len())];
+        // Bun's parser reads `| 2` and `|2 -` as `|2` and `|2-`. In YAML only a comment can follow the whitespace.
+        let after_header = &rest[header.len()..];
+        let blanks = after_header
+            .iter()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count();
+        if !matches!(after_header.get(blanks), None | Some(b'\n' | b'#')) {
+            let at = token.start + (header.len() + blanks) as u32;
+            self.refusal = Some(SyntaxError(Message::UnexpectedCharacter, at));
+            return Err(Unexpected);
+        }
         let indicator_comment = self
             .peek()
             .filter(|it| it.kind == TokenKind::Comment && it.start < token.end)
@@ -1019,6 +1032,9 @@ impl<'a> Context<'_, 'a> {
             _ => content.position.end.offset,
         };
         let last_line = self.point(end.saturating_sub(1)).line;
+        // A comment that isn't indented more than the items doesn't belong to any of them.
+        let column_of_items = (content.children.first())
+            .map_or(1, |item| self.nodes[item.index()].position.start.column);
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {
             let place = self.point(token.start);
             // A document whose content is no block collection ends with the line after that.
@@ -1029,7 +1045,7 @@ impl<'a> Context<'_, 'a> {
             let comment = self.transform_comment(token);
             if place.line > last_line
                 && !is_open
-                && (!is_block || place.column == 1 || !end_comments.is_empty())
+                && (!is_block || place.column <= column_of_items || !end_comments.is_empty())
             {
                 end_comments.push(comment);
             }
@@ -1529,17 +1545,20 @@ pub(crate) fn build<'a>(
         comments: Vec::new(),
         pending: Vec::new(),
         has_properties: false,
+        refusal: None,
         stack,
     };
     // What has been made last is next to what cannot be.
     let children = context
         .transform_documents(documents)
         .map_err(|Unexpected| {
-            let last = context.nodes.last();
-            SyntaxError(
-                Message::CannotBeFormatted,
-                last.map_or(0, |it| it.position.start.offset),
-            )
+            context.refusal.unwrap_or_else(|| {
+                let last = context.nodes.last();
+                SyntaxError(
+                    Message::CannotBeFormatted,
+                    last.map_or(0, |it| it.position.start.offset),
+                )
+            })
         })?;
     let root = context.new_node(Kind::Root, context.position(0, text.len() as u32));
     for &child in &children {

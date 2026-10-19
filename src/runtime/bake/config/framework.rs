@@ -55,6 +55,10 @@ pub(crate) struct FileSystemRouterType {
     pub(crate) extensions: Vec<Utf8Bytes<'static>>,
     pub(crate) style: router::Style,
     pub(crate) allow_layouts: bool,
+    /// `clientPages`: the page and layout files also run in the browser. The dev server adds them to
+    /// the client graph, and the client entry gets them from `route` of `bun:bake/client`, to hydrate
+    /// the server's HTML. Not with server components.
+    pub(crate) client_pages: bool,
 }
 
 /// A "Framework" is simply a set of bundler options that a framework author
@@ -122,11 +126,26 @@ impl Framework {
             .map(|rfr| bt::ReactFastRefresh {
                 import_source: rfr.import_source.as_ref().into(),
             });
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let client_page_dirs = self
+            .file_system_router_types
+            .iter()
+            .filter(|fsr| fsr.client_pages)
+            .map(|fsr| {
+                Box::<[u8]>::from(
+                    bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                        top_level_dir,
+                        &fsr.root,
+                    ),
+                )
+            })
+            .collect();
         bt::Framework::new(
             built_in_modules,
             server_components,
             react_fast_refresh,
             self.is_built_in_react,
+            client_page_dirs,
         )
     }
 
@@ -222,7 +241,7 @@ impl Framework {
 }
 
 impl Framework {
-    pub(super) fn from_js(
+    pub(crate) fn from_js(
         opts: JSValue,
         global: &JSGlobalObject,
         bundler_options: &mut SplitBundlerOptions,
@@ -438,6 +457,16 @@ impl Framework {
                 let layouts = fsr_opts
                     .get_boolean_strict(global, "layouts")?
                     .unwrap_or(false);
+                let client_pages = fsr_opts
+                    .get_boolean_strict(global, "clientPages")?
+                    .unwrap_or(false);
+                // The client entry point is what loads the pages in the browser.
+                if client_pages && client_entry_point.is_none() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'fileSystemRouterTypes[{}].clientPages' needs a 'clientEntryPoint'",
+                        i
+                    )));
+                }
 
                 let style = style_from_js(
                     match fsr_opts.get(global, "style")? {
@@ -497,11 +526,11 @@ impl Framework {
                     ])
                 };
 
-                let ignore_dirs = if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
+                let ignore_dirs = if let Some(dirs_js) = fsr_opts.get(global, "ignoreDirs")? {
                     'exts: {
-                        if exts_js.is_array() {
-                            let mut it_2 = array.array_iterator(global)?;
-                            let mut dirs = Vec::with_capacity(len as usize);
+                        if dirs_js.is_array() {
+                            let mut it_2 = dirs_js.array_iterator(global)?;
+                            let mut dirs = Vec::with_capacity(dirs_js.get_length(global)? as usize);
                             while let Some(array_item) = it_2.next()? {
                                 dirs.push(array_item.to_utf8(global)?);
                             }
@@ -509,7 +538,7 @@ impl Framework {
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
+                            "'ignoreDirs' must be an array of strings"
                         )));
                     }
                 } else {
@@ -526,6 +555,7 @@ impl Framework {
                     extensions,
                     ignore_dirs,
                     allow_layouts: layouts,
+                    client_pages,
                 });
                 i += 1;
             }
@@ -534,6 +564,15 @@ impl Framework {
         };
         // errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
         // — Vec<FileSystemRouterType> drops contents on early return.
+
+        // With server components, the client graph gets the client components of a page, not the page.
+        if server_components.is_some()
+            && file_system_router_types.iter().any(|fsr| fsr.client_pages)
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'fileSystemRouterTypes[n].clientPages' cannot be used with 'serverComponents'"
+            )));
+        }
 
         let framework = Framework {
             is_built_in_react: false,

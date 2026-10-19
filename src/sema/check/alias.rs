@@ -4,6 +4,7 @@
 //! alias whose body is that node, and stores one only if it was instantiated under a different
 //! alias (`getTypeFromTypeAliasReference`).
 
+use super::links::AliasArguments;
 use super::*;
 use crate::bind::ScopeId;
 use smallvec::SmallVec;
@@ -62,7 +63,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getUnionTypeFromSortedList`: the members of `union`, with `origin` and no alias.
     pub(super) fn with_origin(&self, union: TypeId, origin: OriginKey<'_>) -> TypeId {
-        self.intern_key_with_alias(TypeKey::Data(self.data(union)), None, origin)
+        let copy = self.intern_key_with_alias(TypeKey::Data(self.data(union)), None, origin);
+        self.with_members_of(union, copy)
     }
 
     /// The alias stored in `ty`.
@@ -74,7 +76,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `ty` with `alias` and `type_arguments` as `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
         let key = TypeKey::Data(self.data(ty));
-        self.intern_key_with_alias(key, Some((alias, type_arguments)), self.origin(ty).into())
+        let alias = Some((alias, type_arguments));
+        let copy = self.intern_key_with_alias(key, alias, self.origin(ty).into());
+        self.with_members_of(ty, copy)
     }
 
     /// The end of `getUnionTypeWorker`, given an alias. `created` is the union without one. A named
@@ -85,8 +89,6 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Sym,
         type_arguments: &[TypeId],
     ) -> TypeId {
-        // `getUnionKey`
-        self.get_symbol_id(alias);
         // `addNamedUnions`
         let is_named = match self.types().provenance(created) {
             Some(own) => match own.origin {
@@ -110,43 +112,53 @@ impl<'p, 's> Checker<'p, 's> {
             is_array_pattern: false,
             has_other_instantiation: could_contain_type_variables,
         };
-        (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance)
+        let copy = (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance);
+        self.with_members_of(created, copy)
     }
 
     /// `t.alias`. A type identified by its type node has the alias whose body is that node, with
     /// the type parameters of the alias instantiated by the mapper of the type.
-    pub(super) fn alias_of_type(&self, ty: TypeId) -> Option<(Sym, Vec<TypeId>)> {
+    pub(super) fn alias_of_type(&self, ty: TypeId) -> Option<(Sym, AliasArguments)> {
         if let Some((alias, type_arguments)) = self.stored_alias(ty) {
-            return Some((*alias, type_arguments.to_vec()));
+            return Some((*alias, SmallVec::from_slice(type_arguments)));
         }
+
+        let alias = self.alias_symbol_of_type(ty)?;
+        if let Some(kept) = self.links.alias_type_arguments(ty) {
+            return Some((alias, kept));
+        }
+        let (_, type_arguments) = self.derive_alias_of_node_type(ty)?;
+        (self.links).keep_alias_type_arguments(ty, &type_arguments);
+        Some((alias, type_arguments))
+    }
+
+    /// Computes `alias_of_type` for a type that doesn't store its alias.
+    fn derive_alias_of_node_type(&self, ty: TypeId) -> Option<(Sym, AliasArguments)> {
         let (file, node, mapper) = self.alias_node_of_type(ty)?;
-        self.alias_of_node_under(file, node, mapper)
+        let (alias, type_arguments) = self.alias_of_node_under(file, node, mapper)?;
+        Some((alias, SmallVec::from_vec(type_arguments)))
     }
 
     /// `t.alias.symbol`, without computing the alias type arguments.
     pub(super) fn alias_symbol_of_type(&self, ty: TypeId) -> Option<Sym> {
         // FOR SPEED: tsgo reads a field of the type. `CompareTypes` asks for both types of every
         // comparison, and for the members of intersections.
-        if let Some(&known) = self.alias_symbols.borrow().get(&ty) {
-            return known;
+
+        if let Some(kept) = self.links.alias_symbol(ty) {
+            return kept;
         }
-        let alias = match self.stored_alias(ty) {
+        let alias = self.derive_alias_symbol_of_type(ty);
+        self.links.keep_alias_symbol(ty, alias);
+        alias
+    }
+
+    fn derive_alias_symbol_of_type(&self, ty: TypeId) -> Option<Sym> {
+        match self.stored_alias(ty) {
             Some((alias, _)) => Some(*alias),
             None => self.alias_node_of_type(ty).and_then(|(file, node, _)| {
                 let scope = self.bound(file).type_scope[node.idx()];
                 self.alias_symbol_for_type_node(file, scope, node)
             }),
-        };
-        self.alias_symbols.borrow_mut().insert(ty, alias);
-        alias
-    }
-
-    /// `getTypeInstantiationKey` in `getObjectTypeInstantiation`: `GetSymbolId(t.alias.symbol)`.
-    pub(super) fn get_symbol_id_of_object_type_alias(&self, ty: TypeId) {
-        let is_object_type = self.types().deferred(ty).is_some()
-            || matches!(self.data(ty), TypeData::Anon { .. } | TypeData::Fns { .. });
-        if is_object_type && let Some(alias) = self.alias_symbol_of_type(ty) {
-            self.get_symbol_id(alias);
         }
     }
 
@@ -223,7 +235,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         source: TypeId,
         target: TypeId,
-    ) -> Option<(Sym, Vec<TypeId>, Vec<TypeId>, bool)> {
+    ) -> Option<(Sym, AliasArguments, AliasArguments, bool)> {
         // Fast path for the common failure. Two types that store no alias have the same alias only
         // if they have the same type node: an alias declaration has one body.
         if self.stored_alias(source).is_none() && self.stored_alias(target).is_none() {
@@ -249,9 +261,21 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let has_type_arguments = !sources.is_empty();
         let params = self.local_type_params_of_symbol(alias);
-        let sources = self.fill_type_args(&params, &sources);
-        let targets = self.fill_type_args(&params, &targets);
+        let sources = self.fill_alias_arguments(&params, sources);
+        let targets = self.fill_alias_arguments(&params, targets);
         Some((alias, sources, targets, has_type_arguments))
+    }
+
+    /// `fillMissingTypeArguments`. Returns a complete list unchanged.
+    fn fill_alias_arguments(
+        &mut self,
+        params: &[TypeId],
+        type_arguments: AliasArguments,
+    ) -> AliasArguments {
+        if type_arguments.len() == params.len() {
+            return type_arguments;
+        }
+        SmallVec::from_vec(self.fill_type_args(params, &type_arguments))
     }
 
     /// `getAliasForTypeNode`
@@ -320,9 +344,34 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().instantiation_class(ty) == InstantiationClass::Unchanged {
             return ty;
         }
-        if self.hands_out_symbol_ids() {
-            self.get_symbol_id_of_object_type_alias(ty);
+        // For any other type the worker calls `instantiate`, which counts the instantiation level itself.
+        let is_instantiated_here = self.types().deferred(ty).is_some()
+            || match self.data(ty) {
+                TypeData::Union(_)
+                | TypeData::Intersection(_)
+                | TypeData::IndexedAccess { .. }
+                | TypeData::Cond { .. }
+                | TypeData::Anon {
+                    origin: Origin::Mapped(..),
+                    ..
+                } => true,
+                TypeData::Tuple { .. } => self.stored_alias(ty).is_none(),
+                _ => false,
+            };
+        if !is_instantiated_here {
+            return self.instantiate_with_alias_worker(ty, mapper, alias);
         }
+        self.in_instantiation(mapper, |c| {
+            c.instantiate_with_alias_worker(ty, mapper, alias)
+        })
+    }
+
+    fn instantiate_with_alias_worker(
+        &mut self,
+        ty: TypeId,
+        mapper: MapperId,
+        alias: (Sym, &[TypeId]),
+    ) -> TypeId {
         if self.types().deferred(ty).is_some() {
             return self.instantiate_deferred_type_reference(ty, mapper, Some(alias));
         }

@@ -66,6 +66,45 @@ impl Drop for Spent<'_> {
     }
 }
 
+/// Runs `step` on the calling thread until it returns false, while helper threads each run `work` once.
+///
+/// Polls `Host::helpers_now` before every step. When it allows more helpers than are running, the extra ones start and
+/// the calling thread keeps stepping. In a build with project references, this lets the threads of finished projects
+/// join the remaining ones. `helpers` is the number of helpers that are already running.
+pub fn run_with_current_helpers(
+    host: &dyn Host,
+    mut helpers: usize,
+    step: &mut (dyn FnMut() -> bool + Send),
+    work: &(dyn Fn() + Sync),
+) {
+    loop {
+        let allowed = host.helpers_now().unwrap_or(0);
+        if allowed <= helpers {
+            if !step() {
+                return;
+            }
+            continue;
+        }
+        let extra = allowed - helpers;
+        let caller = std::thread::current().id();
+        let pending = bun_threading::Guarded::new(Some(&mut *step));
+        host.with_helpers(extra, extra + 1, &|_| {
+            let is_caller = std::thread::current().id() == caller;
+            let step = pending.lock().take_if(|_| is_caller);
+            match step {
+                Some(step) => run_with_current_helpers(host, allowed, step, work),
+                None => work(),
+            }
+        });
+        // Helpers that find nothing to do can claim every index before the calling thread gets one. Its steps aren't
+        // finished then.
+        if pending.lock().is_none() {
+            return;
+        }
+        helpers = allowed;
+    }
+}
+
 /// The file system, and the parser. The bundler has its own of both.
 /// What only who has made it can read.
 pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
@@ -85,6 +124,10 @@ pub trait Host: Sync {
     /// Reads a source file of the program. A file that cannot be read is loaded as an empty file and returned by `take_unreadable`.
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_default()
+    }
+    /// Where the hosts of one request read different texts at `path`: a number for the text that this one reads.
+    fn origin(&self, _path: &[u8]) -> usize {
+        0
     }
     /// The paths for which `read_source` has failed since the last call.
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
@@ -120,25 +163,6 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
-    /// Several programs are about to be loaded: from here on there is a `shared_file` for a
-    /// declaration file. `variants`: a bit for each `variant_of_files` that more than one of them
-    /// has. What no other program can use is not kept: nothing is once `programs` more
-    /// `stay_loaded`.
-    fn share_declaration_files(&self, _variants: u32, _programs: usize) {}
-    /// The program that was `loaded` is checked as it is. One that lacks what another has yet to
-    /// emit is loaded again.
-    fn stays_loaded(&self) {}
-    /// Where the first program that loads the file at `path` leaves it for the others. `variant`:
-    /// `variant_of_files`, and a bit for whether the file keeps its text. `None`: each program
-    /// loads its own, also where it is given another `text` than the first.
-    fn shared_file(
-        &self,
-        _path: &[u8],
-        _text: &[u8],
-        _variant: u8,
-    ) -> Option<std::sync::Arc<std::sync::OnceLock<crate::portable::SharedFile>>> {
-        None
-    }
     /// The lists of the result are in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
@@ -170,9 +194,31 @@ pub trait Host: Sync {
     }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
+    /// `parallel`, and `meanwhile` on the calling thread: at the same time if `parallel` leaves the calling thread with
+    /// nothing to do but wait, and else when `work` is done. So `meanwhile` may wait for what `work` does, and `work` must
+    /// not wait for `meanwhile`. It returns when both are done.
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        self.parallel(count, work);
+        meanwhile();
+    }
     /// Whether `parallel` would run on the calling thread alone now, whatever the number of threads asked for.
     fn is_of_one_thread(&self) -> bool {
         false
+    }
+    /// Returns true if the process exits right after this host's program is checked and reported: no other program of the
+    /// request is running or will run. `has_a_run` is true if the program shares a `Run` with other programs.
+    fn ends_the_process(&self, _has_a_run: bool) -> bool {
+        false
+    }
+    /// Returns how many other threads a `parallel` call would use if it started now. `None` unless `parallel` also runs on
+    /// the calling thread and the host's share of the threads changes over time.
+    fn helpers_now(&self) -> Option<usize> {
+        None
     }
     /// `parallel`, on the calling thread and on at most `helpers` others.
     fn with_helpers(&self, _helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -339,40 +385,79 @@ pub enum ModuleDetection {
 impl Options {
     /// `getParseFileRedirect`: `OutputDts`, which is read in place of the file at `path` if that is a source of a referenced project.
     pub fn parse_file_redirect(&self, path: &[u8]) -> Option<&[u8]> {
-        let sources = &self.referenced_sources;
-        let index = self.find_by_path(sources, |it| &it.0, path)?;
-        Some(sources[index].2.as_slice()).filter(|output| !output.is_empty())
+        let output = self.referenced_source(path)?.output_dts.as_slice();
+        Some(output).filter(|output| !output.is_empty())
     }
 
     /// `GetProjectReferenceFromSource(path) != nil`
     pub fn is_source_of_referenced_project(&self, path: &[u8]) -> bool {
-        (self.find_by_path(&self.referenced_sources, |it| &it.0, path)).is_some()
+        self.referenced_source(path).is_some()
     }
 
     /// `GetProjectReferenceFromOutputDts(path).Resolved.CompilerOptions()`
     pub fn project_reference_from_output_dts(&self, path: &[u8]) -> Option<&Options> {
-        let outputs = &self.referenced_output_dts;
-        let index = self.find_by_path(outputs, |it| &it.0, path)?;
-        let project = self.referenced_sources[outputs[index].1 as usize].3;
+        let project = self.referenced_projects[&self.referenced_output_dts(path)?.project];
         Some(&self.referenced_options[project as usize])
     }
 
-    /// The index of the file with this name in a table that is sorted by `tspath.Path`.
-    pub(crate) fn find_by_path<T>(
-        &self,
-        table: &[T],
-        path: fn(&T) -> &Vec<u8>,
-        name: &[u8],
-    ) -> Option<usize> {
-        let find = |name: &[u8]| table.binary_search_by(|it| path(it)[..].cmp(name)).ok();
-        if table.is_empty() {
-            return None;
-        }
+    /// `sourceToProjectReference`, for the file with this name.
+    fn referenced_source(&self, name: &[u8]) -> Option<&ProjectFile> {
+        let files = self.project_files.as_ref()?;
+        self.with_path(name, |path| self.last_referenced(files.sources.get(path)?))
+    }
+
+    /// `outputDtsToProjectReference`, for the file with this name.
+    fn referenced_output_dts(&self, name: &[u8]) -> Option<&ProjectFile> {
+        let files = self.project_files.as_ref()?;
+        self.with_path(name, |path| {
+            let sources = files.outputs.get(path)?.iter();
+            // It has what the other has.
+            let sources = sources.filter_map(|source| {
+                let file = self.last_referenced(files.sources.get(source)?)?;
+                (to_path(&file.output_dts, self.use_case_sensitive_file_names) == path)
+                    .then_some(file)
+            });
+            sources.max_by_key(|file| self.referenced_projects[&file.project])
+        })
+    }
+
+    /// `maps.Copy`: of the referenced projects that have a file, the last one has the entry.
+    fn last_referenced<'a>(&self, of_all: &'a [ProjectFile]) -> Option<&'a ProjectFile> {
+        let referenced = of_all.iter().filter_map(|file| {
+            let project = self.referenced_projects.get(&file.project)?;
+            Some((project, file))
+        });
+        referenced.max_by_key(|it| it.0).map(|it| it.1)
+    }
+
+    /// `find`, with the `tspath.Path` of the file with this name.
+    fn with_path<T>(&self, name: &[u8], find: impl FnOnce(&[u8]) -> Option<T>) -> Option<T> {
         if self.use_case_sensitive_file_names {
             return find(name);
         }
         find(&to_path_in(name, false, &mut path_buffer_pool::get()[..]))
     }
+}
+
+/// A file of a project of a build.
+#[derive(Debug)]
+pub struct ProjectFile {
+    /// In the build order.
+    pub project: u32,
+    /// `Source`
+    pub source: Vec<u8>,
+    /// `OutputDts`. Empty if no declaration file is emitted for the file.
+    pub output_dts: Vec<u8>,
+}
+
+/// The files of the projects of a build that another one references. Each program has it: a list of its own of all the
+/// files of what it references would be made again for each.
+#[derive(Default, Debug)]
+pub struct ProjectFiles {
+    /// By `tspath.Path`.
+    pub sources: FxHashMap<Vec<u8>, Vec<ProjectFile>>,
+    /// By the `tspath.Path` of `OutputDts`: the keys of `sources`.
+    pub outputs: FxHashMap<Vec<u8>, Vec<Vec<u8>>>,
 }
 
 /// `core.ScriptKind`, of source code.
@@ -443,6 +528,10 @@ pub struct Dialect {
     /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
     /// that would make the scopes of the file for nothing else.
     pub oxc_names: bool,
+    /// Nothing outside the file says whether it's a module or a script, so its syntax decides. It's read as a module. If that
+    /// fails or the text has a `<!--`, and the file has no `import`, `export` or `import.meta`, it's read again as a script,
+    /// where `await` is a name and `<!--` starts a comment. Not with `script` or `oxc`.
+    pub module_or_script: bool,
 }
 
 impl Dialect {
@@ -456,6 +545,7 @@ impl Dialect {
             flow: false,
             oxc: false,
             oxc_names: false,
+            module_or_script: false,
         }
     }
 
@@ -520,6 +610,8 @@ pub struct ParseOptions {
     /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
     /// library can be any file.
     pub keeps_the_text_of_libraries: bool,
+    /// `Options::keeps_comments`
+    pub keeps_comments: bool,
     pub bind: crate::bind::BindOptions,
 }
 
@@ -542,6 +634,9 @@ pub struct Options {
     /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
+    /// `hir::FileIn::comments` are kept, which the checker does not read. Not a TypeScript option. For a caller that goes on
+    /// to read the files of the program.
+    pub keeps_comments: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -643,17 +738,13 @@ pub struct Options {
     /// For each referenced project that emits into a separate directory: its declaration output
     /// directory and its `rootDir`.
     pub referenced_outputs: Vec<(Vec<u8>, Vec<u8>)>,
-    /// `sourceToProjectReference`, sorted: for each file of the referenced projects, its
-    /// `tspath.Path`, `Source`, `OutputDts`, and the index in `referenced_options` of `Resolved`.
-    /// `tsc -b` reads the declaration file in place of the source (`getParseFileRedirect`).
-    /// `OutputDts` is empty if no declaration file is emitted for the file.
-    pub referenced_sources: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, u32)>,
+    /// `tsc -b` reads the declaration file of a referenced project in place of the source (`getParseFileRedirect`).
+    pub project_files: Option<std::sync::Arc<ProjectFiles>>,
+    /// The projects that are referenced, directly or not, by `ProjectFile::project`: the index in `referenced_options`.
+    pub referenced_projects: FxHashMap<u32, u32>,
     /// `UseCaseSensitiveFileNames` of the host that the project was read from.
     pub use_case_sensitive_file_names: bool,
-    /// `outputDtsToProjectReference`, sorted: the `tspath.Path` of `OutputDts` and its index in
-    /// `referenced_sources`.
-    pub referenced_output_dts: Vec<(Vec<u8>, u32)>,
-    /// The options of the referenced projects that have a file in `referenced_sources`.
+    /// The options of the referenced projects.
     pub referenced_options: Vec<Options>,
     /// A later project of a `tsc -b` run reads the declaration files of this one: `Report::declaration_files` has them.
     pub writes_declaration_files: bool,
@@ -775,6 +866,7 @@ impl Options {
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
             keeps_the_text_of_libraries: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
+            keeps_comments: self.keeps_comments,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
@@ -1644,7 +1736,8 @@ fn normalize_path_for_cjs_resolution(containing_directory: &[u8], module_name: &
 }
 
 struct Package<'h> {
-    json: Json,
+    /// A program keeps those of its packages when the resolver is gone.
+    json: std::sync::Arc<Json>,
     /// `Name` and `Version`, if both are strings: without them `getPackageId` makes no id.
     name_and_version: Option<(&'h [u8], &'h [u8])>,
     /// `readPackageJsonPeerDependencies`
@@ -1966,33 +2059,51 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
     }
 }
 
+/// What a resolver has found so far.
+struct Caches<'h> {
+    packages: Memo<&'h [u8], Option<Package<'h>>>,
+    dirs: Memo<&'h [u8], bool>,
+    files: Memo<&'h [u8], bool>,
+    /// The results of `resolve_module_name`. The key is `Resolver::redirect`, the directory, `//`, the mode as a digit, and
+    /// the specifier. No directory contains `//`.
+    resolved: Memo<&'h [u8], Option<ResolvedModule<'h>>>,
+    /// `knownSymlinks.Directories`: the symlink target of a package directory in `node_modules`.
+    /// `None`: it is not a symlink.
+    linked_packages: Memo<&'h [u8], Option<&'h [u8]>>,
+}
+
+impl Caches<'_> {
+    fn new(are_small: bool) -> Self {
+        Caches {
+            packages: Memo::new(are_small),
+            dirs: Memo::new(are_small),
+            files: Memo::new(are_small),
+            resolved: Memo::new(are_small),
+            linked_packages: Memo::new(are_small),
+        }
+    }
+}
+
 pub struct Resolver<'h> {
     /// Owns every path in the caches. It is not the session of the check: the caches are of no use
     /// once the program is loaded, and the caller frees them then.
     session: &'h Session,
     host: &'h dyn Host,
     options: &'h Options,
-    packages: Memo<&'h [u8], Option<Package<'h>>>,
-    dirs: Memo<&'h [u8], bool>,
-    files: Memo<&'h [u8], bool>,
-    /// Cache of the results of `resolve_module_name`. The key is the directory, `//`, the mode as a
-    /// digit, and the specifier. No directory contains `//`.
-    resolved: Memo<&'h [u8], Option<ResolvedModule<'h>>>,
+    /// Its `redirected` have the same, if they find the same on the disk: the empty maps are five times 256 shards, and a
+    /// project of a monorepo references hundreds.
+    caches: std::sync::Arc<Caches<'h>>,
     /// `resolutionState.diagnostics` of all lookups: whether it concerns `imports`, the entry, and
     /// the `package.json`.
     ambiguous_roots: bun_threading::Guarded<Vec<(bool, &'h [u8], &'h [u8]), &'h Session>>,
     /// `OriginalPath` and `ResolvedFileName` of each file found through a symlink. Only recorded
     /// when declaration files are emitted.
     links: bun_threading::Guarded<Vec<(&'h [u8], &'h [u8]), &'h Session>>,
-    /// `knownSymlinks.Directories`: the symlink target of a package directory in `node_modules`.
-    /// `None`: it is not a symlink.
-    linked_packages: Memo<&'h [u8], Option<&'h [u8]>>,
     /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`, made when a file of that project is
-    /// first resolved from: the empty maps of a resolver are five times 64 shards, and a project of a monorepo references
-    /// hundreds.
+    /// first resolved from.
     redirected: Vec<std::sync::OnceLock<Resolver<'h>>>,
-    /// `redirectedReference != nil`: it is one of the `redirected` of another resolver.
-    is_redirect: bool,
+    /// `redirectedReference != nil`: which of the `redirected` of another resolver it is, from 1 on. 0: none.
+    redirect: u32,
 }
 
 /// `guessDirectorySymlink`: the real path of the symlinked directory and the path of the symlink,
@@ -2301,16 +2412,12 @@ impl<'h> Resolver<'h> {
             session,
             host,
             options,
-            packages: Memo::new(are_small),
-            dirs: Memo::new(are_small),
-            files: Memo::new(are_small),
-            resolved: Memo::new(are_small),
+            caches: std::sync::Arc::new(Caches::new(are_small)),
             ambiguous_roots: bun_threading::Guarded::new(Vec::new_in(session)),
             links: bun_threading::Guarded::new(Vec::new_in(session)),
-            linked_packages: Memo::new(are_small),
             // Not in an arena: a resolver that keeps nothing creates none.
             redirected: redirected.collect(),
-            is_redirect: false,
+            redirect: 0,
         }
     }
 
@@ -2333,37 +2440,38 @@ impl<'h> Resolver<'h> {
     /// from: a declaration file that is read in place of a source resolves its specifiers as the
     /// source does.
     pub fn redirect_for_resolution<'a>(&'a self, path: &'a [u8]) -> (&'a Resolver<'h>, &'a [u8]) {
-        let sources = &self.options.referenced_sources;
-        let outputs = &self.options.referenced_output_dts;
-        let from_output_dts = |path: &[u8]| {
-            let index = self.options.find_by_path(outputs, |it| &it.0, path)?;
-            Some(outputs[index].1 as usize)
-        };
+        let options = self.options;
         // `getSourceToDtsIfSymlink`
         let if_symlink = || {
-            if !self.options.preserve_symlinks
-                || outputs.is_empty()
+            if !options.preserve_symlinks
+                || (options.project_files.as_ref()).is_none_or(|files| files.outputs.is_empty())
                 || !strings::contains(path, b"/node_modules/")
             {
                 return None;
             }
-            from_output_dts(&self.host.realpath(path))
+            options.referenced_output_dts(&self.host.realpath(path))
         };
-        let index = (self.options.find_by_path(sources, |it| &it.0, path))
-            .or_else(|| from_output_dts(path))
+        let file = (options.referenced_source(path))
+            .or_else(|| options.referenced_output_dts(path))
             .or_else(if_symlink);
-        let Some(index) = index else {
+        let Some(file) = file else {
             return (self, path);
         };
-        let (_, source, _, project) = &sources[index];
-        let project = *project as usize;
+        let source = &file.source;
+        let project = options.referenced_projects[&file.project] as usize;
         let redirected = self.redirected[project].get_or_init(|| Resolver {
-            is_redirect: true,
-            ..Resolver::new(
-                self.session,
-                self.host,
-                &self.options.referenced_options[project],
-            )
+            session: self.session,
+            host: self.host,
+            options: &self.options.referenced_options[project],
+            // See `is_dir`.
+            caches: match self.options.referenced_outputs.is_empty() {
+                true => std::sync::Arc::clone(&self.caches),
+                false => std::sync::Arc::new(Caches::new(false)),
+            },
+            ambiguous_roots: bun_threading::Guarded::new(Vec::new_in(self.session)),
+            links: bun_threading::Guarded::new(Vec::new_in(self.session)),
+            redirected: Vec::new(),
+            redirect: 1 + project as u32,
         });
         (redirected, source)
     }
@@ -2447,8 +2555,14 @@ impl<'h> Resolver<'h> {
         }
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
+        // The directories of the files so far: thousands of files are in hundreds of directories.
+        let mut asked: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
-            let Some((directory, package)) = self.package_scope(dirname::<Posix>(path)) else {
+            let of_file = dirname::<Posix>(path);
+            if !asked.insert(of_file) {
+                continue;
+            }
+            let Some((directory, package)) = self.package_scope(of_file) else {
                 continue;
             };
             if seen.contains(&directory) {
@@ -2505,7 +2619,7 @@ impl<'h> Resolver<'h> {
     }
 
     fn is_dir(&self, path: &[u8]) -> bool {
-        if let Some(&known) = self.dirs.get_ref(path) {
+        if let Some(&known) = self.caches.dirs.get_ref(path) {
             return known;
         }
         if let Some(normalized) = normalized_for_lookup(path) {
@@ -2518,11 +2632,11 @@ impl<'h> Resolver<'h> {
                     || self.path_through_linked_package(path).is_some_and(|real| {
                         self.directory_exists_if_project_reference_decl_dir(&real)
                     })));
-        *self.dirs.insert_ref(self.keep(path), result)
+        *self.caches.dirs.insert_ref(self.keep(path), result)
     }
 
     fn is_file(&self, path: &[u8]) -> bool {
-        if let Some(&known) = self.files.get_ref(path) {
+        if let Some(&known) = self.caches.files.get_ref(path) {
             return known;
         }
         if let Some(normalized) = normalized_for_lookup(path) {
@@ -2530,12 +2644,12 @@ impl<'h> Resolver<'h> {
         }
         // Most misses are in directories that do not exist.
         let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
-        *self.files.insert_ref(self.keep(path), result)
+        *self.caches.files.insert_ref(self.keep(path), result)
     }
 
     fn package(&self, dir: &[u8]) -> Option<&Package<'h>> {
         let dir = strings::without_trailing_slash(dir);
-        if let Some(known) = self.packages.get_ref(dir) {
+        if let Some(known) = self.caches.packages.get_ref(dir) {
             return known.as_ref();
         }
         // `packageJsonInfoCache` has `tspath.Path` as its key.
@@ -2552,11 +2666,14 @@ impl<'h> Resolver<'h> {
             let kept = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {
                 name_and_version: kept(b"name").zip(kept(b"version")),
-                json,
+                json: std::sync::Arc::new(json),
                 peer_dependencies: Default::default(),
             }
         });
-        self.packages.insert_ref(self.keep(dir), package).as_ref()
+        self.caches
+            .packages
+            .insert_ref(self.keep(dir), package)
+            .as_ref()
     }
 
     /// `getPackageJsonInfo`: `package`, logged. A directory that does not exist is passed over in
@@ -2577,8 +2694,9 @@ impl<'h> Resolver<'h> {
     }
 
     /// The `package.json` in `dir`, if one exists.
-    pub fn package_json(&self, dir: &[u8]) -> Option<Json> {
-        self.package(dir).map(|package| package.json.clone())
+    pub fn package_json(&self, dir: &[u8]) -> Option<std::sync::Arc<Json>> {
+        self.package(dir)
+            .map(|package| std::sync::Arc::clone(&package.json))
     }
 
     /// `Resolver.GetPackageScopeForPath`: the nearest `package.json` in `dir` or an ancestor
@@ -2614,9 +2732,9 @@ impl<'h> Resolver<'h> {
         mode: ResolutionMode,
         tracer: Option<&Tracer>,
     ) -> Option<ResolvedModule<'h>> {
-        let key = resolution_key(spec, from, mode);
+        let key = resolution_key(self.redirect, spec, from, mode);
         if tracer.is_none()
-            && let Some(&known) = self.resolved.get_ref(key.as_slice())
+            && let Some(&known) = self.caches.resolved.get_ref(key.as_slice())
         {
             return known;
         }
@@ -2670,7 +2788,7 @@ impl<'h> Resolver<'h> {
             }
             return found;
         }
-        *self.resolved.insert_ref(self.keep(&key), found)
+        *self.caches.resolved.insert_ref(self.keep(&key), found)
     }
 
     /// The same, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
@@ -2686,7 +2804,7 @@ impl<'h> Resolver<'h> {
 
     /// `traceResolutionUsingProjectReference`
     fn trace_resolution_using_project_reference(&self, look: Look) {
-        if self.is_redirect {
+        if self.redirect != 0 {
             look.trace(6215, &[Arg::Path(&self.options.config_path)]);
         }
     }
@@ -3564,11 +3682,12 @@ impl<'h> Resolver<'h> {
             end = next_separator(end + 1);
         }
         let package_root = &path[..end];
-        let known = self.linked_packages.get_ref(package_root);
+        let known = self.caches.linked_packages.get_ref(package_root);
         let real = known.unwrap_or_else(|| {
             let real = Some(self.host.realpath(package_root)).filter(|real| real != package_root);
             let real = real.map(|real| self.keep(&real));
-            self.linked_packages
+            self.caches
+                .linked_packages
                 .insert_ref(self.keep(package_root), real)
         });
         Some([(*real)?, &path[end..]].concat())
@@ -3741,7 +3860,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         if look.as_require {
-            let json = package.filter(|_| is_package_dir).map(|it| &it.json);
+            let json = package.filter(|_| is_package_dir).map(|it| &*it.json);
             let named = |field: &[u8]| {
                 let entry = get_package_json_path_field(json?, field, candidate, look)?;
                 let entry = strings::without_trailing_slash(&entry);
@@ -4684,9 +4803,10 @@ fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Js
     None
 }
 
-/// The key of `Resolver::resolved`. Only the directory of `from` is used.
-fn resolution_key(spec: &[u8], from: &[u8], mode: ResolutionMode) -> Vec<u8> {
+/// The key of `Caches::resolved`. Only the directory of `from` is used.
+fn resolution_key(redirect: u32, spec: &[u8], from: &[u8], mode: ResolutionMode) -> Vec<u8> {
     [
+        &redirect.to_le_bytes()[..],
         dirname::<Posix>(from),
         match mode {
             ResolutionMode::None => b"//0",

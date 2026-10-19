@@ -107,12 +107,56 @@ pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+/// True if the last modifier printed before `member`'s name must be on the same line as the name. With a line break
+/// after it, it would be parsed as a member name. A line break is fine after `static`, `get`, `set` and `*`.
+fn last_modifier_allows_no_line_break(member: Member<'_>) -> bool {
+    let function = member.func();
+    if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
+        || function.is_some_and(Func::is_generator)
+    {
+        return false;
+    }
+    if function.is_some_and(Func::is_async) {
+        return true;
+    }
+    let written = (member.modifiers().iter()).fold(Flags::empty(), |all, it| all | it.flag());
+    // Checked from the last modifier printed to the first. `IN` and `OUT` are Flow's `+` and `-`.
+    if written.intersects(Flags::IN | Flags::OUT) {
+        return false;
+    }
+    if written.intersects(Flags::ABSTRACT | Flags::OVERRIDE | Flags::READONLY | Flags::ACCESSOR) {
+        return true;
+    }
+    !written.contains(Flags::STATIC)
+        && written.intersects(Flags::AMBIENT | Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE)
+}
+
+/// In `static // comment⏎async a() {}` the modifiers aren't nodes, so the comment is attached to the name as a leading
+/// comment. Prettier and oxfmt print `static async // comment⏎a() {}`, which declares a field `async` and a method that
+/// is neither static nor async. This prints those comments before the first modifier instead. The code that prints the
+/// name skips them because they're already marked as printed.
+pub(crate) fn write_comments_between_modifiers<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    let Some(key) = member.key().filter(|key| !key.is_computed()) else {
+        return;
+    };
+    let comments = f.comments().of_name(key.inner_span(f.file()).start).leading;
+    if (comments.iter()).any(|comment| comment.has_newline_after() || comment.is_multiline_block())
+        && last_modifier_allows_no_line_break(member)
+    {
+        write!(f, FormatLeadingComments::Comments(comments));
+    }
+}
+
 fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     let Some(value) = member.func() else {
         return;
     };
     if !member.modifiers().is_empty() {
         write!(f, FormatDecorators::of_member(member));
+        write_comments_between_modifiers(member, f);
         for (flag, keyword) in [
             (Flags::PUBLIC, "public "),
             (Flags::PROTECTED, "protected "),

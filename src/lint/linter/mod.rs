@@ -48,12 +48,13 @@ pub use config::{
     oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,
-    verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, breaks_syntax, is_parse_error,
+    is_redeclaration, verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
+pub use levn::parse_rules as parse_levn_rules;
 pub(crate) use message::write_json_with;
 pub use message::{
     Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
@@ -73,7 +74,7 @@ use resolved::{Prepared, Skipped, Slot};
 pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, parse_errors,
-    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
+    redeclarations, refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -176,7 +177,8 @@ pub struct LintResult {
     pub skipped_rules: Vec<Box<[u8]>>,
     /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
     pub handed_back: Option<crate::formats::Reason>,
-    /// It [may be misread](may_be_misread), and whoever lints has somebody else to read it. There is nothing else in the result.
+    /// It [may be misread](may_be_misread), or a comment in a file that is not JavaScript turns on a rule that is not for its
+    /// language, and whoever lints has somebody else to read it. There is nothing else in the result.
     pub is_unread: bool,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
@@ -187,6 +189,9 @@ pub struct LintResult {
     /// With a configuration of oxlint that has a rule for which the file may be linted again: where in the run of oxlint each of
     /// the messages of the rules is, by [`LintMessage::reported`], from 1.
     pub run_keys: Vec<(u64, u128)>,
+    /// Number of syntax errors in the file that didn't prevent linting. [`verify_and_fix`] reverts fixes that add one.
+    /// The code that applies fixes adds the [`redeclarations`] to it.
+    pub tolerated_errors: usize,
 }
 
 /// `S`: the rules that it has.
@@ -463,7 +468,11 @@ impl<S: RuleSet> Linter<S> {
     ) -> LintResult {
         let locator = Locator::new(file);
         let mut problems: Vec<LintMessage> = Vec::new();
-        let (mut fatal, is_of_parser) = syntax::parse_errors_and_stage(file);
+        let (mut fatal, is_of_parser) = match file.parsed() {
+            // Its language has parsed it.
+            Some(_) => (Vec::new(), false),
+            None => syntax::parse_errors_and_stage(file),
+        };
         if !fatal.is_empty() {
             let is_oxlint = file.language().is_oxlint;
             if is_oxlint && is_of_parser && syntax::is_flow(file) {
@@ -480,7 +489,10 @@ impl<S: RuleSet> Linter<S> {
             problems.append(&mut fatal);
         }
         let is_refused = !problems.is_empty();
-        let mut result = LintResult::default();
+        let mut result = LintResult {
+            tolerated_errors: syntax::tolerated_errors(file),
+            ..LintResult::default()
+        };
         let enabled_js =
             (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
         let mut running_js: Vec<RunningJs> = enabled_js
@@ -599,6 +611,19 @@ impl<S: RuleSet> Linter<S> {
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
+        }
+        // Such a rule is one of a package, or it would see JavaScript that is not there.
+        let is_of_no_language =
+            |it: &Running<S>| it.severity != Severity::Off && it.entry.meta.languages.is_empty();
+        if file.parsed().is_some()
+            && (running.iter().any(is_of_no_language)
+                || !running_js.is_empty()
+                || !result.skipped_rules.is_empty())
+        {
+            return LintResult {
+                is_unread: true,
+                ..LintResult::default()
+            };
         }
         let mut off: Vec<RuleId> = Vec::new();
         if config.has_every_rule {
@@ -720,9 +745,11 @@ impl<S: RuleSet> Linter<S> {
         let before_js = problems.len();
         let wants_fixes = options.wants_fixes && !options.disables_fixes;
         // First, for the variables that they mark as used.
-        if let (Some(host), Some(settings), None) =
-            (options.js_plugins, &config.js_settings, options.again)
-            && !running_js.is_empty()
+        if let (Some(host), Some(settings), None) = (
+            options.js_plugins,
+            config.js_settings_of(file),
+            options.again,
+        ) && !running_js.is_empty()
         {
             // What a rule that does not run would have reported cannot be told.
             running_js.retain(|it| {
@@ -1013,7 +1040,7 @@ impl<S: RuleSet> Linter<S> {
                 .collect();
             let enabled: Vec<&js_plugin::Configured> =
                 back.iter().map(|it| &**it.0.configured).collect();
-            let reports = match (options.js_plugins, &config.js_settings) {
+            let reports = match (options.js_plugins, config.js_settings_of(file)) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => {
                     if file.text().len() < js_plugin::HEAVY {
                         host.comes(file.text().len() as u64);
@@ -1391,7 +1418,14 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             return Some(Named::Instance(rule, name));
         }
         let js = config.find_js_rule(id);
-        let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
+        // ESLint only accepts a rule's own name. `eslint/no-var` is oxlint's name for `no-var`.
+        let is_of_eslint = !config.has_every_rule && !config.prefers_typescript_rules;
+        let prefix = registry::parse_rule_id(id).0;
+        let native = || {
+            (config.find_rule(&self.linter.registry, id))
+                .filter(|it| !is_of_eslint || it.meta.plugin.prefix().as_bytes() == prefix)
+                .map(Named::Native)
+        };
         let lacks_it = config.lacks_rule(id);
         let is_about_layout =
             !lacks_it && (config.formatting_rule(&self.linter.registry, id)).is_some();
@@ -1506,7 +1540,8 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             }
             _ => return,
         }
-        let rules = match comment::parse_json_like_config(self.file.slice(comment.value)) {
+        let rules = match comment::parse_json_like_config(self.file.slice_of_comment(comment.value))
+        {
             Ok(rules) => rules,
             Err(message) => return self.fatal(comment, message),
         };
@@ -1634,6 +1669,26 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                     b"\" is invalid:\n\t",
                     bun_core::strings::trim_js_whitespace(lines),
                     b"\n",
+                ]);
+                self.error(comment, Some(rule.id()), message);
+                continue;
+            }
+            let meta = match rule {
+                Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
+                    Some(entry.meta)
+                }
+                Named::Js(_) => None,
+            };
+            if validated.is_some()
+                && meta.is_some_and(|it| !self.config.supports_language(it))
+                && self.config.language.eslint_major >= 10
+            {
+                let message = quoted(&[
+                    b"Inline configuration for rule \"",
+                    &id,
+                    b"\" is invalid:\n\tRule does not support the language \"",
+                    self.config.normalized_language_name(),
+                    b"\". Use a config block with \"files\" to apply the rule only to supported files, or disable it.\n",
                 ]);
                 self.error(comment, Some(rule.id()), message);
                 continue;
@@ -1801,7 +1856,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             ]);
             return self.error(comment, None, message);
         }
-        let list = self.file.slice(comment.value);
+        let list = self.file.slice_of_comment(comment.value);
         let mut names = comment::parse_list_config(list);
         let (line, column) = if kind == disable::Kind::DisableNextLine {
             end
@@ -1839,8 +1894,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         parents.push(disable::Parent {
             comment: comment.span,
             list,
+            list_span: comment.value,
             names,
-            justification: self.file.slice(comment.justification),
+            justification: self.file.slice_of_comment(comment.justification),
             start,
             tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
                 true => "oxlint",

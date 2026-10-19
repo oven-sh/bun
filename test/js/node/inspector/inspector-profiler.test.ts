@@ -973,7 +973,9 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       await reader.post("HeapProfiler.getSamplingProfile");
       await reader.post("HeapProfiler.disable");
       reader.disconnect();
-      expect(((await starter.post("HeapProfiler.getSamplingProfile")) as any).profile.samples.length).toBeGreaterThan(0);
+      expect(((await starter.post("HeapProfiler.getSamplingProfile")) as any).profile.samples.length).toBeGreaterThan(
+        0,
+      );
       // A session that posted startSampling stops it on disable(), even when its start was the second one (V8).
       await other.post("HeapProfiler.disable");
       await expect(starter.post("HeapProfiler.getSamplingProfile")).rejects.toThrow(notStarted());
@@ -1012,7 +1014,10 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
         expect(depth(profile.head)).toBeLessThanOrEqual(1 + stackDepth);
         expect(bytesOf(profile.head, "allocateObjects")).toBeGreaterThan(100_000);
         if (stackDepth === 1) expect(findNode(profile.head, "outer")).toBeUndefined();
-        else expect(findNode(profile.head, "outer")!.children.map(c => c.callFrame.functionName)).toContain("allocateObjects");
+        else
+          expect(findNode(profile.head, "outer")!.children.map(c => c.callFrame.functionName)).toContain(
+            "allocateObjects",
+          );
       }
       session.disconnect();
     });

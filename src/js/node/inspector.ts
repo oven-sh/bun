@@ -799,8 +799,7 @@ class Session extends EventEmitter {
 
       case "HeapProfiler.getSamplingProfile":
       case "HeapProfiler.stopSampling": {
-        const json =
-          method === "HeapProfiler.stopSampling" ? stopAllocationSampling() : getAllocationSamplingProfile();
+        const json = method === "HeapProfiler.stopSampling" ? stopAllocationSampling() : getAllocationSamplingProfile();
         if (json === null) return $ERR_INSPECTOR_COMMAND("-32000: V8 sampling heap profiler was not started.");
         if (method === "HeapProfiler.stopSampling") this.#startedAllocationSampling = false;
         return { profile: JSON.parse(json) };

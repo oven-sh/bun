@@ -151,7 +151,7 @@ plugins! {
     /// `no-debugger`
     Eslint: ["", "eslint"], Always, Whole;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1"), Whole;
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(Some("@typescript-eslint/eslint-plugin"), "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
     ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
     /// `import/no-cycle`
@@ -273,6 +273,16 @@ impl Plugin {
     /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
     pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
         Plugin::answers_in_place_of(prefix, None)
+    }
+
+    /// The plugin whose rules answer in place of those of `package`, with a configuration of ESLint, whatever name the
+    /// configuration has the package under.
+    pub(crate) fn in_place_of_package(package: &[u8]) -> Option<Plugin> {
+        let is_it = |it: &Plugin| match it.names().under_eslint {
+            UnderEslint::InPlaceOf(Some(usual), _) => usual.as_bytes() == package,
+            _ => false,
+        };
+        Plugin::ALL.iter().copied().find(is_it)
     }
 
     /// The version of the package that the rules here do the same as, if they answer in place of one.

@@ -270,6 +270,9 @@ pub struct ResolvedConfig {
     /// The plugins that are configured and that are not implemented here, by the prefix of their
     /// rules. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
+    /// The plugins that are configured under a name other than the one that is usual for them, and that are implemented
+    /// here: `ts` for `@typescript-eslint/eslint-plugin`. Their rules are called what the configuration calls them.
+    pub aliases: Vec<(Box<[u8]>, Plugin)>,
     /// The plugins of an `eslint.config.js` as `--print-config` has them, but for ESLint's own: `prefix:name@version`.
     pub printed_plugins: Vec<Box<[u8]>>,
     /// A rule that does not exist is skipped, whatever its name.
@@ -421,15 +424,26 @@ impl ResolvedConfig {
         (self.js_rules.iter()).find(|it| Arc::ptr_eq(&it.configured.rule, rule))
     }
 
+    /// The plugin that is implemented here that the configuration has as `prefix`, under a name other than the one that is
+    /// usual for it: one of `aliases`, and the name as the configuration has it.
+    pub fn alias_of(&self, prefix: &[u8]) -> Option<(&[u8], Plugin)> {
+        let found = self.aliases.iter().find(|it| *it.0 == *prefix)?;
+        Some((&found.0, found.1))
+    }
+
     /// The rule that the configuration, or a comment of a file that it is for, calls `id`. Not one of a JavaScript plugin.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
         // A plugin that is not the one which is implemented here under that name hides it.
-        let prefix = parse_rule_id(id).0;
+        let (prefix, name) = parse_rule_id(id);
         if self.foreign_plugins.iter().any(|it| **it == *prefix) {
             return None;
         }
         if self.has_every_rule {
             return registry.find_by_any_name(id);
+        }
+        if let Some((_, plugin)) = self.alias_of(prefix) {
+            let found = registry.get_preferring(plugin, name, self.prefers_typescript_rules);
+            return found.filter(|it| !(self.has_unknown_resolver && needs_resolver(it.meta)));
         }
         let found = registry
             .find_preferring(id, self.prefers_typescript_rules)
@@ -488,10 +502,13 @@ impl ResolvedConfig {
         let prefix = parse_rule_id(id).0;
         let is_implemented_in_part = match self.has_every_rule {
             true => Plugin::spelled(prefix).any(|plugin| !plugin.is_whole()),
-            false => Plugin::of_prefix(prefix).is_some_and(|plugin| {
-                !plugin.is_whole()
-                    && (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin))
-            }),
+            false => match self.alias_of(prefix) {
+                Some((_, plugin)) => !plugin.is_whole(),
+                None => Plugin::of_prefix(prefix).is_some_and(|plugin| {
+                    !plugin.is_whole()
+                        && (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin))
+                }),
+            },
         };
         self.skips_unknown_rules
             || is_implemented_in_part

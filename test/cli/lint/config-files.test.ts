@@ -214,35 +214,146 @@ describe.concurrent("an eslint.config.js", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a plugin that is built in runs in JavaScript under another name, and so does another plugin under its name", async () => {
-    const plugin = (name: string, rule: string) => `{
-      meta: { name: "${name}", version: "1.0.0" },
-      rules: { "${rule}": { create: context => ({ DebuggerStatement: node => context.report({ node, message: "from JavaScript" }) }) } },
-    }`;
-    const { problems, stderr, exitCode } = await lint(
-      {
-        "eslint.config.mjs": `export default [
-          { files: ["**/*.js"], rules: { "ts/no-explicit-any": "error", "node/no-deprecated-api": "error", "import/first": "error" } },
-          {
-            plugins: {
-              ts: ${plugin("@typescript-eslint/eslint-plugin", "no-explicit-any")},
-              node: ${plugin("eslint-plugin-n", "no-deprecated-api")},
-              import: ${plugin("eslint-plugin-import-x", "first")},
-            },
+  // A plugin that is built in can be registered under any name, as `@antfu/eslint-config` has `@typescript-eslint` as `ts` and
+  // eslint-plugin-n as `node`. It is the package it says it is, so the built-in rules run, under the name of the configuration.
+  // Another package under the name of a built-in plugin, as eslint-plugin-import-x as `import`, runs as what it is: JavaScript.
+  describe("a plugin that is built in, under another name", () => {
+    const timeout = isDebug || isASAN ? 120_000 : 30_000;
+    const asks = `throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.")`;
+    const rule = (selector: string) =>
+      `{ meta: { schema: false }, create: context => ({ ${selector}: node => context.report({ node, message: "from JavaScript" }) }) }`;
+    const typed = `{ meta: { schema: false }, create: () => { ${asks} } }`;
+    const plugin = (name: string, rules: Record<string, string>) =>
+      `{ meta: { name: "${name}", version: "1.0.0" }, rules: { ${Object.entries(rules)
+        .map(([rule, definition]) => `"${rule}": ${definition}`)
+        .join(", ")} } }`;
+    const ts = plugin("@typescript-eslint/eslint-plugin", {
+      "no-explicit-any": rule("TSAnyKeyword"),
+      "no-floating-promises": typed,
+      "await-thenable": typed,
+    });
+    const node = plugin("eslint-plugin-n", {
+      "no-process-exit": rule("DebuggerStatement"),
+      "no-deprecated-api": rule("DebuggerStatement"),
+    });
+    const importX = plugin("eslint-plugin-import-x", { first: rule("DebuggerStatement") });
+    const files = {
+      "eslint.config.mjs": `export default [
+        {
+          files: ["**/*.ts"],
+          rules: {
+            "ts/no-explicit-any": "error", "ts/no-floating-promises": "error", "ts/await-thenable": "error",
+            "node/no-process-exit": "error", "node/no-deprecated-api": "error", "import/first": "error",
           },
-        ];`,
-        "a.js": "debugger;\ndebugger; // eslint-disable-line ts/no-explicit-any, import/first\n",
-      },
-      ["a.js"],
-    );
-    expect(stderr).not.toContain("Could not find plugin");
-    expect(problems).toEqual([
-      "a.js:1:1 import/first",
-      "a.js:1:1 node/no-deprecated-api",
-      "a.js:1:1 ts/no-explicit-any",
-      "a.js:2:1 node/no-deprecated-api",
-    ]);
-    expect(exitCode).toBe(1);
+        },
+        { plugins: { ts: ${ts}, node: ${node}, import: ${importX} }, languageOptions: { parserOptions: { projectService: true } } },
+      ];`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, module: "esnext", target: "esnext", moduleResolution: "bundler" },
+        include: ["*.ts"],
+      }),
+      "a.ts": [
+        "export async function f(): Promise<number> { return 1 }",
+        "export async function g() { await 1; f(); process.exit(); debugger; }",
+        "export let a: any = 1;",
+        "export let b: any = 2; // eslint-disable-line ts/no-explicit-any",
+        "export let c: any = 3; // eslint-disable-line @typescript-eslint/no-explicit-any",
+        "",
+      ].join("\n"),
+    };
+
+    test("its rules run natively, with types, and are called what the configuration calls them", async () => {
+      const { problems, raw, stderr, exitCode } = await lint(files, ["a.ts"]);
+      expect(stderr).toBe("Linted 1 file");
+      expect(problems).toEqual(
+        [
+          // Built in, with types: what the package's rules would need types for.
+          "a.ts:2:29 ts/await-thenable",
+          "a.ts:2:38 ts/no-floating-promises",
+          "a.ts:2:43 node/no-process-exit",
+          "a.ts:3:15 ts/no-explicit-any",
+          // Of the package, in JavaScript: the rule is not built in, or the package is another.
+          "a.ts:2:59 node/no-deprecated-api",
+          "a.ts:2:59 import/first",
+          // The name of the configuration is the rule's name, as with ESLint.
+          "a.ts:5:15 ts/no-explicit-any",
+          "a.ts:5:24 @typescript-eslint/no-explicit-any",
+        ].sort(),
+      );
+      const messages = JSON.parse(raw).results[0].messages.map((it: { ruleId: string | null; message: string }) => [
+        it.ruleId,
+        it.message,
+      ]);
+      expect(messages).toContainEqual(["ts/no-explicit-any", "Unexpected any. Specify a different type."]);
+      expect(messages).toContainEqual(["node/no-deprecated-api", "from JavaScript"]);
+      expect(messages).toContainEqual([
+        "@typescript-eslint/no-explicit-any",
+        "Definition for rule '@typescript-eslint/no-explicit-any' was not found.",
+      ]);
+      expect(exitCode).toBe(1);
+    }, timeout);
+
+    test("--native-plugin-rules and --doctor know the plugin by its package", async () => {
+      const [only, none, doctor] = await Promise.all([
+        lint(files, ["a.ts", "--native-plugin-rules=n"]),
+        lint(files, ["a.ts", "--no-native-plugin-rules"]),
+        lint(files, ["--doctor"]),
+      ]);
+      const refused =
+        "2 rules did not run because rules that run in JavaScript cannot use type information: ts/await-thenable, ts/no-floating-promises";
+      expect(only.stderr).toContain(refused);
+      expect(only.problems).toContain("a.ts:2:43 node/no-process-exit");
+      expect(only.problems).toContain("a.ts:3:15 ts/no-explicit-any");
+      expect(only.exitCode).toBe(2);
+      expect(none.stderr).toContain(refused);
+      expect(none.problems).toContain("a.ts:2:59 node/no-process-exit");
+      expect(none.exitCode).toBe(2);
+      expect(doctor.stdout).toContain("4 rules run natively");
+      expect(doctor.stdout).toContain("2 rules run in JavaScript");
+      expect(doctor.exitCode).toBe(0);
+    }, timeout);
+
+    test("the usual name and another name of one plugin are two plugins, as with ESLint", async () => {
+      const { problems, raw, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `const tsPlugin = { meta: { name: "@typescript-eslint/eslint-plugin", version: "8.71.1" }, rules: {} };
+            export default [{
+              files: ["**/*.ts"],
+              plugins: { ts: tsPlugin, "@typescript-eslint": tsPlugin },
+              rules: { "ts/no-explicit-any": "error", "@typescript-eslint/no-explicit-any": "warn" },
+            }];`,
+          "a.ts": "export let a: any = 1;\nexport let b: any = 2; // eslint-disable-line ts/no-explicit-any\n",
+        },
+        ["a.ts"],
+      );
+      expect(problems).toEqual([
+        "a.ts:1:15 @typescript-eslint/no-explicit-any",
+        "a.ts:1:15 ts/no-explicit-any",
+        "a.ts:2:15 @typescript-eslint/no-explicit-any",
+      ]);
+      const severities = JSON.parse(raw).results[0].messages.map((it: { ruleId: string; severity: number }) => [
+        it.ruleId,
+        it.severity,
+      ]);
+      expect(severities.sort()).toEqual([
+        ["@typescript-eslint/no-explicit-any", 1],
+        ["@typescript-eslint/no-explicit-any", 1],
+        ["ts/no-explicit-any", 2],
+      ]);
+      expect(exitCode).toBe(1);
+    }, timeout);
+
+    test("a comment turns on a rule under the other name", async () => {
+      const { problems, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `export default [{ files: ["**/*.ts"], plugins: { ts: { meta: { name: "@typescript-eslint/eslint-plugin" }, rules: {} } } }];`,
+          "a.ts": "/* eslint ts/no-explicit-any: error */\nexport let a: any = 1;\nexport let b: any = 2; // eslint-disable-line ts/no-explicit-any\n",
+        },
+        ["a.ts"],
+      );
+      expect(problems).toEqual(["a.ts:2:15 ts/no-explicit-any"]);
+      expect(exitCode).toBe(1);
+    }, timeout);
   });
 
   // What ESLint 10.12 reports.
@@ -1111,8 +1222,15 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
     for (const version of ["8.71.0", "8.71.9", "8.72.0", "9.0.0", undefined, "next"]) {
       expect([version, await notes(typescript(version))]).toEqual([version, []]);
     }
-    expect(await notes(flat({ ts: { name: "@typescript-eslint/eslint-plugin", version: "8.43.0" } }))).toEqual([]);
     expect(await notes(flat({ n: { name: "eslint-plugin-node", version: "11.1.0" } }))).toEqual([]);
+    expect(await notes(flat({ import: { name: "eslint-plugin-import-x", version: "2.31.0" } }))).toEqual([]);
+  });
+
+  // Under another name the plugin is the same package, and the built-in rules answer for it.
+  test("also for a plugin that is built in under another name", async () => {
+    expect(await notes(flat({ ts: { name: "@typescript-eslint/eslint-plugin", version: "8.43.0" } }))).toEqual([
+      "note: @typescript-eslint/eslint-plugin 8.43.0 is installed, but bun lint's built-in rules match 8.71.1",
+    ]);
   });
 
   // eslint-plugin-react-hooks 7.1.1 ships with `meta.version: "7.0.0"`.

@@ -688,6 +688,8 @@ pub struct Config {
     js_locations: Vec<(Box<[u8]>, Json)>,
     /// Objects, for different files, have different plugins under one name.
     has_twins: bool,
+    /// The names under which the objects have a plugin that is implemented here, other than the one that is usual for it.
+    aliases: Vec<(Box<[u8]>, Plugin)>,
     heads: Heads,
     cache: Cache,
 }
@@ -1518,6 +1520,11 @@ impl Config {
                     config.foreign_plugins.push(plugin.clone());
                 }
             }
+            for alias in self.aliases.iter().filter(|it| object.plugins.contains(&it.0)) {
+                if !config.aliases.iter().any(|it| it.0 == alias.0) {
+                    config.aliases.push(alias.clone());
+                }
+            }
             for plugin in &object.printed_plugins {
                 if !config.printed_plugins.contains(plugin) {
                     config.printed_plugins.push(plugin.clone());
@@ -1710,7 +1717,11 @@ impl Config {
                 true => registry.base_of(&setting.id),
                 false => None,
             };
-            let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
+            // Also a rule of a plugin that the configuration has under a name of its own: it is called what the configuration
+            // calls it.
+            let is_aliased = native.is_some() && config.alias_of(prefix).is_some();
+            let name: Option<Arc<[u8]>> =
+                (base.is_some() || is_aliased).then(|| Arc::from(&setting.id[..]));
             let entry = match (native.or(base), js) {
                 (Some(entry), _) => entry,
                 (None, Some(Some(rule))) => {
@@ -1814,7 +1825,9 @@ impl Config {
             let mut implemented: Vec<Plugin> = Vec::new();
             let is_foreign =
                 |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);
-            let built_in = plugins.iter().filter(|it| !is_foreign(it));
+            // Under a name of its own a plugin is found by that name alone: `config.aliases`.
+            let is_alias = |it: &&&[u8]| config.alias_of(it).is_some();
+            let built_in = plugins.iter().filter(|it| !is_foreign(it) && !is_alias(it));
             for plugin in built_in.filter_map(|it| Plugin::of_prefix(it)) {
                 if !implemented.contains(&plugin) {
                     implemented.push(plugin);

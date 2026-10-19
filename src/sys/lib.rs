@@ -9368,6 +9368,27 @@ pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     Ok(())
 }
 
+/// Reads from stdin, for a caller that reads it until the end of input. Another process can leave
+/// the open file description of a terminal or a pipe in non-blocking mode, and then `read` fails
+/// with EAGAIN while no data is there. That is not the end of input: this waits for data.
+/// `Ok(0)` is the end of input.
+pub fn read_stdin_waiting(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+    loop {
+        match read(fd, buf) {
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_IN,
+                    revents: 0,
+                }];
+                posix::poll(&mut pfd, -1)?;
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
 fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {
@@ -9525,7 +9546,7 @@ bun_core::link_impl_OutputSink! {
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
-        read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),
+        read(fd, buf) => read_stdin_waiting(fd, buf).map_err(|_| bun_core::Error::Unexpected),
     }
 }
 

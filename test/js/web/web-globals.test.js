@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isMusl, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -417,6 +417,57 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+// Another program can leave the stdin that it shares with this one in non-blocking mode. A read
+// then fails with EAGAIN while there is no input yet, which is not the end of the input.
+test.skipIf(!isLinux)("prompt, confirm and alert wait for input on a stdin in non-blocking mode", async () => {
+  const libc = isMusl ? `libc.musl-${process.arch === "arm64" ? "aarch64" : "x86_64"}.so.1` : "libc.so.6";
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { fcntl } = require("bun:ffi").dlopen(${JSON.stringify(libc)}, {
+          fcntl: { args: ["i32", "i32", "i32"], returns: "i32" },
+        }).symbols;
+        // fcntl(0, F_SETFL, fcntl(0, F_GETFL) | O_NONBLOCK)
+        if (fcntl(0, 4, fcntl(0, 3, 0) | 0o4000) !== 0) throw new Error("fcntl failed");
+        console.log(JSON.stringify(prompt("name?")));
+        console.log(confirm("sure?"));
+        alert("seen");
+        console.log("after alert");
+      `,
+    ],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  let output = "";
+  const decoder = new TextDecoder();
+  const reader = proc.stdout.getReader();
+  const waitFor = async text => {
+    while (!output.includes(text)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stdout ended before ${JSON.stringify(text)}: ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
+  const answer = async (question, text) => {
+    // The read is under way, with nothing to return, when its question is on stdout.
+    await waitFor(question);
+    proc.stdin.write(text);
+    await proc.stdin.flush();
+  };
+
+  await answer("name?", "Ada\n");
+  await answer("sure?", "y\n");
+  await answer("seen", "\n");
+  await waitFor("after alert\n");
+  expect(output).toContain('"Ada"\n');
+  expect(output).toContain("true\n");
+  expect(await proc.stderr.text()).toBe("");
+  expect(await proc.exited).toBe(0);
 });
 
 test("globalThis.self = 123 works", () => {

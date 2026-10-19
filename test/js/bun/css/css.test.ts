@@ -271,27 +271,24 @@ describe("css tests", () => {
       },
     };
 
-    for (const [handler, properties] of Object.entries(handlers)) {
+    describe.each(Object.entries(handlers))("%s", (handler, properties) => {
       const names = Object.keys(properties);
-      for (const [i, name] of names.entries()) {
-        const typed = `${name}:${properties[name]}`;
-        test(`${handler}: ${typed}`, () => {
-          expect(declarations(`.a{${typed};zoom:1}`)).toEqual(["zoom:1", typed]);
-        });
 
-        // `SizeHandler` prints a value that did not parse before the declarations it holds.
-        if (handler === "Size") continue;
+      test.each(names.map(name => `${name}:${properties[name]}`))("%s", typed => {
+        expect(declarations(`.a{${typed};zoom:1}`)).toEqual(["zoom:1", typed]);
+      });
+
+      // `SizeHandler` prints a value that did not parse before the declarations it holds.
+      if (handler === "Size") return;
+      const unparsedCases = names.map((name, i) => {
         const other = names[i === 0 ? 1 : 0] ?? name;
-        const held = `${other}:${properties[other]}`;
-        const unparsed = `${name}:var(--x)`;
-        test(`${handler}: ${held}; ${unparsed}`, () => {
-          const handled = declarations(`.a{${held};${unparsed};zoom:1}`).filter(
-            declaration => declaration !== "zoom:1",
-          );
-          expect(handled).toEqual([held, unparsed]);
-        });
-      }
-    }
+        return [`${other}:${properties[other]}`, `${name}:var(--x)`];
+      });
+      test.each(unparsedCases)("%s; %s", (held, unparsed) => {
+        const handled = declarations(`.a{${held};${unparsed};zoom:1}`).filter(declaration => declaration !== "zoom:1");
+        expect(handled).toEqual([held, unparsed]);
+      });
+    });
 
     // These handlers print a declaration where it is written. The fallback shows that they got it.
     prefix_test(".a { color: lab(40% 56.6 39) }", ".a { color: #b32323; color: lab(40% 56.6 39); }", {

@@ -1,7 +1,7 @@
 // Tests for `bun lint --init` and `bun fmt --init`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -201,6 +201,39 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
       chmodSync(none, 0o755);
       chmodSync(one, 0o755);
     }
+  });
+
+  describe.skipIf(isWindows)("a bunfig.toml that is a symlink", () => {
+    const project = { "project/.git/HEAD": "ref: refs/heads/main\n", "project/a.js": "a;\n" };
+
+    test("isn't written if it points outside the repository", async () => {
+      using dir = tempDir("bun-init-section", { ...project, "outside/existing.toml": "a = 1\n" });
+      const link = join(String(dir), "project", "bunfig.toml");
+      for (const target of ["existing.toml", "new.toml", "new/directory/new.toml"]) {
+        symlinkSync(join(String(dir), "outside", target), link);
+        expect(await run(join(String(dir), "project"), command, "--init")).toEqual({
+          stdout: "",
+          stderr: expect.stringContaining(
+            "error: Cannot write bunfig.toml: it is a symlink to a file outside the repository\n",
+          ),
+          exitCode: 2,
+        });
+        rmSync(link);
+      }
+      expect(readdirSync(join(String(dir), "outside"))).toEqual(["existing.toml"]);
+      expect(readFileSync(join(String(dir), "outside", "existing.toml"), "utf8")).toBe("a = 1\n");
+    });
+
+    test("is written through the symlink if it points inside the repository", async () => {
+      using dir = tempDir("bun-init-section", { ...project, "project/config/a.js": "a;\n" });
+      symlinkSync(join("config", "bunfig.toml"), join(String(dir), "project", "bunfig.toml"));
+      expect(await run(join(String(dir), "project"), command, "--init")).toEqual({
+        stdout: `Created bunfig.toml with a [${command}] section\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readFileSync(join(String(dir), "project", "config", "bunfig.toml"), "utf8")).toBe(section);
+    });
   });
 
   test("a directory called bunfig.toml is an error", async () => {

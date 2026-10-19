@@ -21,8 +21,8 @@ const NO_FUNCTION: FnInfo = FnInfo {
 
 /// What is filled in, each as long as the list of the file and with nothing in it.
 struct Lists<'l> {
-    expr_parent: &'l mut [Parent],
-    stmt_parent: &'l mut [Parent],
+    expr_parent: &'l mut [PackedParent],
+    stmt_parent: &'l mut [PackedParent],
     pat_parent: &'l mut [PatParent],
     prop_owner: &'l mut [ExprId],
     member_owner: &'l mut [MemberOwner],
@@ -82,7 +82,7 @@ pub fn try_bind_for_format_in<'r>(
 /// `ids` are the `return` statements, in the order of the list of the file. `false`: the file takes the
 /// binder.
 pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
-    if is_for_the_binder(f) {
+    if is_for_the_binder(f) || !f.has_room_for_handles() {
         return false;
     }
     b.clear();
@@ -91,8 +91,8 @@ pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut Bound
         refilled(&mut b.expr_kind_counts, 2 * ExprTag::COUNT, 0);
         refilled(&mut b.kind_counts, kind_counts::LEN, 0);
     }
-    refilled(&mut b.expr_parent, f.exprs.len(), Parent::None);
-    refilled(&mut b.stmt_parent, f.stmts.len(), Parent::None);
+    refilled(&mut b.expr_parent, f.exprs.len(), PackedParent::default());
+    refilled(&mut b.stmt_parent, f.stmts.len(), PackedParent::default());
     refilled(&mut b.pat_parent, f.pats.len(), PatParent::None);
     refilled(&mut b.prop_owner, f.props.len(), ExprId::NONE);
     refilled(&mut b.member_owner, f.members.len(), MemberOwner::None);
@@ -181,7 +181,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     macro_rules! set {
         ($list:ident[$id:expr] = $value:expr) => {
             if let Some(slot) = $list.get_mut($id.idx()) {
-                *slot = $value;
+                *slot = $value.into();
             }
         };
         ($list:ident[$id:expr].owner = $value:expr) => {
@@ -273,7 +273,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
                         set!(
                             expr_parent[key] = match names_a_function {
                                 true => Parent::MethodKey(p),
-                                false => Parent::PropKey(id, p),
+                                false => Parent::PropKey(p),
                             }
                         );
                     }
@@ -308,14 +308,17 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
                 link!(chain);
                 operands!(obj, index);
             }
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                if let Some(call) = f.calls.get(call.idx()) {
+            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+                if let Some(call) = f.calls.get(c.idx()) {
                     if let ExprKind::Call(_) = e.kind {
                         link!(call.chain);
                     }
-                    operands!(call.callee, call.template);
+                    operands!(call.callee);
+                    if let ExprKind::TaggedTemplate(_) = e.kind {
+                        operands!(f.template_of(c));
+                    }
                     list!(call.args);
-                    tys!(call.type_args);
+                    tys!(f.list_at(call.type_args));
                 }
             }
             ExprKind::Template { exprs, .. } => list!(exprs),
@@ -334,7 +337,10 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Binary { left, right, .. } => operands!(left, right),
             ExprKind::Assign { target, value, .. } => operands!(target, value),
-            ExprKind::Cond { test, yes, no } => operands!(test, yes, no),
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = f.branches(branches);
+                operands!(test, yes, no);
+            }
             ExprKind::Unary { operand, .. }
             | ExprKind::Spread(operand)
             | ExprKind::Await(operand)
@@ -347,7 +353,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             ExprKind::Instantiation { expr, type_args } => {
                 operands!(expr);
-                tys!(type_args);
+                tys!(f.list_at(type_args));
             }
             ExprKind::Jsx(jsx) => {
                 if let Some(jsx) = f.jsx.get(jsx.idx()) {
@@ -459,10 +465,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     }
     for (i, class) in f.classes.iter().enumerate() {
         let id = ClassId(i as u32);
-        decorators!(
-            class.modifiers,
-            Parent::Decorator(id, DecoratorOwner::Class(id))
-        );
+        decorators!(class.modifiers, Parent::ClassDecorator(id));
         set!(expr_parent[class.extends] = Parent::ClassExtends(id));
         for other in f.ids(class.other_extends) {
             set!(expr_parent[other] = Parent::ClassExtends(id));
@@ -477,11 +480,8 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     }
     for (i, member) in f.members.iter().enumerate() {
         let id = MemberId(i as u32);
-        if let MemberOwner::Class(class) = member_owner[i] {
-            decorators!(
-                member.modifiers,
-                Parent::Decorator(class, DecoratorOwner::Member(id))
-            );
+        if let MemberOwner::Class(_) = member_owner[i] {
+            decorators!(member.modifiers, Parent::MemberDecorator(id));
         }
         if let PropKey::Computed(key) = member.key {
             set!(expr_parent[key] = Parent::MemberKey(id));
@@ -489,6 +489,11 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         set!(fns[member.func].owner = FnOwner::Member(id));
         set!(expr_parent[member.init] = Parent::MemberInit(id));
         ty!(member.ty);
+    }
+    for &(id, modifiers) in f.modifiers_of_stmts.iter() {
+        if !matches!(f.stmts.get(id.idx()), Some(s) if matches!(s.kind, StmtKind::Class(_))) {
+            decorators!(modifiers, Parent::Stmt(id));
+        }
     }
     for (i, s) in f.stmts.iter().enumerate() {
         let id = StmtId(i as u32);
@@ -513,9 +518,6 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         }
         if LINT {
             others[kind_counts::STMTS + s.kind.tag() as usize] += 1;
-        }
-        if !s.modifiers.is_empty() && !matches!(s.kind, StmtKind::Class(_)) {
-            decorators!(s.modifiers, me);
         }
         match s.kind {
             StmtKind::Return(e) => {
@@ -635,7 +637,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             decorators!(
                 f.param_modifiers(p),
                 match class.is_some() {
-                    true => Parent::Decorator(class, DecoratorOwner::Param(p)),
+                    true => Parent::ParamDecorator(p),
                     false => Parent::FnBody(id),
                 }
             );
@@ -718,7 +720,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
 /// The part of [`fill`] that is about the declarations of variables.
 fn fill_of_var_decls(
     declarations: &[VarDecl],
-    expr_parent: &mut [Parent],
+    expr_parent: &mut [PackedParent],
     pat_parent: &mut [PatParent],
     type_scope: &mut [ScopeId],
 ) {
@@ -728,7 +730,7 @@ fn fill_of_var_decls(
             *slot = PatParent::Var(id);
         }
         if let Some(slot) = expr_parent.get_mut(declaration.init.idx()) {
-            *slot = Parent::VarInit(id);
+            *slot = Parent::VarInit(id).into();
         }
         if let Some(slot) = type_scope.get_mut(declaration.ty.idx()) {
             *slot = REACHED;
@@ -740,16 +742,16 @@ fn fill_of_var_decls(
 /// has entries that `bind` does not have. That is rare enough to leave it to the binder.
 #[inline(never)]
 fn is_all_part_of_something(
-    expr_parent: &[Parent],
-    stmt_parent: &[Parent],
+    expr_parent: &[PackedParent],
+    stmt_parent: &[PackedParent],
     fns: &[FnInfo],
     class_owner: &[ClassOwner],
     type_scope: &[ScopeId],
     type_param_scope: &[ScopeId],
 ) -> bool {
     // Nearly always there is none, so a list is not left at the first: that way several entries are compared at once.
-    let has_orphan = |list: &[Parent]| {
-        let is_orphan = |found, it: &Parent| found | matches!(it, Parent::None);
+    let has_orphan = |list: &[PackedParent]| {
+        let is_orphan = |found, it: &PackedParent| found | (*it == PackedParent::default());
         list.iter().fold(false, is_orphan)
     };
     let has_unreached =

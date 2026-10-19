@@ -6,7 +6,7 @@ use crate::{Options, Part, Refusal, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::hir::{
-    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind,
+    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind, rare,
 };
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
@@ -80,6 +80,8 @@ struct Reading<'a> {
     experimental_decorators: bool,
     every_file_is_a_module: bool,
     jsdoc: JsDoc,
+    /// `Options::attach_comments`
+    attach_comments: bool,
 }
 
 /// `path` has the extension of JSON, and nobody says what else the file is.
@@ -103,6 +105,13 @@ fn place_of_refusal(text: &[u8], (why, at, after): (Refusal, u32, u32), of_recov
         Refusal::Reported => of_recovery,
         _ => at,
     }
+}
+
+/// True if `text` contains something that a script may parse differently from a module.
+fn differs_in_a_script(text: &[u8]) -> bool {
+    // `\u` is listed because an `await` written with an escape is a name in a script.
+    let words: [&[u8]; 4] = [b"await", b"<!--", b"-->", b"\\u"];
+    words.iter().any(|it| bun_core::strings::contains(text, it))
 }
 
 /// The file as the parser leaves it. Without `atoms`, the file has its own, which `scratch` knows.
@@ -133,6 +142,23 @@ fn file_of(
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
     let has_only_ambiguous_awaits = scratch.has_only_ambiguous_awaits;
     let may_be_script = html_opens.first.is_some() || has_only_ambiguous_awaits;
+    if how.dialect.module_or_script && !how.dialect.oxc && !how.dialect.script {
+        let is_module = file.has_module_syntax || file.rare_syntax & rare::IMPORT_META != 0;
+        let is_same_in_a_script = match was_refused {
+            true => !differs_in_a_script(text),
+            false => html_opens.first.is_none(),
+        };
+        if is_module || is_same_in_a_script {
+            return file;
+        }
+        scratch.recycle(file);
+        let script = file_read_as(scratch, as_script, text, atoms, true);
+        if !is_refused(&script) && !script.has_module_syntax {
+            return script;
+        }
+        scratch.recycle(script);
+        return file_read_as(scratch, how, text, atoms, false);
+    }
     if !how.dialect.oxc || how.dialect.script || !was_refused && !may_be_script {
         return file;
     }
@@ -145,9 +171,7 @@ fn file_of(
         || file.has_module_syntax
         || has_import_meta
         || file.stmts.iter().any(is_global_name);
-    // The last: `await` with an escape is a name in a script.
-    let words: [&[u8]; 4] = [b"await", b"<!--", b"-->", b"\\u"];
-    if was_refused && (is_module || !words.iter().any(|it| bun_core::strings::contains(text, it))) {
+    if was_refused && (is_module || !differs_in_a_script(text)) {
         return file;
     }
     // `a <!--b`, which is `a < !--b` for every other parser.
@@ -221,6 +245,7 @@ fn file_read_as(
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
         part: None,
+        attach_comments: how.attach_comments,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -351,6 +376,7 @@ pub fn summarize<'s>(
         experimental_decorators,
         every_file_is_a_module,
         jsdoc: JsDoc::Read,
+        attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
@@ -401,6 +427,7 @@ pub fn summarize_in<'s>(
         experimental_decorators,
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
+        attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -455,6 +482,7 @@ pub fn with_summary<R>(
         atoms,
         experimental_decorators,
         every_file_is_a_module,
+        false,
         |file, atoms| match file {
             Summary::InArena(mut file) => {
                 file.text = std::borrow::Cow::Borrowed(text);
@@ -481,6 +509,7 @@ pub fn with_summary_in_place<'s, R>(
     atoms: &dyn Intern,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    attach_comments: bool,
     then: impl FnOnce(Summary<'_, 's>, &dyn Intern) -> R,
 ) -> R {
     let how = Reading {
@@ -490,6 +519,7 @@ pub fn with_summary_in_place<'s, R>(
         experimental_decorators,
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
+        attach_comments,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();
@@ -567,6 +597,7 @@ impl<'t> Parts<'t> {
                 until,
                 ..part
             }),
+            attach_comments: true,
             ..Default::default()
         };
         // Where it ends.

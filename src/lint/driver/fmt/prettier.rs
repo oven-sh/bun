@@ -1,14 +1,13 @@
 //! A bridge to the project's own Prettier, for files in a language that only a Prettier plugin can format.
 //!
-//! `bun fmt` doesn't support Astro or PHP, and of Svelte it prints what one version of the plugin prints. If the Prettier
-//! config lists the plugin for such a language, and both Prettier and the plugin are installed, the whole file goes to
-//! `prettier.format`. That runs in the same VMs that run `bun lint`'s plugins. The result is checked or written like the
-//! built-in formatter's output. It's exact, but slow.
+//! `bun fmt` doesn't support Astro or PHP. If the Prettier config lists the plugin for such a language, and both Prettier and
+//! the plugin are installed, the whole file goes to `prettier.format`. That runs in the same VMs that run `bun lint`'s
+//! plugins. The result is checked or written like the built-in formatter's output. It's exact, but slow.
 
 use super::cli::{Options, Precedence};
 use super::config::is_option_of_prettier;
 use crate::run::Environment;
-use crate::{fs, paths};
+use crate::{fs, git, paths};
 use bun_lint::js_plugin::{Host, Unformatted};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
@@ -93,10 +92,11 @@ impl<'e> Prettier<'e> {
         (path, shown): (&[u8], &[u8]),
         config: Option<&[u8]>,
         writes: bool,
+        only: Option<&git::Files>,
     ) -> Result<bool, Vec<u8>> {
         let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
-        let text =
-            fs::read(path).map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
+        let text = git::read(only, path)
+            .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
         let formatted = (self.format(Some(path), config, &text))
             .map_err(|why| [shown, b": ", &describe(why)].concat())?;
         if formatted == text {

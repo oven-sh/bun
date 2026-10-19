@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5860,6 +5860,18 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
+});
+
+it("hexadecimal, octal and binary literals are rounded to the nearest double", () => {
+  const transpiler = new Bun.Transpiler();
+  const wrong = [];
+  for (const [text, exact] of [...integersThatNeedRounding(), ["0777777777777777777777", 0o777777777777777777777n]]) {
+    const printed = transpiler.transformSync(`x = ${text};`).trim();
+    const value = printed === "x = 1 / 0;" ? Infinity : Number(printed.slice("x = ".length, -1));
+    if (!Object.is(value, Number(exact))) wrong.push({ text, printed, nearest: Number(exact) });
+  }
+  expect(wrong).toEqual([]);
+  expect(BigInt(0xb3c8bf81fdf2247) - 0xb3c8bf81fdf2247n).toBe(57n);
 });
 
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the

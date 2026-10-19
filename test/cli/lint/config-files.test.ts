@@ -2387,17 +2387,29 @@ describe.concurrent("an .oxlintrc.json", () => {
     ]);
   });
 
-  test("`files` of `overrides` have no `?(a|b)`", async () => {
+  // oxlint 1.87 takes the parentheses literally, so there these patterns match none of the files. `@oxlint/migrate` copies them
+  // from an ESLint config as they are.
+  test("`files` and `excludeFiles` of `overrides` have `?(a|b)`, like ESLint", async () => {
     const { problems } = await lint({
       ".oxlintrc.json": JSON.stringify({
         ...noVar,
         categories: { correctness: "off" },
-        overrides: [{ files: ["**/*.?([cm])js", "**/*.[jt]s?(x)"], rules: { "no-var": "off" } }],
+        overrides: [
+          { files: ["**/*.?([cm])js"], rules: { "no-var": "off" } },
+          { files: ["**/*.[jt]s?(x)"], excludeFiles: ["**/*.@(test|spec).*"], rules: { eqeqeq: "error" } },
+        ],
       }),
       "a.js": code,
       "b.mjs": code,
+      "src/c.tsx": code,
+      "src/c.test.tsx": code,
     });
-    expect(problems).toEqual(["a.js:1:1 no-var", "b.mjs:1:1 no-var"]);
+    expect(problems).toEqual([
+      "a.js:2:7 eqeqeq",
+      "src/c.test.tsx:1:1 no-var",
+      "src/c.tsx:1:1 no-var",
+      "src/c.tsx:2:7 eqeqeq",
+    ]);
   });
 
   test.each([
@@ -4793,6 +4805,80 @@ describe.concurrent("whose configuration files count", () => {
     expect((await lint(both, ["--nonsense"])).exitCode).toBe(1);
   });
 
+  describe("a package with both configs in a repository without a root config", () => {
+    const files = {
+      "package.json": `{ "workspaces": ["packages/*"] }`,
+      "packages/app/.oxlintrc.json": oxlintrc({ eqeqeq: "error" }),
+      "packages/app/eslint.config.js": `module.exports = [{ rules: { "no-var": "error" } }];`,
+      "packages/app/src/a.js": code,
+    };
+    const absolute = (dir: string) => [join(dir, "packages", "app", "src", "a.js")];
+
+    // Rows are padded with `undefined` because a row shorter than the parameter list gets `done` as the next argument.
+    test.each<[cwd: string, args: string[], up: string, more: Options["args"]]>([
+      [".", ["."], "packages/app/", undefined],
+      [".", ["packages/app"], "packages/app/", undefined],
+      [".", ["packages/app/src/a.js"], "packages/app/", undefined],
+      [".", [], "packages/app/", absolute],
+      ["packages", ["app"], "app/", undefined],
+      ["packages/app", ["."], "", undefined],
+      ["packages/app", [], "", absolute],
+      ["packages/app/src", ["a.js"], "../", undefined],
+    ])("the oxlint config wins in %s with %j", async (cwd, args, up, more) => {
+      const { problems, stderr, exitCode } = await lint(files, args, { cwd, args: more });
+      expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq"]);
+      expect(stderr).toContain(ignores(`${up}eslint.config.js`, `${up}.oxlintrc.json`));
+      expect(exitCode).toBe(1);
+    });
+
+    test("--print-config prints the oxlint config from the root and from the package", async () => {
+      const [fromRoot, fromPackage] = await Promise.all([
+        lint(files, ["--print-config", "packages/app/src/a.js"]),
+        lint(files, ["--print-config", "src/a.js"], { cwd: "packages/app" }),
+      ]);
+      expect(fromRoot.raw).toContain(`"eqeqeq": "deny"`);
+      expect(fromRoot.raw).toBe(fromPackage.raw);
+    });
+
+    test("prints a note for each package with both configs", async () => {
+      const copy = Object.entries(files).map(([name, text]) => [name.replace("/app/", "/web/"), text]);
+      const { problems, stderr } = await lint({ ...files, ...Object.fromEntries(copy) });
+      expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq", "packages/web/src/a.js:2:7 eqeqeq"]);
+      const notes = ["app", "web"].map(it =>
+        ignores(`packages/${it}/eslint.config.js`, `packages/${it}/.oxlintrc.json`),
+      );
+      expect(stderr).toContain(notes.join("\n"));
+    });
+
+    test.each([
+      [".", ["."]],
+      [".", ["packages/app/fixtures/b.js"]],
+      ["packages/app", ["."]],
+    ])("ignores ESLint configs below the oxlint config in %s with %j", async (cwd, args) => {
+      const { "packages/app/eslint.config.js": _, ...rest } = files;
+      const below = {
+        ...rest,
+        "packages/app/fixtures/eslint.config.js": `import "a-package-that-is-not-installed";`,
+        "packages/app/fixtures/b.js": code,
+        "packages/app/fixtures/old/.eslintrc": "not: [valid",
+        "packages/app/fixtures/old/c.js": code,
+      };
+      const { problems, exitCode } = await lint(below, args, { cwd });
+      expect(problems).toContain("packages/app/fixtures/b.js:2:7 eqeqeq");
+      expect(problems.filter(it => !it.endsWith(" eqeqeq"))).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a sibling package with only an ESLint config still uses it", async () => {
+      const { problems } = await lint({
+        ...files,
+        "packages/old/eslint.config.js": files["packages/app/eslint.config.js"],
+        "packages/old/a.js": code,
+      });
+      expect(problems).toEqual(["packages/app/src/a.js:2:7 eqeqeq", "packages/old/a.js:1:1 no-var"]);
+    });
+  });
+
   const [ofESLint, ofOxlint, legacy] = [both["eslint.config.js"], oxlintrc({ "no-debugger": "error" }), rc(noVar)];
   const asModule = ofESLint.replace("module.exports =", "export default");
   test.each([
@@ -5632,10 +5718,27 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     const { problems, stderr, exitCode } = await lint(files);
     expect(problems).toEqual(["a.js:1:1 no-var"]);
     expect(stderr).toContain(
-      "4 files were not linted because bun lint only supports JavaScript and TypeScript (3 *.one, 1 *.two): b.one, c.one, d.one, ..",
+      "4 files were not linted because they need eslint, which is not installed (3 *.one, 1 *.two): b.one, c.one, d.one, ..\n  Run bun add -d eslint",
     );
     expect(exitCode).toBe(2);
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
+  });
+
+  // Windows doesn't allow these file names.
+  test.skipIf(isWindows)("escapes control characters in printed file names", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [
+        { files: ["**/*.one"], plugins: { p: { languages: { l: {} } } }, language: "p/l" },
+      ];`,
+      "b\x1b[31m.one": "",
+      "c\nd.one": "",
+    };
+    const { stderr, exitCode } = await lint(files);
+    // The `lint` helper normalizes stderr, which turns every backslash into a slash.
+    expect(stderr).toContain(
+      "2 files were not linted because they need eslint, which is not installed (2 *.one): b/x1b[31m.one, c/nd.one\n  Run bun add -d eslint",
+    );
+    expect(exitCode).toBe(2);
   });
 });
 
@@ -6787,6 +6890,79 @@ describe.concurrent("a pattern that leaves a working directory without a configu
       ran: ["beside/flat-js"],
       files: scripts("beside").filter(it => it !== "beside/flat-js/x.js"),
     });
+  });
+});
+
+// What is left out is what `git check-ignore` has. oxlint 1.87.0 does not find the file of a submodule, and looks for a `gitdir`
+// that is not absolute from where it runs.
+describe.concurrent("info/exclude of a repository, where the configuration is not of oxlint", () => {
+  const names = ["a.js", "gen/b.js", "kept.js", "sub/a.js", "sub/anchored.js", "sub/named.js"];
+  const excludes = "/a.js\nnamed.js\ngen/\n/sub/anchored.js\n";
+  const left = ["kept.js", "sub/a.js"];
+  /** `names`, each after `prefix`. */
+  const tree = (prefix: string) => Object.fromEntries(names.map(name => [prefix + name, code]));
+  /** The files that are linted. */
+  async function linted(files: Record<string, string>, args: string[], cwd: string) {
+    const { problems } = await lint(files, args, { cwd });
+    return [...new Set(problems.map(it => it.split(":")[0]))];
+  }
+
+  test("a working tree of `git worktree add --relative-paths`", async () => {
+    const files = {
+      ...tree("wt/"),
+      "wt/.git": "gitdir: ../main/.git/worktrees/wt\n",
+      "main/.git/worktrees/wt/commondir": "../..\n",
+      "main/.git/info/exclude": excludes,
+    };
+    expect(
+      await Promise.all([linted(files, ["."], "wt"), linted(files, ["."], "wt/sub"), linted(files, ["wt"], ".")]),
+    ).toEqual([left.map(it => `wt/${it}`), ["wt/sub/a.js"], left.map(it => `wt/${it}`)]);
+  });
+
+  test("a submodule", async () => {
+    const files = {
+      ...tree("vendor/lib/"),
+      "top.js": code,
+      ".git/info/exclude": "kept.js\n",
+      ".git/modules/vendor/lib/info/exclude": excludes,
+      "vendor/lib/.git": "gitdir: ../../.git/modules/vendor/lib\n",
+    };
+    const inLib = left.map(it => `vendor/lib/${it}`);
+    expect(
+      await Promise.all([
+        linted(files, ["."], "."),
+        linted(files, ["."], "vendor/lib"),
+        linted(files, ["."], "vendor/lib/sub"),
+      ]),
+    ).toEqual([["top.js", ...inLib], inLib, ["vendor/lib/sub/a.js"]]);
+  });
+
+  test.each([
+    ["no configuration", {}],
+    ["a configuration of ESLint 8", { ".eslintrc.json": rc(eqeqeq) }],
+  ])("--ignore-path names it, with %s", async (_, configuration) => {
+    const files = { ...tree(""), ...configuration, ".git/info/exclude": excludes };
+    expect(
+      await Promise.all([
+        linted(files, ["--ignore-path", ".git/info/exclude", "."], "."),
+        linted(files, ["--ignore-path", "../.git/info/exclude", "."], "sub"),
+      ]),
+    ).toEqual([left, ["sub/a.js"]]);
+  });
+
+  // oxlint compares a file that is named with the patterns as it is spelled. These patterns start where Git has them start.
+  test("--ignore-path names it, with a configuration of oxlint: its patterns start at the root for files that are named too", async () => {
+    const files = { ...tree(""), ".oxlintrc.json": JSON.stringify(noVar), ".git/info/exclude": excludes };
+    const fromSub = names.map(name => (name.startsWith("sub/") ? name.slice(4) : `../${name}`));
+    expect(
+      await Promise.all([
+        linted(files, ["--ignore-path", ".git/info/exclude", "."], "."),
+        linted(files, ["--ignore-path", ".git/info/exclude", ...names], "."),
+        linted(files, ["--ignore-path", "../.git/info/exclude", ".."], "sub"),
+        linted(files, ["--ignore-path", "../.git/info/exclude", ...fromSub], "sub"),
+      ]),
+      // About a file that is named, oxlint does not ask the patterns for the directories that it is in.
+    ).toEqual([left, ["gen/b.js", ...left], left, ["gen/b.js", ...left]]);
   });
 });
 

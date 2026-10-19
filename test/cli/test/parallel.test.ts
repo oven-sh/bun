@@ -1428,8 +1428,9 @@ test.skipIf(isWindows)(
     // The grandchild is orphaned when the worker dies, so a zombie could still
     // answer kill(pid, 0). It records its own termination instead. A shell
     // keeps its startup out of the timing; the trap is armed before the pid
-    // is logged.
-    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; while :; do sleep 60; done`;
+    // is logged. It blocks in `wait`, which a trapped signal interrupts: a
+    // foreground `sleep` would put the trap off until it ends.
+    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; sleep 60 & echo grandchild=$$ >> "$PIDS"; wait`;
     const crasher = (how: string) => `
     import { test } from "bun:test";
     test("spawn then die", async () => {

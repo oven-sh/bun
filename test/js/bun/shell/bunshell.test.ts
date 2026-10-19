@@ -8,7 +8,17 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isPosix,
+  isRoot,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -54,7 +64,6 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
-const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -179,6 +188,28 @@ describe("bunshell", () => {
       // `{ raw: $.escape(v) }` must contribute exactly one argv entry, even for "".
       const { stdout } = await $`echo a ${{ raw: $.escape("") }} b`;
       expect(stdout.toString()).toEqual("a  b\n");
+    });
+
+    test("$.escape converts its argument to a string, also when there is nothing to escape", () => {
+      expect($.escape(1 as any)).toBe('"1"');
+      expect($.escape({ toString: () => "a b" } as any)).toBe('"a b"');
+      expect($.escape({ toString: () => "plain" } as any)).toBe("plain");
+      expect($.escape({ toString: () => "é\u65e5" } as any)).toBe("é\u65e5");
+      expect($.escape(new String("plain") as any)).toBe("plain");
+      expect([true, null, undefined, NaN].map(value => $.escape(value as any))).toEqual([
+        "true",
+        "null",
+        "undefined",
+        "NaN",
+      ]);
+      // @ts-expect-error
+      expect($.escape()).toBe("undefined");
+      // A lone surrogate has no UTF-8, so what needs no escaping does not go through it.
+      expect($.escape("\ud800")).toBe("\ud800");
+      expect($.escape(new String("a\ud800") as any)).toBe("a\ud800");
+      expect(() => $.escape(Symbol() as any)).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
+      );
     });
 
     test("quotes values containing a tab, carriage return, or question mark", async () => {

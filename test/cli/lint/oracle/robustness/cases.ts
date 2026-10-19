@@ -25,8 +25,12 @@ export type Case = {
   /** Comments that disable nothing are errors. */
   reportsUnusedDirectives?: boolean;
   args?: string[];
+  /** `compilerOptions` of a `tsconfig.json`. Without them there is none. */
+  compilerOptions?: Record<string, unknown>;
   /** How many lines of `-f unix` name each rule, or what else the output is to match. */
   reports?: Record<string, number>;
+  /** Or else the output matches this: how much fits on the stack decides which of the two. */
+  orWarns?: RegExp;
   matches?: RegExp;
   lacks?: RegExp;
   /** How often the file matches this when the command has run. */
@@ -476,6 +480,8 @@ export const cases: Case[] = [
     // Each of the three is reported, if `b` and `p` have their types.
     const three = "await b;\nx = b as number;\np;\n";
     const conditions = (n: number, name = "x") => rep(`if (a) { ${name} = 1; }\n`, n);
+    const loop = (n: number) =>
+      `declare function must(v: unknown): asserts v;\nlet y: string | number | undefined = 0;\nwhile (b) {\nif (a) { y = "s"; }\n${rep("must(b);\n", n)}const z = y;\n}\n`;
     const warning =
       /This file is too large for control flow analysis\. Reports from rules that need type information may be wrong or incomplete\./;
     const [awaited, asserted, floating] = ["await-thenable", "no-unnecessary-type-assertion", "no-floating-promises"];
@@ -527,8 +533,201 @@ export const cases: Case[] = [
         matches: warning,
         exitCode: 1,
       },
+      // The body of a loop is walked twice: from `y` to the start of the loop, and from the end of the loop to its start again. No
+      // rule asks about `y`.
+      {
+        ...common,
+        name: "a loop of 996 statements stays under the control flow limit",
+        text: () => head + three + loop(996),
+        reports: all,
+        lacks: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "a loop of 997 statements hits the control flow limit and warns",
+        text: () => head + three + loop(997),
+        reports: all,
+        matches: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "a `// @ts-nocheck` file over the control flow limit warns too",
+        text: () => "// @ts-nocheck\n" + head + three + conditions(1_100),
+        reports: all,
+        matches: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "400 small functions with loops stay under the control flow limit",
+        text: () =>
+          head +
+          seq(400, i => `function f${i}() { let y: number = 0;\nwhile (a) {\n${conditions(20, "y")}}\ny as number; }\n`) +
+          three,
+        reports: { ...all, [`@typescript-eslint/${asserted}`]: 401 },
+        lacks: warning,
+        exitCode: 1,
+      },
     ];
   })(),
+
+  // ── TypeScript keeps the type of a reference at the start of a loop. With a `finally` block, what it keeps depends on who asks first:
+  // from behind the block there are fewer ways into it. `no-floating-promises` asks about the last statement. ──
+  ...((): Case[] => {
+    const common = {
+      rules: { "typescript/no-floating-promises": "error", "typescript/no-unnecessary-condition": "error" },
+      reports: {},
+      exitCode: 0,
+    };
+    const loopInBlock = `let x = 0;
+try {
+  try {
+    while (a) {}
+  } finally {
+    do {} while (a);
+  }
+} finally {
+  a && (x = 1);
+}
+export { x };
+`;
+    const declarations = "declare function c(): boolean;\ndeclare const d: boolean;\ndeclare function mayThrow(): void;\n";
+    const blockInLoop = (before: string, jump: string, after: string) => `${declarations}let x: string | undefined = undefined;
+while (c()) {
+  if (x) {}
+  ${before}
+    try {
+      if (c()) { x = "s"; mayThrow(); x = undefined; }
+    } finally {
+      ${jump};
+    }
+    x && mayThrow();
+  ${after}
+}
+export {};
+`;
+    const flags = [[], ["--type-check"]];
+    return [
+      {
+        ...common,
+        name: "a loop in a `finally` block: no false report when another rule asks about the code after the block first",
+        file: "a.ts",
+        text: () => `declare const a: boolean; ${loopInBlock}`,
+        args: typed,
+      },
+      // `d` can be narrowed, so there is a flow node for the condition. For `c()` there is none.
+      ...["if (c()) ", "if (d) "].flatMap(condition =>
+        [
+          ["", "continue", ""],
+          ["block: {", "break block", "}"],
+          ["(() => {", "return", "})();"],
+        ].map(([before, jump, after]) => ({
+          ...common,
+          name: `a \`finally\` block in a loop, left by \`${condition}${jump}\`: no false report before the block`,
+          file: "a.ts",
+          text: () => blockInLoop(before, condition + jump, after),
+          args: typed,
+        })),
+      ),
+      // The jump is the only way to reach `mayThrow()`, so the binder makes no label in front of it: the call follows a flow
+      // node inside the `finally` block directly.
+      ...["if (c()) ", "if (d) "].flatMap(condition =>
+        (
+          [
+            ["for (;;) {", "break", "}", 0],
+            ["while (true) {", "break", "}", 1],
+            ["do {", "break", "} while (true);", 1],
+            ["(() => {", "return", "throw 0; })();", 0],
+          ] as const
+        ).map(([before, jump, after, constantConditions]) => ({
+          ...common,
+          name: `a \`finally\` block in a loop, where \`${condition}${jump}\` is the only way out of \`${before}\`: no false report before the block`,
+          file: "a.ts",
+          text: () => blockInLoop(before, condition + jump, `${after}\n  mayThrow();`),
+          args: typed,
+          // The rule reports `true` as a loop condition.
+          reports: constantConditions ? { "@typescript-eslint/no-unnecessary-condition": constantConditions } : {},
+          exitCode: constantConditions ? 1 : 0,
+        })),
+      ),
+      // No loop around the block in these two. A walk from the last line enters the block twice, in two different ways, and the
+      // second time it reuses a type it cached the first time. The second time is on behalf of the loop.
+      {
+        ...common,
+        name: "a `finally` block that an exception can leave, and a loop in the `catch` around it: no false report in the loop",
+        file: "a.ts",
+        text: () => `${declarations}let x: string | undefined = undefined;
+try {
+  try {
+    if (c()) { x = "s"; mayThrow(); x = undefined; }
+  } finally {
+    if (d) {}
+  }
+} catch {
+  for (;;) { if (x) {} if (d) break; }
+}
+x && mayThrow();
+export {};
+`,
+        args: typed,
+      },
+      {
+        ...common,
+        name: "a `finally` block left by `break`, and a loop after it: no false report in the loop",
+        file: "a.ts",
+        text: () => `${declarations}let x: string | number | undefined = 0;
+block: {
+  try {
+    x = "s";
+  } finally {
+    if (d) break block;
+  }
+  for (;;) { if (x) {} else { break; } }
+}
+x && mayThrow();
+export {};
+`,
+        rules: { "typescript/no-floating-promises": "error", "typescript/strict-boolean-expressions": "error" },
+        args: typed,
+        // Only the last line: `x` is a string in the loop.
+        reports: { "@typescript-eslint/strict-boolean-expressions": 1 },
+        exitCode: 1,
+      },
+      // They are checked all the same, and nothing is reported about the types in them.
+      ...flags.map(flag => ({
+        ...common,
+        name: `a loop in a \`finally\` block in a \`// @ts-nocheck\` file${flag.length ? `, with ${flag}` : ""}`,
+        file: "a.ts",
+        text: () => `// @ts-nocheck\ndeclare const a: boolean; ${loopInBlock}export const wrong: number = "";\n`,
+        args: [...typed, ...flag],
+      })),
+      ...flags.map(flag => ({
+        ...common,
+        name: `a loop in a \`finally\` block in a JavaScript file without \`checkJs\`${flag.length ? `, with ${flag}` : ""}`,
+        file: "a.js",
+        text: () =>
+          `/** @type {boolean} */ const a = globalThis.a; ${loopInBlock}/** @type {number} */ export const wrong = "";\n`,
+        compilerOptions: { allowJs: true, checkJs: false, strict: true, noEmit: true },
+        args: [...typed, ...flag],
+      })),
+    ];
+  })(),
+
+  // ── the type checker runs out of stack while it answers a rule, and no file is checked before it is linted ──
+  {
+    name: "3,000 generic calls in each other: the promise is reported, or it says that it gave up",
+    file: "a.ts",
+    text: () =>
+      `declare function f<T>(x: T): T;\ndeclare const p: Promise<void>;\n${rep("f(", 3_000)}p${rep(")", 3_000)};\n`,
+    rules: { "typescript/no-floating-promises": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/no-floating-promises": 1 },
+    orWarns: /^warn: The type checker ran out of stack in a\.ts$/m,
+    exitCode: [0, 1],
+    isHeavy: true,
+  },
 
   // ── time that doubles with each line ──
   // Seven times as long for each alternative. Yarn's release bundle, which many repositories commit, has such a parser.

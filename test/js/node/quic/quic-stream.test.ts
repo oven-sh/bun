@@ -656,6 +656,24 @@ describe("a stream left open when the connection closes", () => {
     client.close();
   });
 
+  test("a stream the peer finished and then stopped closes while the connection lives", async () => {
+    const { server, client, stream, peer, open } = await openPair();
+    await using _server = server;
+    // The peer's FIN arrives first and is read, so only our write side is
+    // still open when the peer's STOP_SENDING lands.
+    peer.stream.writer.endSync();
+    for await (const _ of stream) {
+    }
+    const closed = settle(stream.closed);
+
+    peer.stream.stopSending(4n);
+
+    expect(await closed).toBe("resolved");
+    const { peer: next } = await open("bidi");
+    expect(next.session).toBe(peer.session);
+    client.close();
+  });
+
   test("an iterator taken after the connection error rethrows it", async () => {
     const { server, client, stream, peer } = await openPair();
     await using _server = server;
@@ -671,8 +689,10 @@ describe("a stream left open when the connection closes", () => {
   test("a stream nobody observes raises no unhandled rejection when the connection dies", async () => {
     const { server, client, peer, open } = await openPair();
     await using _server = server;
-    // Neither `closed` nor a read is ever looked at on this stream.
-    await open("bidi", { observeClosed: false });
+    // Neither `closed` nor a read is ever looked at on this stream. Its
+    // writer is done, so no writer failure marks `closed` handled either.
+    const { stream: unobserved } = await open("bidi", { observeClosed: false });
+    unobserved.writer.endSync();
     const sessionClosed = settle(client.closed);
 
     peer.session.destroy(undefined, { code: 2n, type: "application" });

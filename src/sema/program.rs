@@ -8961,6 +8961,7 @@ impl<'s> Files<'s> {
             let mut queue = shared.lock();
             queue.present += 1;
             let mut has_paused = false;
+            let mut taken: Vec<u64> = Vec::new();
             loop {
                 // Take the lowest component first. A thread that finishes a component pushes the components this made
                 // ready and pops the lowest without releasing the lock. So some thread is always working on the lowest
@@ -8988,39 +8989,57 @@ impl<'s> Files<'s> {
                     continue;
                 };
                 has_paused = false;
-                queue.not_taken[(next >> 32) as usize] -= 1;
+                // A package of ten thousand one-line modules is ten thousand components that are ready at the same time. A
+                // thread takes its share of half of them, so that the threads don't queue up for the lock. They're all of
+                // one level: a component only waits for lower levels (`LinkPlan::sees`), so none of them waits for what
+                // another one of them makes ready, which this thread only queues when it's through with all of them.
+                taken.clear();
+                taken.push(next);
+                let more = queue.ready.len() / (2 * queue.present);
+                for _ in 0..more {
+                    match queue.ready.peek() {
+                        Some(it) if it.0 >> 32 == next >> 32 => taken.push(it.0),
+                        _ => break,
+                    }
+                    queue.ready.pop();
+                }
+                for &next in &taken {
+                    queue.not_taken[(next >> 32) as usize] -= 1;
+                }
                 while queue.not_taken.get(queue.lowest) == Some(&0) {
                     queue.lowest += 1;
                 }
                 drop(queue);
-                let at = next as u32;
-                let mut resolved = self.resolve_files(all[at as usize].files, Some((&plan, at)));
-                let of_symbols = std::mem::take(&mut resolved.decls);
-                if !of_symbols.is_empty() {
-                    decls.lock().push(of_symbols);
-                }
-                let mut nested = Vec::new();
-                let mut failed_lookups = std::mem::take(&mut resolved.failed_lookups);
-                failed_lookups.retain(|it| plan.component_of(it.file) == at);
-                let rest = self.publish_own(resolved, &plan, at, &mut nested);
-                plan.set_published(at);
-                let is_ready =
-                    |&&it: &&u32| waits_for[it as usize].fetch_sub(1, Ordering::AcqRel) == 1;
-                let now_ready: SmallVec<[Reverse<u64>; 8]> = (importers_of(at as usize).iter())
-                    .filter(is_ready)
-                    .map(|&it| place(it))
-                    .collect();
-                if !nested.is_empty() || !failed_lookups.is_empty() {
-                    let mut found = found.lock();
-                    found.0.append(&mut nested);
-                    found.1.append(&mut failed_lookups);
-                }
-                if let Some(rest) = rest {
-                    left_over.lock().push((next, rest));
+                let mut now_ready: SmallVec<[Reverse<u64>; 8]> = SmallVec::new();
+                for &next in &taken {
+                    let at = next as u32;
+                    let files = all[at as usize].files;
+                    let mut resolved = self.resolve_files(files, Some((&plan, at)));
+                    let of_symbols = std::mem::take(&mut resolved.decls);
+                    if !of_symbols.is_empty() {
+                        decls.lock().push(of_symbols);
+                    }
+                    let mut nested = Vec::new();
+                    let mut failed_lookups = std::mem::take(&mut resolved.failed_lookups);
+                    failed_lookups.retain(|it| plan.component_of(it.file) == at);
+                    let rest = self.publish_own(resolved, &plan, at, &mut nested);
+                    plan.set_published(at);
+                    let is_ready =
+                        |&&it: &&u32| waits_for[it as usize].fetch_sub(1, Ordering::AcqRel) == 1;
+                    let importers = importers_of(at as usize).iter();
+                    now_ready.extend(importers.filter(is_ready).map(|&it| place(it)));
+                    if !nested.is_empty() || !failed_lookups.is_empty() {
+                        let mut found = found.lock();
+                        found.0.append(&mut nested);
+                        found.1.append(&mut failed_lookups);
+                    }
+                    if let Some(rest) = rest {
+                        left_over.lock().push((next, rest));
+                    }
                 }
                 queue = shared.lock();
                 queue.ready.extend(now_ready);
-                queue.finished += 1;
+                queue.finished += taken.len();
                 if queue.finished == all.len() {
                     has_tasks.notify_all();
                 }

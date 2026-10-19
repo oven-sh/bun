@@ -61,7 +61,8 @@ function pagesOfRouter(router: any): FrameworkPage[] {
   const walk = (node: RouteNode, prefix: string, outerLayouts: string[]) => {
     const pattern = node.part === "/" ? prefix : prefix + node.part;
     const layouts = node.layout ? [...outerLayouts, node.layout] : outerLayouts;
-    if (node.page) pages.push({ pattern: pattern || "/", page: node.page, layouts: layouts.toReversed() });
+    const { page } = node;
+    if (page) pages.push({ pattern: pattern || "/", page, layouts: layouts.toReversed() });
     for (const child of node.children) walk(child, pattern, layouts);
   };
   walk(scanned.toJSON(), "", []);

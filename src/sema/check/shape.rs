@@ -13,6 +13,11 @@ mod unlisted;
 use unlisted::Constituents;
 pub(super) use unlisted::UnlistedIntersections;
 
+#[path = "sibling_intersections.rs"]
+mod siblings;
+pub(super) use siblings::SiblingIntersections;
+use siblings::{FactsOfName, Holder};
+
 #[path = "intersection_reduction.rs"]
 mod reduction;
 pub use reduction::MEMBER_COUNTS;
@@ -7815,10 +7820,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.tally(MemberCount::WithSharedName, 1);
-        // `isLiteralType`, `isPatternLiteralType`
-        let is_literal = |c: &Self, t: TypeId| {
-            c.is_boolean(t) || c.is_pattern_literal(t) || c.is_every_type_unit(t)
-        };
         // The names in the order of `getPropertiesOfUnionOrIntersectionType`, and for each the members
         // in order. `createUnionOrIntersectionProperty` compares every symbol with the first
         // (`singleProp`, `firstType`), so the cost is linear in the number of members:
@@ -7830,77 +7831,18 @@ impl<'p, 's> Checker<'p, 's> {
         // Whether the members are those of the shape of `ty`, where each has `ty` for `this`
         // (`members_of_constituent`). Decided on request.
         let mut is_shape_of_whole = is_apparent.then_some(true);
-        // What `build_intersection_shape` leaves out where it asks whether the property is optional.
-        let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
-        // `prop_set` from `LONG_PROP_LIST` entries on: those, and the ones that come after.
-        let mut long_prop_set = crate::util::FxHashSet::<PropOfConstituent<'_>>::default();
-        // `prop`: the first property of a name, which `member` has. `holders`: the later members that have the name, and
-        // the property of each.
-        type Holder<'p> = (Members<'p>, &'p Prop<'p>);
-        let mut examine = |c: &mut Self, (member, prop): Holder<'p>, holders: &[Holder<'p>]| {
-            // `singleProp` is `prop`, instantiated. With the identity that is `prop` itc.
-            let mut of_single: Option<PropInstantiation> = None;
-            let mut type_of_single: Option<TypeId> = None;
-            let (mut some, mut every) = (prop.flags, prop.flags);
-            let (mut is_non_uniform, mut has_literal) = (false, false);
-            let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
-            let mut has_one_of_no_member = is_of_no_member(c, prop);
-            // `propSet`: a symbol that several members have is considered once.
-            let mut prop_set: SmallVec<[PropOfConstituent<'_>; 4]> = SmallVec::new();
-            long_prop_set.clear();
-            let mut scope = None;
-            for &(later, other) in holders {
-                // One property under one mapper is one property, whatever that makes of it.
-                if std::ptr::eq(prop, other) && member.mapper == later.mapper {
-                    continue;
-                }
-                // FOR SPEED, neither is copied to be compared: a property of a union has a property of each
-                // constituent in it.
-                let instantiation = c.instantiation_of_prop(other, later.mapper);
-                if of_single.is_none() && member.mapper != MapperId::IDENTITY {
-                    of_single = Some(c.instantiation_of_prop(prop, member.mapper));
-                }
-                // The same property reached through two paths.
-                let is_same = match of_single {
-                    Some(of_single) => instantiation.makes_the_same_as(other, of_single, prop),
-                    None => instantiation.makes(prop, other),
-                };
-                if is_same {
-                    continue;
-                }
-                let first_type = match type_of_single {
-                    Some(first_type) => first_type,
-                    None => {
-                        scope = Some(c.begin_scope());
-                        let (first_type, _) = c.types_of_instantiated_prop(prop, of_single);
-                        has_literal = is_literal(c, first_type);
-                        type_of_single = Some(first_type);
-                        types.push(first_type);
-                        first_type
-                    }
-                };
-                let of_later = PropOfConstituent(other, later.mapper);
-                if prop_set.len() < LONG_PROP_LIST {
-                    if prop_set.contains(&of_later) {
-                        continue;
-                    }
-                    prop_set.push(of_later);
-                } else {
-                    if long_prop_set.is_empty() {
-                        long_prop_set.extend(prop_set.iter().copied());
-                    }
-                    if !long_prop_set.insert(of_later) {
-                        continue;
-                    }
-                }
-                let of_other = (later.mapper != MapperId::IDENTITY).then_some(instantiation);
-                let (second, _) = c.types_of_instantiated_prop(other, of_other);
-                types.push(second);
-                has_one_of_no_member |= is_of_no_member(c, other);
-                (some, every) = (some | other.flags, every & other.flags);
-                is_non_uniform |= second != first_type;
-                has_literal = has_literal || is_literal(c, second);
-            }
+        // `prop_set` of `combine_props` from `LONG_PROP_LIST` entries on: those, and the ones that come after.
+        let mut long_prop_set = crate::util::FxHashSet::<PropOfConstituent<'p>>::default();
+        // `prop`: the first property of a name. `combined`, `scope`: what `combine_props` has returned for it.
+        let mut examine = |c: &mut Self, prop: &Prop, combined: Combined, scope: Option<Scope>| {
+            let Combined {
+                types,
+                some,
+                every,
+                is_non_uniform,
+                has_literal,
+                has_one_of_no_member,
+            } = combined;
             let Some(scope) = scope else {
                 return;
             };
@@ -7951,10 +7893,26 @@ impl<'p, 's> Checker<'p, 's> {
         if all.len() > FEW_MEMBERS {
             let names = SharedNames::of(&all);
             self.note_names_of_constituents(ty, &names);
+            // Taken out: see check/sibling_intersections.rs.
+            let mut memo = match self.may_reuse_for_siblings() {
+                true => self.sibling_intersections.take(),
+                false => None,
+            };
+            let numbers = memo.as_mut().map_or(Vec::new(), |it| it.numbers_of(&all));
             for of_name in names.iter() {
                 holders.clear();
                 holders.extend(of_name[1..].iter().map(|&it| holder(it)));
-                examine(self, holder(of_name[0]), &holders);
+                let first = holder(of_name[0]);
+                let facts = memo.as_mut().map(|all| {
+                    self.forget_disturbed_facts(all);
+                    FactsOfName::new(all, &numbers, of_name)
+                });
+                let (combined, scope) =
+                    self.combine_props(first, &holders, &mut long_prop_set, facts);
+                examine(self, first.1, combined, scope);
+            }
+            if memo.is_some() {
+                self.sibling_intersections = memo;
             }
         } else {
             let mut seen = crate::util::FxHashSet::<Atom>::default();
@@ -7977,7 +7935,9 @@ impl<'p, 's> Checker<'p, 's> {
                             holders.push((later, other));
                         }
                     }
-                    examine(self, (member, prop), &holders);
+                    let (combined, scope) =
+                        self.combine_props((member, prop), &holders, &mut long_prop_set, None);
+                    examine(self, prop, combined, scope);
                 }
             }
         }
@@ -7995,6 +7955,102 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         NeverReduced::No
+    }
+
+    /// The part of `createUnionOrIntersectionProperty` that looks at each symbol. `prop`: the first property of a name,
+    /// which `member` has. `holders`: the later members that have the name, and the property of each.
+    /// `long_prop_set`: scratch space. `facts`: about `prop`, then about the properties in `holders`. See
+    /// check/sibling_intersections.rs.
+    ///
+    /// Also returns the scope that it begins before it asks for the first type. `None` if there's only one symbol.
+    fn combine_props(
+        &mut self,
+        (member, prop): Holder<'p>,
+        holders: &[Holder<'p>],
+        long_prop_set: &mut crate::util::FxHashSet<PropOfConstituent<'p>>,
+        mut facts: Option<FactsOfName<'_, 'p>>,
+    ) -> (Combined, Option<Scope>) {
+        // What `build_intersection_shape` leaves out where it asks whether the property is optional.
+        let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
+        // `singleProp` is `prop`, instantiated. With the identity that is `prop` itself.
+        let mut of_single: Option<PropInstantiation> = None;
+        let mut type_of_single: Option<TypeId> = None;
+        let (mut some, mut every) = (prop.flags, prop.flags);
+        let (mut is_non_uniform, mut has_literal) = (false, false);
+        let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut has_one_of_no_member = is_of_no_member(self, prop);
+        // `propSet`: a symbol that several members have is considered once.
+        let mut prop_set: SmallVec<[PropOfConstituent<'p>; 4]> = SmallVec::new();
+        long_prop_set.clear();
+        let mut scope = None;
+        for (nth, &(later, other)) in (1..).zip(holders) {
+            // One property under one mapper is one property, whatever that makes of it.
+            if std::ptr::eq(prop, other) && member.mapper == later.mapper {
+                continue;
+            }
+            // FOR SPEED, neither is copied to be compared: a property of a union has a property of each
+            // constituent in it.
+            let instantiation =
+                self.instantiation_of_prop_with_facts(facts.as_mut(), nth, other, later.mapper);
+            if of_single.is_none() && member.mapper != MapperId::IDENTITY {
+                let mapper = member.mapper;
+                let it = self.instantiation_of_prop_with_facts(facts.as_mut(), 0, prop, mapper);
+                of_single = Some(it);
+            }
+            // The same property reached through two paths.
+            let is_same = match of_single {
+                Some(of_single) => instantiation.makes_the_same_as(other, of_single, prop),
+                None => instantiation.makes(prop, other),
+            };
+            if is_same {
+                continue;
+            }
+            let first_type = match type_of_single {
+                Some(first_type) => first_type,
+                None => {
+                    scope = Some(self.begin_scope());
+                    let first = self.type_of_prop_with_facts(facts.as_mut(), 0, prop, of_single);
+                    has_literal = first.is_literal;
+                    type_of_single = Some(first.ty);
+                    types.push(first.ty);
+                    first.ty
+                }
+            };
+            let of_later = PropOfConstituent(other, later.mapper);
+            if let Some(facts) = &mut facts {
+                if !facts.add_symbol(nth, of_later) {
+                    continue;
+                }
+            } else if prop_set.len() < LONG_PROP_LIST {
+                if prop_set.contains(&of_later) {
+                    continue;
+                }
+                prop_set.push(of_later);
+            } else {
+                if long_prop_set.is_empty() {
+                    long_prop_set.extend(prop_set.iter().copied());
+                }
+                if !long_prop_set.insert(of_later) {
+                    continue;
+                }
+            }
+            let of_other = (later.mapper != MapperId::IDENTITY).then_some(instantiation);
+            let second = self.type_of_prop_with_facts(facts.as_mut(), nth, other, of_other);
+            types.push(second.ty);
+            has_one_of_no_member |= is_of_no_member(self, other);
+            (some, every) = (some | other.flags, every & other.flags);
+            is_non_uniform |= second.ty != first_type;
+            has_literal |= second.is_literal;
+        }
+        let combined = Combined {
+            types,
+            some,
+            every,
+            is_non_uniform,
+            has_literal,
+            has_one_of_no_member,
+        };
+        (combined, scope)
     }
 
     /// An intersection, or `ObjectFlagsContainsIntersections`.
@@ -8023,7 +8079,9 @@ impl<'p, 's> Checker<'p, 's> {
                     return known;
                 }
                 let before = self.non_cacheable_mark();
+                let outer = self.sibling_intersections.replace(Default::default());
                 let reduced = self.filter(ty, |c, m| !c.is_never_intersection(m));
+                self.sibling_intersections = outer;
                 // A member that is being reduced counts as not `never` for the time being, and moves no counter.
                 let is_in_progress = |member: &TypeId| self.never_in_progress.contains(member);
                 if self.non_cacheable_mark() == before && !members.iter().any(is_in_progress) {
@@ -9224,6 +9282,20 @@ pub(super) fn members_among(declarations: &[(FileId, Decl)]) -> SmallVec<[(FileI
         _ => None,
     };
     declarations.iter().filter_map(member).collect()
+}
+
+/// What `createUnionOrIntersectionProperty` finds out about the symbols that it combines.
+struct Combined {
+    /// The types of the distinct symbols, in the order of the members. Empty if there's only one symbol.
+    types: SmallVec<[TypeId; 4]>,
+    /// The flags that at least one symbol has.
+    some: PropFlags,
+    /// The flags that all symbols have.
+    every: PropFlags,
+    is_non_uniform: bool,
+    has_literal: bool,
+    /// `build_intersection_shape` leaves one of the symbols out where it asks whether the property is optional.
+    has_one_of_no_member: bool,
 }
 
 /// What `Checker::may_have_never_reduced_property` has found.

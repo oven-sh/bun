@@ -520,7 +520,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the counters in `TRACES` order. Together with the other fields of `Readings`, they change whenever a
     /// walk does anything that isn't recorded in its `Entry`. Every computation whose result is cached in a table
     /// starts with `enter` or `begin_scope`, which `work` and `scopes_begun` count.
-    fn traces_of_inference(&self) -> [u64; TRACES.len()] {
+    pub(in super::super) fn traces_of_inference(&self) -> [u64; TRACES.len()] {
         let [atoms, components, mappers, signatures, types] = self.task.own.created();
         [
             self.work,
@@ -546,7 +546,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The last counter changes when `getUniqueTypeParameters` adds type parameters to `unresolved_renamed_params`.
     /// Asking for the constraint of one removes it from the set, which is a trace. So a stored walk doesn't ask for the
     /// constraint of any type parameter in the set, and that stays true until more are added.
-    fn inference_disturbances(&self) -> [u64; DISTURBANCES.len()] {
+    pub(in super::super) fn inference_disturbances(&self) -> [u64; DISTURBANCES.len()] {
         let from_loops = self.incomplete_flow_taints;
         [
             self.cycles.wrapping_sub(from_loops),

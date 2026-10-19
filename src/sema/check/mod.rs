@@ -911,6 +911,7 @@ impl<'s> Program<'s> {
             reduced_unions: spare.reduced_unions,
             union_members: Default::default(),
             unlisted_intersections: Default::default(),
+            sibling_intersections: None,
             reductions: Default::default(),
             never_in_progress_from: Vec::new(),
             reverse_mapped_inferences_from: Vec::new(),
@@ -1725,6 +1726,8 @@ pub struct Checker<'p, 's> {
     union_members: union_property::UnionMembers<'p>,
     /// See check/unlisted_intersections.rs.
     unlisted_intersections: shape::UnlistedIntersections<'p>,
+    /// See check/sibling_intersections.rs. `Some` while `reduced_members` filters a union.
+    sibling_intersections: Option<shape::SiblingIntersections<'p>>,
     /// See check/intersection_reduction.rs.
     reductions: shape::Reductions,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.

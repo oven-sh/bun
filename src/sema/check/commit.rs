@@ -602,6 +602,12 @@ impl<'s> Checker<'_, 's> {
         self.task.view().map_or(0, View::state)
     }
 
+    /// Returns the number of the newest commit that resolves a cycle, as far as this task sees commits.
+    pub(super) fn newest_commit_with_a_cycle(&self) -> u64 {
+        let newest = |view: &View| view.numbers.with_a_ring.load(Ordering::Acquire);
+        self.task.view().map_or(0, |view| u64::from(newest(view)))
+    }
+
     /// Between two statements or two deferred nodes of the task's own walk.
     #[inline]
     pub(super) fn rest_between_statements(&mut self) {

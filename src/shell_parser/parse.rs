@@ -578,8 +578,7 @@ pub mod ast {
             use SimpleAtom as SA;
             match (&self, right) {
                 (Atom::Simple(l), Atom::Simple(r)) => {
-                    // bumpalo has no fill_default for non-Default types, so
-                    // seed with `QuotedEmpty` then overwrite.
+                    // Seed with `QuotedEmpty` then overwrite.
                     let atoms = bump.alloc_slice_fill_with(2, |_| SimpleAtom::QuotedEmpty);
                     atoms[0] = l.clone();
                     atoms[1] = r.clone();

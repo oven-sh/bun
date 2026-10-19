@@ -147,8 +147,6 @@ pub struct BorderRadiusHandler {
     pub(crate) start_end: Option<Property>,
     pub(crate) end_end: Option<Property>,
     pub(crate) end_start: Option<Property>,
-    // derive(Default) is sound here because
-    // PropertyCategory::default() == Physical (see src/css/logical.rs).
     pub(crate) category: PropertyCategory,
     pub(crate) has_any: bool,
 }

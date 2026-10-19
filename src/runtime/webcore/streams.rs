@@ -545,7 +545,7 @@ impl Pending {
         // `&`-borrow on this thread, outlives this call.
         let vm = VirtualMachine::get();
         let clone = Box::new(core::mem::replace(self, Pending::new()));
-        // `mem::take` resets `state`/`result`/`future` via `Default`;
+        // `mem::replace` resets `state`/`result`/`future` via `Pending::new()`;
         // no reader observes `future` after this.
         // VM event loop is a singleton; temporary `&mut` is the sole borrow
         // for the duration of `enqueue_task` (no re-entry into Rust).

@@ -34,7 +34,7 @@ pub struct ExtractTarball {
     /// The value of `PackageManager::skips_verify`, which the cache lookup also uses.
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
-    pub(crate) integrity: Integrity, // = Integrity::default()
+    pub(crate) integrity: Integrity, // = Integrity::new()
     /// This run can't pin the dependency (see `pins_tarballs`), so the cache entry is named after
     /// `url`.
     pub(crate) stays_unpinned: bool,

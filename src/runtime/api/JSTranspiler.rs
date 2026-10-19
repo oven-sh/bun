@@ -558,10 +558,7 @@ impl Config {
                             )));
                         }
 
-                        // NOTE: `StringArrayHashMap::get_or_put` is gated on
-                        // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
-                        // the value first, then `put` (which upserts without needing a default
-                        // slot).
+                        // NOTE: Compute the value first, then `put` (which upserts).
                         if let Some(expr) = export_replacement_value(value, global, arena)? {
                             replacements
                                 .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr))

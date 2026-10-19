@@ -110,7 +110,7 @@ pub struct ParseTask {
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
-    // BACKREF; `None` only before enqueue (`Default`, runtime source).
+    // BACKREF; `None` only before enqueue (`new()`, runtime source).
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,

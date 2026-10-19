@@ -105,7 +105,7 @@ pub struct Ast<'a> {
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
-// so `Default` no longer applies; use `Ast::empty_in(arena)`.
+// so there is no `Ast::new()`; use `Ast::empty_in(arena)`.
 impl<'a> Ast<'a> {
     pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
         Self {

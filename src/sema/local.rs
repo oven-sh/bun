@@ -203,7 +203,7 @@ impl Found {
 
 /// A hash map that iterates in insertion order: the entries are in a vector, and the hash index
 /// holds indices into it. Equivalent to `bun_collections::ArrayHashMap`, which this crate does not
-/// depend on, and which has no insert with a precomputed hash for a key without `Default`.
+/// depend on, and whose insert with a precomputed hash needs a placeholder key.
 pub struct Hashed<K, V> {
     entries: Vec<(K, V)>,
     found: Found,

@@ -277,7 +277,7 @@ impl Worker {
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block
             // doesn't double-close. Any later error (watch_or_reap) is handled
-            // by the outer `this` guard, whose `Channel::default()` assignment
+            // by the outer `this` guard, whose `Channel::new()` assignment
             // drops the old Channel and `close_and_destroy`s the pipe via Drop.
             let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }

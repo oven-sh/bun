@@ -60,7 +60,7 @@ pub(crate) struct Options {
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
     /// cost of grain on flat areas; off by default to match Sharp's
     /// `palette:true` default.
-    // No `Default` impl — callers must
+    // No constructor, so callers must
     // pass this explicitly.
     pub(crate) dither: bool,
 }

@@ -418,7 +418,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<'_, T> {
 /// per-worker AST heap); the table generated for `LineOffsetTables::Deferred`
 /// is `List<Global>` and needs the per-row drain, so wrap it in a type that
 /// does it automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
-/// `..Default::default()` struct-update used to build it in
+/// `..Builder::new()` struct-update used to build it in
 /// `get_source_map_builder`, hence the newtype.)
 pub struct OwnedLineOffsetTables(pub(crate) line_offset_table::List);
 

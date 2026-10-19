@@ -22,7 +22,7 @@
 //! if resolved.route(path) != Route::Native { continue }
 //! let how = resolved.language.parse_options(path); // The arguments of `summarize`.
 //! let file = File::new(path, &hir, &bound, &atoms, &resolved.language, types);
-//! let result = linter.lint(&file, &resolved, &LintOptions::default());
+//! let result = linter.lint(&file, &resolved, &LintOptions::new());
 //! ```
 
 mod comment;

@@ -270,7 +270,7 @@ impl WindowsWatcher {
 
         // Materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
         // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
-        // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
+        // place instead: `buf` was already zero-initialised by `empty()` and is an output buffer
         // filled by ReadDirectoryChangesW before any read.
         self.watcher.overlapped = bun_core::ffi::zeroed::<w::OVERLAPPED>();
         self.watcher.dir_handle = *handle_guard;

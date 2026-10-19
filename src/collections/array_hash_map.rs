@@ -334,7 +334,7 @@ fn rebuild_index_from_hashes<A: MapAllocator>(
 /// `impl` block needs: `core::alloc::Allocator` for the `Vec<K/V/u32, A>`
 /// columns and the per-key `Box<[u8], A>`; `Stateless` (which is `Copy`) so
 /// `Vec`/`Box` can copy their allocator on resize/clone and constructors don't
-/// need an `*_in(alloc: A)` variant — all current `A` (`Global`, `AstAlloc`)
+/// need an `*_in(alloc: A)` variant: all current `A` (`Global`, `AstAlloc`)
 /// are ZST.
 pub trait MapAllocator: Allocator + Stateless {}
 impl<A: Allocator + Stateless> MapAllocator for A {}
@@ -1207,7 +1207,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 
 impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Look up by `key` using `adapter` for hash/eql;
-    /// on miss, append the `K`/`V` pair that `init` makes — caller fills both
+    /// on miss, append the `K`/`V` pair that `init` makes. The caller fills both
     /// via `key_ptr` / `value_ptr`.
     pub fn get_or_put_adapted<Q: ?Sized, Ad>(
         &mut self,

@@ -29,7 +29,7 @@ pub struct PostgresSQLStatement {
 
 impl PostgresSQLStatement {
     pub fn init() -> Self {
-        // Callers must set `signature`. This Default
+        // Callers must set `signature`. This constructor
         // exists only to mirror the per-field `= ...` initializers.
         Self {
             cached_structure: PostgresCachedStructure::new(),
@@ -70,7 +70,7 @@ pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
     pub(crate) fn new(signature: Signature) -> RefPtr<PostgresSQLStatement> {
-        // It implements Drop, so `..Default::default()` is not allowed (E0509).
+        // It implements Drop, so `..PostgresSQLStatement::init()` is not allowed (E0509).
         let mut statement = PostgresSQLStatement::init();
         statement.signature = signature;
         RefPtr::new(statement)

@@ -615,7 +615,7 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` / `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
+// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.

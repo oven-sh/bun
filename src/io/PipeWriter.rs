@@ -345,7 +345,7 @@ pub trait PosixBufferedWriterParent: WriterParent {
 
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub handle: PollOrFd,
-    /// `None` only between `Default` and `set_parent`; every dispatch path
+    /// `None` only between `new` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
     pub parent: Option<bun_ptr::ParentRef<Parent, bun_ptr::Mut>>,
     pub(crate) is_done: bool,

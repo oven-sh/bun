@@ -9,7 +9,7 @@
 //!
 //! Example:
 //! ```ignore
-//! let m = Mutex::default();
+//! let m = Mutex::new();
 //!
 //! {
 //!     m.lock();

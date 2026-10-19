@@ -31,8 +31,8 @@ pub(crate) struct FileRoute {
     headers: Headers,
     status_code: u16,
     // Mutated on every request (`on()` runs `hash()`) through a shared
-    // `&Self`; `StatHash` is small POD with `Default`, so `Cell` +
-    // `take()/set()` gives safe read-modify-write on the single-threaded JS
+    // `&Self`; `StatHash` is small POD, so `Cell` +
+    // `replace()/set()` gives safe read-modify-write on the single-threaded JS
     // event loop.
     stat_hash: Cell<StatHash>,
     has_last_modified_header: bool,
@@ -97,8 +97,8 @@ impl FileRoute {
             }
         }
 
-        // `Cell::take` then restore — single-threaded event loop, no re-entry
-        // reads `stat_hash` between take/set (see field comment).
+        // `Cell::replace` then restore: single-threaded event loop, no re-entry
+        // reads `stat_hash` between replace/set (see field comment).
         let sh = self.stat_hash.replace(StatHash::new());
         let last_modified_u64 = sh.last_modified_u64;
         self.stat_hash.set(sh);
@@ -211,8 +211,8 @@ impl FileRoute {
         }
 
         if !self.has_last_modified_header {
-            // `Cell::take` then restore — `write_header` is a sync uWS buffer
-            // copy, no re-entry into `stat_hash` between take/set.
+            // `Cell::replace` then restore: `write_header` is a sync uWS buffer
+            // copy, no re-entry into `stat_hash` between replace/set.
             let sh = self.stat_hash.replace(StatHash::new());
             if let Some(last_modified) = sh.last_modified() {
                 resp.write_header(b"last-modified", last_modified);
@@ -341,8 +341,8 @@ impl FileRoute {
                 break 'brk (false, 0, 0, FileType::File, false);
             }
 
-            // `Cell::take` → mutate → `set`: single-threaded event loop, no
-            // re-entry reads `stat_hash` between take/set.
+            // `Cell::replace` → mutate → `set`: single-threaded event loop, no
+            // re-entry reads `stat_hash` between replace/set.
             let mut sh = self.stat_hash.replace(StatHash::new());
             sh.hash(&stat, path);
             self.stat_hash.set(sh);

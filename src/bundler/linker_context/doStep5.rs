@@ -490,9 +490,7 @@ impl LinkerContext<'_> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        // `Batcher::<T>::init` (preallocated arena slice + cursor) requires
-        // `T: Default` which `Stmt`
-        // doesn't satisfy, so we hand-roll the same shape: one arena slab of
+        // Preallocated arena slice + cursor: one arena slab of
         // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
         // becomes a `write` + sub-slice carve. The slab is held as a safe
         // `&mut [MaybeUninit<Stmt>]` borrow of the arena allocation; each

@@ -185,8 +185,7 @@ use super::util::validators;
 //   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
 use bun_sys_jsc::ErrorJsc as _;
 
-/// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
-/// `Default` (its `callback` field has no sensible default). Build one with
+/// Build a `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) with
 /// the intrusive `node` zeroed and the supplied callback.
 #[inline]
 fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
@@ -1486,7 +1485,7 @@ mod _async_tasks {
         /// it is not threadsafe and is unnecessary as the process will be kept
         /// alive by the shell instance.
         // The field exists unconditionally; the `IS_SHELL` path simply skips
-        // `ref_()`/`unref()` (`KeepAlive::default()` is inert until ref'd).
+        // `ref_()`/`unref()` (`KeepAlive::new()` is inert until ref'd).
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
         /// `fs.cp`: the context whose script asked. The shell's `cp`: a step of its script.

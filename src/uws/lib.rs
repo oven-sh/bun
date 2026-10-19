@@ -1613,7 +1613,7 @@ pub use bun_uws_sys::{ConnectResult, SocketGroup};
 pub mod SocketContext {
     /// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. What
     /// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
-    /// The struct body, `Default`, `digest()` and `create_ssl_context()` live in
+    /// The struct body, `new()`, `digest()` and `create_ssl_context()` live in
     /// `bun_uws_sys`; re-exported so this crate and `_sys` share one definition
     /// (callers in higher tiers pass values to `_sys` constructors directly).
     pub use bun_uws_sys::BunSocketContextOptions;

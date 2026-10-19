@@ -528,7 +528,7 @@ impl Components {
         }
     }
 }
-// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
+// Note: `JSValue::new()` must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
@@ -1141,7 +1141,7 @@ impl Callbacks {
         }
     }
 }
-// Note: `Default` for JSValue must be `JSValue::ZERO`.
+// Note: `JSValue::new()` must be `JSValue::ZERO`.
 
 struct CallbackStackEntry {
     buffer: Vec<u8>,

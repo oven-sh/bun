@@ -69,14 +69,14 @@ pub struct Property {
     pub value: Binding,
     pub default_value: Option<Expr>,
 }
-// No `impl Default` on purpose: only `flags`/`default_value` have sensible
+// No `new()` on purpose: only `flags`/`default_value` have sensible
 // defaults; `key`/`value` do not, so every constructor must supply them.
 
 pub struct Object {
     pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
 }
-// No `impl Default` on purpose: only `is_single_line` has a sensible default;
+// No `new()` on purpose: only `is_single_line` has a sensible default;
 // `properties` does not, so every constructor must supply it.
 
 pub struct Array {
@@ -84,7 +84,7 @@ pub struct Array {
     pub has_spread: bool,
     pub is_single_line: bool,
 }
-// No `impl Default` on purpose: only `has_spread`/`is_single_line` have
+// No `new()` on purpose: only `has_spread`/`is_single_line` have
 // sensible defaults; `items` does not, so every constructor must supply it.
 
 #[derive(Copy, Clone)]

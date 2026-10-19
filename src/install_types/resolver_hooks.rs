@@ -46,7 +46,7 @@ pub struct ExternalSlice<T> {
 
 // Manual impls: the `(off, len)` pair is unconditionally
 // copyable/comparable regardless of `Type`. `#[derive]` would add spurious
-// `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
+// `T: Copy/Clone/PartialEq` bounds via `PhantomData<T>`, breaking
 // by-value `self` methods for non-`Copy` element types (e.g. `Dependency`).
 impl<T> Copy for ExternalSlice<T> {}
 impl<T> Clone for ExternalSlice<T> {

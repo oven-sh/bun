@@ -3782,9 +3782,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the original `&mut` would pop `scope_nn`'s tag off the borrow stack
         // (Stacked Borrows); going `&mut → NonNull → StoreRef` avoids that —
         // every later deref/store goes through the `StoreRef` wrapping `scope_nn`.
-        // `..Scope::EMPTY` (a `const`) instead of `..Default::default()` so the
+        // `..Scope::EMPTY` (a `const`) instead of a constructor call so the
         // remaining fields are filled from a compile-time value: no temporary
-        // `Scope` is built via the `Default` chain and then partially dropped,
+        // `Scope` is built at run time and then partially dropped,
         // and the `members`/`children`/`generated` empty headers const-fold.
         // This runs once per pushed scope (every block/fn/class body).
         let scope_nn: NonNull<Scope> = NonNull::from(arena.alloc(Scope {
@@ -5295,7 +5295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // threading `'a` through `bun_ast::ImportRecord`.
         // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
         let path: fs::Path<'static> = unsafe { path.into_static() };
-        // No `impl Default for ImportRecord` (range/path/kind have no defaults) —
+        // `ImportRecord` has no constructor (range/path/kind have no defaults):
         // spell out the optional fields explicitly.
         self.import_records.push(ImportRecord {
             kind,
@@ -7481,7 +7481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // The old backing slice is overwritten right after this loop, so
-                    // `take` is fine here (Property: Default).
+                    // `mem::replace` with `Property::new()` is fine here.
                     class_properties.push(core::mem::replace(prop, bun_ast::g::Property::new()));
                 }
 
@@ -9183,7 +9183,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             total_stmts_count += usize::from(preserve_strict_mode);
 
-            // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
@@ -9447,9 +9446,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts: parts_list,
             import_records,
 
-            // ── Remaining fields spelled out explicitly. Previously
-            //    `..Default::default()` constructed a
-            //    full temporary `Ast` — including a `Scope::default()` for
+            // ── Remaining fields spelled out explicitly. A
+            //    `..Ast::empty_in(arena)` tail would construct a
+            //    full temporary `Ast`, including a `Scope::EMPTY` for
             //    `module_scope` and empty `Vec`/map headers for
             //    `parts`/`symbols`/`import_records`/`named_*` — only to drop
             //    every one of those (all are explicitly set above). Spelling

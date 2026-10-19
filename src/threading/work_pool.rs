@@ -157,7 +157,7 @@ impl WorkPool {
     pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
         // Install the monomorphized shim via the safe accessor — no raw
         // byte-offset write. `node` is left as the caller initialized it
-        // (always `Node::default()`).
+        // (always `Node::new()`).
         task.task_mut().callback = T::__callback;
         // The single into_raw for every OwnedTask scheduler call. Derive the
         // intrusive `*mut Task` *after* into_raw so provenance covers the full

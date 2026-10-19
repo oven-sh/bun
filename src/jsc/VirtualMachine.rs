@@ -5639,7 +5639,7 @@ impl VirtualMachine {
         unsafe { core::mem::ManuallyDrop::drop(&mut self.handle) };
 
         // `ProcessAutoKiller`'s `Drop`
-        // is the deinit body; take()+drop runs it without dropping `self`.
+        // is the deinit body; `mem::replace`+drop runs it without dropping `self`.
         drop(core::mem::replace(
             &mut self.auto_killer,
             crate::process_auto_killer::ProcessAutoKiller::new(),
@@ -5678,7 +5678,7 @@ impl VirtualMachine {
         }
 
         // Drops all `Arc`-held
-        // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
+        // proxy strings; `mem::replace`+drop suffices.
         drop(core::mem::replace(
             &mut self.proxy_env_storage,
             crate::rare_data::ProxyEnvStorage::new(),

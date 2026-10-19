@@ -470,7 +470,8 @@ pub mod api {
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
             /// `#[repr(C)]` `us_bun_socket_context_options_t` for client mode
             /// (request_cert=1, reject_unauthorized=0; SQL re-verifies hostname
-            /// itself). Returns `Default` for the empty/`tls:true` config.
+            /// itself). Returns `us_bun_socket_context_options_t::new()` with
+            /// those two set for the empty/`tls:true` config.
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
             ) -> bun_uws::us_bun_socket_context_options_t {

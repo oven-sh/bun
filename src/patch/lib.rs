@@ -1526,7 +1526,7 @@ pub fn spawn_opts(
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
+        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::new()` is
         // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {

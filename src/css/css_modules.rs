@@ -70,8 +70,8 @@ impl<'a> CssModule<'a> {
     }
 
     pub(crate) fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
-        // (CssModuleExport can't be Default — BumpVec field), so use the
+        // bun_collections::ArrayHashMap::get_or_put needs a placeholder value
+        // (CssModuleExport has no zero-argument constructor), so use the
         // entry()-API instead.
         use bun_collections::array_hash_map::MapEntry;
         match self.exports_by_source_index[source_index as usize].entry(name) {
@@ -124,7 +124,7 @@ impl<'a> CssModule<'a> {
             }
             None => {
                 // Local export. Mark as used.
-                // `CssModuleExport` cannot be `Default` (BumpVec field),
+                // `CssModuleExport` has no zero-argument constructor,
                 // so use the `entry()` API like `get_reference` above.
                 use bun_collections::array_hash_map::MapEntry;
                 match self.exports_by_source_index[source_index as usize].entry(name) {

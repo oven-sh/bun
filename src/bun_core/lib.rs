@@ -363,7 +363,7 @@ pub mod vec {
         //   newly-exposed range contains only valid `T`.
         // Panic note: if `f` panics mid-loop, `len` is still `prev`, so the
         // already-written prefix stays in spare capacity and is *leaked* (not
-        // dropped) — sound, and acceptable for the constant/`Default`/index
+        // dropped): sound, and acceptable for the constant/`new()`/index
         // fills this helper targets.
         unsafe { v.set_len(prev + n) };
     }
@@ -2539,9 +2539,9 @@ pub mod ffi {
     ///
     /// The `T: Zeroable` bound discharges the `mem::zeroed` safety obligation
     /// once per type (at the `unsafe impl`), so callers need no `unsafe`
-    /// block. Prefer `T::default()` when `T` implements (or can derive)
-    /// `Default` — reserve this for foreign POD where the orphan rule blocks a
-    /// `Default` impl (libc, bindgen output) or where `Default` would be wrong
+    /// block. Prefer `T::new()` when `T` has (or can have) an inherent
+    /// constructor. Reserve this for foreign POD that cannot have one
+    /// (libc, bindgen output) or where `T::new()` would be wrong
     /// but zero-init matches the C API contract.
     #[inline(always)]
     pub const fn zeroed<T: Zeroable>() -> T {

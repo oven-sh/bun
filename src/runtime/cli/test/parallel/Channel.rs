@@ -55,7 +55,7 @@ pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
 // (Worker, WorkerCommands) can embed `Channel<Self>` as a field before their
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
 // `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
-// on `Drop` than on the struct, so Drop/Default below are unbounded too.)
+// on `Drop` than on the struct, so Drop/`new()` below are unbounded too.)
 pub(crate) struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     pub(crate) r#in: JsCell<Vec<u8>>,

@@ -116,7 +116,7 @@ pub(crate) struct AnchorAlias {
 
 impl AnchorAlias {
     pub(crate) fn new() -> Self {
-        // Exists only because `HashMap::get_or_put` requires `V: Default` to
+        // Exists only because `HashMap::get_or_put` needs an `init` fn to
         // fill the freshly-inserted slot; the value is immediately overwritten
         // by the caller (see `find_anchors_and_aliases`).
         AnchorAlias {

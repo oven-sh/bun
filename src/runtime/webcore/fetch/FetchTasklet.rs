@@ -207,7 +207,7 @@ pub(crate) enum HTTPRequestBody {
 impl HTTPRequestBody {
     pub(crate) fn new() -> Self {
         // `Blob` has no `const EMPTY`
-        // (non-Copy fields), so use the runtime `Default` instead of a const.
+        // (non-Copy fields), so use the runtime `Blob::empty()` instead of a const.
         HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::empty()))
     }
 }
@@ -260,9 +260,9 @@ impl HTTPRequestBody {
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
                 // `BodyValue` now has `Drop` (H3), so we cannot move
-                // `l.readable` out by value (E0509). `mem::take` leaves a default
+                // `l.readable` out by value (E0509). `mem::replace` leaves an `Empty`
                 // readable; `Value::drop` on the residual `Locked` then runs
-                // `readable.deinit()` on that default — a no-op.
+                // `readable.deinit()` on that `Empty`, a no-op.
                 return Ok(HTTPRequestBody::ReadableStream(core::mem::replace(
                     &mut locked.readable,
                     ReadableStreamStrong::Empty,
@@ -1992,7 +1992,7 @@ impl FetchTasklet {
     ) -> crate::Result<*mut FetchTasklet> {
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
-            // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
+            // `AsyncHTTP` has no `new()`/zero-init; defer the Box until
             // `AsyncHTTP::init` produces the value.
             http: None,
             result: HTTPClientResult::new(),

@@ -2171,7 +2171,7 @@ fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
 /// To use this, stack allocate the following struct, and then call `resolve`.
 ///
 /// ```ignore
-/// let mut normalizer = PosixToWinNormalizer::default();
+/// let mut normalizer = PosixToWinNormalizer::new();
 /// let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
 /// ```
 ///

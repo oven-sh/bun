@@ -105,8 +105,7 @@ pub struct StaticHashMap<
 impl<K: Copy, V: Copy, Ctx, const CAPACITY: usize, const SLOTS: usize>
     StaticHashMap<K, V, Ctx, CAPACITY, SLOTS>
 {
-    /// An empty map. `key` and `value` fill the empty slots; nothing reads
-    /// them there.
+    /// An empty map. `key` and `value` fill the empty slots, where nothing reads them.
     pub fn new(key: K, value: V) -> Self {
         const {
             assert!((CAPACITY as u64).is_power_of_two());

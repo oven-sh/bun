@@ -155,8 +155,7 @@ impl File {
 }
 
 impl File {
-    /// Only exists to satisfy `StringArrayHashMap::get_or_put`'s `V: Default`
-    /// bound; the slot is always overwritten on `!found_existing`.
+    /// Passed to `get_or_put` as `init`; the slot is always overwritten on `!found_existing`.
     pub(crate) fn new() -> Self {
         Self {
             kind: FileKind::Unknown,

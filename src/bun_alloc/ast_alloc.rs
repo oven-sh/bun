@@ -497,13 +497,13 @@ unsafe impl Allocator for AstAlloc {
 
 // ── AstVec construction helpers ──────────────────────────────────────────
 // `Vec<T, A>` has no `Default` / `From<&[T]>` for non-`Global` `A`, so the
-// 81 `DeclList::default()` / `::from_slice()` etc. call sites need these.
+// call sites need these.
 // Kept as free fns (not a trait) so `bun_collections::VecExt` can add a
 // blanket `impl<T> VecExt<T> for Vec<T, AstAlloc>` that forwards here without
 // a `bun_alloc → bun_collections` cycle.
 
 impl AstAlloc {
-    /// `Vec::new()` parity. `const` so it is usable in `Default` impls.
+    /// `Vec::new()` parity. `const` so it is usable in `const` items.
     #[inline]
     pub const fn vec<T>() -> AstVec<T> {
         Vec::new_in(AstAlloc)

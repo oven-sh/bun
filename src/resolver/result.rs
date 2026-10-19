@@ -225,7 +225,7 @@ pub enum ResultUnion {
 
 impl Result {
     /// Read-only view of the `package_json` field. It stores `Option<*const _>`
-    /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
+    /// (rather than `Option<&'static _>`) so [`Result::new`] / zeroed-init stays
     /// bit-valid. Takes the `Copy` field, not `&self`, so a site that already
     /// borrows `self` mutably (e.g. while iterating `path_pair`) can read it.
     /// Single deref site for the ARENA-backed pointer — same invariant as

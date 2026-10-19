@@ -1179,7 +1179,7 @@ impl Response {
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
-// syntax (`Init { status_code: x, ..Default::default() }`) and partial moves
+// syntax (`Init { status_code: x, ..Init::new() }`) and partial moves
 // (e.g. Request::construct_into reading `response_init.headers`) keep working;
 // the fields' own drop glue releases `headers` and `status_text`.
 pub(crate) struct Init {

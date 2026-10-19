@@ -811,15 +811,14 @@ pub struct ParseResult<'a> {
 impl<'a> ParseResult<'a> {
     /// `ParseResult` is value-copied (e.g.
     /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
-    /// value). `Default` lets the Rust port `mem::take` it across that
+    /// value). `empty` lets the Rust port `mem::replace` it across that
     /// boundary; see `AsyncModule::resume_loading_module`.
     pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         ParseResult {
             source: bun_ast::Source::new(),
-            // `options::Loader` has no `Default`.
             // `File` is the resolver's neutral fallback
-            // (BundleEnums.rs:353), and `Default` here exists only for
-            // `mem::take` in `AsyncModule::resume_loading_module`.
+            // (BundleEnums.rs:353), and `empty` exists only for
+            // `mem::replace` in `AsyncModule::resume_loading_module`.
             loader: options::Loader::File,
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
@@ -965,7 +964,7 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// Every field the resolver reads is now projected (clone of owned data, no
 /// `Box::leak`); the resolver-side FORWARD_DECL types were widened to owned
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
-/// value copy rather than a `Default` stub.
+/// value copy rather than a stub.
 ///
 /// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type
@@ -1192,7 +1191,7 @@ impl<'a> Transpiler<'a> {
         // `Resolver.opts` is the resolver-crate subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this
         // crate's `options::BundleOptions<'a>`. Project the fields the resolver
-        // reads; the rest stay at `Default` until MOVE_DOWN to
+        // reads until MOVE_DOWN to
         // `bun_options_types` unifies the two (resolver/lib.rs:2773 note).
         let resolver_opts = resolver_bundle_options_subset(&bundle_options);
 
@@ -1858,14 +1857,13 @@ fn parse_data_loader<'a>(
                 // some slots are never assigned. In Rust an uninit
                 // live `Vec<T>` element is UB the moment it is
                 // observed (truncate/into_boxed_slice/index-assign),
-                // so pre-fill every slot with `Default` instead of
+                // so pre-fill every slot with `G::Decl::new()` instead of
                 // `set_len`.
                 let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::new(); n];
 
                 symbols.resize_with(n, bun_ast::Symbol::new);
                 // `S::ExportClause.items: *mut [ClauseItem]`
-                // is arena-owned; `ClauseItem: Default` so
-                // `alloc_slice_fill_default` is fine.
+                // is arena-owned; pre-fill it with `ClauseItem::new()`.
                 let export_clauses = arena
                     .alloc_slice_fill_with::<bun_ast::ClauseItem, _>(n, |_| {
                         bun_ast::ClauseItem::new()

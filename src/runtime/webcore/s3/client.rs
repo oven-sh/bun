@@ -1227,7 +1227,7 @@ fn download_stream(
             mutex: bun_threading::Mutex::new(),
             request_error: None,
             reported_response_buffer: MutableString::new(),
-            // `State::default()` sets
+            // `State::new()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in
             // `process_http_callback` on the very first HTTP-thread callback.

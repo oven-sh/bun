@@ -13,7 +13,7 @@ pub(crate) fn post_process_html_chunk(
     // `post_process_*_chunk` callees dispatched from `generate_chunk`.
     // This is where we split output into pieces
     let c = ctx.c();
-    // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
+    // `StringJoiner` has a private field, so a struct literal cannot build it here: assign `watcher`.
     let mut j = StringJoiner::new();
     j.watcher = Watcher {
         input: chunk.unique_key,

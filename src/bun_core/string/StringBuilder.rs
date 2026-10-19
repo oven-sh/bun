@@ -242,7 +242,7 @@ impl StringBuilder {
         // Reconstruct the Box (allocated in init_capacity/allocate) and hand
         // it back.
         //
-        // `take()` first: `*self = Self::default()` drops the old value, and
+        // `take()` first: `*self = Self::new()` drops the old value, and
         // `Drop` frees the buffer when `ptr` is still `Some` — leaving it set
         // here would free the allocation we're about to hand back.
         let Some(ptr) = self.ptr.take() else {

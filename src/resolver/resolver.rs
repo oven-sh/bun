@@ -4062,7 +4062,7 @@ impl<'a> Resolver<'a> {
             None,
             None,
         )?;
-        // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
+        // NOTE: reshaped for borrowck: `mem::replace` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::replace(&mut entry.contents, crate::cache::Contents::Empty);
         let _close_guard = scopeguard::guard(entry, |mut e| {

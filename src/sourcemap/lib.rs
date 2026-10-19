@@ -148,8 +148,7 @@ pub struct LineColumnOffset {
     pub columns: Ordinal,
 }
 
-// Field defaults are `START`, not invalid
-// (bun_core::Ordinal::default() is INVALID, so derive(Default) would be wrong).
+// Field defaults are `START`, not invalid.
 impl LineColumnOffset {
     #[inline]
     pub fn new() -> Self {

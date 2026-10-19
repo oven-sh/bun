@@ -673,7 +673,7 @@ impl BunTest {
             first_last,
             extra_execution_entries: Vec::new(),
             cloned_hook_entries: Vec::new(),
-            // `EventLoopTimer` has no `Default`; `init_paused` sets
+            // `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,

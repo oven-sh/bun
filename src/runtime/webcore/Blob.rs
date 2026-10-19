@@ -3676,7 +3676,7 @@ impl FormDataContext<'_> {
                             // `NodeFS` (it is stateless aside from a path scratch
                             // buffer; a per-VM cache would be purely a perf reuse).
                             let mut node_fs = crate::node::fs::NodeFS::new();
-                            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
+                            // `ReadFile` has `Drop`; can't use FRU `..ReadFile::new()`.
                             let mut rf_args = crate::node::fs::args::ReadFile::new();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
                             rf_args.path = file.pathlike.clone();

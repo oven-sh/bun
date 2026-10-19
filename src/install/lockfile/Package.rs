@@ -3313,7 +3313,7 @@ pub mod serializer {
             );
             // No uninitialized padding: `Package`'s field types are all
             // `#[repr(C)]` with explicit padding zeroed by their
-            // `Default`/`init` paths.
+            // `new`/`init` paths.
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =

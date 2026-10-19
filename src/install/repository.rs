@@ -10,7 +10,7 @@ use crate::dependency as Dependency;
 use crate::hosted_git_info;
 use crate::resolution::fmt_store_url;
 
-// MOVE_DOWN: data struct + Default + buffer-relative `order`/`count`/`clone`/
+// MOVE_DOWN: data struct + `new()` + buffer-relative `order`/`count`/`clone`/
 // `eql` now live in `bun_install_types::resolver_hooks` so the resolver and
 // `Resolution.Value`/`Dependency.Version.Value` can name a real type. The
 // install-tier behaviour below (parsing, formatting, git CLI, download/

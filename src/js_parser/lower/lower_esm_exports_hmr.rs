@@ -21,7 +21,7 @@ pub(crate) struct ConvertESMExportsForHmr<'a> {
 // Note: the consumers of the four collections
 // (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
 // global-heap `Vec<T>`. Kept as `Vec` so callers can construct via
-// `Default::default()` without needing `&'a Bump`.
+// `Vec::new()` without needing `&'a Bump`.
 
 pub(crate) struct ImportRef {
     /// Index into ConvertESMExportsForHmr.stmts

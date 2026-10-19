@@ -27,7 +27,7 @@ impl Framework {
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // `TransformOptions::default()`: every `Option` is `None`, every
+            // `TransformOptions::new()`: every `Option` is `None`, every
             // slice empty, every scalar zero/false.
             bun_schema::api::TransformOptions::new(),
             None,

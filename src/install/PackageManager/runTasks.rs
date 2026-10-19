@@ -875,8 +875,8 @@ fn run_tasks_erased(
                             npm::Registry::manifest_expiry(&response.headers);
 
                         // reshaped for borrowck —
-                        // `bun_collections::HashMap` lacks `get_or_put` for
-                        // non-`Default` values, so insert by-value (overwriting
+                        // `bun_collections::HashMap::get_or_put` needs a
+                        // placeholder value, so insert by-value (overwriting
                         // any prior entry) and reborrow.
                         let name_hash = manifest.pkg.name.hash;
                         manager

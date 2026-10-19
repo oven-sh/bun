@@ -21,7 +21,7 @@ use crate::{JSGlobalObject, JSValue, Strong};
 ///
 /// impl MyNativeObject {
 ///     pub fn init(global: &JSGlobalObject) -> Box<MyNativeObject> {
-///         let this = MyNativeObject::new(Default::default());
+///         let this = Box::new(MyNativeObject::new());
 ///         let this_value = this.to_js(global);
 ///         // Start with strong ref - object has pending work (initialization)
 ///         this.this_value = JsRef::init_strong(this_value, global);

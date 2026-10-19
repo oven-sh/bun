@@ -748,7 +748,7 @@ impl<'a> LinkerGraph<'a> {
 
             let import_records_len = self.ast.items_import_records().len();
             self.meta.set_capacity(import_records_len)?;
-            // Fill each slot with `Default`.
+            // Fill each slot with `JSMeta::new()`.
             let ast_len = self.ast.len();
             debug_assert!(ast_len <= import_records_len);
             for _ in 0..ast_len {

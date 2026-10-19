@@ -88,7 +88,7 @@ pub mod Macro {
         fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
         // All args are safe Rust-ABI types (refs/slices/by-value); the only
         // raw pointer involved is `ctx.data`, which is a struct invariant
-        // maintained by `init`/`Default` — not a caller precondition. The
+        // maintained by `init`, not a caller precondition. The
         // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
         safe fn __bun_macro_context_call(
             ctx: &mut MacroContext,

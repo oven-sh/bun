@@ -520,7 +520,7 @@ pub(crate) mod js_bundler {
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
         ) -> JsResult<Config> {
-            // Config implements Drop, so functional-record-update from Default::default()
+            // Config implements Drop, so functional-record-update from Config::new()
             // is rejected by rustc (E0509). Construct default then mutate instead.
             let mut this = Config::new();
             // `define` defaults to `StringMap::init(false)`; only the flag differs.

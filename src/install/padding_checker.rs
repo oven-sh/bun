@@ -23,7 +23,7 @@
 //! #[repr(C)]
 //! struct Demo {
 //!     a: u8,
-//!     _padding: [u8; 7], // = [0; 7] in Default
+//!     _padding: [u8; 7], // = [0; 7] in new()
 //!     b: u64,            // same offset as before
 //! }
 //! ```

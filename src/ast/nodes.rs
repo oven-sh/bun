@@ -1120,7 +1120,7 @@ impl StmtOrExpr {
             StmtOrExpr::Stmt(stmt) => match stmt.data {
                 crate::stmt::Data::SFunction(mut s) => {
                     // The StoreRef arena slot is never individually dropped, so
-                    // `take` (replace with Default) is safe here.
+                    // `mem::replace` with `Fn::new()` is safe here.
                     let func = core::mem::replace(&mut s.func, crate::g::Fn::new());
                     Expr::init(E::Function { func }, stmt.loc)
                 }

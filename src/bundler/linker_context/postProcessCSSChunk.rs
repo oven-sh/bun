@@ -15,7 +15,7 @@ pub(crate) fn post_process_css_chunk(
     chunk: &mut Chunk,
 ) -> Result<(), crate::Error> {
     let c = ctx.c();
-    // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
+    // `StringJoiner` has a private field, so a struct literal cannot build it here: assign `watcher`.
     let mut j = StringJoiner::new();
     j.watcher = Watcher {
         input: chunk.unique_key,

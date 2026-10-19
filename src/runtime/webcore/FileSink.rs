@@ -1619,8 +1619,7 @@ impl FileSink {
         }
     }
 
-    // Helper for struct-init defaults. `EventLoopHandle` has
-    // no `Default`, so `impl Default for FileSink` is not possible; kept private
+    // Helper for struct-init defaults. Kept private
     // to avoid exposing a half-initialized state.
     /// One ref, counted in `LIVE_COUNT`; the writer's parent/pipe are set by
     /// the caller once the sink has its final address.

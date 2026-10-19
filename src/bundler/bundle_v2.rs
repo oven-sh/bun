@@ -1217,7 +1217,7 @@ pub mod bv2_impl {
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
                     Self {
-                        // SAFETY: lifetime erased — Resolve is owned by the dispatch
+                        // SAFETY: lifetime erased: Resolve is owned by the dispatch
                         // chain and never outlives `bv2`.
                         bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                         import_record: record,
@@ -4204,8 +4204,8 @@ pub mod bv2_impl {
                 side_effects: loader.side_effects(),
                 ..crate::Graph::InputFile::new()
             })?;
-            // `core::mem::take` moved the real `Source` into `graph.input_files`,
-            // leaving `*source` as `Default`. Read path/contents back from the
+            // `core::mem::replace` moved the real `Source` into `graph.input_files`,
+            // leaving `*source` as `Source::new()`. Read path/contents back from the
             // graph's stored copy (where the data now lives for the rest of the
             // bundle pass) so the `ParseTask` below sees the actual source bytes.
             let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
@@ -4325,7 +4325,7 @@ pub mod bv2_impl {
                     )
                 }),
                 source: task_source,
-                // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
+                // `..ServerComponentParseTask::new()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..ServerComponentParseTask::new()
             }));
 
@@ -6173,7 +6173,7 @@ pub mod bv2_impl {
                 };
             }
 
-            // `Chunk: !Default` (Vec fields). Allocate via Vec then
+            // Allocate via Vec then
             // leak into the arena.
             let mut chunks: Vec<Chunk> =
                 Vec::with_capacity(1 + start.css_entry_points.count() + html_files.count());

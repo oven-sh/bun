@@ -350,7 +350,7 @@ impl ByteStream {
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
     pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
+        // Called immediately after `ByteStream::new()` construction;
         // the old value owns nothing the new one
         // reuses, so dropping it is the intended reset.
         drop(core::mem::replace(self, ByteStream::new()));

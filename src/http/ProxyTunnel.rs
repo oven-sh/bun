@@ -638,7 +638,7 @@ impl ProxyTunnel {
             wrapper.set_inline_reject();
         }
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
-        // `Default`); the client holds it until `close_proxy_tunnel` or the
+        // `ProxyTunnel::new()`); the client holds it until `close_proxy_tunnel` or the
         // hand-off to the keep-alive pool.
         let mut tunnel = ProxyTunnel::new();
         tunnel.wrapper = Some(wrapper);

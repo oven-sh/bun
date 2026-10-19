@@ -639,7 +639,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         let mut list: Vec<CrossChunkImport> = Vec::new();
         let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
         // We move the per-chunk fields we
-        // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
+        // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `mem::replace` / `mem::take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
         // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
         // the fields back at loop end.

@@ -549,7 +549,7 @@ impl Worker {
             worker.stmt_list = None;
         }
         // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` —
-        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`,
+        // `get_worker` unconditionally writes `ASTMemoryAllocator::init()`,
         // and `create()` may overwrite it
         // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
         // the `has_created` guard so the default-constructed arena is freed

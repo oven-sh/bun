@@ -3,7 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Kind;
 
-// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
+// Struct + `RefCounted` impl + `new()` + the forwarder host-fns
 // (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
 // `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
 // `impl_timer_object!` in `super` (timer/mod.rs).

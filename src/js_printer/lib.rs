@@ -1761,7 +1761,7 @@ pub(crate) mod __gated_printer {
         pub(crate) right_level: Level,
     }
 
-    // No `Default` impl: every construction
+    // No constructor: every construction
     // site builds the visitor with all fields explicit.
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -7661,7 +7661,7 @@ impl GenerateSourceMap {
 // Top-level print entry points — `get_source_map_builder` / `print` /
 // `print_with_writer{,_and_platform}` are live (the
 // `bun_crash_handler::current_action` / `bun_core::perf::trace` /
-// `bun_sourcemap::chunk::Builder: Default` blockers are all real now, so the
+// `bun_sourcemap::chunk::Builder::new` blockers are all real now, so the
 // former `__gated_entry_points` wrapper has been flattened away).
 // `print_ast` is live (borrowck reshape: `opts` re-reads routed through
 // `printer.options`, `*mut Symbol` for `must_not_be_renamed`, raw-ptr

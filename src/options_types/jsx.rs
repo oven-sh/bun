@@ -13,7 +13,7 @@ use bun_core::strings;
 use std::borrow::Cow;
 
 /// 3-state including `_None` so `Pragma.runtime` preserves the zero value
-/// when an `api.Jsx` arrives with `runtime == _none`. `#[default]` is
+/// when an `api.Jsx` arrives with `runtime == _none`. `Pragma::new()` uses
 /// `Automatic`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -53,7 +53,7 @@ bun_core::comptime_string_map! {
 
 /// Member-expression list for `Pragma.{factory,fragment}`.
 ///
-/// Boxing every element (`Box<[Box<[u8]>]>`) made `Pragma::default()` /
+/// Boxing every element (`Box<[Box<[u8]>]>`) made `Pragma::new()` /
 /// `Clone` cost ~10 heap allocations and dominated mimalloc samples in the
 /// resolver hot path.
 ///
@@ -146,7 +146,7 @@ impl ImportSource {
 }
 
 /// All string fields default to borrowed `'static` data
-/// (the `defaults::*` slices), so `Pragma::default()` and the derived
+/// (the `defaults::*` slices), so `Pragma::new()` and the derived
 /// `Clone` perform **zero** heap allocations in the common case. Hot callers
 /// — `RuntimeTranspilerStore` (per transpiled module) and `Resolver`
 /// (per resolve) — clone this struct on every operation.

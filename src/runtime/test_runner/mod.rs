@@ -273,7 +273,7 @@ pub(crate) mod expect {
     pub(crate) enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
     /// `super::make_formatter(global_this)`
-    /// is the universal matcher pattern; `Formatter` has no `Default` (it
+    /// is the universal matcher pattern; `Formatter` has no zero-argument constructor (it
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
     #[inline]

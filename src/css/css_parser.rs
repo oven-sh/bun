@@ -776,7 +776,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
                 },
                 len: i32::try_from(end_position - start_position).expect("int cast"),
             },
-            // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
+            // NOTE: `ImportRecord` deliberately has no zero-argument `new()` (range/path/kind
             // are required); spell out the remaining defaults explicitly.
             tag: bun_ast::ImportRecordTag::None,
             loader: None,

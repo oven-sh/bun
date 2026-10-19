@@ -808,7 +808,7 @@ impl S3Credentials {
         // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
-            // SignResult implements Drop, so struct-update `..default()`
+            // SignResult implements Drop, so struct-update `..SignResult::new()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::new();
             r.acl = sign_options.acl;
@@ -841,7 +841,7 @@ impl S3Credentials {
         )
         .into_boxed_slice();
 
-        // SignResult implements Drop, so struct-update `..default()` is forbidden.
+        // SignResult implements Drop, so struct-update `..SignResult::new()` is forbidden.
         let mut result = SignResult::new();
         result.amz_date = amz_date;
         result.host = host;

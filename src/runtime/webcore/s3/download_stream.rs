@@ -146,7 +146,7 @@ impl S3HttpDownloadStreamingTask {
         // dont report empty chunks if we have more data to read
         // SAFETY: fn contract.
         if !has_more || unsafe { (*this).reported_response_buffer.list.len() } > 0 {
-            // `core::mem::take` transfers ownership of the buffer, leaving an
+            // `core::mem::replace` transfers ownership of the buffer, leaving an
             // empty MutableString behind.
             // SAFETY: fn contract; the borrow ends with the statement.
             let chunk = unsafe {

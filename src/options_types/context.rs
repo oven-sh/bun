@@ -20,7 +20,7 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Raw pointer (not `&mut`) so `Default` works and so the
+    /// Raw pointer (not `&mut`) so `ContextData::new()` works and so the
     /// process-global `CONTEXT_DATA` static can be zero-initialized before
     /// `create_context_data()` writes the real `&mut Log` into it.
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
@@ -48,18 +48,18 @@ pub struct ContextData {
 
 impl ContextData {
     // ── Startup .text page-fault reduction ───────────────────────────────
-    // `--version` perf showed `ContextData::default` (1 638 B) plus its
+    // `--version` perf showed `ContextData::new` (1 638 B) plus its
     // out-of-line callees (`TransformOptions` / `DebugOptions` / `TestOptions`
     // / `BundlerOptions` / `RuntimeOptions` / `CodeCoverageOptions` /
     // `CompileTarget` / `CpuProf` …) sampling 31× across ≈10 distinct 4 KB
-    // r-xp pages — each nested `Default` impl landed in its own CGU, so the
+    // r-xp pages: each nested `new()` landed in its own CGU, so the
     // single call from `write_context_no_parse` faulted in ~40 KB of scattered
     // `.text`.
     //
     // A literal `unsafe { core::mem::zeroed() }` is
     // **unsound**: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
     // (validity invariant — null is immediate UB regardless of len). Instead,
-    // every `Default` impl in this module is `#[inline(always)]` so the entire
+    // every `*Options::new()` in this module is `#[inline(always)]` so the entire
     // recursive chain folds into the one `write_context_no_parse` call site
     // and lives on a single contiguous page. This removes the per-type callees
     // from the startup fault set without violating any niche invariants.
@@ -246,7 +246,7 @@ pub struct BundlerOptions {
 }
 
 impl BundlerOptions {
-    // See `ContextData::default` — folded into the single startup call site.
+    // See `ContextData::new`: folded into the single startup call site.
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -380,7 +380,7 @@ pub struct DebugOptions {
 }
 
 impl DebugOptions {
-    // See `ContextData::default` — folded into the single startup call site.
+    // See `ContextData::new`: folded into the single startup call site.
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -514,7 +514,7 @@ impl TestOptions {
 }
 
 impl TestOptions {
-    // See `ContextData::default` — folded into the single startup call site.
+    // See `ContextData::new`: folded into the single startup call site.
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -636,7 +636,7 @@ pub struct CpuProf {
 }
 
 impl CpuProf {
-    // See `ContextData::default` — folded into the single startup call site.
+    // See `ContextData::new`: folded into the single startup call site.
     #[inline(always)]
     pub fn new() -> Self {
         Self {
@@ -670,7 +670,7 @@ impl HeapProf {
 }
 
 impl RuntimeOptions {
-    // See `ContextData::default` — folded into the single startup call site.
+    // See `ContextData::new`: folded into the single startup call site.
     #[inline(always)]
     pub fn new() -> Self {
         Self {

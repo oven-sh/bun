@@ -1649,7 +1649,7 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::new(),
                 disable_inspect_custom: false,
-                // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
+                // `StackCheck::new()` has `cached_stack_end = 0` ⇒ the
                 // check always passes; callers that want a real bound
                 // overwrite with `StackCheck::init()` explicitly.
                 stack_check: StackCheck::new(),

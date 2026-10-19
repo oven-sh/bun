@@ -574,7 +574,7 @@ pub(crate) struct DevServer {
     // the server.
     // `MaybeUninit` until `Framework::init_transpiler` populates them in place
     // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
-    // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
+    // `mem::zeroed()` is not sound (PORTING.md §Forbidden).
     pub(crate) server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     pub(crate) client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,

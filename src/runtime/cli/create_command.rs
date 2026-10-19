@@ -1107,7 +1107,7 @@ impl CreateCommand {
                 stderr: spawn_sync::SyncStdio::Inherit,
                 stdout: spawn_sync::SyncStdio::Inherit,
                 stdin: spawn_sync::SyncStdio::Inherit,
-                // Default would zero `loop_` → UB.
+                // `WindowsOptions::new()` would zero `loop_` → UB.
                 #[cfg(windows)]
                 windows: spawn_sync::WindowsOptions {
                     loop_: bun_event_loop::EventLoopHandle::init_mini(

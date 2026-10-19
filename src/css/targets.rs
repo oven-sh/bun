@@ -181,7 +181,7 @@ impl Targets {
 /// ```ignore
 /// Browsers {
 ///   safari: Some((13 << 16) | (2 << 8)),
-///   ..Browsers::default()
+///   ..Browsers::new()
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

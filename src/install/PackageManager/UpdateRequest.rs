@@ -97,7 +97,7 @@ impl UpdateRequest {
     #[inline]
     pub fn version_buf(&self) -> &[u8] {
         // See fn doc. `RawSlice` encapsulates the deref under the
-        // outlives-holder invariant; `Default` seeds it as `EMPTY` and every
+        // outlives-holder invariant; `UpdateRequest::new()` seeds it as `EMPTY` and every
         // assignment is `RawSlice::new(&[u8])`.
         self.version_buf.slice()
     }

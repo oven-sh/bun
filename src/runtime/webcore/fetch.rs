@@ -1657,7 +1657,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // with an `Fd` path only touches `self.sync_error_buf` for
             // path-variant inputs, so a fresh `NodeFS` is sufficient here.
             let mut node_fs = node::fs::NodeFS::new();
-            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
+            // `ReadFile` has `Drop`; can't use FRU `..ReadFile::new()`.
             let mut rf_args = node::fs::args::ReadFile::new();
             rf_args.encoding = Encoding::Buffer;
             rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);

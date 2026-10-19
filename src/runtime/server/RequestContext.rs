@@ -3226,7 +3226,7 @@ where
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
                     if let Some(stream) = lock.readable.get() {
                         // we hold the stream alive until we're done with it
-                        // NOTE: `Strong` is move-only — take() transfers ownership.
+                        // NOTE: `Strong` is move-only: `mem::replace` transfers ownership.
                         this.response_body_readable_stream_ref
                             .set(core::mem::replace(
                                 &mut lock.readable,

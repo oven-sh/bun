@@ -6,7 +6,7 @@ use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 
 /// Runtime flag set passed to [`JSPropertyIterator::init`].
 ///
-/// `Default` is `own_properties_only = true`,
+/// [`Self::init`] is `own_properties_only = true`,
 /// `observable = true`, `only_non_index_properties = false`,
 /// `include_symbols = false`.
 // Runtime flags (not const generics) because the branches gate per-property work, not a
@@ -27,7 +27,7 @@ pub struct JSPropertyIteratorOptions {
 
 impl JSPropertyIteratorOptions {
     /// Shorthand for the most common call-site shape; the remaining
-    /// options take the [`Default`] values.
+    /// options take the [`Self::init`] values.
     pub const fn new(skip_empty_name: bool, include_value: bool) -> Self {
         Self {
             skip_empty_name,

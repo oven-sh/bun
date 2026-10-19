@@ -181,7 +181,7 @@ pub struct UnboundedQueue<T: Node> {
 }
 
 impl<T: Node> UnboundedQueue<T> {
-    /// Const constructor — `Default` is not usable in `static` initializers.
+    /// Const constructor, usable in `static` initializers.
     #[inline]
     pub const fn new() -> Self {
         Self {

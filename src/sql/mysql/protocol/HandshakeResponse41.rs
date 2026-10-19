@@ -15,7 +15,7 @@ pub struct HandshakeResponse41<'a> {
     pub capability_flags: Capabilities,
     pub mariadb_capability_flags: MariaDBCapabilities,
     pub max_packet_size: u32,        // default: 0xFFFFFF (16MB)
-    pub character_set: CharacterSet, // default: CharacterSet::default()
+    pub character_set: CharacterSet, // default: CharacterSet::new()
     pub username: Data,
     pub auth_response: AuthResponse<'a>,
     pub database: Data,

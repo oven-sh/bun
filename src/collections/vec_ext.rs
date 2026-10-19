@@ -589,7 +589,7 @@ impl OffsetByteList {
 ///
 /// Free function (not a `VecExt` method) so it is generic over *any*
 /// `A: Allocator` — the `VecExt` blanket impl carries an
-/// `A: Default + 'static` bound that `&'a MimallocArena` (i.e.
+/// `A: Stateless + 'static` bound that `&'a MimallocArena` (i.e.
 /// [`bun_alloc::ArenaVec`]) does not satisfy. `src` and `dst` may use
 /// distinct allocators.
 ///

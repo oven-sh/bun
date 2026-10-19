@@ -254,7 +254,7 @@ impl PendingValue {
 }
 
 impl PendingValue {
-    /// Callers using `..Default::default()` must initialize `global`
+    /// Callers using `..PendingValue::init()` must initialize `global`
     /// explicitly. Null here is the only viable default.
     pub fn init() -> Self {
         Self {
@@ -916,7 +916,7 @@ impl Value {
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 global_this: Some(bun_ptr::BackRef::new(cx.global())),
-                // `ByteStream::default()` is the post-setup state.
+                // `ByteStream::new()` is the post-setup state.
                 ..webcore::readable_stream::NewSource::with_context(ByteStream::new())
             },
         );
@@ -1200,7 +1200,7 @@ impl Value {
         match self {
             Value::Blob(b) => {
                 // `Value` has `Drop`, so we cannot move the `Blob` out by
-                // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
+                // value (E0509). `mem::replace` leaves `Blob::empty()` whose `deinit()`
                 // (run by `Value::drop` on the assignment below) is a no-op.
                 let new_blob = core::mem::replace(b, Blob::empty());
                 *self = Value::Used;
@@ -1235,7 +1235,7 @@ impl Value {
                 new_blob
             }
             // A zero-length body is spent by a read like any other (`use_as_any_blob` agrees).
-            // `Blob::default()` leaves `global_this` null which matches the
+            // `Blob::empty()` leaves `global_this` null which matches the
             // don't-care contract here.
             Value::Empty => {
                 *self = Value::Used;
@@ -1286,7 +1286,7 @@ impl Value {
     pub(crate) fn use_as_any_blob(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
         // `Value` has `Drop`, so we cannot `mem::replace` then
-        // destructure by value (E0509). Match by `&mut` and `mem::take` the
+        // destructure by value (E0509). Match by `&mut` and `mem::replace` the
         // payload; the trailing `*self = Used/Null` runs `Value::drop` on the
         // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
         // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
@@ -1345,8 +1345,8 @@ impl Value {
         global: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         if let Value::Locked(_) = self {
-            // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
-            // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
+            // reshaped for borrowck + E0509 (`Value` has `Drop`): `mem::replace`
+            // the `PendingValue` out (leaves `Locked(PendingValue::init())`, whose Drop is a no-op on
             // an empty readable), then overwrite with `Error`.
             let mut locked = match self {
                 Value::Locked(l) => core::mem::replace(l, PendingValue::init()),
@@ -1687,7 +1687,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             Self::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
         if let Value::Locked(locked) = self.get_body_value() {
-            // `mem::take` swaps in `Default` and drops the old value.
+            // `mem::replace` swaps in `Strong::Empty` and drops the old value.
             let _ = core::mem::replace(
                 &mut locked.readable,
                 crate::webcore::readable_stream::Strong::Empty,

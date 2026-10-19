@@ -3162,7 +3162,7 @@ pub mod package_index {
     }
 
     impl Entry {
-        /// `HashMap::get_or_put` needs a `Default` to fill the value slot before
+        /// `HashMap::get_or_put` needs an `init` fn to fill the value slot before
         /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.
         #[inline]
         pub fn new() -> Self {
@@ -3825,7 +3825,7 @@ impl PatchedDep {
 
 impl PatchedDep {
     /// Construct with just `path` set. Exists because
-    /// the explicit-padding / private-hash fields make the `..Default::default()`
+    /// the explicit-padding / private-hash fields make the `..PatchedDep::new()`
     /// struct-update form unusable from sibling modules.
     pub(crate) fn with_path(path: SemverString) -> Self {
         Self {

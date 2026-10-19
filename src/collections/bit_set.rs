@@ -513,7 +513,7 @@ impl Drop for DynamicBitSetUnmanaged {
 
 impl DynamicBitSetUnmanaged {
     // There is no `const` empty value (the empty sentinel pointer is computed at
-    // runtime); use `Self::default()`.
+    // runtime); use `Self::new()`.
 
     /// Borrow the mask words as a shared slice of length `num_masks(bit_length)`.
     #[inline(always)]

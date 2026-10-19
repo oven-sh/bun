@@ -82,7 +82,7 @@ macro_rules! impl_timer_object {
                     event_loop_timer: super::EventLoopTimer::init_paused(
                         super::EventLoopTimerTag::$tag,
                     ),
-                    // Default-constructed here, then overwritten in `init()`.
+                    // Placeholder here, then overwritten in `init()`.
                     internals: super::TimerObjectInternals::new(),
                 }
             }

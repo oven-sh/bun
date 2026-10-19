@@ -50,7 +50,7 @@ impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
 // ──────────────────────────────────────────────────────────────────────────
 
 // MOVE_DOWN: data structs (`URI`, `NpmInfo`, `TagInfo`, `TarballInfo`,
-// `Value`, `Version`, `Dependency`, `Behavior`) and their `Default`/`Clone`/
+// `Value`, `Version`, `Dependency`, `Behavior`) and their `new`/`Clone`/
 // `eql` impls now live in `bun_install_types::resolver_hooks` so the resolver
 // and `bun_install` share ONE definition (no opaque round-trip blob).
 // Install-tier behaviour (parsing, builder-clone, comparators, JSON, ...) is

@@ -2167,7 +2167,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     // ─── init ────────────────────────────────────────────────────────────────
     /// Allocate and populate a `NewServer` from `config`. The config is moved
-    /// into the server (left as `Default` in the caller's slot). Route
+    /// into the server (left as `ServerConfig::new()` in the caller's slot). Route
     /// registration and the listen socket happen later in `listen()`.
     pub(crate) fn init(config: &mut ServerConfig, global: &JSGlobalObject) -> JsResult<*mut Self>
     where

@@ -1741,7 +1741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 visited_count = end;
             }
 
-            // `Stmt: Copy`, so clear+extend avoids a `Stmt::default()`
+            // `Stmt: Copy`, so clear+extend avoids a `Stmt::new()`
             // filler value.
             stmts.clear();
             stmts.reserve(visited_count + before.len() + after.len());

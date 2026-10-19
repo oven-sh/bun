@@ -137,7 +137,7 @@ impl Address {
     }
 }
 
-// ZBox frees on Drop; resetting is `*self = Address::default()`.
+// ZBox frees on Drop; resetting is `*self = Address::new()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DevelopmentOption {

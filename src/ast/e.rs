@@ -393,7 +393,7 @@ pub struct Function {
 /// padding for discrete bools).
 ///
 /// `ref_` remains a public field so the ~100 existing `id.ref_` /
-/// `Identifier { ref_, ..Default::default() }` sites stay untouched; flag
+/// `Identifier { ref_, ..Identifier::new() }` sites stay untouched; flag
 /// access goes through the accessor methods below.
 ///
 /// **Hazard:** assigning a fresh `Ref` to `ref_` *clears the flags*. This is

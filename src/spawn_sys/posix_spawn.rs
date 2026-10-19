@@ -210,7 +210,7 @@ pub mod bun_spawn {
 
     impl Attr {
         // `pty_slave_fd` must default to `-1`.
-        // `#[derive(Default)]` would yield `0` (stdin), which makes `spawn_z` take
+        // `0` (stdin) would make `spawn_z` take
         // the PTY path and call setsid()+ioctl(TIOCSCTTY, 0) in the child.
         pub(crate) fn new() -> Self {
             Self {

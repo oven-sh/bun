@@ -352,7 +352,7 @@ pub struct Scope<'a> {
     /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
     previous_ast_state: Option<Box<AstAllocState>>,
     /// `true` between `enter()` and the first `exit()`; makes `exit()`
-    /// idempotent and a never-entered `Scope::default()` drop a no-op.
+    /// idempotent and a never-entered `Scope::new()` drop a no-op.
     entered: bool,
 }
 
@@ -432,7 +432,7 @@ impl<'a> Scope<'a> {
                 r.ast_pushed = false;
             }
             None => {
-                // `Scope::default()` installed nothing, so nothing should come back out.
+                // `Scope::new()` installed nothing, so nothing should come back out.
                 debug_assert!(installed.is_none());
             }
         }

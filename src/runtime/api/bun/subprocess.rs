@@ -162,7 +162,7 @@ pub struct Subprocess<'a> {
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
 
-// Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
+// Note: no `new()` for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 

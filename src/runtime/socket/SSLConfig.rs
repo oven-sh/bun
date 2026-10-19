@@ -1,4 +1,4 @@
-//! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`Default`/hash/
+//! DEDUP(D202): the `SSLConfig` struct, its `Clone`/`Drop`/`new`/hash/
 //! equality/registry impls, and `as_usockets*`/`for_client_verification` were
 //! duplicated (here and in `bun_http::ssl_config`). The lower-tier
 //! `bun_http` copy is canonical (JSC-free, nullable NUL-terminated C-string
@@ -88,7 +88,7 @@ fn read_from_blob(
     };
     let mut fs = node_fs::NodeFS::new();
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
-    // record update from `..Default::default()` would partially move out of a
+    // record update from `..ReadFile::new()` would partially move out of a
     // `Drop` type. Mutate-after-default instead.
     let mut read_args = node_fs::args::ReadFile::new();
     read_args.path = file.pathlike.clone();

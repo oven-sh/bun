@@ -350,7 +350,7 @@ struct InstallDirState {
     /// Not opened on Windows; the copy loops there work from `buf`/`buf2`.
     subdir: Dir,
     // A by-value `WPathBuffer` here would
-    // memset+move ~128 KB through `Default::default()` per package. Use the
+    // memset+move ~128 KB through `WPathBuffer::ZEROED` per package. Use the
     // thread-local pool guard (heap-backed, uninit) so construction is O(1)
     // and the struct stays small enough to return by value.
     #[cfg(windows)]

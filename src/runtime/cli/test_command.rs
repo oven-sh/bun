@@ -1912,7 +1912,7 @@ impl TestCommand {
                     .map(|p| p.cast::<jsc::RegularExpression>()),
                 snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
-                // `TestRunner` cannot derive `Default` because of the
+                // `TestRunner` has no `new()` because of the
                 // `&'a TestOptions` field, so spell the remaining fields out
                 // explicitly.
                 current_file: jest::CurrentFile::new(),

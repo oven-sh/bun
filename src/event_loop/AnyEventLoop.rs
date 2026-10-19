@@ -58,15 +58,6 @@ pub enum AnyEventLoop {
 }
 
 impl AnyEventLoop {
-    /// Stub default for `#[derive(Default)]` containers (e.g. the
-    /// `bun_install::PackageManager` stub). Real consumers always overwrite
-    /// this via `init()` / `js_current()` before use.
-    pub fn new() -> Self {
-        AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
-    }
-}
-
-impl AnyEventLoop {
     /// Owning thread: the weak poster other threads use to deliver JS-loop
     /// tasks to this loop's VM; `None` for a mini loop.
     pub fn js_poster(&self) -> Option<JsPoster> {

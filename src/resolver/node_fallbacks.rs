@@ -153,7 +153,7 @@ fn init_modules() {
                     version: Box::from(b"0.0.0-polyfill".as_slice()),
                     module_type: ModuleType::Esm,
                     // main_fields/browser_map are never read on this code path;
-                    // Default::default() fills them safely.
+                    // PackageJSON::new() fills them safely.
                     source: bun_ast::Source::init_path_string(spec.pkgjson_path, b""),
                     side_effects: SideEffects::False,
                     ..PackageJSON::new()

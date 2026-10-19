@@ -408,7 +408,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     }
 
     /// Single-probe insert-or-lookup. Uninit values cannot be exposed through
-    /// a `&mut V`, so on miss the slot holds what `init` makes — callers
+    /// a `&mut V`, so on miss the slot holds what `init` makes. Callers
     /// overwrite `*value_ptr` when `!found_existing`.
     pub fn get_or_put(
         &mut self,

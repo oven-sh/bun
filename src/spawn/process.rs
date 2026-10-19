@@ -1743,7 +1743,7 @@ impl WindowsOptions {
             verbatim_arguments: false,
             hide_window: true,
             // Every `bun.spawnSync` call site sets `loop_` explicitly. A
-            // zeroed handle here keeps `..Default::default()` usable
+            // zeroed handle here keeps `..WindowsOptions::new()` usable
             // for the other fields. `spawn_process_windows` (the sole consumer)
             // asserts non-null at the read site so a forgotten `loop_` panics
             // with a pointed message instead of segfaulting at the `.uv_loop`
@@ -1980,7 +1980,7 @@ mod spawn_process_body {
         // SAFETY: argv is null-terminated, argv[0] is non-null
         uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // `WindowsOptions::default()` leaves `loop_` zeroed (every
+        // `WindowsOptions::new()` leaves `loop_` zeroed (every
         // `bun.spawnSync` call site sets it explicitly). A zeroed
         // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
         // so `platform_event_loop()` returns null and the deref below segfaults
@@ -1990,7 +1990,7 @@ mod spawn_process_body {
         assert!(
             !options.windows.loop_.platform_event_loop().is_null(),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
-         WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
+         WindowsOptions::new() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
          (`.loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(...))`)."
         );
@@ -2004,7 +2004,7 @@ mod spawn_process_body {
         };
 
         // `git_diff_internal` reaches here
-        // with `Options::default()` → `cwd = ""`. libuv treats a
+        // with `Options::new()` → `cwd = ""`. libuv treats a
         // non-NULL `cwd` as explicit and hands `L""` to `CreateProcessW`, which
         // fails with `ERROR_DIRECTORY` → `UV_ENOENT`. Map empty to NULL so libuv
         // inherits the parent cwd.
@@ -2339,7 +2339,7 @@ mod spawn_process_body {
             );
         }
 
-        // No FRU `..Default::default()` here: `WindowsSpawnResult` impls `Drop`,
+        // No FRU `..WindowsSpawnResult::new()` here: `WindowsSpawnResult` impls `Drop`,
         // so functional-record-update would have to move fields out of the
         // temporary default — E0509. Spell the defaults out instead.
         let mut result = WindowsSpawnResult {

@@ -224,7 +224,7 @@ pub(crate) fn post_process_js_chunk(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
                 ),
                 range: bun_ast::Range::NONE,
-                // Remaining fields (`ImportRecord` has no `Default` impl):
+                // Remaining fields (`ImportRecord` has no zero-argument `new()`):
                 tag: ImportRecordTag::None,
                 loader: None,
                 source_index: Index::INVALID,

@@ -677,7 +677,7 @@ ${targetFields}
         macro_rules! probe {
             ($field:ident) => {
                 if targets.$field.is_some() {
-                    let mut browsers = Browsers::default();
+                    let mut browsers = Browsers::new();
                     browsers.$field = targets.$field;
                     if self.is_compatible(&browsers) {
                         return true;

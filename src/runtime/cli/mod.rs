@@ -300,7 +300,7 @@ fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
 fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_copy(s.len() + 1, 0);
     buf[..s.len()].copy_from_slice(s);
-    // buf[s.len()] is already 0 (Default for u8).
+    // buf[s.len()] is already 0 (the fill value).
     buf.as_ptr().cast::<core::ffi::c_char>()
 }
 
@@ -932,10 +932,10 @@ pub(crate) mod command {
         // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
         // address is sound for the process lifetime.
         //
-        // One `ContextData::default()` is constructed and written in place,
+        // One `ContextData::new()` is constructed and written in place,
         // then the two non-default fields are patched on the live storage —
-        // avoids the second `Default` temporary (and its drop) that the
-        // `..Default::default()` struct-update form would build on the stack.
+        // avoids the second `ContextData` temporary (and its drop) that the
+        // `..ContextData::new()` struct-update form would build on the stack.
         unsafe {
             let ctx = (*CONTEXT_DATA.get()).write(ContextData::new());
             ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);

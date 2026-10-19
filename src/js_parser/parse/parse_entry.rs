@@ -206,7 +206,7 @@ impl<'a> Options<'a> {
     /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
     ///
     /// Co-located with the struct so adding a field is a hard error here —
-    /// the struct-literal below has no `..Default::default()` tail. Callers
+    /// the struct-literal below has no `..Options::new()` tail. Callers
     /// take this snapshot *before* moving `opts` into `parse()`.
     ///
     /// Intentionally NOT carried over (lazy-export / `to_lazy_export_ast` does
@@ -2303,7 +2303,7 @@ impl<'a> Parser<'a> {
             // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
             // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
             // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
-            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
+            // out via `mem::replace` to avoid an overlapping `&self.jsx_imports`
             // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
             // semantically a no-op.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());

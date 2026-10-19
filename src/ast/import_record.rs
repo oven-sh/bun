@@ -138,6 +138,6 @@ impl Tag {
     }
 }
 
-// NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no
+// NOTE: no zero-argument `ImportRecord::new()`: `range`, `path`, `kind` have no
 // sensible defaults. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper).

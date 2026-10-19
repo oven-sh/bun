@@ -1048,9 +1048,7 @@ pub fn loaders_from_transform_options(
         loaders.insert(ext, loader_values[i]);
     }
 
-    // contains+insert (only when absent); `Loader` is not `Default`
-    // so the `V: Default`-gated `StringArrayHashMap::get_or_put_value` does not
-    // apply.
+    // contains+insert (only when absent).
     for ext in DEFAULT_LOADER_EXT {
         if !loaders.contains(*ext) {
             loaders.insert(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());

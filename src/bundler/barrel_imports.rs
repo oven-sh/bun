@@ -34,7 +34,7 @@ impl RequestedExports {
 
 impl RequestedExports {
     /// `get_or_put`-shaped entry on the dense `Vec<Option<Self>>` storage.
-    /// Returns `(found_existing, &mut value)`; inserts `Default` when absent.
+    /// Returns `(found_existing, &mut value)`; inserts `Self::new()` when absent.
     #[inline]
     fn entry(map: &mut Vec<Option<Self>>, idx: u32) -> (bool, &mut Self) {
         let i = idx as usize;

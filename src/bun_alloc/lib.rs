@@ -2349,12 +2349,7 @@ pub trait Allocator: 'static {}
 pub struct DefaultAlloc;
 impl Allocator for DefaultAlloc {}
 
-/// A type with one value and no state: an allocator handle such as `Global` or
-/// [`AstAlloc`], or the hash context of a map. A container that is generic
-/// over such a type makes the value itself, so no caller passes one.
-///
-/// An allocator that owns or borrows memory cannot implement this. A container
-/// that is to hold one needs an `*_in(alloc)` constructor.
+/// A type with one value and no state (`Global`, [`AstAlloc`], a hash context), so a generic container makes the value itself.
 pub trait Stateless: Copy {
     const INSTANCE: Self;
 }

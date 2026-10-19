@@ -48,7 +48,7 @@ pub mod api {
     /// The CLI/bunfig-populated option bag that `BundleOptions::from_api`
     /// projects into bundler options.
     ///
-    /// `Default` is all-zero: every Option `None`, every slice empty, every
+    /// `new()` is all-zero: every Option `None`, every slice empty, every
     /// scalar `0`/`false`.
     ///
     /// LIFECYCLE: `BundleOptions::from_api` parks this in an `Arc` whose final ref
@@ -188,7 +188,7 @@ pub mod api {
 
     // ─── BunInstall + supporting types ───────────────────────────────────────
 
-    /// `Default` is empty slices.
+    /// `new()` is empty slices.
     #[derive(Clone, Debug)]
     pub struct NpmRegistry {
         /// url
@@ -311,7 +311,7 @@ pub mod api {
     pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 
     /// Full field set.
-    /// `Default` is every field `None`/empty.
+    /// `new()` is every field `None`/empty.
     ///
     /// No `Debug`/`Clone` derive: `NpmRegistryMap` wraps `StringArrayHashMap`
     /// which currently provides neither.

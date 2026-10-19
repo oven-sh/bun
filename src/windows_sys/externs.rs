@@ -1527,8 +1527,8 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 
 // winnt.h _IO_COUNTERS — out-param of GetProcessIoCounters / embedded in
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION. All-zero is the valid initial state
-// (Win32 zero-inits before fill), so `Default` is sound and lets callers write
-// `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
+// (Win32 zero-inits before fill), so `new()` is all-zero and lets callers write
+// `IO_COUNTERS::new()` instead of `unsafe { zeroed_unchecked() }`.
 // Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
 #[derive(Copy, Clone)]

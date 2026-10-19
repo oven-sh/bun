@@ -1306,7 +1306,7 @@ impl JSGlobalObject {
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
 
-// No `Default` derive — `code` has no default (only `errno`/`name` are
+// No constructor: `code` has no default (only `errno`/`name` are
 // optional). Callers must always supply `code`.
 pub struct SysErrOptions {
     pub code: NodeErrorCode,

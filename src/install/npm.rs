@@ -932,7 +932,7 @@ pub struct PackageVersion {
     // Explicit padding so this struct has no implicit (uninitialized) padding
     // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
+    // fields, `new()` zero-fills them and every byte of the struct is
     // initialized. Layout (size=248, align=8) is unchanged; see the
     // `offset_of!` asserts below and `padding_checker.rs` for the contract.
     pub(crate) _padding_after_integrity: [u8; 3],
@@ -1111,7 +1111,7 @@ pub struct NpmPackage {
     // Explicit padding so this struct has no implicit (uninitialized) padding
     // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
+    // fields, `new()` zero-fills them and every byte of the struct is
     // initialized. Layout (size=120, align=8) is unchanged; see the
     // `offset_of!` asserts below and `padding_checker.rs` for the contract.
     pub(crate) _padding_after_max_age: [u8; 4],
@@ -1335,7 +1335,7 @@ pub mod package_manifest {
                 // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
                 // implicit padding** — the two layout gaps are filled by
                 // explicit `_padding_*: [u8; N]` fields (zero-initialized via
-                // `Default`), and the `const _ = { offset_of!… }` block at the
+                // `NpmPackage::new()`), and the `const _ = { offset_of!… }` block at the
                 // struct definition statically asserts no gap remains. Every
                 // byte of `this.pkg` is therefore initialized, so viewing it
                 // as `&[u8]` is sound.
@@ -2556,7 +2556,7 @@ impl PackageManifest {
         }
 
         // For cache determinism the serialized `NpmPackage` has explicit
-        // `_padding_*` fields zeroed by `Default`, so plain `default()` is
+        // `_padding_*` fields zeroed by `NpmPackage::new()`, so plain `new()` is
         // already deterministic here.
         let mut result: PackageManifest = PackageManifest::new();
 
@@ -2804,7 +2804,7 @@ impl PackageManifest {
             vec![0u64; bundled_deps_count].into_boxed_slice();
         let mut bundled_deps_offset: usize = 0;
 
-        // Default::default() above zeroes the buffers for determinism.
+        // `new()` above zeroes the buffers for determinism.
 
         // Index cursors are used instead of overlapping mutable subslices into
         // the same allocation; re-slice on demand.
@@ -2868,7 +2868,7 @@ impl PackageManifest {
                 ..PackageVersion::new()
             };
             // PackageVersion's explicit `_padding_*` fields are zeroed by
-            // `Default`, so no separate padding scrub is needed.
+            // `new()`, so no separate padding scrub is needed.
 
             // Index the root `time` object once so the per-version publish-time
             // lookup below is O(1) instead of a linear scan of ~V entries.
@@ -3010,7 +3010,7 @@ impl PackageManifest {
                                         };
 
                                         // The boxed slice is fully initialised
-                                        // (`vec![Default; n].into_boxed_slice()` in the counting
+                                        // (`vec![ExternalString::new(); n].into_boxed_slice()` in the counting
                                         // pass) and `ExternalString: Copy`, so plain absolute
                                         // indexing at `group_start + group_i` works — no
                                         // `from_raw_parts`/`.add()` needed, and the `prev` read
@@ -3508,7 +3508,7 @@ impl PackageManifest {
                 let cloned_versions = &mut all_cloned_versions[..len];
                 // `ExternalSlice` offsets index into `versioned_packages` /
                 // `all_semver_versions`, both fully-initialised `Box<[T]>`s
-                // (created via `vec![Default; n].into_boxed_slice()` above),
+                // (created via `vec![T::new(); n].into_boxed_slice()` above),
                 // so safe slice indexing suffices. The two boxes are
                 // distinct allocations so the two `&mut` borrows do not
                 // overlap.

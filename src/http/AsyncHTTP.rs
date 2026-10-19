@@ -148,7 +148,7 @@ pub fn basic_authorization(url: &URL<'_>) -> Option<Vec<u8>> {
 }
 
 /// Construct an `HTTPClient` with all defaults except the supplied fields.
-/// `HTTPClient` has no `Default` (it has a `Drop` impl with side-effects), so
+/// `HTTPClient` has no zero-argument constructor (it has a `Drop` impl with side-effects), so
 /// this is the single place that enumerates the field set.
 fn make_client<'a>(
     method: Method,
@@ -792,7 +792,7 @@ impl<'a> AsyncHTTP<'a> {
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
-                    // `state` was `Default` at `ptr::read` time and was
+                    // `state` was `InternalState::new()` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.
                     drop(core::mem::replace(&mut client.state, InternalState::new()));

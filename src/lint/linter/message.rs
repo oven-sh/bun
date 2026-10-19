@@ -318,7 +318,7 @@ impl Details {
 }
 
 impl LintMessage {
-    /// An error of the linter itself, without a text and without a place. For `..LintMessage::default()`, with which code that
+    /// An error of the linter itself, without a text and without a place. For `..LintMessage::new()`, with which code that
     /// makes a message goes on compiling when there are more fields.
     pub fn new() -> LintMessage {
         LintMessage {

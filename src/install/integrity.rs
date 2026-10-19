@@ -456,7 +456,7 @@ impl Streaming {
     }
 }
 
-// Assert Integrity::default().value is all-zero.
+// Assert Integrity::new().value is all-zero.
 const _: () = {
     let buf = EMPTY_DIGEST_BUF;
     let mut i = 0;

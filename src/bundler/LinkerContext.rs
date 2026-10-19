@@ -74,7 +74,7 @@ pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
-    /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
+    /// raw pointer (like `parse_graph` / `resolver`) so [`Self::new`] can set
     /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
     /// [`Self::log`] / [`Self::log_mut`]; deref the field directly only for
     /// split-borrow patterns that hold other `self` borrows across the access.
@@ -83,7 +83,7 @@ pub struct LinkerContext<'a> {
     /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
     /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
     /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
-    /// instead of open-coding a raw deref. `Option` because `Default` precedes
+    /// instead of open-coding a raw deref. `Option` because [`Self::new`] precedes
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
@@ -1535,7 +1535,7 @@ impl SourceMapData {
 }
 
 pub struct SourceMapDataTask {
-    /// `None` only in `Default` (the per-index slot is overwritten before
+    /// `None` only in `new()` (the per-index slot is overwritten before
     /// scheduling).
     pub(crate) ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
     pub(crate) source_index: crate::IndexInt,
@@ -2504,7 +2504,7 @@ impl<'a> LinkerContext<'a> {
         };
 
         writer.buffer.reset();
-        // Note: `BufferWriter` isn't `Clone`/`Default`; move it through
+        // Note: `BufferWriter` isn't `Clone`; move it through
         // `mem::replace` with a freshly-initialized writer.
         let mut printer = js_printer::BufferPrinter::init(core::mem::replace(
             writer,

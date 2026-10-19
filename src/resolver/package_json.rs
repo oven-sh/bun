@@ -141,11 +141,10 @@ pub struct PackageJSON {
     pub(crate) imports: Option<ExportsMap>,
 }
 
-// hand-rolled `Default` because `#[derive(Default)]` would zero
+// `PackageJSON::new()` must not zero
 // `package_manager_package_id` (a valid lockfile id — typically the root
 // package). The field defaults to `Install.invalid_package_id` (= `u32::MAX`);
-// `node_fallbacks.rs` relies on `..Default::default()` matching that. Likewise
-// `arch`/`os` default to `*::all()`.
+// `node_fallbacks.rs` relies on `..PackageJSON::new()` matching that.
 impl PackageJSON {
     pub fn new() -> Self {
         PackageJSON {
@@ -455,7 +454,7 @@ impl PackageJSON {
                 return None;
             }
         };
-        // Reshaped for borrowck — `mem::take` the contents (leaving
+        // Reshaped for borrowck: `mem::replace` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
         // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive

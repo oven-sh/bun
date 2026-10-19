@@ -1078,7 +1078,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// for the NTSTATUS → `E` mapping.
 pub trait MaybeExt: Sized {
     type T;
-    /// `Maybe(void).success` — `Ok(())`.
+    /// `Maybe(void).success`: `Ok(())`.
     fn success() -> Result<()>
     where
         Self: MaybeExt<T = ()>;

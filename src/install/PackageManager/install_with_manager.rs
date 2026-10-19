@@ -481,8 +481,8 @@ pub fn install_with_manager(
                             match gop {
                                 bun_collections::array_hash_map::MapEntry::Vacant(v) => {
                                     // `PatchedDep` has private padding/hash fields,
-                                    // so the `..Default::default()` struct-update form is rejected
-                                    // outside its module. Build via `default()` + field stores.
+                                    // so the `..PatchedDep::new()` struct-update form is rejected
+                                    // outside its module. Build via `new()` + field stores.
                                     let mut new = crate::lockfile_real::PatchedDep::new();
                                     new.path = builder.append::<SemverString>(
                                         value.path.slice(&lockfile.buffers.string_bytes),

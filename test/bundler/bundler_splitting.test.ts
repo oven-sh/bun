@@ -2643,39 +2643,45 @@ describe("bundler", () => {
     "p.ts": `process.env.APP_MODE = "production";\nexport const mode = process.env.APP_MODE;`,
     "q.ts": `import { mode } from "./p.ts";\nconsole.log(mode);`,
   };
-  for (const [name, files, entries, source, build] of [
-    ["Example", docsExample, ["index.ts", "worker.ts"], ["production", "undefined"], ["undefined", "undefined"]],
-    ["Remedy", docsRemedy, ["index.ts", "worker.ts"], ["production", "production"], ["production", "production"]],
+  // The example prints APP_MODE: it must not get one from the environment of the test run.
+  const docsEnv: typeof env = { ...env };
+  delete docsEnv.APP_MODE;
+  for (const [name, files, entries, chunks, source, build] of [
+    ["Example", docsExample, ["index.ts", "worker.ts"], 1, ["production", "undefined"], ["undefined", "undefined"]],
+    ["Remedy", docsRemedy, ["index.ts", "worker.ts"], 1, ["production", "production"], ["production", "production"]],
     [
       "RemedyInTwoChunks",
       docsRemedy,
       ["index.ts", "worker.ts", "admin.ts"],
+      2,
       ["production", "production"],
       ["production", "production"],
     ],
   ] as const) {
     test("splitting/SharedChunkOrderOfDocs" + name, async () => {
       using dir = tempDir("splitting-order-docs", files);
+      const cwd = String(dir);
       const result = await Bun.build({
-        entrypoints: entries.map(entry => join(String(dir), entry)),
-        outdir: join(String(dir), "out"),
+        entrypoints: entries.map(entry => join(cwd, entry)),
+        outdir: join(cwd, "out"),
         splitting: true,
         target: "bun",
       });
       expect(result.success).toBe(true);
-      const run = async (file: string) => {
-        await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: String(dir), stdout: "pipe" });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        return { stdout: stdout.trim(), exitCode };
-      };
+      // The output files that hold p.ts and q.ts: one chunk, or two.
+      const holders: string[] = [];
+      for (const output of result.outputs) {
+        if (/^\/\/ .*\b[pq]\.ts$/m.test(await output.text())) holders.push(output.path);
+      }
+      expect(holders).toHaveLength(chunks);
+      const runAll = (paths: string[]) => Promise.all(paths.map(path => run([bunExe(), path], cwd, docsEnv)));
       const [fromSource, fromBuild] = await Promise.all([
-        Promise.all([run("index.ts"), run("worker.ts")]),
-        Promise.all([run(join("out", "index.js")), run(join("out", "worker.js"))]),
+        runAll(["index.ts", "worker.ts"]),
+        runAll([join("out", "index.js"), join("out", "worker.js")]),
       ]);
-      expect({ fromSource, fromBuild }).toEqual({
-        fromSource: source.map(stdout => ({ stdout, exitCode: 0 })),
-        fromBuild: build.map(stdout => ({ stdout, exitCode: 0 })),
-      });
+      const prints = (lines: readonly string[]) =>
+        lines.map(line => ({ stdout: line + "\n", stderr: "", exitCode: 0 }));
+      expect({ fromSource, fromBuild }).toEqual({ fromSource: prints(source), fromBuild: prints(build) });
     });
   }
 

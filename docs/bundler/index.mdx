@@ -598,7 +598,7 @@ console.log(process.env.APP_MODE);
 bun build ./index.ts ./worker.ts --outdir ./out --target bun --splitting
 ```
 
-From source, `index.ts` prints `production` and `worker.ts` prints `undefined`. In the build, `p.ts` and `q.ts` are in one chunk. That chunk follows `worker.ts`, which runs `q.ts` first. So `import("./a.ts")` in `index.ts` also runs `q.ts` before `p.ts`, and both entrypoints print `undefined`.
+From source, `index.ts` prints `production` and `worker.ts` prints `undefined`, when `APP_MODE` is not set in the environment. In the build, `p.ts` and `q.ts` are in one chunk. That chunk follows `worker.ts`, which runs `q.ts` first. So `import("./a.ts")` in `index.ts` also runs `q.ts` before `p.ts`, and both entrypoints print `undefined`.
 
 Since Bun v1.4.3, a chunk follows the entrypoint that comes first in this list, among the entrypoints that load it:
 

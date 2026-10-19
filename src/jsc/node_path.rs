@@ -75,7 +75,9 @@ impl<'a> PathLike<'a> {
     pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Self::Buffer(b) => b.slice().len(),
-            Self::String(_) | Self::ThreadIsolatedString(_) => 0,
+            Self::String(_) => 0,
+            // The private copy that a `Blob` store keeps.
+            Self::ThreadIsolatedString(s) => s.slice().len(),
             Self::Utf8(s) => s.slice().len(),
         }
     }

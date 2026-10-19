@@ -143,7 +143,16 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         };
         fs.rmSync(realDir, { recursive: true, force: true });
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, glob, realDirPosix }));
+        // An embedded file keeps its own type, and an explicit type wins over it.
+        const embedded = Bun.file(asset);
+        const blobType = {
+          file: embedded.type,
+          blob: new Blob([embedded]).type,
+          typeInOptions: new Blob([embedded], { type: "a/b" }).type,
+          typeEmpty: new Blob([embedded], { type: "" }).type,
+        };
+
+        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, glob, realDirPosix, blobType }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
@@ -236,6 +245,12 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           enotdirCode: "ENOTDIR",
         },
         realDirPosix: expect.any(String),
+        blobType: {
+          file: "text/plain;charset=utf-8",
+          blob: "text/plain;charset=utf-8",
+          typeInOptions: "a/b",
+          typeEmpty: "",
+        },
       });
       // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");

@@ -4901,8 +4901,6 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             content
         } else if blob.was_string() {
             bun_http_types::MimeType::TEXT
-            // TODO: should we get the mime type off of the Blob.Store if it exists?
-            // A little wary of doing this right now due to causing some breaking change
         } else {
             bun_http_types::MimeType::OTHER
         }

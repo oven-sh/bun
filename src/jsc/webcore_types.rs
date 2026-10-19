@@ -535,7 +535,6 @@ pub mod store {
     #[derive(bun_ptr::ThreadSafeRefCounted)]
     pub struct Store {
         pub data: Data,
-        pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: IsAllAscii,
     }
@@ -899,7 +898,6 @@ pub mod store {
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
             RefPtr::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
-                mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: IsAllAscii::default(),
             })

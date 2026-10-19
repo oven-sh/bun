@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
@@ -783,6 +784,106 @@ test.skipIf(!isASAN).each(["Blob", "File"] as const)(
     });
   },
 );
+
+// https://github.com/oven-sh/bun/issues/35284: the type lived on the byte store
+// as well, so a Response or a Request could write it onto a Blob it shares bytes
+// with. A Blob now reports its own type and nothing else.
+describe("a Blob reports its own type, never one another Blob put on the shared bytes", () => {
+  test("reading a Response or a Request body does not retype the Blob it was made from", async () => {
+    const blob = new Blob(["hello world"]);
+    const sliceTakenFirst = blob.slice(0, 5);
+    await new Response(blob, { headers: { "content-type": "application/x-attacker-controlled" } }).blob();
+
+    const body = new Blob(["hi"]);
+    const sliceOfBody = body.slice(0, 1);
+    await new Request("http://example.com/", {
+      method: "POST",
+      body,
+      headers: { "content-type": "image/png" },
+    }).blob();
+
+    expect({
+      blob: blob.type,
+      sliceTakenFirst: sliceTakenFirst.type,
+      body: body.type,
+      sliceOfBody: sliceOfBody.type,
+    }).toEqual({ blob: "", sliceTakenFirst: "", body: "", sliceOfBody: "" });
+  });
+
+  test("an empty type stays empty, and a slice keeps only an interned parent type", async () => {
+    const typedBody = await new Response("hi", { headers: { "content-type": "image/png" } }).blob();
+    const searchParams = await new Response(new URLSearchParams("h=i")).blob();
+
+    expect({
+      typedBody: typedBody.type,
+      emptyTypeOverBody: new Blob([typedBody], { type: "" }).type,
+      emptyTypeOverSearchParams: new Blob([searchParams], { type: "" }).type,
+      // A slice keeps an interned parent type and drops a heap-owned one. That
+      // rule is unchanged; the test below pins the interned set.
+      sliceOfBody: typedBody.slice(0, 1).type,
+      sliceOfSearchParams: searchParams.slice(0, 1).type,
+    }).toEqual({
+      typedBody: "image/png",
+      emptyTypeOverBody: "",
+      emptyTypeOverSearchParams: "",
+      sliceOfBody: "",
+      sliceOfSearchParams: "application/x-www-form-urlencoded;charset=UTF-8",
+    });
+  });
+
+  test("a Bun.build() output and a Bun.Archive() do not type the Blobs made from their bytes", async () => {
+    using dir = tempDir("blob-own-type-build", { "entry.js": "export default 1;" });
+    const build = await Bun.build({ entrypoints: [path.join(String(dir), "entry.js")] });
+    const output = build.outputs[0];
+
+    const archive = await new Bun.Archive({ "a.txt": "hi" }).blob();
+    await new Response(archive, { headers: { "content-type": "application/x-tar" } }).blob();
+
+    expect({
+      output: output.type,
+      fromStreamOfOutput: (await Bun.readableStreamToBlob(output.stream())).type,
+      archive: archive.type,
+      archiveRead: (await new Bun.Archive(archive).blob()).type,
+    }).toEqual({
+      output: "text/javascript;charset=utf-8",
+      fromStreamOfOutput: "",
+      archive: "",
+      archiveRead: "",
+    });
+  });
+
+  test("an import of a blob: URL picks its loader from the Blob's own type", async () => {
+    const load = async (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      try {
+        return await import(url).then(
+          module => module.default,
+          error => error.name,
+        );
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    expect({
+      typedSlice: await load(new Blob(['{"a":1}']).slice(0, 7, "application/json")),
+      typedBlob: await load(new Blob(['{"a":2}'], { type: "application/json" })),
+      dataUrl: await load(await (await fetch('data:application/json,{"a":3}')).blob()),
+      untyped: await load(new Blob(["export default 4"])),
+    }).toEqual({ typedSlice: { a: 1 }, typedBlob: { a: 2 }, dataUrl: { a: 3 }, untyped: 4 });
+  });
+
+  test("a Bun.file() Blob reports the path it keeps to the GC", () => {
+    using dir = tempDir("blob-own-type-estimate", { "data.txt": "hello world" });
+    const shortPath = path.join(String(dir), "data.txt");
+    const longPath = path.join(String(dir), Buffer.alloc(200, "a").toString() + ".txt");
+
+    // The store keeps its own copy of the path, so a longer path costs more.
+    expect(estimateShallowMemoryUsageOf(Bun.file(longPath)) - estimateShallowMemoryUsageOf(Bun.file(shortPath))).toBe(
+      longPath.length - shortPath.length,
+    );
+  });
+});
 
 // File-backed twin of "slice bounds are respected when streaming and serving"
 // above: the File arm of resolve_size()/resolved_size() must not widen a

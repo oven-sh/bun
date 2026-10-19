@@ -126,6 +126,69 @@ test("Worker on a revoked blob still works", async () => {
   expect(revoked).toBe("revoked.");
 });
 
+// A Blob's `type` lived on the byte store too, and `Response.blob()` wrote it
+// there after the store was shared. A Worker reading `.type` through an object
+// URL then read freed memory. The store no longer holds a type.
+// Two ASAN debug processes start before the loop runs, so this one test takes
+// more than the default timeout.
+test("the type of a Blob read through an object URL survives a Response.blob() on another thread", async () => {
+  using dir = tempDir("worker-blob-type-race", {
+    "main.mjs": `import { Worker } from "node:worker_threads";
+
+      const rounds = 600;
+      // None of these is in the MIME table, so each one is its own heap allocation.
+      const types = Array.from({ length: 8 }, (_, i) => "x-race/t" + i + "-" + Buffer.alloc(2048 + i * 37, "a").toString());
+      const blob = new Blob(["hello"]);
+      const url = URL.createObjectURL(blob);
+      const state = new Int32Array(new SharedArrayBuffer(8)); // [0] main is done, [1] reads
+
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url), {
+        workerData: { url, shared: state.buffer, types },
+      });
+      const ready = new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+      });
+      const read = await ready;
+      const done = new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+      });
+
+      // Every read the Worker makes happens while this loop writes.
+      for (let i = 0; i < rounds || Atomics.load(state, 1) < rounds; i++) {
+        new Response(blob, { headers: { "content-type": types[i % types.length] } }).blob();
+      }
+      Atomics.store(state, 0, 1);
+
+      console.log(JSON.stringify({ ready: read, ...(await done), type: blob.type }));
+      URL.revokeObjectURL(url);
+      `,
+    "worker.mjs": `import { resolveObjectURL } from "node:buffer";
+      import { parentPort, workerData } from "node:worker_threads";
+
+      const { url, shared, types } = workerData;
+      const state = new Int32Array(shared);
+      const expected = new Set(["", ...types]);
+      // A Blob of this thread over the store of the Blob of the main thread.
+      const blob = resolveObjectURL(url);
+
+      let unexpected = 0;
+      parentPort.postMessage("ready");
+      while (Atomics.load(state, 0) === 0) {
+        if (!expected.has(blob.type)) unexpected++;
+        Atomics.add(state, 1, 1);
+      }
+      parentPort.postMessage({ unexpected });
+      `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("AddressSanitizer");
+  expect(stdout.trim()).toBe(JSON.stringify({ ready: "ready", unexpected: 0, type: "" }));
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+}, 30_000);
+
 test("object URL created in one worker is usable and revocable across threads", async () => {
   using dir = tempDir("worker-object-url", {
     "main.mjs": `import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";

@@ -123,7 +123,6 @@ pub fn by_name_static(name: &[u8]) -> Option<MimeType> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum Category {
-    None,
     Image,
     Text,
     Html,
@@ -274,7 +273,6 @@ impl Category {
     }
 }
 
-pub const NONE: MimeType = MimeType::init_comptime(b"", Category::None);
 pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream", Category::Other);
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
 pub const JAVASCRIPT: MimeType =

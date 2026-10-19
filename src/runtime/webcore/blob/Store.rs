@@ -133,7 +133,6 @@ impl StoreExt for Store {
 
         Ok(RefPtr::new(Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
-            mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),
         }))
@@ -152,7 +151,6 @@ impl StoreExt for Store {
 
         Ok(RefPtr::new(Store {
             data: Data::File(File::init(pathlike, mime_type)),
-            mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),
         }))
@@ -164,7 +162,6 @@ impl StoreExt for Store {
     fn init_mmap(slice: &'static mut [u8]) -> RefPtr<Store> {
         RefPtr::new(Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
-            mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),
         })

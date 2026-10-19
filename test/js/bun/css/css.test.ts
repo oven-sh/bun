@@ -5373,19 +5373,19 @@ describe("css tests", () => {
     prefix_test("li::before { &::marker {color:red} }", "li:before::marker { color: red; }", { chrome: 100 << 16 });
     minify_test("li:before::marker {color:red}", "li:before::marker{color:red}");
     // A lowered logical property puts its direction fallback on `li`, as it does for `li::before`.
-    prefix_test(
-      "li::before::marker {inset-inline-start: 1px}",
-      `
-      li:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)):before::marker {
-        left: 1px;
-      }
+    for (const pseudo of ["before", "after"]) {
+      const fallback = `
+        li:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)):${pseudo}::marker {
+          left: 1px;
+        }
 
-      li:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi):before::marker {
-        right: 1px;
-      }
-      `,
-      { safari: 14 << 16 },
-    );
+        li:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi):${pseudo}::marker {
+          right: 1px;
+        }
+      `;
+      prefix_test(`li::${pseudo}::marker {inset-inline-start: 1px}`, fallback, { safari: 14 << 16 });
+      prefix_test(`li { &::${pseudo}::marker {inset-inline-start: 1px} }`, fallback, { safari: 14 << 16 });
+    }
     minify_test("li:lang(ae, ar):after::marker {right:1px}", "li:lang(ae,ar):after::marker{right:1px}");
     minify_test("::before:hover {color:red}", ":before:hover{color:red}");
 
@@ -5410,6 +5410,11 @@ describe("css tests", () => {
       ["::first-line::marker", "Token is not allowed in this state"],
       ["::part(x)::marker::before", "Token is not allowed in this state"],
       ["::slotted(x)::before::marker::marker", "Token is not allowed in this state"],
+      // A combinator ends the selector after ::before, so ::marker cannot follow it.
+      ["a::before ::marker", "Unexpected selector after pseudo-element: :"],
+      ["a::before > ::marker", "Unexpected selector after pseudo-element: >"],
+      ["a::before + ::marker", "Unexpected selector after pseudo-element: +"],
+      ["a::before ~ ::marker", "Unexpected selector after pseudo-element: ~"],
       // What follows ::before::marker gets the errors that follow any pseudo-element.
       ["::before::marker.x", "Unexpected selector after pseudo-element: ."],
       ["::before::marker:first-child", "Invalid pseudo-class after pseudo-element"],

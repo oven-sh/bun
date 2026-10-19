@@ -367,9 +367,9 @@ describe("css", () => {
     },
   });
 
-  // The argument of `:global(...)` or `:local(...)` prints in place of the
-  // wrapper. A `&` that starts the argument starts the printed selector only
-  // when the wrapper does. Anywhere else a parent with a combinator needs
+  // The argument of `:global(...)` or `:local(...)` joins the selector where
+  // the wrapper is. A `&` that starts the argument starts the printed selector
+  // only when the wrapper does. Anywhere else a parent with a combinator needs
   // `:is()`. A type selector after the `&` always moves in front of it.
   itBundled("css-module/AmpersandInsideGlobalUnderAComplexParent", {
     files: {
@@ -521,6 +521,7 @@ describe("css", () => {
     [":global(.x):global(*|*)", "*|*.x"],
     [":global(#i):global(div):global(.a)", "div#i.a"],
     [":global(div):global(span)", "div:is(span)"],
+    [":global(*):global(div)", "*:is(div)"],
     [":global(.x):global(.a .b):hover", ".x.a .b:hover"],
     [":global(.x):global(.a::before):hover", ".x.a::before:hover"],
     [":global(.x)::before:global(:hover)", ".x::before:hover"],

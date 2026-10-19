@@ -181,15 +181,15 @@ impl<'a> CssModule<'a> {
         // let bump = dest.arena;
         for sel in selectors.v.slice() {
             if sel.len() == 1
-                && matches!(
-                    sel.components[0],
-                    css::selector::parser::Component::Class(_)
-                )
+                && sel.components[0]
+                    .as_class()
+                    .is_some_and(|class| class.is_ref())
             {
                 continue;
             }
 
             // The composes property can only be used within a simple class selector.
+            // A class written inside `:global()` is not a local name, so it cannot compose.
             return Err(css::PrinterErrorKind::invalid_composes_selector);
         }
 

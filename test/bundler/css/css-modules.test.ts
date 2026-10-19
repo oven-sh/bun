@@ -92,7 +92,9 @@ describe("css", () => {
     });
   }
 
-  // The innermost `:local(...)` or `:global(...)` decides, at any depth.
+  // The innermost `:local(...)` or `:global(...)` decides, at any depth. The
+  // default targets have browsers without `:is()`, so a rule with `:is()` also
+  // prints with `:-webkit-any()` and `:-moz-any()`, as it does with no wrapper.
   itBundled("css-module/LocalAndGlobalNestAtAnyDepth", {
     files: {
       "/entry.js": printsStyles,
@@ -110,6 +112,8 @@ describe("css", () => {
         oneLine(`
           /* styles.module.css */
           .l1_HASH .g1 .l2_HASH .g2 { color: red; }
+          :-webkit-any(.c, .d) .e_HASH:not(.f) .after_HASH { color: #00f; }
+          :-moz-any(.c, .d) .e_HASH:not(.f) .after_HASH { color: #00f; }
           :is(.c, .d) .e_HASH:not(.f) .after_HASH { color: #00f; }
           .g3 .l3_HASH .g4 .l4_HASH { color: green; }
         `),
@@ -133,6 +137,8 @@ describe("css", () => {
 
   // The scope reaches every selector that can hold a class: the functional
   // pseudo-classes, the pseudo-elements that take a selector, and `@scope`.
+  // The `:host()` rule and the `::slotted()` rule have the same declarations,
+  // so they print as one rule, as they do with no wrapper.
   itBundled("css-module/GlobalInEverySelectorContext", {
     files: {
       "/entry.js": printsStyles,
@@ -152,9 +158,10 @@ describe("css", () => {
       expect(css).toBe(
         oneLine(`
           /* styles.module.css */
+          :-webkit-any(.a, .b):not(.c):has(.d):nth-child(2 of .e) .l1_HASH { color: red; }
+          :-moz-any(.a, .b):not(.c):has(.d):nth-child(2 of .e) .l1_HASH { color: red; }
           :is(.a, .b):not(.c):has(.d):nth-child(2 of .e) .l1_HASH { color: red; }
-          :host(.f) .l2_HASH { color: red; }
-          ::slotted(.g) { color: red; }
+          :host(.f) .l2_HASH, ::slotted(.g) { color: red; }
           video::cue(.h) { color: red; }
           :where(.i, .l3_HASH):not(.j):has(.k .l4_HASH):nth-child(2 of .m .l5_HASH) { color: #00f; }
           @scope (.s1) to (.s2 .l6_HASH) {
@@ -292,7 +299,10 @@ describe("css", () => {
     outdir: "/out",
     onAfterBundle(api) {
       const { css, js } = readScoped(api, "l0");
-      const printed = [...css.replace("/* styles.module.css */", "").matchAll(/[.#]([\w-]+)/g)].map(m => m[1]);
+      // The `:is()` rule prints once for each vendor prefix, so each name counts once.
+      const printed = [...css.replace("/* styles.module.css */", "").matchAll(/[.#]([\w-]+)/g)]
+        .map(m => m[1])
+        .filter((name, i, names) => names.indexOf(name) === i);
       expect(printed).toEqual(shapeNames.map(name => (isLocalName(name) ? `${name}_HASH` : name)));
       const exported = [...js.matchAll(/^\s*(\w+): "(\w+)",?$/gm)].map(m => [m[1], m[2]]);
       expect(exported).toEqual(shapeNames.filter(isLocalName).map(name => [name, `${name}_HASH`]));
@@ -399,6 +409,252 @@ describe("css", () => {
           z: "z_HASH",
           w: "w_HASH",
           p: "p_HASH"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+      `);
+    },
+  });
+
+  // `:global(...)` and `:local(...)` only set the scope of the names in their
+  // argument. The argument is a part of the selector that holds the wrapper. So
+  // a `&` that stands for such a parent, and a `:is()` with such an argument,
+  // print like the same selector with no wrapper: `:is()` stays when the
+  // argument has a combinator or a type selector, and goes when it is simple.
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`css-module/ParentWrittenWithGlobalOrLocal/${backend}`, {
+      backend,
+      files: {
+        "/entry.js": printsStyles,
+        "/styles.module.css": `
+          :global(.a .b) { .q& { color: red } }
+          :global(.a .b) { .y & { color: orange } }
+          :global(div) { .x& { color: yellow } }
+          .w:is(:global(.a .b)) { color: green }
+          :local(.c .d) { .q2& { color: blue } }
+          :global(:local(.e .f)) { .q3& { color: pink } }
+          .p:global(.a .b) { .q4& { color: purple } }
+          .x2:global(div) { .q5& { color: gray } }
+          :global(.g) { .n& { color: tan } .n2 & { color: teal } }
+          .w2:is(:global(.g)) { color: navy }
+          :global(.a .b) { @media print { .q6& { color: olive } } }
+          :global(.a .b) { .m { .q7& { color: maroon } } }
+          @scope (:global(.a .b)) to (.q8&) { .z { color: silver } }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        const { css, js } = readScoped(api, "q");
+        expect(css).toBe(
+          oneLine(`
+            /* styles.module.css */
+            .q_HASH:is(.a .b) { color: red; }
+            .y_HASH :is(.a .b) { color: orange; }
+            .x_HASH:is(div) { color: #ff0; }
+            .w_HASH:is(.a .b) { color: green; }
+            .q2_HASH:is(.c_HASH .d_HASH) { color: #00f; }
+            .q3_HASH:is(.e_HASH .f_HASH) { color: pink; }
+            .q4_HASH:is(.p_HASH.a .b) { color: purple; }
+            .q5_HASH:is(div.x2_HASH) { color: gray; }
+            .n_HASH.g { color: tan; }
+            .n2_HASH .g { color: teal; }
+            .w2_HASH.g { color: navy; }
+            @media print {
+              .q6_HASH:is(.a .b) { color: olive; }
+            }
+            .q7_HASH:is(.a .b .m_HASH) { color: maroon; }
+            @scope (.a .b) to (.q8_HASH:is(.a .b)) {
+              .z_HASH { color: silver; }
+            }
+          `),
+        );
+        expect(js).toEqualIgnoringWhitespace(`
+          // styles.module.css
+          var styles_module_default = {
+            q: "q_HASH",
+            y: "y_HASH",
+            x: "x_HASH",
+            w: "w_HASH",
+            c: "c_HASH",
+            d: "d_HASH",
+            q2: "q2_HASH",
+            e: "e_HASH",
+            f: "f_HASH",
+            q3: "q3_HASH",
+            p: "p_HASH",
+            q4: "q4_HASH",
+            x2: "x2_HASH",
+            q5: "q5_HASH",
+            n: "n_HASH",
+            n2: "n2_HASH",
+            w2: "w2_HASH",
+            q6: "q6_HASH",
+            m: "m_HASH",
+            q7: "q7_HASH",
+            q8: "q8_HASH",
+            z: "z_HASH"
+          };
+
+          // entry.js
+          console.log(JSON.stringify(styles_module_default));
+        `);
+      },
+    });
+  }
+
+  // The same with nesting kept: the parent prints as its argument, and
+  // `:is()` keeps an argument that has a combinator.
+  itBundled("css-module/ParentWrittenWithGlobalNestingKept", {
+    target: "bun",
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        :global(.a .b) { .q& { color: red } }
+        .w:is(:global(.a .b)) { color: green }
+        .p { .r :global(&div) { color: blue } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css } = readScoped(api, "q");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .a .b {
+            .q_HASH& { color: red; }
+          }
+          .w_HASH:is(.a .b) { color: green; }
+          .p_HASH {
+            .r_HASH div& { color: #00f; }
+          }
+        `),
+      );
+    },
+  });
+
+  // The first compound selector of the argument goes on with the compound
+  // selector that holds the wrapper. A type selector has to be first there: it
+  // moves to the front, or it becomes `:is(type)` when there is one already.
+  // With no wrapper node in the selector, a list with a wrapper stays one rule,
+  // an id in a wrapper counts as an id, rules that differ only by a wrapper are
+  // the same rule, and a pseudo-class is lowered for the targets.
+  itBundled("css-module/GlobalOrLocalArgumentJoinsItsSelector", {
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        @namespace svg url(http://www.w3.org/2000/svg);
+        .x:global(div.a) { color: red }
+        span:global(div) { color: orange }
+        .x:global(*) { color: yellow }
+        :global(.a):global(div) { color: green }
+        .x:global(svg|a) { color: blue }
+        :global(.a), .b { color: pink }
+        :global(#i), .j { color: purple }
+        .w:is(:global(.a > .b), :global(.c)) { color: gray }
+        .k { color: tan }
+        :local(.k) { color: tan }
+        :global(.a::-webkit-scrollbar):horizontal { color: teal }
+        :global(.a:fullscreen) .l { color: navy }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css, js } = readScoped(api, "x");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          @namespace svg "http://www.w3.org/2000/svg";
+          div.x_HASH.a { color: red; }
+          span:-webkit-any(div) { color: orange; }
+          span:-moz-any(div) { color: orange; }
+          span:is(div) { color: orange; }
+          .x_HASH { color: #ff0; }
+          div.a { color: green; }
+          svg|a.x_HASH { color: #00f; }
+          .a, .b_HASH { color: pink; }
+          #i, .j_HASH { color: purple; }
+          .w_HASH:is(.a > .b, .c) { color: gray; }
+          .k_HASH { color: tan; }
+          .a::-webkit-scrollbar:horizontal { color: teal; }
+          .a:-webkit-full-screen .l_HASH { color: navy; }
+          .a:fullscreen .l_HASH { color: navy; }
+        `),
+      );
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          x: "x_HASH",
+          b: "b_HASH",
+          j: "j_HASH",
+          w: "w_HASH",
+          k: "k_HASH",
+          l: "l_HASH"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+      `);
+    },
+  });
+
+  // The argument and what follows it obey the rules of the selector that
+  // holds the wrapper. Each of these selectors is an error with no wrapper too.
+  itBundled("css-module/GlobalArgumentObeysTheSelectorThatHoldsIt", {
+    files: {
+      "/entry.js": `
+        import './host.module.css';
+        import './slotted.module.css';
+        import './after-pseudo-element.module.css';
+        import './not.module.css';
+        import './only-pseudo-element.module.css';
+      `,
+      "/host.module.css": `:host(:global(.a > .b)) { color: red }`,
+      "/slotted.module.css": `::slotted(:global(.a .b)) { color: red }`,
+      "/after-pseudo-element.module.css": `:global(.a::before) .b { color: red }`,
+      "/not.module.css": `:not(:global(.a::before)) { color: red }`,
+      "/only-pseudo-element.module.css": `.x > :global(::before) .y { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/host.module.css": ["Invalid selector. Token is not allowed in this state"],
+      "/slotted.module.css": ["Invalid selector. Token is not allowed in this state"],
+      "/after-pseudo-element.module.css": ["Invalid selector. Unexpected selector after pseudo-element: ."],
+      "/not.module.css": ["Invalid selector. Token is not allowed in this state"],
+      "/only-pseudo-element.module.css": ["Invalid selector. Unexpected selector after pseudo-element: ."],
+    },
+  });
+
+  // A rule whose selector is `:local(.name)` is a single class rule, so it can
+  // use `composes`.
+  itBundled("css-module/ComposesInRuleWrittenWithLocal", {
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        :local(.card) { composes: base; color: red }
+        .base { color: blue }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css, js } = readScoped(api, "card");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .card_HASH { color: red; }
+          .base_HASH { color: #00f; }
+        `),
+      );
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          card: "base_HASH card_HASH",
+          base: "base_HASH"
         };
 
         // entry.js
@@ -1178,4 +1434,60 @@ test("css-module/NoBundleLocalInsideGlobal", async () => {
   );
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// With no link step a parent written with `:global(...)` still lowers like the
+// same parent with no wrapper.
+test("css-module/NoBundleParentWrittenWithGlobal", async () => {
+  using dir = tempDir("css-module-no-bundle-global-parent", {
+    "styles.module.css": `
+      .card { color: red }
+      :global(.a .b) { .q& { color: green } }
+      .w:is(:global(.a .b)) { color: blue }
+      .x:global(div.a) { color: pink }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const hash = stdout.match(/\.card_([A-Za-z0-9_-]+)\s*\{/)?.[1];
+  expect(hash, ".card should be scoped").toBeString();
+  expect(oneLine(stdout.replaceAll(`_${hash}`, "_HASH"))).toBe(
+    oneLine(`
+      .card_HASH { color: red; }
+      .q_HASH:is(.a .b) { color: green; }
+      .w_HASH:is(.a .b) { color: #00f; }
+      div.x_HASH.a { color: pink; }
+    `),
+  );
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A class inside `:global(...)` is not a local name, so a rule whose selector
+// is `:global(.name)` cannot use `composes`.
+test("css-module/ComposesInRuleWrittenWithGlobalFails", async () => {
+  using dir = tempDir("css-module-composes-global-rule", {
+    "styles.module.css": `
+      :global(.card) { composes: base; color: red }
+      .base { color: blue }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('"composes" only works inside single class selectors');
+  expect(stderr).toContain("Failed to generate CSS for this file");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

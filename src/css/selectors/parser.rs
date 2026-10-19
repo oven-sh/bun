@@ -756,11 +756,14 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                 //
                 //     (Similar quotes for :where() / :not())
                 //
+                // The argument of `:local()` or `:global()` is parsed as a
+                // selector, which adds the default namespace itself.
                 let ignore_default_ns = state
                     .contains(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
                     || matches!(
                         result,
                         SimpleSelectorParseResult::SimpleSelector(GenericComponent::Host(_))
+                            | SimpleSelectorParseResult::ModuleScope(_)
                     );
                 if !ignore_default_ns {
                     builder.push_simple_selector(GenericComponent::DefaultNamespace(url));
@@ -773,6 +776,9 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         match result {
             SimpleSelectorParseResult::SimpleSelector(s) => {
                 builder.push_simple_selector(s);
+            }
+            SimpleSelectorParseResult::ModuleScope(scope) => {
+                parse_module_scope_argument::<Impl>(parser, input, state, builder, scope)?;
             }
             SimpleSelectorParseResult::PartPseudo(selector) => {
                 state.insert(SelectorParsingState::AFTER_PART);
@@ -992,18 +998,6 @@ pub enum PseudoClass {
     /// The [:autofill](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill) pseudo class.
     Autofill(css::VendorPrefix),
 
-    // CSS modules
-    /// The CSS modules :local() pseudo class.
-    Local {
-        /// A local selector.
-        selector: Box<Selector>,
-    },
-    /// The CSS modules :global() pseudo class.
-    Global {
-        /// A global selector.
-        selector: Box<Selector>,
-    },
-
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
     // https://webkit.org/blog/363/styling-scrollbars/
     WebkitScrollbar(WebKitScrollbarPseudoClass),
@@ -1049,7 +1043,7 @@ impl PseudoClass {
         // A buffered intermediate `Printer` would only matter for
         // length-dependent minification decisions made by callers (none
         // here), so write directly to `dest`.
-        serialize::serialize_pseudo_class(self, dest, None)
+        serialize::serialize_pseudo_class(self, dest)
     }
 
     // eql / hash — provided by `#[derive(CssEql, CssHash)]` (variant-wise; the
@@ -1344,7 +1338,6 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         parser: &mut CssParser,
-        state: &mut SelectorParsingState,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
@@ -1364,16 +1357,6 @@ impl<'a> SelectorParser<'a> {
             },
             b"dir" => PseudoClass::Dir {
                 direction: Direction::parse(parser)?,
-            },
-            b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
-                selector: Box::new(parser.with_css_module_scope(CssModuleScope::Local, |parser| {
-                    Selector::parse_inner(self, parser, state)
-                })?),
-            },
-            b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
-                selector: Box::new(parser.with_css_module_scope(CssModuleScope::Global, |parser| {
-                    Selector::parse_inner(self, parser, state)
-                })?),
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
@@ -1803,20 +1786,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
-    }
-
-    /// `&` in the parsed selector counts as `&` in the selector that holds it.
-    pub(crate) fn parse_inner(
-        parser: &mut SelectorParser,
-        input: &mut CssParser,
-        outer_state: &mut SelectorParsingState,
-    ) -> CResult<Self> {
-        let mut state = SelectorParsingState::empty();
-        let selector = parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)?;
-        if state.contains(SelectorParsingState::AFTER_NESTING) {
-            outer_state.insert(SelectorParsingState::AFTER_NESTING);
-        }
-        Ok(selector)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -2892,6 +2861,8 @@ pub(crate) enum SimpleSelectorParseResult<Impl: SelectorImpl> {
     SlottedPseudo(GenericSelector<Impl>),
     // todo_stuff.think_mem_mgmt
     PartPseudo(Box<[Impl::Identifier]>),
+    /// `:local(` or `:global(` of a CSS module. The argument is still in the input.
+    ModuleScope(CssModuleScope),
 }
 
 /// A pseudo element.
@@ -3359,6 +3330,12 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                 return Ok(Some(S::PseudoElement(pseudo_element)));
             } else {
                 let pseudo_class: GenericComponent<Impl> = if is_functional {
+                    if parser.options.css_modules.is_some() {
+                        if let Some(scope) = css_module_scope_by_name(name) {
+                            // The caller parses the argument, because it has the builder.
+                            return Ok(Some(S::ModuleScope(scope)));
+                        }
+                    }
                     input.parse_nested_block(|input2: &mut CssParser| {
                         parse_functional_pseudo_class::<Impl>(parser, input2, name, state)
                     })?
@@ -3651,9 +3628,42 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
 
-    let result = parser.parse_non_ts_functional_pseudo_class(name, input, state)?;
+    let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
 
     Ok(GenericComponent::NonTsPseudoClass(result))
+}
+
+#[inline(never)]
+fn css_module_scope_by_name(name: &[u8]) -> Option<CssModuleScope> {
+    crate::match_ignore_ascii_case! { name, {
+        b"local" => Some(CssModuleScope::Local),
+        b"global" => Some(CssModuleScope::Global),
+        _ => None,
+    }}
+}
+
+/// Parses the argument of `:local()` or `:global()` as a part of the selector that holds the
+/// wrapper. `state` is the state of that selector, so the argument, and what follows it, obey
+/// the same rules as the same selector without the wrapper.
+#[inline(never)]
+fn parse_module_scope_argument<Impl: BunSelectorImpl>(
+    parser: &mut SelectorParser,
+    input: &mut CssParser,
+    state: &mut SelectorParsingState,
+    builder: &mut SelectorBuilder<Impl>,
+    scope: CssModuleScope,
+) -> CResult<()> {
+    if !state.allows_custom_functional_pseudo_classes() {
+        return Err(input
+            .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
+    }
+    let argument = input.parse_nested_block(|input: &mut CssParser| {
+        input.with_css_module_scope(scope, |input| {
+            parse_selector::<Impl>(parser, input, state, NestingRequirement::None)
+        })
+    })?;
+    builder.push_selector(argument);
+    Ok(())
 }
 
 pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(

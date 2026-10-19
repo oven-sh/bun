@@ -12,22 +12,20 @@ extern crate self as bun_css;
 /// ASCII-fold only, byte-wise). The whole macro is an
 /// expression; arms may `return`, `break 'label`, or yield a value.
 ///
-/// Supports `|`-alternation and Rust-style `if` guards on arms; the trailing
-/// `_ =>` fallback is mandatory.
+/// Supports `|`-alternation; the trailing `_ =>` fallback is mandatory.
 ///
 /// ```ignore
 /// crate::match_ignore_ascii_case! { unit, {
 ///     b"deg"                       => Ok(Angle::Deg(value)),
 ///     b"dppx" | b"x"               => Ok(Resolution::Dppx(value)),
-///     b"local" if mods.is_some()   => PseudoClass::Local { .. },
 ///     _                            => Err(location.new_unexpected_token_error(token)),
 /// }}
 /// ```
 #[macro_export]
 macro_rules! match_ignore_ascii_case {
-    ($name:expr, { $( $($lit:literal)|+ $(if $guard:expr)? => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
+    ($name:expr, { $( $($lit:literal)|+ => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
         let __n: &[u8] = $name;
-        $( if ($( ::bun_core::strings::eql_case_insensitive_ascii_check_length(__n, $lit) )||+) $(&& ($guard))? { $arm } else )* { $fallback }
+        $( if ($( ::bun_core::strings::eql_case_insensitive_ascii_check_length(__n, $lit) )||+) { $arm } else )* { $fallback }
     }};
 }
 

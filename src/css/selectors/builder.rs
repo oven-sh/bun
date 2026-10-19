@@ -22,8 +22,8 @@ pub use crate::{PrintErr, Printer};
 use bun_alloc::ArenaPtr;
 
 use crate::selector::parser::{
-    BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, SelectorFlags,
-    SpecificityAndFlags, compute_specificity,
+    BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, GenericSelector,
+    SelectorFlags, SpecificityAndFlags, compute_specificity,
 };
 
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the
@@ -97,6 +97,72 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         debug_assert!(!ss.is_combinator());
         self.simple_selectors.append(ss);
         self.current_len += 1;
+    }
+
+    /// Pushes the argument of `:local()` or `:global()` in place of the wrapper. Its first
+    /// compound selector goes on with the current one, and its last one stays open.
+    pub(crate) fn push_selector(&mut self, argument: GenericSelector<Impl>) {
+        use GenericComponent as C;
+        let mut components = argument.components;
+        let mut is_first_compound = true;
+        loop {
+            // Compound selectors are stored from right to left, so the leftmost one is last.
+            let start = components
+                .iter()
+                .rposition(C::is_combinator)
+                .map_or(0, |combinator| combinator + 1);
+            let (has_nesting, type_len) = if core::mem::take(&mut is_first_compound) {
+                let has_nesting = matches!(components.get(start), Some(C::Nesting));
+                let after_nesting = start + usize::from(has_nesting);
+                (has_nesting, type_selector_len(&components[after_nesting..]))
+            } else {
+                (false, 0)
+            };
+            let mut compound = components.drain(start..);
+            // A type selector has to be first in its compound selector. Only `&` can be in
+            // front of it, and the printer swaps that pair only in the first compound
+            // selector of a selector, so `&type` is stored as `type&`.
+            if type_len > 0 && (has_nesting || self.current_len > 0) {
+                let nesting = if has_nesting { compound.next() } else { None };
+                self.push_type_selector(compound.by_ref().take(type_len));
+                if let Some(nesting) = nesting {
+                    self.push_simple_selector(nesting);
+                }
+            }
+            for simple_selector in compound {
+                self.push_simple_selector(simple_selector);
+            }
+            let Some(C::Combinator(combinator)) = components.pop() else {
+                break;
+            };
+            self.push_combinator(combinator);
+        }
+    }
+
+    /// Puts `type_selector` in front of the current compound selector. If that has a type
+    /// selector already, pushes `:is(type_selector)`.
+    fn push_type_selector(&mut self, type_selector: impl Iterator<Item = GenericComponent<Impl>>) {
+        use GenericComponent as C;
+        let start = self.simple_selectors.len() as usize - self.current_len;
+        let current = &self.simple_selectors.slice()[start..];
+        let after_nesting = usize::from(matches!(current.first(), Some(C::Nesting)));
+        if type_selector_len(&current[after_nesting..]) == 0 {
+            for (i, component) in type_selector.enumerate() {
+                self.simple_selectors.insert((start + i) as u32, component);
+                self.current_len += 1;
+            }
+            return;
+        }
+        let mut is = SelectorBuilder::<Impl>::init_in(self.alloc);
+        type_selector.for_each(|component| is.push_simple_selector(component));
+        let BuildResult {
+            specificity_and_flags,
+            components,
+        } = is.build(SelectorFlags::empty());
+        self.push_simple_selector(C::Is(Box::new([GenericSelector {
+            specificity_and_flags,
+            components,
+        }])));
     }
 
     pub(crate) fn add_nesting_prefix(&mut self) {
@@ -198,4 +264,23 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
 fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     let midpoint = s.len() - at;
     (&s[0..midpoint], &s[midpoint..])
+}
+
+/// The number of components of the type selector that starts `compound`: one for `a` and `*`,
+/// two for `ns|a`.
+fn type_selector_len<Impl: ValidSelectorImpl>(compound: &[GenericComponent<Impl>]) -> usize {
+    use GenericComponent as C;
+    let namespace = usize::from(matches!(
+        compound.first(),
+        Some(
+            C::ExplicitAnyNamespace
+                | C::ExplicitNoNamespace
+                | C::Namespace { .. }
+                | C::DefaultNamespace(_)
+        )
+    ));
+    match compound.get(namespace) {
+        Some(C::LocalName(_) | C::ExplicitUniversalType) => namespace + 1,
+        _ => 0,
+    }
 }

@@ -129,7 +129,11 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc
 // spec CanTransferArrayBuffer(O) — pure.
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
-// spec StructuredClone(v): no caller — every tee path passes cloneForBranch2 = false.
+// spec StructuredClone(v), for a default-tee chunk: primitives pass through; an ArrayBuffer or
+// a view is copied right-sized (the view's bytes only) into a fresh buffer with the same
+// typed-array type; any other object takes a SerializedScriptValue round trip. Throws a
+// DataCloneError on a detached buffer or an unclonable value.
+JSC::JSValue structuredCloneStreamChunk(JSC::JSGlobalObject*, JSC::JSValue chunk); // userJS: no — WebStreamsMisc.cpp
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count) — pure.
 bool canCopyDataBlockBytes(JSC::ArrayBuffer& toBuffer, size_t toIndex, JSC::ArrayBuffer& fromBuffer, size_t fromIndex, size_t count); // userJS: no — WebStreamsMisc.cpp
 
@@ -305,10 +309,12 @@ bool readableStreamHasDefaultReader(JSReadableStream*); // userJS: no — Readab
 bool readableStreamHasBYOBReader(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 
 // Tee / from / pipe entry points.
-// Bun: the spec's `cloneForBranch2` is not implemented; both branches share each chunk by
-// reference (see WebStreamsExports.cpp). ALSO runs materializeIfNeeded first.
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
-std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
+// Bun: `cloneForBranch2` (true from the body-clone tee, false from the public tee()) does not
+// copy at tee time. Both branch queues hold the one shared chunk, so an N-deep clone chain
+// retains one copy of the body. A branch copies the chunk when a script consumer dequeues it
+// (isolateTeeBranchChunk). ALSO runs materializeIfNeeded first.
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
+std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JSGlobalObject*, JSReadableStream*, bool cloneForBranch2); // userJS: yes — ReadableStreamOperations.cpp
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 // spec ReadableStreamFromIterable(asyncIterable) — `ReadableStream.from`.
 JSReadableStream* readableStreamFromIterable(JSC::JSGlobalObject*, JSC::JSValue asyncIterable); // userJS: yes — ReadableStreamOperations.cpp
@@ -362,6 +368,13 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 // against unset branch slots). Callers skip a terminal branch.
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+// The chunk a default tee branch hands out. A copy (structuredCloneStreamChunk) when the tee
+// isolates script deliveries, the branch's reader belongs to script (!m_nonScriptConsumer), and
+// the sibling branch is not canceled; otherwise `chunk` itself. A failed copy errors both
+// branches, cancels the source (spec tee step 16.1.2) and returns an empty JSValue: the caller
+// checks for an exception from that cancel, then sees the branch errored. Runs no user code on
+// a non-tee stream.
+JSC::JSValue isolateTeeBranchChunk(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue chunk); // userJS: yes (cancel of the source) — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp

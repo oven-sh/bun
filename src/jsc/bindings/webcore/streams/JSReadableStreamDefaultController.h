@@ -76,7 +76,9 @@ public:
     // [[PullSteps]](readRequest) — userJS: YES (may run the user pull algorithm).
     void pullSteps(JSC::JSGlobalObject*, JSReadRequest*);
     // The queue-hit half of [[PullSteps]]: dequeue + the close-or-pull bookkeeping.
-    // Caller checks !m_queue.isEmpty(). Returns the chunk (empty on exception).
+    // Caller checks !m_queue.isEmpty(). Returns the chunk: a copy on a body-clone tee branch
+    // read by script (isolateTeeBranchChunk). Empty on exception, and empty with no exception
+    // when that copy failed and errored the stream.
     JSC::JSValue dequeueChunkForRead(JSC::JSGlobalObject*);
     // [[ReleaseSteps]]() — spec: "Return." (no-op). userJS: no.
     void releaseSteps();

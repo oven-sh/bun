@@ -842,6 +842,7 @@ JSValue readableStreamIntoArray(JSGlobalObject* globalObject, WebCore::JSReadabl
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
+    stream->m_nonScriptConsumer = true;
     auto* chunks = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     const ControllerKind controllerKind = stream->m_controllerKind;
@@ -978,6 +979,7 @@ static JSValue consumeDirectStreamBody(JSC::VM& vm, JSGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, {});
     auto* reader = acquireReadableStreamDefaultReader(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
+    stream->m_nonScriptConsumer = true;
     auto* context = InternalFieldTuple::create(vm, defaultGlobalObject(globalObject)->internalFieldTupleStructure(), stream, reader);
     RELEASE_AND_RETURN(scope, directConsumeLoopStep(vm, globalObject, context));
 }

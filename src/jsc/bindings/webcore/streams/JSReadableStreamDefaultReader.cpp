@@ -210,9 +210,17 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
             chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, resizable), WTF::move(buffer), byteOffset, byteLength);
             RETURN_IF_EXCEPTION(scope, size);
         } else {
+            // Script readMany() on a body-clone tee branch gets copies (see dequeueChunkForRead).
+            // A failed copy errored the stream and reset this queue: stop with that error.
+            chunk = isolateTeeBranchChunk(globalObject, defaultController, defaultController->m_queue.peekQueueValue());
+            RETURN_IF_EXCEPTION(scope, size);
+            if (!chunk) [[unlikely]] {
+                ASSERT(stream->m_state == ReadableStreamState::Errored);
+                JSValue storedError = stream->m_storedError.get();
+                throwException(globalObject, scope, storedError ? storedError : jsUndefined());
+                return size;
+            }
             WTF::Locker locker { defaultController->cellLock() };
-            auto& entry = defaultController->m_queue.first();
-            chunk = entry.value.get();
             defaultController->m_queue.removeFirst(locker);
         }
         into->putDirectIndex(globalObject, base + i, chunk);

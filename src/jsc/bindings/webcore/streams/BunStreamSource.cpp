@@ -1123,6 +1123,7 @@ static void rsisBegin(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamInt
     RETURN_IF_EXCEPTION(scope, );
     // The sink consumes the stream as a body: it stays locked after rsisFinally releases the pump's reader.
     stream->markConsumedAsBody();
+    stream->m_nonScriptConsumer = true;
     op->setReader(vm, reader);
     reader->m_pipeOperation.set(vm, reader, op);
     // Byte-producing native transform + native JSSink: attach the sink to the transform so its

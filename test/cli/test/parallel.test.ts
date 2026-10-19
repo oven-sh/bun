@@ -129,6 +129,33 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(exitCode).toBe(1);
 });
 
+// The scanner reads a backslash in a file name as a separator, so the path the worker gets does
+// not resolve. Windows cannot create such a name.
+test.skipIf(isWindows)("--parallel: a test file that does not resolve fails alone and its worker lives", async () => {
+  const passing = `import {test} from "bun:test"; test("t",()=>{});`;
+  using dir = tempDir("parallel-unresolved", {
+    "test/a.test.ts": passing,
+    "test/x\\y.test.ts": passing,
+    "test/z.test.ts": passing,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("# Unhandled error between tests");
+  expect(stderr).toContain("Cannot find module");
+  expect(stderr).not.toContain("worker crashed");
+  expect(stderr).toContain(" 2 pass\n 1 fail\n 1 error\n");
+  expect(stderr).toContain("Ran 3 tests across 3 files.");
+  expect(exitCode).toBe(1);
+});
+
 // The label must use the OS's name for the number the worker died from. Signal
 // 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
 // macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash

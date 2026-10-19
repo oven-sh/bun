@@ -276,30 +276,32 @@ const nodeTiming = createPerformanceNodeTiming();
 // timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,
 // non-enumerable, per lib/internal/perf/performance.js.
 if (Performance) {
-  const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
-  changeBuiltin(Performance.prototype, () => {
-    $Object.$defineProperty(Performance.prototype, "nodeTiming", {
+  const additions = {
+    __proto__: null,
+    nodeTiming: {
       __proto__: null,
       configurable: true,
       enumerable: false,
       writable: true,
       value: nodeTiming,
-    });
-    $Object.$defineProperty(Performance.prototype, "timerify", {
+    },
+    timerify: {
       __proto__: null,
       configurable: true,
       enumerable: false,
       writable: true,
       value: timerify,
-    });
-    $Object.$defineProperty(Performance.prototype, "eventLoopUtilization", {
+    },
+    eventLoopUtilization: {
       __proto__: null,
       configurable: true,
       enumerable: false,
       writable: true,
       value: eventLoopUtilization,
-    });
-  });
+    },
+  };
+  const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
+  for (const name in additions) defineBuiltinProperty(Performance.prototype, name, additions[name]);
 }
 
 export default {

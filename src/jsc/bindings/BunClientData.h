@@ -141,10 +141,12 @@ namespace Bun {
 // once-per-class setup paths, so each wrapper class doesn't inline them.
 JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype, JSC::TypeInfo, const JSC::ClassInfo*, JSC::IndexingType = JSC::NonArray, unsigned inlineCapacity = 0);
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
-// For an object `owner` creates on first use that is part of its API (`Bun.password`, `process.versions`), not state (`Bun.env`): immutable if `owner` is. JSC covers only functions.
+// For an object `owner` creates on first use that is part of its API (`Bun.password`, `process.versions`), not state (`Bun.env`): immutable if `owner` is, with the objects it holds. JSC covers only functions.
 JSC::JSValue namespaceObjectOf(JSC::VM&, JSC::JSObject* owner, JSC::JSValue namespaceObject);
-// changeBuiltin(builtin, change), for a built-in module that adds to a native class BUN_JSC_immutableGlobals covers. Whatever `change` calls can write to any built-in, so it holds plain writes only.
-JSC_DECLARE_HOST_FUNCTION(jsFunctionChangeBuiltin);
+// Object.defineProperty(), `delete` and Object.setPrototypeOf() for a built-in module that finishes a native class, which BUN_JSC_immutableGlobals may cover by then. No JavaScript runs while the write is allowed.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype);
 // JSGlobalObject::didCreateBuiltin() for a built-in module.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDidCreateBuiltin);
 // `JSC::allocateCell` for a fieldless `JSNonFinalObject` subclass living in `vm.plainObjectSpace()` (prototype objects).

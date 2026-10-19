@@ -355,11 +355,13 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
+    let allow_materialization = global.vm().allow_lazy_materialization_of_immutable_properties();
     if enabled {
         set_timeout_fn.put(global, "clock", JSValue::TRUE);
     } else {
         set_timeout_fn.delete_property(global, "clock")?;
     }
+    drop(allow_materialization);
     Ok(())
 }
 

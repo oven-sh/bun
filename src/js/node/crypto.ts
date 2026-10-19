@@ -435,10 +435,9 @@ crypto_exports.DiffieHellman = DiffieHellman;
 
 crypto_exports.diffieHellman = diffieHellman;
 
-const setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
-const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
-changeBuiltin(ECDH.prototype, () => {
-  ECDH.prototype.setPublicKey = setPublicKey;
+$newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3)(ECDH.prototype, "setPublicKey", {
+  __proto__: null,
+  value: deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031"),
 });
 crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {

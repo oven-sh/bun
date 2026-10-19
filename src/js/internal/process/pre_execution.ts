@@ -4,7 +4,7 @@
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
 
-const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
+const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
 
 let writeSync: typeof import("node:fs").writeSync;
 let envTracePrintMessage = false;
@@ -197,14 +197,11 @@ function installEnvTracing(): void {
     },
   };
   const proxy = new Proxy(real, handler);
-  changeBuiltin(process, () => {
-    $Object.$defineProperty(process, "env", {
-      __proto__: null,
-      value: proxy,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
+  defineBuiltinProperty(process, "env", {
+    value: proxy,
+    writable: true,
+    enumerable: true,
+    configurable: true,
   });
   readStartupEnvVars();
 }
@@ -254,9 +251,7 @@ function installExitTracing(): void {
     writeStderr(out);
     return realExit.$call(process, code);
   }
-  changeBuiltin(process, () => {
-    process.exit = exit as typeof process.exit;
-  });
+  defineBuiltinProperty(process, "exit", { __proto__: null, value: exit });
 }
 
 {
@@ -303,11 +298,7 @@ function installExitTracing(): void {
 
   if (stackTraceLimit !== null) {
     const limit = Number(stackTraceLimit);
-    if (Number.isFinite(limit)) {
-      changeBuiltin(Error, () => {
-        Error.stackTraceLimit = limit;
-      });
-    }
+    if (Number.isFinite(limit)) defineBuiltinProperty(Error, "stackTraceLimit", { __proto__: null, value: limit });
   }
 
   // CLI-driven tracing runs in worker VMs too (workers inherit the parent's

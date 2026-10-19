@@ -4200,8 +4200,10 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
-    object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
+    bool didPut = object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, );
+    if (!didPut) [[unlikely]]
+        throwTypeError(globalObject, scope, JSC::ReadonlyPropertyWriteError);
 }
 
 extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
@@ -5075,10 +5077,13 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
-// JSC::AllowChangesToImmutableProperties for Rust, which pairs the two calls in a guard.
-extern "C" void JSC__VM__allowChangesToImmutableProperties(JSC::VM* vm, bool allow)
+// JSC::AllowLazyMaterializationOfImmutableProperties for Rust, which pairs the two calls in a guard.
+extern "C" void JSC__VM__allowLazyMaterializationOfImmutableProperties(JSC::VM* vm, bool allow)
 {
     vm->allowLazyMaterializationOfImmutablePropertiesCount += allow ? 1 : -1;
+#if ASSERT_ENABLED
+    vm->disallowVMEntryCount += allow ? 1 : -1;
+#endif
 }
 
 // The TerminationException cell itself (what a pending one reads as), not the error object it wraps.

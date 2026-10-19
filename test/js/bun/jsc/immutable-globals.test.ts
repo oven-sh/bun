@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// BUN_JSC_immutableGlobals=* makes every built-in immutable, JavaScriptCore's and Bun's: the global object, what it
-// holds, every prototype, and what is created later. `,-name` after it leaves the global of that name as it is and,
-// if it is a function, its prototype.
+// `*` makes every built-in immutable; `,-name` after it leaves that global as it is and, if it is a function, its prototype.
 
 async function run(immutableGlobals: string | undefined, args: string[], cwd?: string, stdin?: string) {
   await using proc = Bun.spawn({
@@ -127,29 +125,35 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
   });
 
   test("`,-name` leaves a global as it is", async () => {
-    const { stdout, stderr, exitCode } = await run("*,-globalThis,-process,-Response,-Error,-Math,-noSuchGlobal", [
-      "-e",
-      attempts([
-        "globalThis.fresh = 1",
-        "globalThis.fetch = fetch",
-        "process.fresh = 1",
-        "process.exit = process.exit",
-        "process.exit.fresh = 1",
-        "Response.json = Response.json",
-        "Response.prototype.fresh = 1",
-        "Response.prototype.text.fresh = 1",
-        "Error.stackTraceLimit = 20",
-        "Error.prototype.fresh = 1",
-        "Math.random = () => 0.5",
-        // Everything else is covered.
-        "Request.prototype.fresh = 1",
-        "TypeError.prototype.fresh = 1",
-        "Object.getPrototypeOf(process).fresh = 1",
-        "fetch.fresh = 1",
-        "Bun.fresh = 1",
-        "JSON.parse = 1",
-      ]),
-    ]);
+    const { stdout, stderr, exitCode } = await run(
+      "*,-globalThis,-process,-Response,-Error,-Math,-noSuchGlobal,-constructor",
+      [
+        "-e",
+        attempts([
+          "globalThis.fresh = 1",
+          "globalThis.fetch = fetch",
+          "process.fresh = 1",
+          "process.exit = process.exit",
+          "process.exit.fresh = 1",
+          "Response.json = Response.json",
+          "Response.prototype.fresh = 1",
+          "Response.prototype.text.fresh = 1",
+          "Error.stackTraceLimit = 20",
+          "Error.prototype.fresh = 1",
+          "Math.random = () => 0.5",
+          // Everything else is covered.
+          "Request.prototype.fresh = 1",
+          "TypeError.prototype.fresh = 1",
+          "Object.getPrototypeOf(process).fresh = 1",
+          "fetch.fresh = 1",
+          "Bun.fresh = 1",
+          "JSON.parse = 1",
+          // `constructor` is a name the global object only inherits.
+          "Object.fresh = 1",
+          "Object.prototype.fresh = 1",
+        ]),
+      ],
+    );
     expect(stderr).toBe("");
     expect(stdout).toMatchInlineSnapshot(`
       "ok          globalThis.fresh = 1
@@ -169,19 +173,24 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       TypeError   fetch.fresh = 1
       TypeError   Bun.fresh = 1
       TypeError   JSON.parse = 1
+      TypeError   Object.fresh = 1
+      TypeError   Object.prototype.fresh = 1
       "
     `);
     expect(exitCode).toBe(0);
   });
 
-  test.each(["Array", "-Array", "*,Array", "* ,-Array"])("a value of another form is an error: %s", async value => {
-    const { stdout, stderr, exitCode } = await run(value, ["-e", "console.log('ran')"]);
-    expect(stderr).toContain(
-      "ERROR: immutableGlobals is '*', followed by ',-name' for each global to leave mutable: " + value,
-    );
-    expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
-  });
+  test.each(["Array", "-Array", "*,Array", "* ,-Array", ",", ",*", "*,", "*,,-Array"])(
+    "a value of another form is an error: %s",
+    async value => {
+      const { stdout, stderr, exitCode } = await run(value, ["-e", "console.log('ran')"]);
+      expect(stderr).toContain(
+        "ERROR: immutableGlobals is '*', followed by ',-name' for each global to leave mutable: " + value,
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    },
+  );
 
   test("without the option nothing is immutable", async () => {
     const { stdout, exitCode } = await run(undefined, [
@@ -291,6 +300,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     const fixture = /* js */ `
       import crypto from "node:crypto";
       import fs from "node:fs";
+      import { File as FileOfNodeBuffer } from "node:buffer";
       import { createRequire } from "node:module";
       import net from "node:net";
       import "node:perf_hooks";
@@ -329,6 +339,8 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         "require.resolve": prototypeOf(require.resolve),
         "ERR_INVALID_ARG_TYPE": prototypeOf(nodeError),
         "PublicKeyObject's parent": prototypeOf(prototypeOf(crypto.generateKeyPairSync("ed25519").publicKey)),
+        "node:buffer's File": FileOfNodeBuffer,
+        "node:buffer's File.prototype": FileOfNodeBuffer.prototype,
         // Built-in modules add to these as they load.
         "process's prototype": prototypeOf(process),
         "crypto.ECDH.prototype": crypto.ECDH.prototype,
@@ -345,8 +357,11 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         "Bun.semver": Bun.semver,
         "Bun.TOML": Bun.TOML,
         "Bun.FFI": Bun.FFI,
+        "Bun.FFI.read": Bun.FFI.read,
+        "Bun.FFI.read.u8()": Bun.FFI.read.u8,
         "process.versions": process.versions,
         "process.report": process.report,
+        "process.config.variables": process.config.variables,
         // State, not API.
         "Bun.env": Bun.env,
         "Bun.argv": Bun.argv,
@@ -370,8 +385,11 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       "Bun.semver",
       "Bun.TOML",
       "Bun.FFI",
+      "Bun.FFI.read",
+      "Bun.FFI.read.u8()",
       "process.versions",
       "process.report",
+      "process.config.variables",
     ];
 
     test.each([
@@ -407,7 +425,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     });
 
     test("covers what belongs to a global nothing has read, and a constructor only its prototype leads to", async () => {
-      // Written so that no global but Response and Request is named.
+      // Of Bun's globals, this names only Response and Request.
       const script = `
         const prototypeOf = Object.getPrototypeOf;
         const objects = {
@@ -446,9 +464,30 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
             expect(8).not.toBeSeven();
             expect({ n: 7 }).toEqual({ n: expect.toBeSeven() });
           });
+          test("a name that is an index", () => {
+            expect(() => expect.extend({ 0: () => ({ pass: true }) })).toThrow(TypeError);
+          });
         `,
       });
       const { stderr, exitCode } = await run("*", ["test", "extend.test.js"], String(dir));
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("jest.useFakeTimers() marks setTimeout", async () => {
+      using dir = tempDir("immutable-globals", {
+        "timers.test.js": `
+          import { expect, jest, test } from "bun:test";
+          test("marker", () => {
+            jest.useFakeTimers();
+            expect(Object.hasOwn(setTimeout, "clock")).toBe(true);
+            jest.useRealTimers();
+            expect(Object.hasOwn(setTimeout, "clock")).toBe(false);
+            expect(() => { "use strict"; setTimeout.clock = true; }).toThrow(TypeError);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await run("*", ["test", "timers.test.js"], String(dir));
       expect(stderr).toContain("1 pass");
       expect(exitCode).toBe(0);
     });
@@ -457,58 +496,114 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
       const script = `
         import crypto from "node:crypto";
         import EventEmitter from "node:events";
+        import { performance } from "node:perf_hooks";
         import { MessageChannel } from "node:worker_threads";
+        import zlib from "node:zlib";
+        import "bun:ffi";
         let calls = 0;
         process.on("custom", () => calls++);
         process.emit("custom");
         console.log(process instanceof EventEmitter, calls, typeof new MessageChannel().port1.on);
+        console.log(typeof performance.eventLoopUtilization, "callback" in Bun.FFI);
+        console.log(await new Promise(resolve => zlib.gzip("hello", (error, data) => resolve(zlib.gunzipSync(data).toString()))));
         process.on("warning", warning => console.log(warning.code));
         crypto.createECDH("prime256v1").setPublicKey(crypto.createECDH("prime256v1").generateKeys());
       `;
       const { stdout, exitCode } = await run("*", ["-e", script]);
-      expect({ stdout, exitCode }).toEqual({ stdout: "true 1 function\nDEP0031\n", exitCode: 0 });
+      expect({ stdout, exitCode }).toEqual({
+        stdout: "true 1 function\nfunction false\nhello\nDEP0031\n",
+        exitCode: 0,
+      });
     });
 
-    test("every built-in module loads", async () => {
+    // Counts the calls and records each one whose write to a built-in went through.
+    const attempt = `
+      "use strict";
+      const wrote = [];
+      let calls = 0;
+      function attempt(where) {
+        calls++;
+        try {
+          Array.prototype.fresh = 1;
+          wrote.push(where);
+        } catch {}
+      }
+    `;
+
+    test("every built-in module loads, and a listener that is called meanwhile cannot write", async () => {
       using dir = tempDir("immutable-globals-modules", {
         "index.cjs": `
+          ${attempt}
           const failed = [];
-          for (const name of [...require("node:module").builtinModules, "node:quic", "bun:ffi", "bun:jsc", "bun:sqlite"]) {
+          let loading;
+          for (const event of ["newListener", "removeListener"]) process.on(event, name => attempt(loading + ": " + event + " " + String(name)));
+          for (loading of [...require("node:module").builtinModules, "node:quic", "bun:ffi", "bun:jsc", "bun:sqlite"]) {
             try {
-              require(name);
+              require(loading);
             } catch (error) {
-              failed.push(name + ": " + error.message);
+              failed.push(loading + ": " + error.message);
             }
           }
-          console.log(JSON.stringify(failed));
+          console.log(JSON.stringify({ failed, called: calls > 0, wrote }));
         `,
       });
       const { stdout, exitCode } = await run("*", ["index.cjs"], String(dir));
-      expect(JSON.parse(stdout)).toEqual([]);
+      expect(JSON.parse(stdout)).toEqual({ failed: [], called: true, wrote: [] });
       expect(exitCode).toBe(0);
     });
 
-    test("a listener that is called while a built-in module loads cannot write", async () => {
-      using dir = tempDir("immutable-globals-listeners", {
+    test.each([
+      [
+        "*",
+        "node:quic",
+        `const net = require("node:net"), real = net.SocketAddress;
+         net.SocketAddress = { get prototype() { attempt("net.SocketAddress"); return real.prototype; } };`,
+      ],
+      [
+        "*,-globalThis",
+        "node:quic",
+        `const real = Blob;
+         globalThis.Blob = { get prototype() { attempt("Blob"); return real.prototype; } };`,
+      ],
+      [
+        "*,-globalThis",
+        "node:perf_hooks",
+        `const real = Performance;
+         globalThis.Performance = { get prototype() { attempt("Performance"); return real.prototype; } };`,
+      ],
+      [
+        "*,-Bun",
+        "bun:ffi",
+        `const traps = { deleteProperty(target, key) { attempt("Bun.FFI"); return true; } };
+         Object.defineProperty(Bun, "FFI", { value: new Proxy(Bun.FFI, traps) });`,
+      ],
+    ])("with %s, what a program puts where %s looks cannot write", async (immutableGlobals, module, plant) => {
+      using dir = tempDir("immutable-globals-planted", {
         "index.cjs": `
-          "use strict";
-          const wrote = [];
-          let loading;
-          function attempt(event) {
-            try {
-              Array.prototype.fresh = 1;
-              wrote.push(loading + ": " + event);
-            } catch {}
-          }
-          let calls = 0;
-          for (const event of ["newListener", "removeListener"]) process.on(event, name => (calls++, attempt(event + " " + String(name))));
-          for (loading of [...require("node:module").builtinModules, "node:quic", "bun:ffi", "bun:jsc", "bun:sqlite"]) require(loading);
-          console.log(JSON.stringify({ called: calls > 0, wrote }));
+          ${attempt}
+          ${plant}
+          require(${JSON.stringify(module)});
+          console.log(JSON.stringify(wrote));
         `,
       });
-      const { stdout, exitCode } = await run("*", ["index.cjs"], String(dir));
-      expect(JSON.parse(stdout)).toEqual({ called: true, wrote: [] });
-      expect(exitCode).toBe(0);
+      const { stdout, exitCode } = await run(immutableGlobals, ["index.cjs"], String(dir));
+      expect({ stdout, exitCode }).toEqual({ stdout: "[]\n", exitCode: 0 });
+    });
+
+    test.each([
+      ["node:perf_hooks", `globalThis.Performance = { prototype: 5 };`],
+      ["node:quic", `globalThis.Blob = {};`],
+    ])("without the option, %s throws for a class that is not one", async (module, plant) => {
+      const script = `
+        ${plant}
+        try {
+          require(${JSON.stringify(module)});
+        } catch (error) {
+          console.log(error.message);
+        }
+      `;
+      const { stdout, exitCode } = await run(undefined, ["-e", script]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "Properties can only be defined on Objects.\n", exitCode: 0 });
     });
   });
 
@@ -710,7 +805,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Each of these used to assign Error.stackTraceLimit or Error.prepareStackTrace and put the old value back.
+  // Each of these needs a stack trace limit or a stack format of its own for a moment.
   const usesOfTheStack = `
     const util = require("node:util");
     const assert = require("node:assert");
@@ -770,6 +865,26 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     expect(stdout).toContain("new AssertionError");
     expect(stdout).toContain("writes []\n");
     expect(exitCode).toBe(0);
+  });
+
+  test("--stack-trace-limit and --trace-exit work", async () => {
+    using dir = tempDir("immutable-globals-flags", {
+      "index.cjs": `
+        function a() { return b(); }
+        function b() { return c(); }
+        function c() { return new Error().stack; }
+        console.log(Error.stackTraceLimit, a().split("\\n").filter(line => line.includes(" at ")).length);
+        (function leave() { process.exit(3); })();
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(
+      "*",
+      ["--stack-trace-limit=2", "--trace-exit", "index.cjs"],
+      String(dir),
+    );
+    expect(stdout).toBe("2 2\n");
+    expect(stderr).toContain("WARNING: Exited the environment with code 3");
+    expect(exitCode).toBe(3);
   });
 
   test("--trace-env-js-stack works when Error is immutable", async () => {

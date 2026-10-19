@@ -75,12 +75,10 @@ const nativeDLOpen = ffi.dlopen;
 const nativeCallback = ffi.callback;
 const closeCallback = ffi.closeCallback;
 const nativeCFunction = ffi.cfunction;
-const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
-changeBuiltin(ffi, () => {
-  delete ffi.callback;
-  delete ffi.closeCallback;
-  delete ffi.cfunction;
-});
+const deleteBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDeleteBuiltinProperty", 2);
+deleteBuiltinProperty(ffi, "callback");
+deleteBuiltinProperty(ffi, "closeCallback");
+deleteBuiltinProperty(ffi, "cfunction");
 
 class JSCallback {
   declare readonly ptr: number | null;

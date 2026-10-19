@@ -241,29 +241,92 @@ JSC::Structure* createClassStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 
 JSC::JSValue namespaceObjectOf(JSC::VM& vm, JSC::JSObject* owner, JSC::JSValue namespaceObject)
 {
-    if (owner->hasImmutableProperties() && namespaceObject && namespaceObject.isObject()) [[unlikely]]
-        owner->globalObject()->makeObjectAndItsFunctionsImmutable(vm, asObject(namespaceObject));
+    if (!owner->hasImmutableProperties() || !namespaceObject || !namespaceObject.isObject()) [[likely]]
+        return namespaceObject;
+
+    // The objects it holds are part of it too: `Bun.FFI.read`, `process.config.variables`.
+    JSC::DeferGC deferGC(vm);
+    Vector<JSC::JSObject*, 8> objects { asObject(namespaceObject) };
+    while (!objects.isEmpty()) {
+        auto* object = objects.takeLast();
+        if (object->hasImmutableProperties())
+            continue;
+        owner->globalObject()->makeObjectAndItsFunctionsImmutable(vm, object);
+        object->structure()->forEachProperty(vm, [&](const JSC::PropertyTableEntry& entry) {
+            if (JSC::JSValue value = object->getDirect(entry.offset()); value.isObject())
+                objects.append(asObject(value));
+            return true;
+        });
+    }
     return namespaceObject;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionChangeBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* builtin = asObject(callFrame->uncheckedArgument(0));
+    auto* builtin = callFrame->argument(0).getObject();
+    if (!builtin)
+        return throwVMTypeError(globalObject, scope, "Properties can only be defined on Objects."_s);
+    auto key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::PropertyDescriptor descriptor;
+    JSC::toPropertyDescriptor(globalObject, callFrame->argument(2), descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool isImmutable = builtin->hasImmutableProperties();
     {
-        JSC::AllowChangesToImmutableProperties allowChanges(vm);
-        JSC::call(globalObject, callFrame->uncheckedArgument(1), JSC::ArgList(), "changeBuiltin() takes a function"_s);
-        RETURN_IF_EXCEPTION(scope, {});
+        std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
+        if (isImmutable)
+            allowMaterialization.emplace(vm);
+        builtin->methodTable()->defineOwnProperty(builtin, globalObject, key, descriptor, true);
     }
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isImmutable) {
+        for (JSC::JSValue added : { descriptor.value(), descriptor.isAccessorDescriptor() ? descriptor.getter() : JSC::JSValue(), descriptor.isAccessorDescriptor() ? descriptor.setter() : JSC::JSValue() }) {
+            if (added && added.isCallable())
+                globalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(added));
+        }
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* builtin = callFrame->argument(0).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto key = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
     if (builtin->hasImmutableProperties())
-        globalObject->makeObjectAndItsFunctionsImmutable(vm, builtin);
+        allowMaterialization.emplace(vm);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsBoolean(JSC::JSCell::deleteProperty(builtin, globalObject, key))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* builtin = callFrame->argument(0).getObject();
+    JSC::JSValue prototype = callFrame->argument(1);
+    if (!builtin || !(prototype.isObject() || prototype.isNull()))
+        return throwVMTypeError(globalObject, scope, "Object prototype may only be an Object or null"_s);
+
+    std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> allowMaterialization;
+    if (builtin->hasImmutableProperties())
+        allowMaterialization.emplace(vm);
+    scope.release();
+    builtin->setPrototype(vm, globalObject, prototype, true);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDidCreateBuiltin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    globalObject->didCreateBuiltin(JSC::getVM(globalObject), asObject(callFrame->uncheckedArgument(0)));
+    if (auto* builtin = callFrame->argument(0).getObject())
+        globalObject->didCreateBuiltin(JSC::getVM(globalObject), builtin);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

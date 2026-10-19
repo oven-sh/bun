@@ -142,6 +142,9 @@ public:
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
+// The prototype of the process object, whatever the global `process` holds by now.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionGetProcessPrototype);
+
 // Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
 // node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);

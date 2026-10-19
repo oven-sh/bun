@@ -35,7 +35,7 @@ unsafe extern "C" {
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
-    safe fn JSC__VM__allowChangesToImmutableProperties(vm: &VM, allow: bool);
+    safe fn JSC__VM__allowLazyMaterializationOfImmutableProperties(vm: &VM, allow: bool);
     safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
@@ -138,10 +138,10 @@ impl VM {
         JSC__VM__isEntered(self)
     }
 
-    /// While the guard is alive, what `BUN_JSC_immutableGlobals` covers can be changed. For an API whose job is to add to a built-in.
-    pub fn allow_changes_to_immutable_properties(&self) -> AllowChangesToImmutableProperties<'_> {
-        JSC__VM__allowChangesToImmutableProperties(self, true);
-        AllowChangesToImmutableProperties { vm: self }
+    /// While the guard is alive, native code can put and delete the properties of what `BUN_JSC_immutableGlobals` covers. No JavaScript may run.
+    pub fn allow_lazy_materialization_of_immutable_properties(&self) -> AllowLazyMaterializationOfImmutableProperties<'_> {
+        JSC__VM__allowLazyMaterializationOfImmutableProperties(self, true);
+        AllowLazyMaterializationOfImmutableProperties { vm: self }
     }
 
     /// The VM's TerminationException cell (created on demand) — what a pending one reads as; inert
@@ -174,13 +174,13 @@ impl VM {
     }
 }
 
-pub struct AllowChangesToImmutableProperties<'a> {
+pub struct AllowLazyMaterializationOfImmutableProperties<'a> {
     vm: &'a VM,
 }
 
-impl Drop for AllowChangesToImmutableProperties<'_> {
+impl Drop for AllowLazyMaterializationOfImmutableProperties<'_> {
     fn drop(&mut self) {
-        JSC__VM__allowChangesToImmutableProperties(self.vm, false)
+        JSC__VM__allowLazyMaterializationOfImmutableProperties(self.vm, false)
     }
 }
 

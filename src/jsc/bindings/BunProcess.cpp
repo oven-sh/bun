@@ -2942,7 +2942,7 @@ __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSO
 
     config->freeze(vm);
     RETURN_IF_EXCEPTION(scope, {});
-    return config;
+    return namespaceObjectOf(vm, processObject, config);
 }
 
 static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
@@ -3677,6 +3677,11 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
     auto cryptoX509 = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     putDirectNamed(vm, cryptoX509, "isX509Certificate"_s, JSC::JSFunction::create(vm, globalObject, 1, String("isX509Certificate"_s), jsIsX509Certificate, ImplementationVisibility::Public));
     return cryptoX509;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetProcessPrototype, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(defaultGlobalObject(globalObject)->processObject()->getPrototypeDirect());
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))

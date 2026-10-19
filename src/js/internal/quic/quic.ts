@@ -36,7 +36,8 @@ const {
   isSharedArrayBuffer,
   isKeyObject,
 } = require("node:util/types");
-const { SocketAddress, BlockList } = require("node:net");
+const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
+const BlockList = $rust("node_net_binding.rs", "BlockList");
 
 // The native binding hands certificates over as DER bytes; expose them as
 // X509Certificate objects like Node does.
@@ -147,40 +148,34 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
 const kClientHttp = Symbol("kClientHttp");
 const kNoteClientHttp = Symbol("kNoteClientHttp");
 
-const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
+const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
-changeBuiltin(SocketAddress.prototype, () => {
-  $Object.$defineProperty(SocketAddress.prototype, kSocketAddressHandle, {
-    __proto__: null,
-    get() {
-      return this;
-    },
-    configurable: true,
-  });
+defineBuiltinProperty(SocketAddress.prototype, kSocketAddressHandle, {
+  __proto__: null,
+  get() {
+    return this;
+  },
+  configurable: true,
 });
 const kBlockListHandle = Symbol("kBlockListHandle");
-changeBuiltin(BlockList.prototype, () => {
-  $Object.$defineProperty(BlockList.prototype, kBlockListHandle, {
-    __proto__: null,
-    get() {
-      return this;
-    },
-    configurable: true,
-  });
+defineBuiltinProperty(BlockList.prototype, kBlockListHandle, {
+  __proto__: null,
+  get() {
+    return this;
+  },
+  configurable: true,
 });
 function InternalSocketAddress(handle): void {
   return handle;
 }
 
 const kBlobHandle = Symbol("kBlobHandle");
-changeBuiltin(Blob.prototype, () => {
-  $Object.$defineProperty(Blob.prototype, kBlobHandle, {
-    __proto__: null,
-    get() {
-      return this;
-    },
-    configurable: true,
-  });
+defineBuiltinProperty(Blob.prototype, kBlobHandle, {
+  __proto__: null,
+  get() {
+    return this;
+  },
+  configurable: true,
 });
 function isBlob(value) {
   return value instanceof Blob;

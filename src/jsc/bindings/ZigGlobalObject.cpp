@@ -2521,6 +2521,7 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
+             init.owner->didCreateBuiltin(init.vm, fileConstructor);
              init.set(fileConstructor);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {

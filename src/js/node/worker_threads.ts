@@ -114,7 +114,7 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-const changeBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionChangeBuiltin", 2);
+const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -294,9 +294,7 @@ function injectFakeEmitter(Class) {
     Object.defineProperty(inherited, methodName, { value, writable: true, enumerable: false, configurable: true });
   }
   $newCppFunction("BunClientData.cpp", "jsFunctionDidCreateBuiltin", 1)(inherited);
-  changeBuiltin(proto, () => {
-    $setPrototypeDirectOrThrow.$call(proto, inherited);
-  });
+  $newCppFunction("BunClientData.cpp", "jsFunctionSetBuiltinPrototype", 2)(proto, inherited);
 }
 
 injectFakeEmitter(_MessagePort);
@@ -307,8 +305,7 @@ const MessagePort = _MessagePort;
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
-const closeDescriptor = {
-  __proto__: null,
+defineBuiltinProperty(MessagePort.prototype, "close", {
   value: function close(cb) {
     closedMessagePorts.add(this);
     // node's mechanism is literally `this.once('close', cb)`, so cb interleaves
@@ -321,23 +318,18 @@ const closeDescriptor = {
   writable: true,
   enumerable: true,
   configurable: true,
-};
+});
 
 // node-style util.inspect output for MessagePort (shows whether the channel is
 // still active). Symbol-keyed so it does not appear in getOwnPropertyNames.
 const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
-const inspectDescriptor = {
-  __proto__: null,
+defineBuiltinProperty(MessagePort.prototype, kInspectCustom, {
   value: function (_depth, _options) {
     return `MessagePort [EventTarget] { active: ${_isMessagePortActive(this)}, refed: ${this.hasRef()} }`;
   },
   writable: true,
   enumerable: false,
   configurable: true,
-};
-changeBuiltin(MessagePort.prototype, () => {
-  $Object.$defineProperty(MessagePort.prototype, "close", closeDescriptor);
-  $Object.$defineProperty(MessagePort.prototype, kInspectCustom, inspectDescriptor);
 });
 
 let resourceLimits = {};
@@ -366,10 +358,7 @@ function setupWorkerStdio(stdio) {
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
-  const console = new Console(stdoutStream, stderrStream);
-  changeBuiltin(globalThis, () => {
-    (globalThis as { console: unknown }).console = console;
-  });
+  defineBuiltinProperty(globalThis, "console", { __proto__: null, value: new Console(stdoutStream, stderrStream) });
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
@@ -741,20 +730,18 @@ if (!isMainThread && _isNodeWorker) {
 }
 function applyWorkerProcessOverrides() {
   const proc: any = process;
-  const overrides: [string, PropertyDescriptor][] = [];
   // node defaults debugPort to 9229 in workers (still settable). Per-object property:
   // the static accessor's setter writes a process-global shared across threads.
-  overrides.push([
-    "debugPort",
-    { __proto__: null, value: 9229, writable: true, configurable: true, enumerable: true } as PropertyDescriptor,
-  ]);
+  try {
+    defineBuiltinProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
+  } catch {}
   // process.umask(setMask) is unsupported in workers; the getter still works.
   const realUmask = proc.umask;
   function umask(mask?: unknown) {
     if (mask === undefined) return realUmask.$call(proc);
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Setting process.umask() is not supported in workers");
   }
-  overrides.push(["umask", { __proto__: null, value: umask } as PropertyDescriptor]);
+  defineBuiltinProperty(proc, "umask", { __proto__: null, value: umask });
   // Disabled, throwing stubs (each carries `.disabled === true`, like node).
   const disabled = ["abort", "chdir"];
   if (process.platform !== "win32") {
@@ -771,30 +758,20 @@ function applyWorkerProcessOverrides() {
       throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name}() is not supported in workers`);
     };
     stub.disabled = true;
-    overrides.push([
-      name,
-      { __proto__: null, configurable: true, writable: true, enumerable: true, value: stub } as PropertyDescriptor,
-    ]);
+    defineBuiltinProperty(proc, name, { configurable: true, writable: true, enumerable: true, value: stub });
   }
   // IPC accessors throw on access only in a worker that inherited an IPC channel.
   if (hasIpc) {
     for (const name of ["channel", "connected"]) {
-      overrides.push([
-        name,
-        {
-          __proto__: null,
-          configurable: true,
-          enumerable: false,
-          get() {
-            throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name} is not supported in workers`);
-          },
-        } as PropertyDescriptor,
-      ]);
+      defineBuiltinProperty(proc, name, {
+        configurable: true,
+        enumerable: false,
+        get() {
+          throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name} is not supported in workers`);
+        },
+      });
     }
   }
-  changeBuiltin(proc, () => {
-    for (let i = 0; i < overrides.length; i++) $Object.$defineProperty(proc, overrides[i][0], overrides[i][1]);
-  });
 }
 
 function getEnvironmentData(key: unknown): unknown {

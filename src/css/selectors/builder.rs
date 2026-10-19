@@ -22,8 +22,8 @@ pub use crate::{PrintErr, Printer};
 use bun_alloc::ArenaPtr;
 
 use crate::selector::parser::{
-    BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, SelectorFlags,
-    SpecificityAndFlags, compute_specificity,
+    BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, GenericSelector,
+    SelectorFlags, SpecificityAndFlags, compute_specificity,
 };
 
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the
@@ -102,6 +102,58 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     pub(crate) fn add_nesting_prefix(&mut self) {
         self.combinators.insert(0, (Combinator::Descendant, 1));
         self.simple_selectors.insert(0, GenericComponent::Nesting);
+    }
+
+    /// Continues the selector with `argument`, the selector in `:local(...)` or `:global(...)`.
+    pub(crate) fn splice_selector(&mut self, argument: GenericSelector<Impl>) {
+        let mut components = argument.components;
+        let first = leftmost_compound(&components);
+        self.join_compound(components.drain(first..));
+        while let Some(GenericComponent::Combinator(combinator)) = components.pop() {
+            self.push_combinator(combinator);
+            let next = leftmost_compound(&components);
+            for simple in components.drain(next..) {
+                self.push_simple_selector(simple);
+            }
+        }
+    }
+
+    /// Appends `compound` to the current compound selector, where a type selector must be first.
+    fn join_compound(&mut self, compound: impl Iterator<Item = GenericComponent<Impl>>) {
+        let start = self.simple_selectors.len() as usize - self.current_len;
+        let has_type_selector = self.simple_selectors.slice()[start..]
+            .iter()
+            .any(GenericComponent::is_type_selector_part);
+        let mut front = start;
+        let mut second_type_selector = Vec::new_in(self.alloc);
+        for simple in compound {
+            if !simple.is_type_selector_part() {
+                self.push_is(&mut second_type_selector);
+                self.push_simple_selector(simple);
+            } else if has_type_selector {
+                second_type_selector.push(simple);
+            } else {
+                self.simple_selectors.insert(front as u32, simple);
+                self.current_len += 1;
+                front += 1;
+            }
+        }
+        self.push_is(&mut second_type_selector);
+    }
+
+    /// Pushes `:is(<type>)` for the second type selector of a compound selector, if there is one.
+    fn push_is(&mut self, type_selector: &mut Vec<GenericComponent<Impl>, ArenaPtr>) {
+        if type_selector.is_empty() {
+            return;
+        }
+        let components = core::mem::replace(type_selector, Vec::new_in(self.alloc));
+        let specificity = compute_specificity::<Impl>(&components);
+        let flags = SelectorFlags::empty();
+        let selector = GenericSelector {
+            specificity_and_flags: SpecificityAndFlags { specificity, flags },
+            components,
+        };
+        self.push_simple_selector(GenericComponent::Is(Box::new([selector])));
     }
 
     // `SmallList` owns its spill buffer and frees on `Drop`, so no explicit
@@ -193,6 +245,14 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
             components,
         }
     }
+}
+
+/// A selector stores its compound selectors right to left: the leftmost one starts here.
+fn leftmost_compound<Impl: ValidSelectorImpl>(components: &[GenericComponent<Impl>]) -> usize {
+    components
+        .iter()
+        .rposition(GenericComponent::is_combinator)
+        .map_or(0, |combinator| combinator + 1)
 }
 
 fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {

@@ -92,7 +92,9 @@ describe("css", () => {
     });
   }
 
-  // The innermost `:local(...)` or `:global(...)` decides, at any depth.
+  // The innermost `:local(...)` or `:global(...)` decides, at any depth. For
+  // the browser targets, `:is()` prints once per vendor prefix, as it does
+  // outside a wrapper.
   itBundled("css-module/LocalAndGlobalNestAtAnyDepth", {
     files: {
       "/entry.js": printsStyles,
@@ -110,6 +112,8 @@ describe("css", () => {
         oneLine(`
           /* styles.module.css */
           .l1_HASH .g1 .l2_HASH .g2 { color: red; }
+          :-webkit-any(.c, .d) .e_HASH:not(.f) .after_HASH { color: #00f; }
+          :-moz-any(.c, .d) .e_HASH:not(.f) .after_HASH { color: #00f; }
           :is(.c, .d) .e_HASH:not(.f) .after_HASH { color: #00f; }
           .g3 .l3_HASH .g4 .l4_HASH { color: green; }
         `),
@@ -133,6 +137,9 @@ describe("css", () => {
 
   // The scope reaches every selector that can hold a class: the functional
   // pseudo-classes, the pseudo-elements that take a selector, and `@scope`.
+  // The printed rules are those of the same selectors without a wrapper:
+  // `:is()` has its vendor prefixes, and two rules with equal declarations
+  // that every target supports are one rule.
   itBundled("css-module/GlobalInEverySelectorContext", {
     files: {
       "/entry.js": printsStyles,
@@ -152,9 +159,10 @@ describe("css", () => {
       expect(css).toBe(
         oneLine(`
           /* styles.module.css */
+          :-webkit-any(.a, .b):not(.c):has(.d):nth-child(2 of .e) .l1_HASH { color: red; }
+          :-moz-any(.a, .b):not(.c):has(.d):nth-child(2 of .e) .l1_HASH { color: red; }
           :is(.a, .b):not(.c):has(.d):nth-child(2 of .e) .l1_HASH { color: red; }
-          :host(.f) .l2_HASH { color: red; }
-          ::slotted(.g) { color: red; }
+          :host(.f) .l2_HASH, ::slotted(.g) { color: red; }
           video::cue(.h) { color: red; }
           :where(.i, .l3_HASH):not(.j):has(.k .l4_HASH):nth-child(2 of .m .l5_HASH) { color: #00f; }
           @scope (.s1) to (.s2 .l6_HASH) {
@@ -292,7 +300,13 @@ describe("css", () => {
     outdir: "/out",
     onAfterBundle(api) {
       const { css, js } = readScoped(api, "l0");
-      const printed = [...css.replace("/* styles.module.css */", "").matchAll(/[.#]([\w-]+)/g)].map(m => m[1]);
+      // For the browser targets a rule with `:is()` prints once per vendor
+      // prefix. One rule per `z-index` is enough.
+      const rules = css.replace("/* styles.module.css */", "").matchAll(/([^{}]+) \{ z-index: (\d+); \}/g);
+      const selectors = new Map([...rules].map(rule => [rule[2], rule[1]]));
+      const printed = [...selectors.values()].flatMap(selector =>
+        [...selector.matchAll(/[.#]([\w-]+)/g)].map(m => m[1]),
+      );
       expect(printed).toEqual(shapeNames.map(name => (isLocalName(name) ? `${name}_HASH` : name)));
       const exported = [...js.matchAll(/^\s*(\w+): "(\w+)",?$/gm)].map(m => [m[1], m[2]]);
       expect(exported).toEqual(shapeNames.filter(isLocalName).map(name => [name, `${name}_HASH`]));
@@ -406,6 +420,273 @@ describe("css", () => {
       `);
     },
   });
+
+  // The argument of `:local(...)` or `:global(...)` is a part of the selector
+  // that holds it. A type selector must be first in its compound selector, so
+  // a type selector in the argument moves in front of what the holder has. A
+  // selector list with a wrapper stays one rule, in source order.
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`css-module/LocalOrGlobalArgumentJoinsTheSelector/${backend}`, {
+      backend,
+      files: {
+        "/entry.js": printsStyles,
+        "/styles.module.css": `
+          .x1:global(div.a) { z-index: 1 }
+          .x2:local(div.a2) { z-index: 2 }
+          #x3:global(div) { z-index: 3 }
+          .x4:global(*) { z-index: 4 }
+          .x5:hover:global(svg|rect) { z-index: 5 }
+          .x6:global(div .c):hover { z-index: 6 }
+          .x7:global(.d:local(span.e)) { z-index: 7 }
+          .x8:global(div)::before { z-index: 8 }
+          :global(.f), .x9 { z-index: 9 }
+          .x10, :local(.g) { z-index: 10 }
+          :global(.h::before), .x11 { z-index: 11 }
+          .x12 :global(.i), .x13 :global(.j) { z-index: 12 }
+          :global(.k) { z-index: 13 }
+          :global(.k) { color: red }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        const { css } = readScoped(api, "x1");
+        expect(css).toBe(
+          oneLine(`
+            /* styles.module.css */
+            div.x1_HASH.a { z-index: 1; }
+            div.x2_HASH.a2_HASH { z-index: 2; }
+            div#x3_HASH { z-index: 3; }
+            .x4_HASH { z-index: 4; }
+            svg|rect.x5_HASH:hover { z-index: 5; }
+            div.x6_HASH .c:hover { z-index: 6; }
+            span.x7_HASH.d.e_HASH { z-index: 7; }
+            div.x8_HASH:before { z-index: 8; }
+            .f, .x9_HASH { z-index: 9; }
+            .x10_HASH, .g_HASH { z-index: 10; }
+            .h:before, .x11_HASH { z-index: 11; }
+            .x12_HASH .i, .x13_HASH .j { z-index: 12; }
+            .k { z-index: 13; color: red; }
+          `),
+        );
+      },
+    });
+  }
+
+  // A compound selector has one type selector. A second one from the argument
+  // is written as `:is(<type>)`. With `target: "bun"` the stylesheet keeps
+  // `:is()` and nesting as written.
+  itBundled("css-module/SecondTypeSelectorFromLocalOrGlobalArgument", {
+    target: "bun",
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        div:global(span) { z-index: 1 }
+        a:global(b.c) { z-index: 2 }
+        .x:global(div):global(span.d) { z-index: 3 }
+        div:local(svg|rect.e .f) { z-index: 4 }
+        .p1 { &:global(div) { z-index: 5 } }
+        .p2 { .q:global(&div) { z-index: 6 } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css } = readScoped(api, "x");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          div:is(span) { z-index: 1; }
+          a:is(b).c { z-index: 2; }
+          div.x_HASH:is(span).d { z-index: 3; }
+          div:is(svg|rect).e_HASH .f_HASH { z-index: 4; }
+          .p1_HASH { div& { z-index: 5; } }
+          .p2_HASH { div.q_HASH& { z-index: 6; } }
+        `),
+      );
+    },
+  });
+
+  // Everything that reads a selector sees the argument, not a wrapper: `&`
+  // and `:is()` get the type selector and the combinator of the argument, and
+  // a pseudo-class in the argument is compiled for the browser targets.
+  itBundled("css-module/LocalOrGlobalArgumentIsReadLikeTheRestOfTheSelector", {
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        :global(div.a) { .q1& { z-index: 1 } }
+        :global(.a .b) { .q2& { z-index: 2 } }
+        .x3:is(:global(.a .b), .c3) { z-index: 3 }
+        .x4:is(:global(div.a)) { z-index: 4 }
+        :global(.m) { &:global(div) { z-index: 5 } }
+        .p6 { .q6:global(div) & { z-index: 6 } }
+        :global(.n:not(.o, .p)) { z-index: 7 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css } = readScoped(api, "q1");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .q1_HASH:is(div.a) { z-index: 1; }
+          .q2_HASH:is(.a .b) { z-index: 2; }
+          .x3_HASH:is(.a .b, .c3_HASH) { z-index: 3; }
+          .x4_HASH:-webkit-any(div.a) { z-index: 4; }
+          .x4_HASH:-moz-any(div.a) { z-index: 4; }
+          .x4_HASH:is(div.a) { z-index: 4; }
+          div.m { z-index: 5; }
+          div.q6_HASH .p6_HASH { z-index: 6; }
+          .n:not(:-webkit-any(.o, .p)) { z-index: 7; }
+          .n:not(:-moz-any(.o, .p)) { z-index: 7; }
+          .n:not(:is(.o, .p)) { z-index: 7; }
+        `),
+      );
+    },
+  });
+
+  // The argument joins its holder in every place that takes a selector.
+  itBundled("css-module/TypeSelectorOfArgumentInEverySelectorContext", {
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        .x1:where(.y1:global(div), .z1) { z-index: 1 }
+        .x2:not(.y2:global(div)) { z-index: 2 }
+        .x3:has(> .y3:global(div)) { z-index: 3 }
+        .x4:nth-child(2 of .y4:global(div)) { z-index: 4 }
+        :host(.y5:global(div)) { z-index: 5 }
+        ::slotted(.y6:global(div)) { z-index: 6 }
+        video::cue(.y7:global(b)) { z-index: 7 }
+        @scope (.y8:global(div)) to (.z8:global(span)) { .w8 { z-index: 8 } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css } = readScoped(api, "x1");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .x1_HASH:where(div.y1_HASH, .z1_HASH) { z-index: 1; }
+          .x2_HASH:not(div.y2_HASH) { z-index: 2; }
+          .x3_HASH:has( > div.y3_HASH) { z-index: 3; }
+          .x4_HASH:nth-child(2 of div.y4_HASH) { z-index: 4; }
+          :host(div.y5_HASH) { z-index: 5; }
+          ::slotted(div.y6_HASH) { z-index: 6; }
+          video::cue(b.y7_HASH) { z-index: 7; }
+          @scope (div.y8_HASH) to (span.z8_HASH) {
+            .w8_HASH { z-index: 8; }
+          }
+        `),
+      );
+    },
+  });
+
+  // `:local(.name)` is the single class `.name`, so `composes` works in its
+  // rule. A state pseudo-class can follow a pseudo-element, so `:global()`
+  // with one can too.
+  itBundled("css-module/LocalOrGlobalArgumentWhereOnlyASimpleSelectorFits", {
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        .base { color: red }
+        :local(.composed) { composes: base; color: blue }
+        .x::before:global(:hover) { color: green }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css, js } = readScoped(api, "base");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .base_HASH { color: red; }
+          .composed_HASH { color: #00f; }
+          .x_HASH:before:hover { color: green; }
+        `),
+      );
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          base: "base_HASH",
+          composed: "base_HASH composed_HASH",
+          x: "x_HASH"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+      `);
+    },
+  });
+
+  // A selector made only of `:global(...)` arguments has no local name, so it
+  // must print exactly like the same selector in a plain stylesheet. `Z` is
+  // the number of the rule.
+  const globalOnly: [module: string, plain: string][] = [
+    [":global(.x):global(div.a)", "div.x.a"],
+    [":global(.x):global(*|*)", "*|*.x"],
+    [":global(#i):global(div):global(.a)", "div#i.a"],
+    [":global(div):global(span)", "div:is(span)"],
+    [":global(.x):global(.a .b):hover", ".x.a .b:hover"],
+    [":global(.x):global(.a::before):hover", ".x.a::before:hover"],
+    [":global(.a), :global(.b)", ".a, .b"],
+    [":global(.a) :global(.c), :global(.b)", ".a .c, .b"],
+    [":global(.a:focus-visible), :global(.b)", ".a:focus-visible, .b"],
+    [":global(.x):is(:global(div.a))", ".x:is(div.a)"],
+    [":global(.x):is(:global(.a .b), :global(.c))", ".x:is(.a .b, .c)"],
+    [":global(.x):not(:global(div.a), :global(.b))", ".x:not(div.a, .b)"],
+    [":global(.x):has(> :global(div.a))", ".x:has(> div.a)"],
+    [":global(.x):nth-child(2n of :global(.y):global(div))", ".x:nth-child(2n of div.y)"],
+    [":global(.a:dir(rtl))", ".a:dir(rtl)"],
+    [":global(.a:lang(en, fr))", ".a:lang(en, fr)"],
+    [":global(.a:any-link)", ".a:any-link"],
+    [":global(input::placeholder)", "input::placeholder"],
+    [":global(div.a) { :global(.q)& { z-index: Z } }", "div.a { .q& { z-index: Z } }"],
+    [":global(.a .b) { :global(.q)& { z-index: Z } }", ".a .b { .q& { z-index: Z } }"],
+    [":global(.a) { :global(.q):global(&div) { z-index: Z } }", ".a { div.q& { z-index: Z } }"],
+  ];
+  const numbered = (rules: string[]) =>
+    rules.map((rule, i) => (rule.includes("{") ? rule : `${rule} { z-index: Z }`).replace("Z", String(i))).join("\n");
+  itBundled("css-module/GlobalOnlySelectorPrintsLikePlainCss", {
+    files: {
+      "/entry.js": `
+        import './styles.module.css';
+        import './plain.css';
+      `,
+      "/styles.module.css": numbered(globalOnly.map(([module]) => module)),
+      "/plain.css": numbered(globalOnly.map(([, plain]) => plain)),
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const [, module, plain] = css.split(/\/\* (?:styles\.module|plain)\.css \*\/\n/);
+      expect(module.trim().split("\n\n")).toEqual(plain.trim().split("\n\n"));
+    },
+  });
+
+  // The argument is parsed as a part of the holder, so it can hold only what
+  // the holder can hold at that point. Only a state pseudo-class can follow a
+  // pseudo-element, with or without the wrapper.
+  for (const [name, selector] of [
+    ["ClassAfterPseudoElementInGlobal", ".x:global(.a::before).b"],
+    ["CombinatorAfterPseudoElementInGlobal", ".x:global(.a::before) .c"],
+    ["ClassInGlobalAfterPseudoElement", ".x::before:global(.a)"],
+  ]) {
+    itBundled(`css-module/${name}`, {
+      files: {
+        "/entry.js": printsStyles,
+        "/styles.module.css": `${selector} { color: red }`,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      bundleErrors: {
+        "/styles.module.css": ["Invalid selector. Unexpected selector after pseudo-element: ."],
+      },
+    });
+  }
 
   itBundled("css-module/OnlyGlobalSelectorsExportsNothing", {
     files: {
@@ -1174,6 +1455,35 @@ test("css-module/NoBundleLocalInsideGlobal", async () => {
       .a .b_HASH { color: green; }
       ::view-transition-group(hero) { color: #00f; }
       ::view-transition-group(hero_HASH.fade_HASH) { color: pink; }
+    `),
+  );
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// `bun build --no-bundle` parses the module with the same selector parser, so
+// the argument of `:local(...)` or `:global(...)` joins its selector there too.
+test("css-module/NoBundleLocalOrGlobalArgumentJoinsTheSelector", async () => {
+  using dir = tempDir("css-module-no-bundle-join", {
+    "styles.module.css": `
+      .x:global(div.a) { z-index: 1 }
+      :global(.b), .c { z-index: 2 }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "styles.module.css"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const hash = stdout.match(/\.x_([A-Za-z0-9_-]+)/)?.[1];
+  expect(hash, ".x should be scoped").toBeString();
+  expect(oneLine(stdout.replaceAll(`_${hash}`, "_HASH"))).toBe(
+    oneLine(`
+      div.x_HASH.a { z-index: 1; }
+      .b, .c_HASH { z-index: 2; }
     `),
   );
   expect(stderr).toBe("");

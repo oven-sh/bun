@@ -774,6 +774,9 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
             SimpleSelectorParseResult::SimpleSelector(s) => {
                 builder.push_simple_selector(s);
             }
+            SimpleSelectorParseResult::ScopeArgument(argument) => {
+                builder.splice_selector(argument);
+            }
             SimpleSelectorParseResult::PartPseudo(selector) => {
                 state.insert(SelectorParsingState::AFTER_PART);
                 builder.push_combinator(Combinator::Part);
@@ -866,8 +869,7 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
 pub use css::css_properties::text::Direction;
 
 /// A pseudo class.
-// `PartialEq` derive dropped — `Local`/`Global` carry
-// `Box<Selector>` and `CustomFunction` carries `TokenList`, neither of which
+// `PartialEq` derive dropped: `CustomFunction` carries `TokenList`, and that type never
 // implements `PartialEq`. Equality goes through `eql()` (CssEql protocol).
 #[derive(Clone, CssEql, CssHash)]
 pub enum PseudoClass {
@@ -992,18 +994,6 @@ pub enum PseudoClass {
     /// The [:autofill](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill) pseudo class.
     Autofill(css::VendorPrefix),
 
-    // CSS modules
-    /// The CSS modules :local() pseudo class.
-    Local {
-        /// A local selector.
-        selector: Box<Selector>,
-    },
-    /// The CSS modules :global() pseudo class.
-    Global {
-        /// A global selector.
-        selector: Box<Selector>,
-    },
-
     /// A [webkit scrollbar](https://webkit.org/blog/363/styling-scrollbars/) pseudo class.
     // https://webkit.org/blog/363/styling-scrollbars/
     WebkitScrollbar(WebKitScrollbarPseudoClass),
@@ -1049,12 +1039,10 @@ impl PseudoClass {
         // A buffered intermediate `Printer` would only matter for
         // length-dependent minification decisions made by callers (none
         // here), so write directly to `dest`.
-        serialize::serialize_pseudo_class(self, dest, None)
+        serialize::serialize_pseudo_class(self, dest)
     }
 
-    // eql / hash — provided by `#[derive(CssEql, CssHash)]` (variant-wise; the
-    // `Box<Selector>` arms recurse via the `CssEql for GenericSelector` impl
-    // below). `deep_clone` is `Clone` — the selector AST is global-alloc and
+    // eql / hash are derived. `deep_clone` is `Clone`: the selector AST is global-alloc and
     // every borrowed payload (`Str`, `Ident.v`) is an arena-static identity copy.
     pub(crate) fn deep_clone(&self) -> Self {
         self.clone()
@@ -1308,6 +1296,16 @@ impl<'a> SelectorParser<'a> {
         }}
     }
 
+    /// The scope that `:local(...)` or `:global(...)` gives its argument in a CSS module.
+    fn css_module_scope(&self, name: &[u8]) -> Option<CssModuleScope> {
+        let in_module = self.options.css_modules.is_some();
+        crate::match_ignore_ascii_case! { name, {
+            b"local" if in_module => Some(CssModuleScope::Local),
+            b"global" if in_module => Some(CssModuleScope::Global),
+            _ => None,
+        }}
+    }
+
     pub(crate) fn parse_non_ts_pseudo_class(
         &mut self,
         loc: css::SourceLocation,
@@ -1344,7 +1342,6 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         parser: &mut CssParser,
-        state: &mut SelectorParsingState,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
@@ -1364,16 +1361,6 @@ impl<'a> SelectorParser<'a> {
             },
             b"dir" => PseudoClass::Dir {
                 direction: Direction::parse(parser)?,
-            },
-            b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
-                selector: Box::new(parser.with_css_module_scope(CssModuleScope::Local, |parser| {
-                    Selector::parse_inner(self, parser, state)
-                })?),
-            },
-            b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
-                selector: Box::new(parser.with_css_module_scope(CssModuleScope::Global, |parser| {
-                    Selector::parse_inner(self, parser, state)
-                })?),
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
@@ -1803,20 +1790,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
-    }
-
-    /// `&` in the parsed selector counts as `&` in the selector that holds it.
-    pub(crate) fn parse_inner(
-        parser: &mut SelectorParser,
-        input: &mut CssParser,
-        outer_state: &mut SelectorParsingState,
-    ) -> CResult<Self> {
-        let mut state = SelectorParsingState::empty();
-        let selector = parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)?;
-        if state.contains(SelectorParsingState::AFTER_NESTING) {
-            outer_state.insert(SelectorParsingState::AFTER_NESTING);
-        }
-        Ok(selector)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -2266,6 +2239,19 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// Returns true if this is a combinator.
     pub(crate) fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
+    }
+
+    /// Returns true if this is a type selector, a universal selector, or the namespace of one.
+    pub(crate) fn is_type_selector_part(&self) -> bool {
+        matches!(
+            self,
+            Self::ExplicitAnyNamespace
+                | Self::ExplicitNoNamespace
+                | Self::DefaultNamespace(_)
+                | Self::Namespace { .. }
+                | Self::ExplicitUniversalType
+                | Self::LocalName(_)
+        )
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
@@ -2892,6 +2878,8 @@ pub(crate) enum SimpleSelectorParseResult<Impl: SelectorImpl> {
     SlottedPseudo(GenericSelector<Impl>),
     // todo_stuff.think_mem_mgmt
     PartPseudo(Box<[Impl::Identifier]>),
+    /// The argument of `:local(...)` or `:global(...)` in a CSS module. It continues the selector.
+    ScopeArgument(GenericSelector<Impl>),
 }
 
 /// A pseudo element.
@@ -3357,6 +3345,14 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                 }
 
                 return Ok(Some(S::PseudoElement(pseudo_element)));
+            } else if is_functional && let Some(scope) = parser.css_module_scope(name) {
+                // The argument continues this selector, so it is parsed in this selector's state.
+                let argument = input.parse_nested_block(|input2: &mut CssParser| {
+                    input2.with_css_module_scope(scope, |input2| {
+                        parse_selector::<Impl>(parser, input2, state, NestingRequirement::None)
+                    })
+                })?;
+                return Ok(Some(S::ScopeArgument(argument)));
             } else {
                 let pseudo_class: GenericComponent<Impl> = if is_functional {
                     input.parse_nested_block(|input2: &mut CssParser| {
@@ -3651,7 +3647,7 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
 
-    let result = parser.parse_non_ts_functional_pseudo_class(name, input, state)?;
+    let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
 
     Ok(GenericComponent::NonTsPseudoClass(result))
 }

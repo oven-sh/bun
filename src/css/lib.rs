@@ -19,7 +19,7 @@ extern crate self as bun_css;
 /// crate::match_ignore_ascii_case! { unit, {
 ///     b"deg"                       => Ok(Angle::Deg(value)),
 ///     b"dppx" | b"x"               => Ok(Resolution::Dppx(value)),
-///     b"local" if mods.is_some()   => PseudoClass::Local { .. },
+///     b"local" if in_module        => Some(CssModuleScope::Local),
 ///     _                            => Err(location.new_unexpected_token_error(token)),
 /// }}
 /// ```

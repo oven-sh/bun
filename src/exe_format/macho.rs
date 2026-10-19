@@ -161,9 +161,11 @@ impl MachoFile {
                     // program's Info.plist.
                     return Err(MachoError::ForeignInfoPlist);
                 }
-                filled.get_or_insert((header, section, u64::from(section.reserved3)));
-            } else if section.sect_name() == SECT_INFO_PLIST_SLOT {
-                unused.get_or_insert((header, section, section.size));
+                if filled.is_none() {
+                    filled = Some((header, section, u64::from(section.reserved3)));
+                }
+            } else if section.sect_name() == SECT_INFO_PLIST_SLOT && unused.is_none() {
+                unused = Some((header, section, section.size));
             }
         }
         let Some((header, section, capacity)) = filled.or(unused) else {

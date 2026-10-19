@@ -1,4 +1,4 @@
-import { setSocketOptions, socketFaultInjection as fault } from "bun:internal-for-testing";
+import { socketFaultInjection as fault, setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";

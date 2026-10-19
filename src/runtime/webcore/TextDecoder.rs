@@ -8,7 +8,6 @@ use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 
 use jsc::StringJsc as _;
-use jsc::bun_string_jsc;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -235,8 +234,6 @@ impl TextDecoder {
         heap: &JsHeap<'a>,
         buffer_slice: &[u8],
     ) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
-        // SAFETY: it throws, and then nothing reads `self` or the bytes.
-        let global_this = unsafe { heap.global() };
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
@@ -305,11 +302,11 @@ impl TextDecoder {
                         }
 
                         debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
-                        return Err(bun_string_jsc::throw_utf16_transcode_failure(
-                            global_this,
-                            input,
-                        )
-                        .into());
+                        return Err(if bun_core::String::utf16_transcode_too_long(input) {
+                            heap.string_too_long()
+                        } else {
+                            heap.memory_allocation_failed()
+                        });
                     }
                 };
 
@@ -404,7 +401,7 @@ impl TextDecoder {
                             return Err(self.invalid_data(heap));
                         }
                         Err(strings::ToUTF16Error::OutOfMemory) => {
-                            return Err(global_this.throw_memory_allocation_failed().into());
+                            return Err(heap.memory_allocation_failed());
                         }
                     };
 

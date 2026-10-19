@@ -81,6 +81,9 @@ impl<'a> JsHeap<'a> {
         &self,
         utf16: Vec<u16>,
     ) -> Result<'a, JsLocal<'a, JSString>> {
+        if utf16.len() > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
         JsLocal::from_js_result(crate::bun_string_jsc::owned_utf16_into_js(
             self.global_object(),
             utf16,
@@ -177,6 +180,24 @@ impl<'a> JsHeap<'a> {
         self.error_with_code(
             ErrorCode::ILLEGAL_CONSTRUCTOR,
             format_args!("Illegal constructor"),
+        )
+    }
+
+    /// What [`JSGlobalObject::throw_string_too_long`] throws.
+    #[cold]
+    pub fn string_too_long(&self) -> Error<'a> {
+        self.error_with_code(
+            ErrorCode::STRING_TOO_LONG,
+            format_args!("Cannot create a string longer than 2147483647 characters"),
+        )
+    }
+
+    /// What [`JSGlobalObject::throw_memory_allocation_failed`] throws.
+    #[cold]
+    pub fn memory_allocation_failed(&self) -> Error<'a> {
+        self.error_with_code(
+            ErrorCode::MEMORY_ALLOCATION_FAILED,
+            format_args!("Failed to allocate memory"),
         )
     }
 }

@@ -333,7 +333,7 @@ fn run(args: &[String]) {
                 ends_the_process: true,
                 ..Default::default()
             };
-            bun_sema_driver::check_provided_then(&request, provided, |report| {
+            let report = bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
                     layout: if has("--plain") {
@@ -439,8 +439,9 @@ fn run(args: &[String]) {
                         }
                     }
                 }
-                std::process::exit(i32::from(!report.is_ok()));
-            })
+                report
+            });
+            std::process::exit(i32::from(!report.is_ok()));
         }
         // each --out=<directory> [--jobs=<n>] [--limit=<seconds>]: for thousands of small programs,
         // where launching a process costs more than checking. A line of standard input is a

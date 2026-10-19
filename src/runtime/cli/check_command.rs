@@ -242,15 +242,15 @@ struct Entries<'a> {
     conditions: &'a [Box<[u8]>],
 }
 
-fn run(
+fn run<R>(
     cwd: &[u8],
     project: Option<&[u8]>,
     paths: &Paths,
     compiler_options: &[CompilerOption],
     threads: usize,
     provided: Provided,
-    then: impl FnOnce(Report) -> Report,
-) -> Report {
+    then: impl FnOnce(Report) -> R,
+) -> R {
     // Only for an interactive user.
     if !Output::is_stderr_tty() || Output::is_ai_agent() {
         return run_quietly(
@@ -288,7 +288,7 @@ fn run(
     })
 }
 
-fn run_quietly(
+fn run_quietly<R>(
     cwd: &[u8],
     project: Option<&[u8]>,
     paths: &Paths,
@@ -296,8 +296,8 @@ fn run_quietly(
     threads: usize,
     progress: Option<&Progress>,
     provided: Provided,
-    then: impl FnOnce(Report) -> Report,
-) -> Report {
+    then: impl FnOnce(Report) -> R,
+) -> R {
     let request = request(cwd, project, paths, compiler_options, threads, progress);
     bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), then)
 }
@@ -451,30 +451,26 @@ impl CheckCommand {
 
     fn exec_with(options: &Options) -> ! {
         let (cwd, command_line) = (working_directory(), &options.command_line);
-        let report = run(
+        // The report is returned so that nothing drops it.
+        let (exit_code, _report) = run(
             &cwd,
             command_line.project.as_deref(),
             &Paths::Arguments(command_line),
             &command_line.compiler_options,
             options.threads,
-            // Only set here, because this function never returns.
+            // Only set here, because this function never returns. Under leak detection, everything is freed.
             Provided {
-                ends_the_process: true,
+                ends_the_process: !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES,
                 ..Default::default()
             },
-            // The process exits without freeing what was loaded. Under leak detection, everything
-            // is freed first.
-            |report| match bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
-                true => report,
-                false => report_and_exit(&report, options, &cwd),
-            },
+            |report| (print_report(&report, options, &cwd), report),
         );
-        report_and_exit(&report, options, &cwd)
+        Global::exit(u32::from(exit_code));
     }
 }
 
-/// Prints the report and exits the process.
-fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
+/// Prints the report. Returns the exit code.
+fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
     let shown_from = bun_sema_driver::host::from_native(cwd);
     // The errors are the output, as with `tsc`. The summary is printed separately.
     let mut out = Vec::new();
@@ -525,8 +521,7 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             );
         }
     }
-    let exit_code = super::lint_command::print(&out, &summary, u8::from(!report.is_ok()));
-    Global::exit(u32::from(exit_code));
+    super::lint_command::print(&out, &summary, u8::from(!report.is_ok()))
 }
 
 /// What is run.

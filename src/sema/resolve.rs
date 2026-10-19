@@ -215,6 +215,8 @@ pub trait Host: Sync {
     fn ends_the_process(&self, _has_a_run: bool) -> bool {
         false
     }
+    /// Takes the session of a program that is checked, if `ends_the_process`. Nothing refers to it anymore.
+    fn drop_before_the_process_ends(&self, _session: Session) {}
     /// Returns how many other threads a `parallel` call would use if it started now. `None` unless `parallel` also runs on
     /// the calling thread and the host's share of the threads changes over time.
     fn helpers_now(&self) -> Option<usize> {

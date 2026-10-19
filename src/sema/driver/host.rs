@@ -20,7 +20,7 @@ use bun_sema::resolve::{
     hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
-use bun_sema::session::Arena;
+use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
@@ -267,6 +267,8 @@ pub struct Disk {
     pub(crate) keeps_byte_order_marks: bool,
     /// `Provided::ends_the_process`
     pub(crate) ends_the_process: bool,
+    /// `Host::drop_before_the_process_ends`
+    pub(crate) to_drop_before_the_process_ends: bun_threading::Guarded<Vec<Session>>,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
     /// What is in `BUNDLED_LIBS`.
@@ -305,8 +307,8 @@ pub struct Provided {
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
-    /// The caller ends the process when it has the report, as `bun check` does. Never in a process that goes on, like one
-    /// that calls `Bun.build`, watches files or runs a program or tests after the check: see
+    /// The caller ends the process when `check_provided_then` returns, as `bun check` does. Never in a process that goes on,
+    /// like one that calls `Bun.build`, watches files or runs a program or tests after the check: see
     /// `Session::drop_before_the_process_ends`.
     pub ends_the_process: bool,
 }
@@ -498,6 +500,7 @@ impl Disk {
             },
             keeps_byte_order_marks: false,
             ends_the_process: false,
+            to_drop_before_the_process_ends: Default::default(),
             extended_configs: Default::default(),
             paths: Default::default(),
             caches: Default::default(),
@@ -1506,6 +1509,9 @@ impl Host for Disk {
     }
     fn ends_the_process(&self, has_a_run: bool) -> bool {
         self.ends_the_process && !has_a_run
+    }
+    fn drop_before_the_process_ends(&self, session: Session) {
+        self.to_drop_before_the_process_ends.lock().push(session);
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         // The threads that only read serve one load at a time.

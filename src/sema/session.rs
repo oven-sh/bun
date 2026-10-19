@@ -24,6 +24,7 @@ use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
+use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::thread::ThreadId;
@@ -110,19 +111,23 @@ impl Session {
         kept.downcast_ref().expect("it was boxed as a `T`")
     }
 
-    /// Drops the session right before the process exits. The arenas are destroyed in parallel, each thread preferring its
-    /// own, and their memory is returned to the OS immediately. Without this, a single thread unmaps everything at exit,
-    /// which costs about 70 ms per GB.
+    /// Returns the memory of `sessions` to the OS right before the process exits. The arenas are destroyed in parallel. Each
+    /// thread prefers its own, and then also returns the free pages that the allocator retains for it. Without this, a
+    /// single thread unmaps everything at exit, which costs about 70 ms per GB.
+    /// What `keep` took over is not dropped.
     /// `in_parallel(n, f)` must call `f(i)` for every `i < n`, on any number of threads.
     pub fn drop_before_the_process_ends(
-        mut self,
-        in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync)),
+        sessions: Vec<Session>,
+        in_parallel: impl FnOnce(usize, &(dyn Fn(usize) + Sync)),
     ) {
         let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
-        let mut next = self.first.take();
-        while let Some(mut node) = next {
-            next = node.next.take();
-            arenas.push(node);
+        for mut session in sessions {
+            let mut next = session.first.take();
+            while let Some(mut node) = next {
+                next = node.next.take();
+                arenas.push(node);
+            }
+            let _not_dropped = ManuallyDrop::new(session);
         }
         // Make mimalloc return freed pages right away instead of caching them for reuse.
         bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::purge_delay, 0);
@@ -134,6 +139,9 @@ impl Session {
             let one = left.swap_remove(own.unwrap_or(0));
             drop(left);
             drop(one);
+            if own.is_some() {
+                bun_alloc::mimalloc::mi_collect(true);
+            }
         });
     }
 

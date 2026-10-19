@@ -1335,13 +1335,14 @@ fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {
 }
 
 /// Runs the check that `request` describes. Each program is freed with its `Session` as soon as it
-/// has been checked. If `then` returns, the caches of the threads are dropped too, and the free
+/// has been checked. When `then` has returned, the caches of the threads are dropped too, and the free
 /// memory is returned to the system.
 pub fn check_then<R>(request: &Request, then: impl FnOnce(Report) -> R) -> R {
     check_provided_then(request, host::Provided::default(), then)
 }
 
 /// `check_then`, for a caller that has read some of the files, or that watches them.
+/// With `Provided::ends_the_process`, the other threads free the last program while `then` runs, and nothing else is freed.
 pub fn check_provided_then<R>(
     request: &Request,
     provided: host::Provided,
@@ -1375,10 +1376,26 @@ pub fn check_provided_then<R>(
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
-    let mut report = check_request(&disk, request);
-    report.is_case_sensitive = disk.is_case_sensitive();
-    report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
-    report.not_installed = dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
+    let report = check_request(&disk, request);
+    let then = |mut report: Report| {
+        report.is_case_sensitive = disk.is_case_sensitive();
+        report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
+        report.not_installed =
+            dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
+        then(report)
+    };
+    if disk.ends_the_process {
+        let sessions = std::mem::take(&mut *disk.to_drop_before_the_process_ends.lock());
+        let (mut then, mut result) = (Some((then, report)), None);
+        Session::drop_before_the_process_ends(sessions, |count, work| {
+            disk.parallel_while(count, work, &mut || {
+                result = then.take().map(|(then, report)| then(report));
+            });
+        });
+        let _not_dropped = std::mem::ManuallyDrop::new(lent);
+        let _not_dropped = std::mem::ManuallyDrop::new(disk);
+        return result.expect("`parallel_while` has called it");
+    }
     let result = then(report);
     drop(lent);
     disk.caches.idle.lock().clear();
@@ -2871,6 +2888,9 @@ impl Host for WithOutputs<'_> {
     fn ends_the_process(&self, _: bool) -> bool {
         self.is_last_of_the_process
     }
+    fn drop_before_the_process_ends(&self, session: Session) {
+        self.disk.drop_before_the_process_ends(session);
+    }
     fn helpers_now(&self) -> Option<usize> {
         self.built_now.map(|built_now| self.helpers(built_now))
     }
@@ -2895,7 +2915,7 @@ impl Host for WithOutputs<'_> {
     }
 }
 
-/// A session that's dropped on all threads if the process is about to exit.
+/// A session that's dropped on all threads, while the report is printed, if the process is about to exit.
 struct Dropped<'a> {
     session: Session,
     /// `None` if the process keeps running or the request has more programs.
@@ -2905,8 +2925,7 @@ struct Dropped<'a> {
 impl Drop for Dropped<'_> {
     fn drop(&mut self) {
         if let Some(host) = self.before_the_process_ends.get() {
-            let session = std::mem::take(&mut self.session);
-            session.drop_before_the_process_ends(&|count, work| host.parallel(count, work));
+            host.drop_before_the_process_ends(std::mem::take(&mut self.session));
         }
     }
 }

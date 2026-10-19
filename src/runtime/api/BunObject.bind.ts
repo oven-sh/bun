@@ -35,6 +35,8 @@ export const ZlibCompressionOptions = b.dictionary(
     windowBits: b.f64.loose.allowBigInt.optional,
     library: b.string.utf8.nullable,
     level: b.f64.loose.allowBigInt.optional,
+    memLevel: b.i32.validateInteger(1, 9).default(8),
+    strategy: b.i32.validateInteger(0, 4).default(0),
   },
   { allowArray: true },
 );

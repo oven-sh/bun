@@ -1399,7 +1399,7 @@ impl<'s> Checker<'_, 's> {
     /// statement, its `VariableDeclarationList`.
     pub(super) fn start_after_modifiers(&self, file: FileId, s: StmtId) -> u32 {
         let hir = self.hir(file);
-        let Some(last) = hir.modifier_list(hir[s].modifiers).last() else {
+        let Some(last) = hir.modifier_list(hir.stmt_modifiers(s)).last() else {
             return hir[s].start;
         };
         let end = match last.kind {

@@ -24,9 +24,8 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // target, a few crates and modules switch those lints off for other reasons (bun_core, bun_alloc, bun_sys),
 // and none of the three lints sees a hand-written `impl Default for`. This file closes those gaps by text.
 //
-// A call like `Foo::default()` is not matched here: a type can have an inherent function of that name.
-// With no `Default` impl in the tree, that spelling can only reach an inherent function or a type of
-// another crate, and clippy reports the latter.
+// A call `Foo::default()` is reported unless `Foo` has a function of that name of its own in these sources
+// (the CSS value types do). Otherwise it can only be the trait, on a type of std or of another crate.
 
 // file -> lines that may stay, each with its reason.
 const ALLOWED: Record<string, { line: RegExp; why: string }[]> = {
@@ -36,7 +35,22 @@ const ALLOWED: Record<string, { line: RegExp; why: string }[]> = {
       why: "roxmltree::ParsingOptions is a type of another crate with no other constructor",
     },
   ],
+  "src/parsers/benches/json_parse.rs": [
+    { line: /\bCriterion::default\(\)/, why: "criterion::Criterion has no other constructor" },
+  ],
+  "src/runtime/api/html_rewriter.rs": [
+    {
+      line: /^\s*lol_html::(?:Element|Document)ContentHandlers::default\(\);$/,
+      why: "lol_html gives these types no other constructor",
+    },
+  ],
+  "src/runtime/crypto/CryptoHasher.rs": [
+    { line: /^\s*<\$ty>::default\(\)$/, why: "RustCrypto gives a hash state no other constructor" },
+  ],
 };
+
+// Types of other crates whose `default()` is a function of their own, not the trait.
+const OWN_DEFAULT_ELSEWHERE = new Set(["FxHasher"]);
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
@@ -73,7 +87,16 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ],
 ];
 
-const found: string[] = [];
+// `impl .. Foo<..> {` and `impl .. Trait for Foo<..> {`: the indentation and the name of the type.
+const IMPL =
+  /^([ \t]*)(?:unsafe\s+)?impl\b(?:\s*<[^{};]*?>)?\s+(?:[^{};]*?\bfor\s+)?(?:[A-Za-z_][A-Za-z0-9_]*::)*(\$?[A-Za-z_][A-Za-z0-9_]*)[^{};]*\{/gm;
+const FN_DEFAULT = /^([ \t]*)(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?fn\s+default\b/gm;
+// `Foo::default(`, `Foo::<T>::default(`, and `<X as Y>::default(` (no name).
+const CALL = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:::\s*<[^;{}()]*?>\s*)?|>\s*)::\s*default\s*\(/g;
+
+const sources: { source: string; text: string; code: string | null }[] = [];
+// The types that have a `default` function of their own.
+const ownDefault = new Set(["Self", ...OWN_DEFAULT_ELSEWHERE]);
 let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
@@ -83,17 +106,35 @@ for (const abs of rustSources) {
   const text = await file(abs).text();
   scanned++;
   // Most files have no match at all, also not in a comment. Only the others pay for the mask.
-  if (!PATTERNS.some(([, re]) => text.search(re) >= 0)) continue;
-  const code = codeOnly(text);
+  if (!text.includes("default") && !text.includes("Default")) continue;
+  const code =
+    text.search(FN_DEFAULT) >= 0 || text.search(CALL) >= 0 || PATTERNS.some(([, re]) => text.search(re) >= 0)
+      ? codeOnly(text)
+      : null;
+  sources.push({ source, text, code });
+  if (code === null) continue;
+  const impls = [...code.matchAll(IMPL)];
+  for (const fn of code.matchAll(FN_DEFAULT)) {
+    const around = impls.findLast(it => it.index < fn.index && it[1].length < fn[1].length);
+    if (around) ownDefault.add(around[2]);
+  }
+}
+
+const found: string[] = [];
+for (const { source, text, code } of sources) {
+  if (code === null) continue;
   const lines = text.split("\n");
   const allowed = ALLOWED[source] ?? [];
+  const report = (name: string, index: number) => {
+    const lineNo = code.slice(0, index).split("\n").length;
+    const line = lines[lineNo - 1];
+    if (!allowed.some(a => a.line.test(line))) found.push(`${source}:${lineNo}: ${name}: ${line.trim()}`);
+  };
   for (const [name, re] of PATTERNS) {
-    for (const m of code.matchAll(re)) {
-      const lineNo = code.slice(0, m.index).split("\n").length;
-      const line = lines[lineNo - 1];
-      if (allowed.some(a => a.line.test(line))) continue;
-      found.push(`${source}:${lineNo}: ${name}: ${line.trim()}`);
-    }
+    for (const m of code.matchAll(re)) report(name, m.index);
+  }
+  for (const m of code.matchAll(CALL)) {
+    if (m[1] === undefined || !ownDefault.has(m[1])) report("a call of Default::default", m.index);
   }
 }
 

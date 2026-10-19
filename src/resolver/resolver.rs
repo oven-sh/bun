@@ -515,7 +515,7 @@ pub struct Resolver<'a> {
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
-    // set (e.g. bake/production.rs assigns this then calls `configure_defines()`
+    // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
@@ -2932,9 +2932,9 @@ impl<'a> Resolver<'a> {
                             crate::Error::SecurityScannerConfigured => {
                                 Some("a security scanner is configured")
                             }
-                            crate::Error::UnreadableConfig => Some(
-                                "a package.json, bunfig.toml or .npmrc cannot be read or parsed",
-                            ),
+                            crate::Error::UnreadableConfig => {
+                                Some("a package.json or bunfig.toml cannot be read or parsed")
+                            }
                             _ => None,
                         };
                         let log = self.log_mut();

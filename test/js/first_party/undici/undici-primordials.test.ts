@@ -71,6 +71,7 @@ it("undici", () => {
     "interceptors",
     "mockErrors",
     "parseMIMEType",
+    "ping",
     "pipeline",
     "request",
     "serializeAMimeType",

@@ -77,6 +77,8 @@ pub(crate) enum Doc<'a> {
     LineSuffixBoundary,
     BreakParent,
     Line(Line),
+    /// Stops later line breaks from trimming the spaces and tabs printed before it. Prettier has no equivalent.
+    KeepBlanks,
 }
 
 impl<'a> Doc<'a> {
@@ -98,7 +100,11 @@ impl<'a> Doc<'a> {
         let mut take = |contents: &mut Doc<'a>| {
             if !matches!(
                 contents,
-                Doc::Text(_) | Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_)
+                Doc::Text(_)
+                    | Doc::LineSuffixBoundary
+                    | Doc::BreakParent
+                    | Doc::Line(_)
+                    | Doc::KeepBlanks
             ) {
                 rest.push(contents.take());
             }
@@ -120,7 +126,11 @@ impl<'a> Doc<'a> {
                 take(break_contents);
                 take(flat_contents);
             }
-            Doc::Text(_) | Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => {}
+            Doc::Text(_)
+            | Doc::LineSuffixBoundary
+            | Doc::BreakParent
+            | Doc::Line(_)
+            | Doc::KeepBlanks => {}
         }
     }
 }
@@ -329,9 +339,11 @@ fn clean<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
                 _ => Doc::Array(cleaned),
             }
         }
-        leaf @ (Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => {
-            leaf.take()
-        }
+        leaf @ (Doc::Text(_)
+        | Doc::Line(_)
+        | Doc::LineSuffixBoundary
+        | Doc::BreakParent
+        | Doc::KeepBlanks) => leaf.take(),
     }
 }
 
@@ -377,7 +389,8 @@ fn strip_trailing_hardline<'a>(mut doc: Doc<'a>, stack: &Stack) -> Doc<'a> {
         | Doc::MarkAsRoot(_)
         | Doc::Line(_)
         | Doc::LineSuffixBoundary
-        | Doc::BreakParent => {}
+        | Doc::BreakParent
+        | Doc::KeepBlanks => {}
     }
     doc
 }
@@ -422,8 +435,7 @@ enum Element {
     LineSuffixBoundary,
     /// What has been taken out.
     Nothing,
-    /// The blanks at the end of what has been written stay, whatever follows. Prettier has no word for it, so neither
-    /// has a tree.
+    /// `Doc::KeepBlanks`
     KeepBlanks,
     /// A group with nothing but text in it, which follows. To come to a group is all that it does to the printer, so it
     /// has no end.
@@ -971,6 +983,7 @@ impl Elements {
             Doc::LineSuffixBoundary => self.line_suffix_boundary(),
             Doc::BreakParent => self.break_parent(),
             Doc::Line(line) => self.line(*line),
+            Doc::KeepBlanks => self.keep_blanks(),
         }
     }
 
@@ -1006,6 +1019,7 @@ impl Elements {
                 Element::BreakParent => Doc::BreakParent,
                 Element::Line(line) => Doc::Line(line),
                 Element::LineSuffixBoundary => Doc::LineSuffixBoundary,
+                Element::KeepBlanks => Doc::KeepBlanks,
                 Element::TextGroup => match self.list.get(*at) {
                     Some(&Element::Text { start, len, .. }) if *at < end => {
                         *at += 1;
@@ -1059,7 +1073,6 @@ impl Elements {
                 }
                 Element::StartLineSuffix { end } => Doc::LineSuffix(contents(at, end)),
                 Element::Nothing
-                | Element::KeepBlanks
                 | Element::End
                 | Element::EndFill
                 | Element::StartItem { .. }

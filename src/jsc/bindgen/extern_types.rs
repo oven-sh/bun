@@ -3,7 +3,7 @@
 use core::ffi::{c_uint, c_void};
 
 use super::JsHeap;
-use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use crate::{JSGlobalObject, JSValue};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
 pub type ExternString = *mut bun_core::WTFStringImplStruct;
@@ -83,7 +83,7 @@ impl<T: Copy> ExternVector<T> {
     }
 }
 
-/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns.
+/// Bytes in the C++ host function's frame, or in a JS value that frame keeps alive, until it returns. Another thread can write those of a shared buffer.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternBytes {
@@ -118,10 +118,8 @@ pub struct ExternWithValue<T: Copy> {
 }
 
 unsafe extern "C" {
-    pub(super) fn Bun__Bindgen__constructArray(
-        global: *mut JSGlobalObject,
-        values: *mut MarkedArgumentBuffer,
-    ) -> JSValue;
+    /// `value` is a `BufferSource` or a `Blob` whose bytes are in memory.
+    pub(super) safe fn Bun__Bindgen__bytesOfBlobOrBuffer(value: JSValue) -> ExternBytes;
     pub(super) fn Bun__Bindgen__constructArrayFromValues(
         global: *mut JSGlobalObject,
         values: *const JSValue,

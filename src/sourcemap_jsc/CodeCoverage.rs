@@ -698,7 +698,7 @@ fn thread_map() -> *mut ByteRangeMappingHashMap {
         // concurrently on this thread while we hold this exclusive borrow.
         let slot = unsafe { &mut *cell.get() };
         if slot.is_none() {
-            *slot = Some(Box::new(ByteRangeMappingHashMap::init()));
+            *slot = Some(Box::new(ByteRangeMappingHashMap::new()));
         }
         // SAFETY: just ensured Some above; Box deref gives stable address.
         &raw mut **slot.as_mut().unwrap()

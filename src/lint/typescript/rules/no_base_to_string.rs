@@ -63,13 +63,13 @@ impl<'a> Walk<'a> {
     fn new() -> Self {
         Self {
             visited: SmallVec::new(),
-            is_always: IdMap::init(),
+            is_always: IdMap::new(),
             assumed: None,
             pending: Vec::new(),
             looked_into: None,
             come_across: Vec::new(),
             found_other: false,
-            known: IdMap::init(),
+            known: IdMap::new(),
             first_revisited: None,
             was_cut_off: false,
         }
@@ -89,8 +89,8 @@ impl<'a> Certainties<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            known: core::array::from_fn(|_| IdMap::init()),
-            resolving: IdSet::init(),
+            known: core::array::from_fn(|_| IdMap::new()),
+            resolving: IdSet::new(),
         }
     }
 }

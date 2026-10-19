@@ -557,7 +557,7 @@ impl<'s> Namer<'s> {
         taken.dedup();
         Namer {
             arenas: [arena_o, arena_n],
-            weights: bun_collections::HashMap::init(),
+            weights: bun_collections::HashMap::new(),
             too_deep: false,
             all_names: false,
             profiles: [Vec::new(), Vec::new()],

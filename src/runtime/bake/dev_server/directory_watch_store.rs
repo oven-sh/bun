@@ -25,7 +25,7 @@ impl DirectoryWatchStore {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            watches: StringArrayHashMap::init(),
+            watches: StringArrayHashMap::new(),
             dependencies: Vec::new(),
             dependencies_free_list: Vec::new(),
         }

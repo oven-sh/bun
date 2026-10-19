@@ -84,8 +84,8 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            in_objects: IdMap::init(),
-            in_lists: IdMap::init(),
+            in_objects: IdMap::new(),
+            in_lists: IdMap::new(),
         }
     }
 }

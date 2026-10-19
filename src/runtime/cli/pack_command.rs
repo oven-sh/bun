@@ -325,7 +325,7 @@ impl PackQueue {
     pub(crate) fn new() -> Self {
         Self {
             heap: std::collections::BinaryHeap::new(),
-            seen: StringHashMap::init(),
+            seen: StringHashMap::new(),
         }
     }
 }
@@ -637,7 +637,7 @@ impl Bundle {
     fn new() -> Self {
         Self {
             packages: Vec::new(),
-            placed: StringHashMap::init(),
+            placed: StringHashMap::new(),
             pending: Vec::new(),
             files: Vec::new(),
             project_path: Box::new([]),
@@ -1557,7 +1557,7 @@ pub(crate) fn drop_shadowed_properties(json: Expr) {
     let ExprData::EObject(mut object) = json.data else {
         return;
     };
-    let mut seen: StringHashMap<()> = StringHashMap::init();
+    let mut seen: StringHashMap<()> = StringHashMap::new();
     // Built from the last property to the first, so that `pop` returns the flags in property order.
     let mut is_last: Vec<bool> = (object.properties.slice().iter().rev())
         .map(|property| {

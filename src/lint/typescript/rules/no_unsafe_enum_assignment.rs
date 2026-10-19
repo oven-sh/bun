@@ -62,12 +62,12 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            checked_nodes: IdSet::init(),
+            checked_nodes: IdSet::new(),
             pending: Vec::new(),
             is_about_itself: false,
             about_themselves: Vec::new(),
             types: TypeCache::new(),
-            descriptions: IdMap::init(),
+            descriptions: IdMap::new(),
         }
     }
 }
@@ -133,7 +133,7 @@ impl<'a> TypeCache<'a> {
     #[inline]
     fn new() -> Self {
         Self {
-            generic_types: IdMap::init(),
+            generic_types: IdMap::new(),
             top_level_mismatches: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             visited: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
         }

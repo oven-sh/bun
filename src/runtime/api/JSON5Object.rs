@@ -132,7 +132,7 @@ impl Stringifier {
             builder: wtf::StringBuilder::init(),
             indent: 0,
             space: Space::init(global, space_value)?,
-            visiting: HashMap::init(),
+            visiting: HashMap::new(),
         })
     }
 

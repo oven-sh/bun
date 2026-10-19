@@ -140,7 +140,7 @@ static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::Racy
 fn cache() -> &'static mut StringHashMap<Record> {
     // SAFETY: HTTP-thread only; lazy init cannot race. Every call site is a
     // per-statement reborrow (audited in r3); no two `&mut` overlap.
-    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::init) }
+    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::new) }
 }
 
 /// Hard cap on cached origins. When reached, `record()` first sweeps expired

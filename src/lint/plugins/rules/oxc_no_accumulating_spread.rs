@@ -31,7 +31,7 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            first_assignments: IdMap::init(),
+            first_assignments: IdMap::new(),
             in_reduce_or_loop: AncestorMemo::new(),
             in_loops: Vec::new(),
         }

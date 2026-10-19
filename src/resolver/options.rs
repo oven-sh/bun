@@ -29,8 +29,8 @@ impl ExternalModules {
     pub fn new() -> Self {
         Self {
             patterns: Vec::new(),
-            abs_paths: StringSet::empty(),
-            node_modules: StringSet::empty(),
+            abs_paths: StringSet::new(),
+            node_modules: StringSet::new(),
         }
     }
 }

@@ -28,7 +28,7 @@ pub struct PathToSourceIndexMap {
 impl PathToSourceIndexMap {
     #[inline]
     pub fn new() -> Self {
-        Self { map: Map::init() }
+        Self { map: Map::new() }
     }
 }
 

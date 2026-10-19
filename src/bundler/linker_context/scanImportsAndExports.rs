@@ -444,7 +444,7 @@ pub(crate) fn scan_imports_and_exports(
                     import_records: &*import_records_list,
                     exports_kind: &mut *exports_kind,
                     entry_point_kinds: &*entry_point_kinds,
-                    export_star_map: HashMap::init(),
+                    export_star_map: HashMap::new(),
                     export_star_records: &*export_star_import_records,
                     output_format,
                     wrap_stack: Vec::new(),
@@ -560,7 +560,7 @@ pub(crate) fn scan_imports_and_exports(
         {
             this.cycle_detector.clear();
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
-            let mut member_resolutions = crate::linker_context_mod::ImportMemberResolutions::init();
+            let mut member_resolutions = crate::linker_context_mod::ImportMemberResolutions::new();
             for source_index_ in &reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -1982,7 +1982,7 @@ mod __css_validation {
         let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
             visited: ArrayHashMap::<bun_ast::Ref, ()>::new(),
-            properties: StringArrayHashMap::<PropertyInFile>::init(),
+            properties: StringArrayHashMap::<PropertyInFile>::new(),
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,

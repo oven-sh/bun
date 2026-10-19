@@ -2364,7 +2364,7 @@ impl<AtRule> StyleSheet<AtRule> {
             css_modules: None,
             flags: ParserFlags::empty(),
             layer_names: Vec::new(),
-            local_scope: LocalScope::init(),
+            local_scope: LocalScope::new(),
             local_properties: LocalPropertyUsage::new(),
             composes: ComposesMap::new(),
         }
@@ -2604,7 +2604,7 @@ mod stylesheet_impl {
             // and drop the `'static` bound on `arena`.
             let mut composes = ComposesMap::new();
             let mut parser_extra = ParserExtra {
-                local_scope: LocalScope::init(),
+                local_scope: LocalScope::new(),
                 symbols: Vec::new(),
                 source_index,
             };
@@ -2705,7 +2705,7 @@ mod stylesheet_impl {
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
             let mut parser_extra = ParserExtra {
-                local_scope: LocalScope::init(),
+                local_scope: LocalScope::new(),
                 symbols: Vec::new(),
                 source_index,
             };

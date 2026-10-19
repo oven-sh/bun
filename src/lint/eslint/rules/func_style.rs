@@ -39,7 +39,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             candidates: Vec::new(),
-            with_this_or_super: IdSet::init(),
+            with_this_or_super: IdSet::new(),
             functions: AncestorMemo::new(),
             overloads: None,
         }

@@ -176,7 +176,7 @@ impl<'a> LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: ArrayHashMap::new(),
-            cross_chunk_names: HashMap::init(),
+            cross_chunk_names: HashMap::new(),
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
@@ -4584,7 +4584,7 @@ impl<'a> LinkerContext<'a> {
         });
 
         // Items of `ns.name()` left unbound, each with its `ns`.
-        let mut method_call_items: HashMap<Ref, Ref> = HashMap::init();
+        let mut method_call_items: HashMap<Ref, Ref> = HashMap::new();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4895,7 +4895,7 @@ impl<'a> LinkerContext<'a> {
                 // `name` points into `resolved_exports` keys, which outlive printing.
                 self.graph
                     .import_member_bindings
-                    .get_or_put_value(base, bun_collections::StringHashMap::init())
+                    .get_or_put_value(base, bun_collections::StringHashMap::new())
                     .expect("OOM")
                     .value_ptr
                     .put_static_key(name.slice(), resolved.r#ref)

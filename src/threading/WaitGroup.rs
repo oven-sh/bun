@@ -23,8 +23,8 @@ impl WaitGroup {
     pub fn new() -> Self {
         Self {
             raw_count: core::sync::atomic::AtomicUsize::new(0),
-            mutex: Mutex::init(),
-            cond: Condition::init(),
+            mutex: Mutex::new(),
+            cond: Condition::new(),
         }
     }
 }

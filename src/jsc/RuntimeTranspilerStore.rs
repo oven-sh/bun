@@ -767,7 +767,7 @@ impl TranspilerJob {
             || !unsafe { (*vm).has_any_macro_remappings }
             || is_node_override
         {
-            MacroRemap::init()
+            MacroRemap::new()
         } else {
             // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
             // has no nested `Clone` impl (the inherent `clone()` requires
@@ -775,7 +775,7 @@ impl TranspilerJob {
             // matching the build-command conversion (transpiler.rs:2616).
             // OOM during the
             // inner `clone()` must abort — never silently drop a remapping.
-            let mut m = MacroRemap::init();
+            let mut m = MacroRemap::new();
             for (k, v) in transpiler.options.macro_remap.iter() {
                 m.insert(k, bun_core::handle_oom(v.clone()));
             }
@@ -830,7 +830,7 @@ impl TranspilerJob {
             experimental_decorators: transpiler.options.experimental_decorators,
             use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,
-            replace_exports: bun_collections::StringArrayHashMap::init(),
+            replace_exports: bun_collections::StringArrayHashMap::new(),
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,

@@ -113,7 +113,7 @@ impl AWSSignatureCacheInner {
     #[inline]
     fn new() -> Self {
         Self {
-            cache: StringArrayHashMap::init(),
+            cache: StringArrayHashMap::new(),
             date: 0,
         }
     }

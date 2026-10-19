@@ -14,7 +14,7 @@ impl PackageManifestMap {
     #[inline]
     pub fn new() -> Self {
         Self {
-            hash_map: ManifestHashMap::init(),
+            hash_map: ManifestHashMap::new(),
         }
     }
 }

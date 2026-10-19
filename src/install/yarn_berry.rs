@@ -235,9 +235,9 @@ impl YarnRc {
     #[inline]
     fn new() -> Self {
         Self {
-            catalogs: StringArrayHashMap::init(),
+            catalogs: StringArrayHashMap::new(),
             registry: None,
-            scope_registries: StringArrayHashMap::init(),
+            scope_registries: StringArrayHashMap::new(),
             extensions: Vec::new(),
             transparent_workspaces: None,
         }
@@ -373,7 +373,7 @@ fn read_yarnrc_file(
             if !obj.is_object() {
                 return Ok(());
             }
-            let entry = out.catalogs.get_or_put(group, StringArrayHashMap::init)?;
+            let entry = out.catalogs.get_or_put(group, StringArrayHashMap::new)?;
             if !entry.found_existing {
                 *entry.value_ptr = StringArrayHashMap::new();
             }
@@ -573,7 +573,7 @@ impl OriginalSpecs {
     #[inline]
     fn new() -> Self {
         Self {
-            by_dependency: bun_collections::HashMap::init(),
+            by_dependency: bun_collections::HashMap::new(),
             in_several_groups: Vec::new(),
         }
     }
@@ -1021,7 +1021,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
     let mut stacked: Vec<(Vec<u8>, usize, Vec<u8>)> = Vec::new(); // ("name@version", files, the first)
     let mut patched_packages: bun_collections::HashMap<PackageID, ()> =
-        bun_collections::HashMap::init();
+        bun_collections::HashMap::new();
     let mut pending: Vec<usize> = (0..entries.len())
         .filter(|&i| entries[i].kind == EntryKind::Patch)
         .collect();

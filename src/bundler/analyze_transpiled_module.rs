@@ -487,7 +487,7 @@ impl ModuleInfoSlotTableBuilder {
     #[inline]
     pub fn new() -> Self {
         Self {
-            ids: bun_collections::HashMap::init(),
+            ids: bun_collections::HashMap::new(),
             slots: Vec::new(),
         }
     }

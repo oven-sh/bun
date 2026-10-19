@@ -1387,7 +1387,7 @@ impl ByTag {
             registered: Vec::new(),
             starts: Vec::new(),
             listeners: Vec::new(),
-            tags: NodeTags::init(),
+            tags: NodeTags::new(),
         }
     }
 }

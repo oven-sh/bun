@@ -290,7 +290,7 @@ impl MinifyRenamer {
             owns_symbols: false,
             reserved_names,
             slots,
-            top_level_symbol_to_slot: TopLevelSymbolSlotMap::init(),
+            top_level_symbol_to_slot: TopLevelSymbolSlotMap::new(),
             arena: Bump::new(),
             name_minifier: None,
         }))
@@ -1289,7 +1289,7 @@ impl ScopeUseIndex {
         Self {
             offsets: Vec::new(),
             scope_indices: Vec::new(),
-            everywhere: HashMap::init(),
+            everywhere: HashMap::new(),
             aliases: Vec::new(),
         }
     }
@@ -1440,7 +1440,7 @@ pub fn compute_initial_reserved_names(
         unreachable!();
     }
 
-    let mut names = StringHashMap::<u32>::init();
+    let mut names = StringHashMap::<u32>::new();
 
     /// Globals the linker or printer reference by name in generated code. A
     /// user binding with one of these names is renamed so the reference

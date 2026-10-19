@@ -32,7 +32,7 @@ impl<'a> YarnLock<'a> {
     pub(crate) fn new() -> Self {
         Self {
             entries: Vec::new(),
-            entry_by_name_version: StringHashMap::init(),
+            entry_by_name_version: StringHashMap::new(),
         }
     }
 }
@@ -352,7 +352,7 @@ impl<'a> YarnLock<'a> {
                         let key = strings::trim(&trimmed[0..space_idx], b" \"");
                         let value = strings::trim(&trimmed[space_idx + 1..], b" \"");
                         let map =
-                            entry.dependencies[dep_type].get_or_insert_with(StringHashMap::init);
+                            entry.dependencies[dep_type].get_or_insert_with(StringHashMap::new);
                         map.put(key, value)?;
                     }
                     continue;

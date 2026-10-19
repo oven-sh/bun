@@ -79,8 +79,8 @@ impl EbusyState {
             tasks: Vec::new(),
             idx: 0,
             main_exit_code: 0,
-            absolute_targets: bun_collections::StringSet::empty(),
-            absolute_srcs: bun_collections::StringSet::empty(),
+            absolute_targets: bun_collections::StringSet::new(),
+            absolute_srcs: bun_collections::StringSet::new(),
         }
     }
 }

@@ -275,7 +275,7 @@ impl<'a> Tops<'a> {
     #[inline]
     fn new() -> Self {
         Self {
-            known: IdMap::init(),
+            known: IdMap::new(),
         }
     }
 }

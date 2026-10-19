@@ -71,7 +71,7 @@ impl Rule for NoInvalidFetchOptions {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Known<'a>> {
-        Some(core::array::from_fn(|_| IdMap::init()))
+        Some(core::array::from_fn(|_| IdMap::new()))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

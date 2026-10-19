@@ -928,7 +928,7 @@ pub mod fs {
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
-                entries_mutex: Mutex::init(),
+                entries_mutex: Mutex::new(),
                 entries: EntriesMap::new(),
                 cwd,
                 #[cfg(not(windows))]

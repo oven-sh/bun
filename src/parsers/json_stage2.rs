@@ -843,7 +843,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let dup = if n_prior <= Self::DUP_LINEAR_MAX {
             if n_prior == Self::DUP_LINEAR_MAX {
                 if self.dup_maps.len() == self.spill_depth {
-                    self.dup_maps.push(DupMap::init());
+                    self.dup_maps.push(DupMap::new());
                 }
                 let map = &mut self.dup_maps[self.spill_depth];
                 self.spill_depth += 1;

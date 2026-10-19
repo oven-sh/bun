@@ -811,7 +811,7 @@ pub mod semver_string {
         #[inline]
         pub fn new() -> Self {
             Self {
-                map: HashMap::init(),
+                map: HashMap::new(),
             }
         }
     }

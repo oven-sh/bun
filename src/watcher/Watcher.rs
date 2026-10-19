@@ -190,7 +190,7 @@ impl Watcher {
 
         let this = Box::new(Watcher {
             watchlist: WatchList::new(),
-            mutex: Mutex::init(),
+            mutex: Mutex::new(),
             cwd: top_level_dir,
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,

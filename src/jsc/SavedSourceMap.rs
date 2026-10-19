@@ -22,8 +22,8 @@ impl SavedSourceMap {
     #[inline]
     pub fn new() -> Self {
         Self {
-            map: HashTable::init(),
-            mutex: Mutex::init(),
+            map: HashTable::new(),
+            mutex: Mutex::new(),
         }
     }
 }

@@ -714,7 +714,7 @@ where
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
             #[cfg(not(windows))]
-            tombstones: StringHashMap::init(),
+            tombstones: StringHashMap::new(),
             // SAFETY: see above.
             reload_handle: unsafe { (*this).reload_handle() },
             _event_loop: PhantomData,

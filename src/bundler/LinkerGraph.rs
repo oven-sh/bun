@@ -195,7 +195,7 @@ pub mod js_meta {
             Self {
                 probably_typescript_type: ProbablyTypescriptType::new(),
                 imports_to_bind: RefImportData::new(),
-                resolved_exports: ResolvedExports::init(),
+                resolved_exports: ResolvedExports::new(),
                 resolved_export_star: ExportData::new(),
                 sorted_and_filtered_export_aliases: AstAlloc::vec(),
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::new(),
@@ -883,7 +883,7 @@ impl<'a> LinkerGraph<'a> {
             .zip(dest_resolved_exports.iter_mut())
             .enumerate()
         {
-            let mut resolved = ResolvedExports::init();
+            let mut resolved = ResolvedExports::new();
             resolved
                 .ensure_total_capacity(src.count())
                 .expect("unreachable");

@@ -72,7 +72,7 @@ pub(crate) fn stringify<'a>(
     let mut stringifier = Stringifier {
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
-        visiting: HashMap::init(),
+        visiting: HashMap::new(),
         wrote: false,
     };
 

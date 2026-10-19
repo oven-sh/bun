@@ -72,7 +72,7 @@ impl<'a> State<'a> {
             is_at_the_end: core::cell::Cell::new(false),
             methods: smallvec::SmallVec::new(),
             types: core::cell::RefCell::new(ExpressionTypes::new()),
-            var_declarators: IdMap::init(),
+            var_declarators: IdMap::new(),
             function_around: AncestorMemo::new(),
             function_with_this_around: AncestorMemo::new(),
         }

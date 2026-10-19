@@ -80,7 +80,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             import_records: Vec::new(),
             import_records_for_current_part: Vec::new(),
             named_imports: bun_collections::ArrayHashMap::new(),
-            named_exports: bun_collections::StringArrayHashMap::init(),
+            named_exports: bun_collections::StringArrayHashMap::new(),
             declared_symbols: DeclaredSymbolList::new(),
             hot_reloading,
             module_ref: Ref::NONE,  // overwritten below
@@ -553,7 +553,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ),
             named_exports: core::mem::replace(
                 &mut self.named_exports,
-                bun_collections::StringArrayHashMap::init(),
+                bun_collections::StringArrayHashMap::new(),
             ),
             dynamic_import_aliases: bun_collections::ArrayHashMap::new(),
             top_level_symbols_to_parts,
@@ -569,7 +569,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             url_for_css: b"",
             require_ref: Ref::NONE,
             tla_check: bun_ast::TlaCheck::new(),
-            commonjs_named_exports: bun_collections::StringArrayHashMap::init(),
+            commonjs_named_exports: bun_collections::StringArrayHashMap::new(),
             redirect_import_record_index: u32::MAX,
             ts_enums: bun_collections::ArrayHashMap::new(),
         })

@@ -2535,8 +2535,8 @@ impl PackageManifest {
         // already deterministic here.
         let mut result: PackageManifest = PackageManifest::new();
 
-        let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::init();
-        let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::init();
+        let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::new();
+        let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::new();
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_count: usize = 0;
@@ -2854,7 +2854,7 @@ impl PackageManifest {
                 .as_ref()
                 .map(|o| o.get().properties())
                 .unwrap_or(&[]);
-            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::init();
+            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::new();
             if !time_props.is_empty() {
                 time_index.ensure_total_capacity(time_props.len())?;
                 for (i, p) in time_props.iter().enumerate() {

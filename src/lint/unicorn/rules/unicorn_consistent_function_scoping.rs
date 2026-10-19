@@ -37,7 +37,7 @@ impl<'a> State<'a> {
         Self {
             arrows_with_lexical_capture: None,
             is_module: None,
-            is_strict: IdMap::init(),
+            is_strict: IdMap::new(),
             captures: None,
             with_private_names: None,
         }

@@ -1224,7 +1224,7 @@ fn download_stream(
             signal_store: bun_http::signals::Store::new(),
             signals: bun_http::Signals::new(),
             poll_ref: bun_io::KeepAlive::init(),
-            mutex: bun_threading::Mutex::init(),
+            mutex: bun_threading::Mutex::new(),
             request_error: None,
             reported_response_buffer: MutableString::new(),
             // `State::default()` sets

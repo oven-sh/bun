@@ -1249,7 +1249,7 @@ pub type CaseInsensitiveAsciiStringArrayHashMap<V> =
     StringArrayHashMap<V, CaseInsensitiveAsciiStringContext>;
 
 impl<V, C: Stateless, A: MapAllocator> StringArrayHashMap<V, C, A> {
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         Self {
             inner: ArrayHashMap::new(),
             ctx: C::INSTANCE,
@@ -1281,12 +1281,8 @@ impl<V, C, A: MapAllocator> DerefMut for StringArrayHashMap<V, C, A> {
 }
 
 impl<V, C: ArrayHashContext<[u8]>, A: MapAllocator> StringArrayHashMap<V, C, A> {
-    pub fn new() -> Self {
-        Self::init()
-    }
-
     pub fn with_capacity(n: usize) -> Self {
-        let mut m = Self::init();
+        let mut m = Self::new();
         m.reserve(n);
         m
     }
@@ -1642,7 +1638,7 @@ impl<A: Allocator + Stateless> From<&'static [u8]> for StringHashMapKey<A> {
 }
 
 impl<V, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         Self {
             inner: hashbrown::HashMap::with_hasher_in(bun_wyhash::BuildHasher, A::INSTANCE),
         }
@@ -1683,10 +1679,6 @@ fn owned_key<A: Allocator + Stateless>(key: &[u8]) -> StringHashMapKey<A> {
 }
 
 impl<V, A: Allocator + HashbrownAllocator + Stateless> StringHashMap<V, A> {
-    pub fn new() -> Self {
-        Self::init()
-    }
-
     #[inline]
     pub fn count(&self) -> usize {
         self.inner.len()
@@ -1894,23 +1886,18 @@ pub struct StringSet {
 
 impl StringSet {
     #[inline]
-    pub fn empty() -> Self {
+    pub fn new() -> Self {
         Self {
-            map: StringArrayHashMap::init(),
+            map: StringArrayHashMap::new(),
         }
     }
 }
 
 impl StringSet {
-    #[inline]
-    pub fn new() -> Self {
-        Self::empty()
-    }
-
     /// Alias for `new()` (the global allocator is implicit).
     #[inline]
     pub fn init() -> Self {
-        Self::empty()
+        Self::new()
     }
 
     pub fn clone(&self) -> Result<Self, AllocError> {

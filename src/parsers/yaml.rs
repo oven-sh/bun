@@ -2246,11 +2246,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             context: ContextStack::init(),
             block_indents: IndentStack::init(),
             explicit_document_start_line: None,
-            anchors: StringHashMap::init(),
+            anchors: StringHashMap::new(),
             open_collections: Vec::new(),
             cyclic_aliases,
             has_cyclic_alias: false,
-            tag_handles: StringHashMap::init(),
+            tag_handles: StringHashMap::new(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             least_stack_left: usize::MAX,
@@ -3169,7 +3169,7 @@ impl MappingProps {
     pub(crate) fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
-            merge_index: bun_collections::HashMap::init(),
+            merge_index: bun_collections::HashMap::new(),
             merge_indexed: 0,
         }
     }
@@ -3881,7 +3881,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // collection it is still inside of.
         let mut on_path = self
             .has_cyclic_alias
-            .then(bun_collections::HashMap::<usize, ()>::init);
+            .then(bun_collections::HashMap::<usize, ()>::new);
         let mut stack: Vec<Visit> = vec![Visit::Enter(root)];
         while let Some(visit) = stack.pop() {
             let node = match visit {

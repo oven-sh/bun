@@ -255,7 +255,7 @@ impl<'a> Transpiler<'a> {
             resolver,
             fs: from.fs,
             output_files: Vec::new(),
-            resolve_results: Box::new(ResolveResults::init()),
+            resolve_results: Box::new(ResolveResults::new()),
             resolve_queue: std::collections::VecDeque::new(),
             elapsed: 0,
             // Self-referential — wired by `wire_after_move`. Null back-pointers
@@ -1018,7 +1018,7 @@ fn resolver_bundle_options_subset(
             // former predates the TYPE_ONLY move-down); convert variant-wise.
             use crate::bake_types::BuiltInModule as B;
             use bun_options_types::BuiltInModule as R;
-            let mut m = bun_collections::StringArrayHashMap::init();
+            let mut m = bun_collections::StringArrayHashMap::new();
             for (k, v) in f
                 .built_in_modules
                 .keys()
@@ -1197,7 +1197,7 @@ impl<'a> Transpiler<'a> {
         let resolver_opts = resolver_bundle_options_subset(&bundle_options);
 
         let outbase = bundle_options.output_dir.clone();
-        let resolve_results = Box::new(ResolveResults::init());
+        let resolve_results = Box::new(ResolveResults::new());
 
         // Construct directly into the caller-owned storage instead of building a
         // stack temporary and returning it. All fallible work is done; every
@@ -1871,7 +1871,7 @@ fn parse_data_loader<'a>(
                         bun_ast::ClauseItem::new()
                     });
                 let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
-                    bun_collections::StringHashMap::init();
+                    bun_collections::StringHashMap::new();
                 // duplicate_key_checker drops at end of scope (defer .deinit())
                 let mut count: usize = 0;
                 // reshaped for borrowck — cannot zip 4
@@ -2713,7 +2713,7 @@ impl<'a> Transpiler<'a> {
         use std::io::Write as _;
 
         let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> =
-            bun_collections::StringArrayHashMap::init();
+            bun_collections::StringArrayHashMap::new();
         let mut has_duplicates = false;
         for (index, file) in self.output_files.iter().enumerate() {
             if file.dest_path.is_empty() {
@@ -2840,7 +2840,7 @@ impl<'a> Transpiler<'a> {
                 // each inner map (fallible), matching the build-command
                 // conversion.
                 let macro_remappings = {
-                    let mut m = MacroRemap::init();
+                    let mut m = MacroRemap::new();
                     for (k, v) in self.options.macro_remap.iter() {
                         let inner = v
                             .clone()
@@ -2864,7 +2864,7 @@ impl<'a> Transpiler<'a> {
                     experimental_decorators,
                     use_define_for_class_fields,
                     virtual_source: None,
-                    replace_exports: bun_collections::StringArrayHashMap::init(),
+                    replace_exports: bun_collections::StringArrayHashMap::new(),
                     inject_jest_globals: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,

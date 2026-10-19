@@ -118,8 +118,8 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            counts_by_type: IdMap::init(),
-            without_type_parameters: TypesWithoutTypeParameters::init(),
+            counts_by_type: IdMap::new(),
+            without_type_parameters: TypesWithoutTypeParameters::new(),
         }
     }
 }

@@ -70,7 +70,7 @@ pub(crate) struct PathWatcherManager {
 impl PathWatcherManager {
     fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
-            watchers: JsCell::new(StringArrayHashMap::init()),
+            watchers: JsCell::new(StringArrayHashMap::new()),
             vm,
             // A manager can be displaced from `DEFAULT_MANAGER` by a `watch()`
             // call from a different VM; without this the displaced manager

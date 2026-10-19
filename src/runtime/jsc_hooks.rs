@@ -2416,7 +2416,7 @@ fn transpile_source_code_of_any_provenance(
             let (macro_mode, has_any_macro_remappings) =
                 unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
             let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
-                bun_resolver::package_json::MacroMap::init()
+                bun_resolver::package_json::MacroMap::new()
             } else {
                 // Note: `MacroMap`'s value type
                 // (`StringArrayHashMap<Box<[u8]>>`) has only the fallible
@@ -2433,9 +2433,9 @@ fn transpile_source_code_of_any_provenance(
                     // Hot path: a module with no `--define`/`with { type: "macro" }`
                     // remappings skips the per-entry re-key + per-value fallible
                     // `clone()` entirely.
-                    bun_resolver::package_json::MacroMap::init()
+                    bun_resolver::package_json::MacroMap::new()
                 } else {
-                    let mut m = bun_resolver::package_json::MacroMap::init();
+                    let mut m = bun_resolver::package_json::MacroMap::new();
                     for (k, v) in src.iter() {
                         m.insert(k, bun_core::handle_oom(v.clone()));
                     }
@@ -2646,7 +2646,7 @@ fn transpile_source_code_of_any_provenance(
                     remove_cjs_module_wrapper: is_main
                         && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-                    replace_exports: bun_collections::StringArrayHashMap::init(),
+                    replace_exports: bun_collections::StringArrayHashMap::new(),
                 };
 
                 // Both the file-only and transpiled arms hit the same

@@ -591,7 +591,7 @@ pub(crate) fn load(
     }
 
     lockfile.scratch = Scratch::init();
-    lockfile.package_index = PackageIndex::Map::init();
+    lockfile.package_index = PackageIndex::Map::new();
     lockfile.string_pool = StringPool::new();
     lockfile
         .package_index

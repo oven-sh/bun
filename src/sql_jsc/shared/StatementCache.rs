@@ -13,7 +13,7 @@ pub(crate) struct StatementCache<S: AnyRefCounted> {
 impl<S: AnyRefCounted> StatementCache<S> {
     pub(crate) fn new() -> Self {
         Self {
-            statements: StringHashMap::init(),
+            statements: StringHashMap::new(),
             len: 0,
             clock: 0,
         }

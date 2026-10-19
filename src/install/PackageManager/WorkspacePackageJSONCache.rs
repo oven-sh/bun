@@ -105,7 +105,7 @@ pub struct WorkspacePackageJSONCache {
 impl WorkspacePackageJSONCache {
     #[inline]
     pub fn new() -> Self {
-        Self { map: Map::init() }
+        Self { map: Map::new() }
     }
 }
 

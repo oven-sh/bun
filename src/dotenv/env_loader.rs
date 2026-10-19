@@ -1373,7 +1373,7 @@ impl Map {
     #[inline]
     pub(crate) fn init() -> Map {
         Map {
-            map: HashTable::init(),
+            map: HashTable::new(),
         }
     }
 

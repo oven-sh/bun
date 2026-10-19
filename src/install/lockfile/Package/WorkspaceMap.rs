@@ -57,7 +57,7 @@ impl Entry {
 impl WorkspaceMap {
     pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
-            map: Map::init(),
+            map: Map::new(),
             skipped_with_dependencies: Vec::new(),
         }
     }

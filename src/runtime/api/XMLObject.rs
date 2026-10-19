@@ -142,7 +142,7 @@ pub(crate) fn stringify<'a>(
         builder: wtf::StringBuilder::init(),
         indent: 0,
         space: Space::init(global, space_value)?,
-        visiting: HashMap::init(),
+        visiting: HashMap::new(),
     };
 
     let result = if is_node(global, root)? {

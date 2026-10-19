@@ -21,7 +21,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             binding_contexts: AncestorMemo::new(),
-            declared_in: IdMap::init(),
+            declared_in: IdMap::new(),
         }
     }
 }

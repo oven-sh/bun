@@ -13,7 +13,7 @@ pub struct StringMap {
 impl StringMap {
     pub fn init(dupe_keys: bool) -> Self {
         Self {
-            map: StringArrayHashMap::init(),
+            map: StringArrayHashMap::new(),
             dupe_keys,
         }
     }

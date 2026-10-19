@@ -114,7 +114,7 @@ pub struct IdSet<T> {
 
 impl<T> IdSet<T> {
     #[inline]
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         IdSet {
             ids: Ids::new(),
             of: PhantomData,
@@ -123,11 +123,6 @@ impl<T> IdSet<T> {
 }
 
 impl<T: Indexed> IdSet<T> {
-    #[inline]
-    pub fn new() -> Self {
-        Self::init()
-    }
-
     /// Whether it was not in the set.
     #[inline]
     pub fn insert(&mut self, it: T) -> bool {
@@ -166,7 +161,7 @@ impl<T: Indexed> Extend<T> for IdSet<T> {
 
 impl<T: Indexed> FromIterator<T> for IdSet<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut set = IdSet::init();
+        let mut set = IdSet::new();
         set.extend(iter);
         set
     }
@@ -249,7 +244,7 @@ pub struct IdMap<T, V> {
 
 impl<T, V> IdMap<T, V> {
     #[inline]
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         IdMap {
             ids: IdsTo {
                 few: SmallVec::new(),
@@ -261,11 +256,6 @@ impl<T, V> IdMap<T, V> {
 }
 
 impl<T: Indexed, V> IdMap<T, V> {
-    #[inline]
-    pub fn new() -> Self {
-        Self::init()
-    }
-
     /// What `key` had before.
     #[inline]
     pub fn insert(&mut self, key: T, value: V) -> Option<V> {

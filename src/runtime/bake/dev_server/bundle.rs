@@ -177,7 +177,7 @@ impl EntryPointList {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            set: bun_collections::StringArrayHashMap::init(),
+            set: bun_collections::StringArrayHashMap::new(),
         }
     }
 }

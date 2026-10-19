@@ -322,7 +322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             expr.loc,
             e_,
             original_name,
-            IdentifierOpts::init()
+            IdentifierOpts::new()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
                 .with_is_call_target(
@@ -1014,7 +1014,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
-                            let opts = IdentifierOpts::init()
+                            let opts = IdentifierOpts::new()
                                 .with_is_call_target(is_call_target)
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
@@ -1441,7 +1441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if e_.optional_chain.is_none() {
-            let opts = IdentifierOpts::init()
+            let opts = IdentifierOpts::new()
                 .with_is_call_target(is_call_target)
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)

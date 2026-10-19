@@ -52,7 +52,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             in_root_scope: AncestorMemo::new(),
-            declared_with_violation: IdMap::init(),
+            declared_with_violation: IdMap::new(),
         }
     }
 }

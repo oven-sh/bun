@@ -1011,7 +1011,7 @@ pub(crate) fn run_scripts_with_filter(
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
     let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
         unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
-    let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::init();
+    let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::new();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,

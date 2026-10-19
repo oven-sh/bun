@@ -235,7 +235,7 @@ impl Expect {
         type Key = (&'static str, &'static str, bool);
         static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [Box<str>; 2]>>> =
             OnceLock::new();
-        let cache = CACHE.get_or_init(|| bun_threading::guarded::GuardedBy::init(bun_collections::HashMap::init()));
+        let cache = CACHE.get_or_init(|| bun_threading::guarded::GuardedBy::init(bun_collections::HashMap::new()));
         let colors = Output::enable_ansi_colors_stderr();
 
         let mut map = cache.lock();

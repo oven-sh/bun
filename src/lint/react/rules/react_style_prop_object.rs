@@ -30,7 +30,7 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            invalid_variables: IdMap::init(),
+            invalid_variables: IdMap::new(),
             pragma: core::cell::OnceCell::new(),
         }
     }

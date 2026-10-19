@@ -290,7 +290,7 @@ impl AuditCommand {
 fn build_dependency_tree(
     pm: &mut PackageManager,
 ) -> Result<StringHashMap<Vec<Box<[u8]>>>, bun_alloc::AllocError> {
-    let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::init();
+    let mut dependency_tree: StringHashMap<Vec<Box<[u8]>>> = StringHashMap::new();
 
     let packages = pm.lockfile.packages.slice();
     let pkg_names = packages.items_name();
@@ -815,8 +815,8 @@ fn find_dependency_paths(
     }
 
     let mut queue: std::collections::VecDeque<Box<[u8]>> = std::collections::VecDeque::new();
-    let mut visited: StringHashMap<()> = StringHashMap::init();
-    let mut parent_map: StringHashMap<Box<[u8]>> = StringHashMap::init();
+    let mut visited: StringHashMap<()> = StringHashMap::new();
+    let mut parent_map: StringHashMap<Box<[u8]>> = StringHashMap::new();
 
     if let Some(dependents) = dependency_tree.get(target_package) {
         for dependent in dependents {
@@ -839,7 +839,7 @@ fn find_dependency_paths(
             let mut path = DependencyPath::new();
 
             let mut trace: Box<[u8]> = current;
-            let mut seen_in_trace: StringHashMap<()> = StringHashMap::init();
+            let mut seen_in_trace: StringHashMap<()> = StringHashMap::new();
 
             // Walks dependent → dependency.
             loop {

@@ -47,8 +47,8 @@ impl<'a> Memo<'a> {
     #[inline]
     fn new() -> Self {
         Self {
-            from_parameter: IdMap::init(),
-            parameter_properties: IdMap::init(),
+            from_parameter: IdMap::new(),
+            parameter_properties: IdMap::new(),
             property_definitions: AncestorMemo::new(),
             functions: AncestorMemo::new(),
             class_bodies: AncestorMemo::new(),

@@ -49,7 +49,7 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
 pub(crate) fn write_coverage_report(coord: &mut Coordinator, opts: &mut CodeCoverageOptions) {
     let mut merged = core::mem::replace(
         &mut coord.coverage_files,
-        bun_collections::StringArrayHashMap::init(),
+        bun_collections::StringArrayHashMap::new(),
     );
     let mut reports: Vec<Report<'static>> = Vec::with_capacity(merged.count());
     for m in merged.values_mut() {

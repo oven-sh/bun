@@ -11,7 +11,7 @@ pub(super) struct LineBuffer {
 
 impl LineBuffer {
     #[inline]
-    pub(super) fn init() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             buf: Vec::new(),
             has_content: false,
@@ -20,10 +20,6 @@ impl LineBuffer {
 }
 
 impl LineBuffer {
-    pub(super) fn new() -> Self {
-        Self::init()
-    }
-
     /// Pushes a line, or several if there are line breaks in it.
     pub(super) fn push(&mut self, line: impl AsRef<[u8]>) {
         self.begin_line().extend_from_slice(line.as_ref());

@@ -288,13 +288,13 @@ impl Stringifier {
 
         // Written out in iteration order, which the hash and the reserved capacity decide.
         let mut found_trusted_dependencies: HashMap<u64, String, WrittenOrderContext> =
-            HashMap::init();
+            HashMap::new();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
             found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
         let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String), WrittenOrderContext> =
-            HashMap::init();
+            HashMap::new();
         found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
@@ -1554,7 +1554,7 @@ enum RowEvidence {
 impl<T> PkgMap<T> {
     fn init() -> Self {
         Self {
-            map: StringHashMap::init(),
+            map: StringHashMap::new(),
         }
     }
 
@@ -2192,7 +2192,7 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
-    let mut optional_peers_buf: HashMap<u64, ()> = HashMap::init();
+    let mut optional_peers_buf: HashMap<u64, ()> = HashMap::new();
     let mut unresolved_rows: Vec<DependencyID> = Vec::new();
 
     let mut bundled_pkgs = PkgPathSet::init();
@@ -2917,7 +2917,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
         // then each package dependency
         let mut bound_by: Vec<RowEvidence> = vec![RowEvidence::Unbound; dependencies.len()];
-        let mut root_dep_names: HashMap<u64, ()> = HashMap::init();
+        let mut root_dep_names: HashMap<u64, ()> = HashMap::new();
         for root_dep in pkg_deps[0].get(dependencies) {
             root_dep_names.insert(root_dep.name_hash, ());
         }

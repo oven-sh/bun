@@ -331,7 +331,7 @@ fn edit_update_targets(
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
     for target in selected {
         let mut ast = fetch_entry_root(manager, &target);
-        let mut updating = bun_collections::StringArrayHashMap::init();
+        let mut updating = bun_collections::StringArrayHashMap::new();
         for options in [
             EditOptions {
                 exact_versions: true,

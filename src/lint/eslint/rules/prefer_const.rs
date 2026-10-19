@@ -139,7 +139,7 @@ impl<'a> Known<'a> {
         Self {
             through: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             assignments: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            redeclared: IdMap::init(),
+            redeclared: IdMap::new(),
             patterns: Patterns::new(),
         }
     }

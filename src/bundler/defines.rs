@@ -165,8 +165,8 @@ impl DefineExt for Define {
         omit_unused_global_calls: bool,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
         let mut define = Box::new(Define {
-            identifiers: StringHashMap::init(),
-            dots: StringHashMap::init(),
+            identifiers: StringHashMap::new(),
+            dots: StringHashMap::new(),
             dots_filter: bun_js_parser::defines::DotFilter::new(),
             drop_debugger,
             user_hash: None,
@@ -469,7 +469,7 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, crate::Error> {
-        let mut user_defines = UserDefines::init();
+        let mut user_defines = UserDefines::new();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {
             <Self as DefineDataExt>::from_mergeable_input_entry(

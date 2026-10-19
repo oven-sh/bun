@@ -1174,7 +1174,7 @@ impl FSWatcher {
                 ctx: None,
                 ..FSWatchTask::new()
             }),
-            mutex: Mutex::init(),
+            mutex: Mutex::new(),
             signal: JsCell::new(args.signal.map(|s| s.ref_())),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),

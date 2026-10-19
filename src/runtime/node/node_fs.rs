@@ -2486,7 +2486,7 @@ mod _async_tasks {
                     result_list_queue: UnboundedQueue::new(),
                     root_fd: FD::INVALID,
                     pending_err: None,
-                    pending_err_mutex: bun_threading::Mutex::init(),
+                    pending_err_mutex: bun_threading::Mutex::new(),
                 },
                 AsyncFSJs {
                     completion,

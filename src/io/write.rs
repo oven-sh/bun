@@ -41,13 +41,6 @@ pub struct DiscardingWriter {
 
 impl DiscardingWriter {
     #[inline]
-    pub fn init() -> Self {
-        Self { count: 0 }
-    }
-}
-
-impl DiscardingWriter {
-    #[inline]
     pub const fn new() -> Self {
         Self { count: 0 }
     }

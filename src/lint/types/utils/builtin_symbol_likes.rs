@@ -106,7 +106,7 @@ impl<'a> BaseTypeAnswers<'a> {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            known: IdMap::init(),
+            known: IdMap::new(),
             open: SmallVec::new(),
             first_reopened: None,
         }

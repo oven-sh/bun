@@ -856,7 +856,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 // `BoxedSliceContext`), so re-seat by iterating instead of move.
                 // Cold path (only hit when bunfig declares `[macros]`).
                 for (k, v) in macros.iter() {
-                    let mut inner = bun_resolver::package_json::MacroImportReplacementMap::init();
+                    let mut inner = bun_resolver::package_json::MacroImportReplacementMap::new();
                     for (ik, iv) in v.iter() {
                         inner.put(ik, iv.clone()).unwrap_or_oom();
                     }
@@ -3335,7 +3335,7 @@ impl RunCommand {
         // Walk the collected URLs once, deduping and picking out the
         // http(s) ones. If there are no remote URLs we never spawn the
         // HTTP worker or allocate any Download structs.
-        let mut seen: StringHashMap<()> = StringHashMap::init();
+        let mut seen: StringHashMap<()> = StringHashMap::new();
         let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
@@ -3600,7 +3600,7 @@ impl RunCommand {
         // inline. Only runs when kitty_graphics is on and the document
         // actually contains an image marker — otherwise the whole block
         // is a no-op.
-        let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::init();
+        let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::new();
         if kitty_graphics && strings::contains(&contents, b"![") {
             Self::prefetch_remote_images(&contents, md_opts, &mut remote_map);
         }

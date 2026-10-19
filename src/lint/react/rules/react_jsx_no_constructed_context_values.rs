@@ -49,7 +49,7 @@ impl<'a> State<'a> {
         Self {
             inside_component: AncestorMemo::new(),
             constructed_variables: FlagsOfVariables::new(),
-            ends: IdMap::init(),
+            ends: IdMap::new(),
             constructions: Vec::new(),
         }
     }

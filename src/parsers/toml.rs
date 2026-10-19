@@ -241,7 +241,7 @@ impl TOML {
             },
             bump,
             stack_check: StackCheck::init(),
-            meta: HashMap::init(),
+            meta: HashMap::new(),
             block: 0,
         };
         match parser.parse_root() {

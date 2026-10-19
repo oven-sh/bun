@@ -1585,7 +1585,7 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
-        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::init();
+        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::new();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {

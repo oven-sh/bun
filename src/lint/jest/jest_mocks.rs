@@ -424,8 +424,8 @@ pub(crate) mod prefer_mock_return_shorthand {
         #[inline]
         fn new() -> Self {
             Self {
-                known: IdMap::init(),
-                mutable: IdMap::init(),
+                known: IdMap::new(),
+                mutable: IdMap::new(),
                 pending: Vec::new(),
             }
         }

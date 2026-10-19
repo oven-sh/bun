@@ -3095,7 +3095,7 @@ fn rebase_key_onto(
     shown: &Shown,
     display: &normalize::Normalized,
 ) {
-    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> = bun_collections::HashMap::init();
+    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> = bun_collections::HashMap::new();
     at.reserve(display.map.len());
     for m in display.map.iter().rev() {
         if m.gen_line >= shown.skipped {

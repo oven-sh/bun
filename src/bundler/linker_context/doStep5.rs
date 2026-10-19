@@ -259,7 +259,7 @@ impl LinkerContext<'_> {
         );
 
         // Each part tracks the other parts it depends on within this file
-        let mut local_dependencies: HashMap<u32, u32> = HashMap::init();
+        let mut local_dependencies: HashMap<u32, u32> = HashMap::new();
 
         // Multiple `&mut` into graph SoA are needed here;
         // raw per-row pointers via `split_raw()` so concurrent tasks never

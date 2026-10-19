@@ -22,7 +22,7 @@ impl HmrSocket {
             dev: bun_ptr::BackRef::new_mut(dev),
             subscriptions: HmrTopicBits::empty(),
             active_route: None,
-            referenced_source_maps: HashMap::init(),
+            referenced_source_maps: HashMap::new(),
             underlying: None,
             inspector_connection_id: -1,
         })

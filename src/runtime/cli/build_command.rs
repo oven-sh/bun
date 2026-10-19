@@ -543,9 +543,9 @@ impl BuildCommand {
                 use bun_resolver::package_json::{
                     MacroImportReplacementMap as ResolverInner, MacroMap as ResolverMacroMap,
                 };
-                let mut remap = ResolverMacroMap::init();
+                let mut remap = ResolverMacroMap::new();
                 for (pkg, imports) in macros.iter() {
-                    let mut inner = ResolverInner::init();
+                    let mut inner = ResolverInner::new();
                     for (name, path) in imports.iter() {
                         inner.insert(name, Box::<[u8]>::from(path.as_ref()));
                     }

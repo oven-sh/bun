@@ -51,7 +51,7 @@ impl<'a> State<'a> {
             methods: Vec::new(),
             is_using_this: Vec::new(),
             others: Vec::new(),
-            uses_this: IdSet::init(),
+            uses_this: IdSet::new(),
             owners_of_this: AncestorMemo::new(),
         }
     }

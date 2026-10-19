@@ -581,7 +581,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let loaders = args.and_then(|args| args.loaders.as_ref());
     let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
     let by_extension = script_kinds_by_extension(
-        &loaders.unwrap_or_else(|_| bun_collections::StringArrayHashMap::init()),
+        &loaders.unwrap_or_else(|_| bun_collections::StringArrayHashMap::new()),
     );
     let Some((paths, script_kinds)) = what_to_check(&cwd, entry_points, &by_extension) else {
         return true;

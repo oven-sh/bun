@@ -56,8 +56,8 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            promise_arrays: IdMap::init(),
-            promise_likes: IdMap::init(),
+            promise_arrays: IdMap::new(),
+            promise_likes: IdMap::new(),
         }
     }
 }

@@ -337,7 +337,7 @@ impl UpdateInteractiveCommand {
         updates: &[PackageUpdate],
     ) -> crate::Result<()> {
         // Workspace path -> indices into `updates`.
-        let mut workspace_groups: StringHashMap<Vec<usize>> = StringHashMap::init();
+        let mut workspace_groups: StringHashMap<Vec<usize>> = StringHashMap::new();
         for (i, update) in updates.iter().enumerate() {
             workspace_groups
                 .get_or_put(&update.workspace_path, Vec::new)?
@@ -494,7 +494,7 @@ impl UpdateInteractiveCommand {
         let selected = Self::prompt_for_updates(&mut outdated_packages);
 
         // Maps `OutdatedPackage::catalog_key` to the new version and its `target_in_range`.
-        let mut catalog_updates: StringHashMap<(Box<[u8]>, bool)> = StringHashMap::init();
+        let mut catalog_updates: StringHashMap<(Box<[u8]>, bool)> = StringHashMap::new();
         let mut package_updates: Vec<PackageUpdate> = Vec::new();
 
         // Becomes `options.positionals` so the install runs as `bun update <selected...>`.
@@ -591,7 +591,7 @@ impl UpdateInteractiveCommand {
     fn group_catalog_dependencies(
         packages: Vec<OutdatedPackage>,
     ) -> crate::Result<Vec<OutdatedPackage>> {
-        let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::init();
+        let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::new();
         let mut result: Vec<OutdatedPackage> = Vec::new();
 
         for pkg in packages {

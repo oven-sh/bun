@@ -605,7 +605,7 @@ impl Ticket {
     fn new() -> Self {
         Self {
             is_done: Guarded::init(false),
-            changed: Condition::init(),
+            changed: Condition::new(),
         }
     }
 }
@@ -766,8 +766,8 @@ impl Crew {
             demand: Demand::new(),
             state: Guarded::init(CrewState::new()),
             busy: core::sync::atomic::AtomicUsize::new(0),
-            is_posted: Condition::init(),
-            is_over: Condition::init(),
+            is_posted: Condition::new(),
+            is_over: Condition::new(),
         }
     }
 }

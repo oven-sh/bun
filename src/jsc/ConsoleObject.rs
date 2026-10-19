@@ -126,7 +126,7 @@ impl ConsoleObject {
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
-            counts: Counter::init(),
+            counts: Counter::new(),
             _pin: core::marker::PhantomPinned,
         });
         let p: *mut ConsoleObject = out;
@@ -1816,7 +1816,7 @@ pub mod formatter {
         impl Map {
             #[inline]
             pub fn new() -> Self {
-                Self(bun_collections::HashMap::init())
+                Self(bun_collections::HashMap::new())
             }
         }
 
@@ -5818,7 +5818,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
 
 type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
 thread_local! {
-    static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::init());
+    static PENDING_TIME_LOGS: RefCell<PendingTimers> = RefCell::new(PendingTimers::new());
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -5833,7 +5833,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
-        PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::init());
+        PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::new());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
     }
 

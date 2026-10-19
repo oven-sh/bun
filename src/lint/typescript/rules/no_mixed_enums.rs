@@ -21,7 +21,7 @@ pub struct State<'a>(IdMap<Symbol<'a>, Option<AllowedType>>);
 impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
-        Self(IdMap::init())
+        Self(IdMap::new())
     }
 }
 

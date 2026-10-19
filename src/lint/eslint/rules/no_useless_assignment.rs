@@ -78,7 +78,7 @@ impl<'a> State<'a> {
             is_only_checked: false,
             stack: Vec::new(),
             current_segments: CurrentSegments::new(),
-            code_path_start_scopes: IdSet::init(),
+            code_path_start_scopes: IdSet::new(),
             evaluated_in: AncestorMemo::new(),
             uses: Uses::new(),
             identifier_ranges: Vec::new(),
@@ -717,7 +717,7 @@ impl<'a> Uses<'a> {
             all: Vec::new(),
             conditions: AncestorMemo::new(),
             writers: AncestorMemo::new(),
-            loops: IdSet::init(),
+            loops: IdSet::new(),
             budget: 0,
             is_in_module_scope: false,
         }

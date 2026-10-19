@@ -225,9 +225,9 @@ impl StartsForParseOnly {
     #[inline]
     pub fn new() -> Self {
         Self {
-            async_arrow_parameters: bun_collections::HashMap::init(),
-            arrow_expression_bodies: bun_collections::HashMap::init(),
-            class_elements: bun_collections::HashMap::init(),
+            async_arrow_parameters: bun_collections::HashMap::new(),
+            arrow_expression_bodies: bun_collections::HashMap::new(),
+            class_elements: bun_collections::HashMap::new(),
         }
     }
 }
@@ -732,13 +732,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
         for mut scope in self.ts_namespace_scopes.drain(..) {
             drop(core::mem::replace(
                 &mut scope.property_accesses,
-                bun_collections::StringArrayHashMap::init(),
+                bun_collections::StringArrayHashMap::new(),
             ));
         }
         for mut map in self.ts_namespace_member_maps.drain(..) {
             drop(core::mem::replace(
                 &mut *map,
-                bun_collections::StringArrayHashMap::init(),
+                bun_collections::StringArrayHashMap::new(),
             ));
         }
     }
@@ -1141,7 +1141,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.dynamic_import_aliases.count() == 0 {
             return;
         }
-        let mut exported: HashMap<Ref, ()> = HashMap::init();
+        let mut exported: HashMap<Ref, ()> = HashMap::new();
         for export in self.named_exports.values() {
             exported.insert(export.ref_, ());
         }
@@ -1268,7 +1268,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         self.import_items_for_namespace
-            .insert(local, ImportItemForNamespaceMap::init());
+            .insert(local, ImportItemForNamespaceMap::new());
         self.dynamic_import_namespace_locals
             .insert(local, records.to_vec());
         if self.react_compiler_may_replace_body {
@@ -1453,7 +1453,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ns = self.new_symbol(js_ast::symbol::Kind::Other, b"require_ns");
         VecExt::append(&mut self.module_scope_mut().generated, ns);
         self.import_items_for_namespace
-            .insert(ns, ImportItemForNamespaceMap::init());
+            .insert(ns, ImportItemForNamespaceMap::new());
         self.dynamic_import_namespace_locals
             .insert(ns, vec![req.import_record_index]);
         self.dynamic_import_copied_locals.insert(ns, ());
@@ -1515,7 +1515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let ns = self.new_symbol(js_ast::symbol::Kind::Other, name);
                 VecExt::append(&mut self.module_scope_mut().generated, ns);
                 self.import_items_for_namespace
-                    .insert(ns, ImportItemForNamespaceMap::init());
+                    .insert(ns, ImportItemForNamespaceMap::new());
                 self.imports_to_convert_from_dynamic_import
                     .push(DeferredImportNamespace {
                         namespace: LocRef {
@@ -1721,7 +1721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             scope: None,
                         });
                     self.import_items_for_namespace
-                        .insert(namespace_ref, ImportItemForNamespaceMap::init());
+                        .insert(namespace_ref, ImportItemForNamespaceMap::new());
                     self.record_usage(namespace_ref);
 
                     if !state.is_require_immediately_assigned_to_decl {
@@ -4818,7 +4818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
-                property_accesses: bun_collections::StringArrayHashMap::init(),
+                property_accesses: bun_collections::StringArrayHashMap::new(),
             }));
             self.ts_namespace_scopes.push(scope);
             return scope;
@@ -4829,15 +4829,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // map field can't be null-then-patched, and same-arena allocation
         // keeps the locality while avoiding a self-referential init.
         let map = js_ast::StoreRef::from_bump(
-            self.arena
-                .alloc(bun_collections::StringArrayHashMap::init()),
+            self.arena.alloc(bun_collections::StringArrayHashMap::new()),
         );
         self.ts_namespace_member_maps.push(map);
         let scope = js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
             exported_members: map,
             is_enum_scope,
             arg_ref: Ref::NONE,
-            property_accesses: bun_collections::StringArrayHashMap::init(),
+            property_accesses: bun_collections::StringArrayHashMap::new(),
         }));
         self.ts_namespace_scopes.push(scope);
         scope
@@ -5481,12 +5480,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value,
                 part,
                 loc,
-                IdentifierOpts::init().with_is_property_access_target(i + 1 < parts.len()),
+                IdentifierOpts::new().with_is_property_access_target(i + 1 < parts.len()),
             ) {
                 value = rewrote;
             } else {
                 let is_import_property_use =
-                    self.record_import_property_use(&value, part, IdentifierOpts::init());
+                    self.record_import_property_use(&value, part, IdentifierOpts::new());
                 value = self.new_expr(
                     E::Dot {
                         target: value,
@@ -5540,7 +5539,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
-            let mut already_declared = RefMap::init();
+            let mut already_declared = RefMap::new();
 
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
@@ -5905,7 +5904,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !self.is_revisit_for_substitution {
                 let call = self
                     .import_symbol_property_uses
-                    .get_or_put_value(self.exports_ref, StringHashMap::init())
+                    .get_or_put_value(self.exports_ref, StringHashMap::new())
                     .expect("OOM")
                     .value_ptr
                     .get_or_put_value(name, bun_ast::PropertyUse::new())
@@ -6650,7 +6649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let gop = self
             .import_symbol_property_uses
-            .get_or_put_value(base, StringHashMap::init())
+            .get_or_put_value(base, StringHashMap::new())
             .expect("unreachable");
         let inner_use = gop
             .value_ptr
@@ -8879,7 +8878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
                 is_in_node_modules: self.source.path.is_node_module(),
-                imports_seen: bun_collections::StringArrayHashMap::init(),
+                imports_seen: bun_collections::StringArrayHashMap::new(),
                 export_star_props: Vec::new(),
                 export_props: Vec::new(),
                 stmts: Vec::new(),
@@ -9403,7 +9402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             named_imports: core::mem::replace(&mut *self.named_imports, ArrayHashMap::new()),
             named_exports: core::mem::replace(
                 &mut self.named_exports,
-                bun_collections::StringArrayHashMap::init(),
+                bun_collections::StringArrayHashMap::new(),
             ),
             dynamic_import_aliases: core::mem::replace(
                 &mut self.dynamic_import_aliases,
@@ -9432,7 +9431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: self.top_level_await_keyword,
             commonjs_named_exports: core::mem::replace(
                 &mut self.commonjs_named_exports,
-                bun_collections::StringArrayHashMap::init(),
+                bun_collections::StringArrayHashMap::new(),
             ),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
@@ -9489,7 +9488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
-            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::init();
+            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::new();
             inner_map.ensure_total_capacity(ns.count())?;
             for i in 0..ns.count() {
                 let key = &ns.keys()[i];
@@ -9724,7 +9723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             define,
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
             named_imports: NamedImportsType::Owned(ArrayHashMap::new()), // overwritten below for !SCAN_ONLY
-            named_exports: bun_collections::StringArrayHashMap::init(),
+            named_exports: bun_collections::StringArrayHashMap::new(),
             log,
             stack_check: bun_core::StackCheck::init(),
             starts_for_parse_only: None,
@@ -9777,7 +9776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,
-            hoisted_ref_for_sloppy_mode_block_fn: HashMap::init(),
+            hoisted_ref_for_sloppy_mode_block_fn: HashMap::new(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
@@ -9791,14 +9790,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             imports_to_convert_from_require: BumpVec::new_in(arena),
             imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
             dynamic_import_aliases: ArrayHashMap::new(),
-            dynamic_import_namespace_locals: HashMap::init(),
-            dynamic_import_escaped_records: HashMap::init(),
-            dynamic_import_needs_object: HashMap::init(),
-            dynamic_import_copied_locals: HashMap::init(),
-            dynamic_import_destructured_locals: HashMap::init(),
-            namespace_tracked_uses: HashMap::init(),
+            dynamic_import_namespace_locals: HashMap::new(),
+            dynamic_import_escaped_records: HashMap::new(),
+            dynamic_import_needs_object: HashMap::new(),
+            dynamic_import_copied_locals: HashMap::new(),
+            dynamic_import_destructured_locals: HashMap::new(),
+            namespace_tracked_uses: HashMap::new(),
             unwrap_all_requires,
-            commonjs_named_exports: bun_collections::StringArrayHashMap::init(),
+            commonjs_named_exports: bun_collections::StringArrayHashMap::new(),
             commonjs_module_exports_assigned_deoptimized: false,
             module_exports_rewrite_count: 0,
             commonjs_named_exports_needs_conversion: u32::MAX,
@@ -9808,9 +9807,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
-            emitted_namespace_vars: RefMap::init(),
-            is_exported_inside_namespace: HashMap::init(),
-            local_type_names: StringBoolMap::init(),
+            emitted_namespace_vars: RefMap::new(),
+            is_exported_inside_namespace: HashMap::new(),
+            local_type_names: StringBoolMap::new(),
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::new(),
             react_refresh: ReactRefresh::new(),
@@ -9828,8 +9827,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_import_keyword: bun_ast::Range::NONE,
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
-            import_items_for_namespace: HashMap::init(),
-            is_import_item: HashMap::init(),
+            import_items_for_namespace: HashMap::new(),
+            is_import_item: HashMap::new(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::new(),
@@ -9851,7 +9850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             const_values: ArrayHashMap::new(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
-            ref_to_ts_namespace_member: HashMap::init(),
+            ref_to_ts_namespace_member: HashMap::new(),
             ts_namespace_scopes: Vec::new(),
             ts_namespace_member_maps: Vec::new(),
             ts_namespace: RecentlyVisitedTSNamespace {

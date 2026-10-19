@@ -210,7 +210,7 @@ impl FrameworkRouter {
             types,
             routes,
             dynamic_routes: DynamicRouteMap::new(),
-            static_routes: StaticRouteMap::init(),
+            static_routes: StaticRouteMap::new(),
             pattern_string_arena: Arena::new(),
         })
     }
@@ -602,7 +602,7 @@ impl FrameworkRouter {
                 Box<[u8]>,
                 *mut bun_resolver::fs::Entry,
                 ZigStringHashContext,
-            > = bun_collections::HashMap::init();
+            > = bun_collections::HashMap::new();
             {
                 // Copy under `entries_mutex`: other threads rewrite the cached
                 // `DirEntry` map in place under that lock. Dropped before the

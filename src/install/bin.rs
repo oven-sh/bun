@@ -1949,7 +1949,7 @@ pub(crate) fn link_free_bins(
     let (target_node_modules_path, mut node_modules_path) =
         (abs_node_modules(), abs_node_modules());
 
-    let mut seen: StringHashMap<()> = StringHashMap::init();
+    let mut seen: StringHashMap<()> = StringHashMap::new();
     match global_bin_path {
         // The linker creates a missing `.bin`, but never a missing global bin folder.
         Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,

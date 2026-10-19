@@ -505,7 +505,7 @@ pub(crate) fn dedupe_columns<'a>(
     let mut seen_numbers: Vec<u32> = Vec::new();
     // StringHashMap clones to an owned `Box<[u8]>` key. Fine for a transient
     // dedup set.
-    let mut seen_fields: StringHashMap<()> = StringHashMap::init();
+    let mut seen_fields: StringHashMap<()> = StringHashMap::new();
     seen_fields.reserve(columns.len());
 
     let mut flags = Flags::empty();

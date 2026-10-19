@@ -184,9 +184,9 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
             // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
             // rebuild the resolver-shaped map by cloning value bytes.
-            let mut remap = bun_resolver::package_json::MacroMap::init();
+            let mut remap = bun_resolver::package_json::MacroMap::new();
             for (pkg, inner) in macros.iter() {
-                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::init();
+                let mut entry = bun_resolver::package_json::MacroImportReplacementMap::new();
                 for (import_name, path) in inner.iter() {
                     entry.insert(import_name.as_ref(), Box::<[u8]>::from(path.as_ref()));
                 }
@@ -662,8 +662,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
     let mut module_keys: Vec<BunString> = vec![BunString::DEAD; entry_points.files.count()];
-    let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::init();
-    let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::init();
+    let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::new();
+    let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::new();
     {
         let output_indexes = entry_points.files.values_mut();
         for (i, file) in bundled_outputs_list.iter().enumerate() {

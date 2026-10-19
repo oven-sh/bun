@@ -81,7 +81,7 @@ impl Framework {
             file_system_router_types: Vec::new(),
             server_components: None,
             react_fast_refresh: None,
-            built_in_modules: bun_collections::StringArrayHashMap::init(),
+            built_in_modules: bun_collections::StringArrayHashMap::new(),
         }
     }
 }

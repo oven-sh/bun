@@ -323,7 +323,7 @@ impl Rule for SortKeys {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Fixes<'a>> {
-        Some(Fixes::init())
+        Some(Fixes::new())
     }
 
     fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {

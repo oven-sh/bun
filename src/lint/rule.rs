@@ -1131,13 +1131,6 @@ impl On {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct NodeTags(u128);
 
-impl NodeTags {
-    #[inline]
-    pub fn init() -> Self {
-        Self(0)
-    }
-}
-
 const STMTS: u32 = ExprTag::COUNT as u32;
 const TYPES: u32 = STMTS + StmtTag::COUNT as u32;
 const REST: u32 = TYPES + TypeTag::COUNT as u32;

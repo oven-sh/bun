@@ -87,7 +87,7 @@ impl Rule for NoEmptyInterface {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(IdMap::init())
+        Some(IdMap::new())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

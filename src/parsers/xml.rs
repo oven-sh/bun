@@ -2663,7 +2663,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             group_of: Vec::new(),
             groups: Vec::new(),
             gathered: Rows::with_capacity(0),
-            group_index: HashMap::init(),
+            group_index: HashMap::new(),
             root: None,
         }
     }
@@ -3078,7 +3078,7 @@ impl<'a, U: Unit> AttList<'a, U> {
     fn new() -> Self {
         Self {
             defs: Vec::new(),
-            by_name: HashMap::init(),
+            by_name: HashMap::new(),
         }
     }
 }
@@ -3150,8 +3150,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 suspended: Vec::new(),
                 next_frame_id: 1,
                 entities: Entities {
-                    general: HashMap::init(),
-                    parameter: HashMap::init(),
+                    general: HashMap::new(),
+                    parameter: HashMap::new(),
                 },
                 expanded_bytes: 0,
                 document_len: contents.len() as u64,
@@ -3183,10 +3183,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             in_dtd: false,
             stack_check: StackCheck::init(),
             sink,
-            attlists: HashMap::init(),
+            attlists: HashMap::new(),
             open: Vec::new(),
             attribute_first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
-            attribute_names: HashMap::init(),
+            attribute_names: HashMap::new(),
             attribute_count: 0,
         }
     }

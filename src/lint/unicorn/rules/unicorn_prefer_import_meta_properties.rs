@@ -201,7 +201,7 @@ impl Rule for PreferImportMetaProperties {
         if !file.mentions_any(&["dirname", "fileURLToPath"]) {
             return None;
         }
-        Some(core::array::from_fn(|_| core::array::from_fn(|_| IdMap::init())))
+        Some(core::array::from_fn(|_| core::array::from_fn(|_| IdMap::new())))
     }
 
     fn expr<'a>(&self, meta: Expr<'a>, cx: &mut Cx<'a, Self>) {

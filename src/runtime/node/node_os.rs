@@ -20,6 +20,7 @@ pub(crate) struct CPUTimes {
     pub irq: u64,
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl CPUTimes {
     #[inline]
     pub(crate) fn new() -> Self {

@@ -389,7 +389,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<u32> = StringHashMap::init();
+        let mut path_names_map: StringHashMap<u32> = StringHashMap::new();
 
         struct DuplicateEntry {
             // `BackRef` (not `*mut`) — entries point at elements of the
@@ -406,7 +406,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
         }
-        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::init();
+        let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::new();
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
@@ -563,7 +563,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
             unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
-        let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::init();
+        let mut unique_key_to_path: StringHashMap<Box<[u8]>> = StringHashMap::new();
         for ch in chunks.iter() {
             if ch.unique_key.len() > 0 && ch.final_rel_path.len() > 0 {
                 // Use the per-chunk public_path to match what IntermediateOutput.code()

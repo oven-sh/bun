@@ -1353,7 +1353,7 @@ impl<'a> Parser<'a> {
             // A namespace ref is listed once per registration and once per
             // destructure of it; its alias map only needs one walk.
             let mut seen_namespace: bun_collections::HashMap<(bun_ast::Ref, u32), ()> =
-                bun_collections::HashMap::init();
+                bun_collections::HashMap::new();
             let arena = p.arena;
             for i in 0..p.imports_to_convert_from_dynamic_import.len() {
                 let (ns_ref, import_record_id, scope) = {
@@ -1702,7 +1702,7 @@ impl<'a> Parser<'a> {
                                         ),
                                         named_exports: core::mem::replace(
                                             &mut p.named_exports,
-                                            bun_collections::StringArrayHashMap::init(),
+                                            bun_collections::StringArrayHashMap::new(),
                                         ),
                                         ..js_ast::Ast::empty_in(p.arena)
                                     })));

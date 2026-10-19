@@ -161,9 +161,9 @@ impl<'a> Frame<'a> {
     fn new() -> Self {
         Self {
             hasher: Wyhash::new(),
-            declared: HashMap::init(),
-            of_module: HashMap::init(),
-            labels: HashMap::init(),
+            declared: HashMap::new(),
+            of_module: HashMap::new(),
+            labels: HashMap::new(),
             is_module: false,
             awaits: false,
             is_unnamed: false,
@@ -856,7 +856,7 @@ impl<'p, 'a> Walker<'p, 'a> {
         let class_index = self.fields.len();
         self.fields.push([None, None]);
         let fields_around = self.fields_being_walked;
-        let mut private_names = HashMap::<&'a [u8], u32>::init();
+        let mut private_names = HashMap::<&'a [u8], u32>::new();
         for property in class.properties.slice() {
             if let Some(Data::EPrivateIdentifier(name)) = property.key.as_ref().map(|key| &key.data)
             {

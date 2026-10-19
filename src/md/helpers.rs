@@ -512,7 +512,7 @@ impl HeadingIdTracker {
             enabled: false,
             in_heading: false,
             text_buf: Vec::new(),
-            slug_counts: bun_collections::StringHashMap::init(),
+            slug_counts: bun_collections::StringHashMap::new(),
         }
     }
 }

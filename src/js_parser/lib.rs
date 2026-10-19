@@ -497,8 +497,8 @@ pub mod defines {
         #[inline]
         pub fn new() -> Self {
             Self {
-                identifiers: StringHashMap::init(),
-                dots: StringHashMap::init(),
+                identifiers: StringHashMap::new(),
+                dots: StringHashMap::new(),
                 dots_filter: DotFilter::new(),
                 drop_debugger: false,
                 user_hash: None,

@@ -24,7 +24,7 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            of_variables: IdMap::init(),
+            of_variables: IdMap::new(),
             of_globals: None,
         }
     }

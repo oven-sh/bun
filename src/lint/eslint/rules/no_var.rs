@@ -116,7 +116,7 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            first_calls: core::cell::RefCell::new(IdMap::init()),
+            first_calls: core::cell::RefCell::new(IdMap::new()),
             loops: core::cell::RefCell::new(AncestorMemo::new()),
             ambient: AmbientAncestors::new(),
         }

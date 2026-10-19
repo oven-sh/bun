@@ -68,7 +68,7 @@ pub struct UpdateRequestIndex(
 impl UpdateRequestIndex {
     #[inline]
     pub fn new() -> Self {
-        Self(bun_collections::HashMap::init())
+        Self(bun_collections::HashMap::new())
     }
 }
 

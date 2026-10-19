@@ -137,7 +137,7 @@ impl LiveTickets {
     fn new() -> Self {
         Self {
             next_id: 0,
-            at: bun_collections::HashMap::init(),
+            at: bun_collections::HashMap::new(),
         }
     }
 }

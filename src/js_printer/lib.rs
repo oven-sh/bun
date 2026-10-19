@@ -456,7 +456,7 @@ pub mod analyze_transpiled_module {
                 keys: Vec::new(),
                 values: Vec::new(),
                 phases: Vec::new(),
-                index: HashMap::init(),
+                index: HashMap::new(),
             }
         }
     }
@@ -511,7 +511,7 @@ pub mod analyze_transpiled_module {
         }
         fn init(is_typescript: bool) -> Self {
             Self {
-                strings_map: HashMap::init(),
+                strings_map: HashMap::new(),
                 strings_buf: Vec::new(),
                 strings_lens: Vec::new(),
                 requested_modules: RequestedModules::new(),
@@ -521,7 +521,7 @@ pub mod analyze_transpiled_module {
                     is_typescript,
                     ..Flags::new()
                 },
-                exported_names: HashMap::init(),
+                exported_names: HashMap::new(),
                 finalized: false,
             }
         }
@@ -818,7 +818,7 @@ pub mod analyze_transpiled_module {
                 record_kinds_idx: usize,
                 is_namespace: bool,
             }
-            let mut local_name_to_module_name: HashMap<StringID, LocalImport> = HashMap::init();
+            let mut local_name_to_module_name: HashMap<StringID, LocalImport> = HashMap::new();
             {
                 let mut i = 0usize;
                 for (idx, &k) in self.record_kinds.iter().enumerate() {

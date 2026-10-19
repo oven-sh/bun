@@ -73,7 +73,7 @@ impl<'a> Command<'a> {
 
     pub(crate) fn byte_length(&self) -> usize {
         // DiscardingWriter is bun_io's byte-counting null sink.
-        let mut counter = bun_io::DiscardingWriter::init();
+        let mut counter = bun_io::DiscardingWriter::new();
         self.write(&mut counter).expect("unreachable");
         counter.count
     }

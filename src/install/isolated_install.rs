@@ -286,7 +286,7 @@ fn peers_served_in(
     let pkg_dependencies = lockfile.packages.items_dependencies();
 
     let mut served: Vec<(DependencyID, PackageID)> = Vec::new();
-    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::init();
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::new();
     for node in (0..nodes.len()).filter(|&node| only.is_none_or(|only| only.is_set(node))) {
         let wired = &node_dependencies[node];
         let deps = pkg_dependencies[node_pkg_ids[node] as usize];
@@ -666,7 +666,7 @@ fn build_store(
     // Two would-be nodes with the same (pkg_id, ctx_hash) will end up with the
     // same `peers` set and therefore become the same entry in the second pass.
     // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
-    let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::init();
+    let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::new();
 
     let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
     for dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
@@ -713,7 +713,7 @@ fn build_store(
 
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
 
-    let mut first_named = FirstNamed::init();
+    let mut first_named = FirstNamed::new();
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
@@ -1241,7 +1241,7 @@ fn build_store(
         );
     }
 
-    let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::init();
+    let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::new();
 
     let mut res_fmt_buf: Vec<u8> = Vec::new();
 
@@ -1261,9 +1261,9 @@ fn build_store(
         entry_parent_id: store::entry::Id::INVALID,
     })?;
 
-    let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::init();
+    let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::new();
 
-    let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::init();
+    let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::new();
     let mut hidden_hoist_keys: Vec<store::entry::DependenciesItem> = Vec::new();
 
     // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
@@ -2179,7 +2179,7 @@ pub(crate) fn install_isolated_packages(
         let pkg_resolutions = pkgs.items_resolution();
 
         // TODO: delete
-        let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::init();
+        let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::new();
 
         let tasks_in_flight = bun_threading::WaitGroup::init();
 

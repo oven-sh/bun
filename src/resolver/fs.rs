@@ -386,7 +386,7 @@ impl DirEntry {
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
-            data: dir_entry::EntryMap::init(),
+            data: dir_entry::EntryMap::new(),
             generation,
             fd: Fd::INVALID,
         }

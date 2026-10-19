@@ -28,7 +28,7 @@ pub enum RequestedExports {
 
 impl RequestedExports {
     pub fn new() -> Self {
-        RequestedExports::Partial(StringArrayHashMap::init())
+        RequestedExports::Partial(StringArrayHashMap::new())
     }
 }
 
@@ -214,7 +214,7 @@ fn apply_barrel_optimization_impl(
     // import records that share a path with any needed record.
     if dev_handle.is_some() {
         // Collect paths of needed records.
-        let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::init();
+        let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
 
         for rec_idx in needed_records.keys() {
             if (*rec_idx as usize) < ast.import_records.len() {
@@ -491,7 +491,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // its index, so the direct path lookup below fails for those entries.
     // Build a fallback: raw specifier → surviving record's resolved path
     // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::init();
+    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)

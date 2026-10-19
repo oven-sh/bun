@@ -477,7 +477,7 @@ pub(crate) struct Group {
 
 impl Group {
     #[inline]
-    pub(crate) fn init() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             id: [0; 2],
             end: [0; 2],
@@ -489,10 +489,6 @@ impl Group {
 }
 
 impl Group {
-    pub(crate) fn new() -> Self {
-        Self::init()
-    }
-
     #[must_use]
     pub(crate) fn with_id(mut self, id: Option<GroupId>) -> Self {
         let id = id.map_or(0, |id| id.0.get());

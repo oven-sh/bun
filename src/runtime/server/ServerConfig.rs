@@ -710,7 +710,7 @@ impl ServerConfig {
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                dedupe_html_bundle_map: bun_collections::HashMap::init(),
+                dedupe_html_bundle_map: bun_collections::HashMap::new(),
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,

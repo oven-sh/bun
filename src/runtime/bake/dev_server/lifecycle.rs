@@ -71,13 +71,13 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(client_graph, IncrementalGraph::new());
         w!(server_graph, IncrementalGraph::new());
-        w!(barrel_files_with_deferrals, StringArrayHashMap::init());
-        w!(barrel_needed_exports, StringArrayHashMap::init());
+        w!(barrel_files_with_deferrals, StringArrayHashMap::new());
+        w!(barrel_needed_exports, StringArrayHashMap::new());
         w!(incremental_result, IncrementalResult::EMPTY);
         w!(route_lookup, ArrayHashMap::new());
         w!(route_bundles, Vec::new());
         w!(html_router, HTMLRouter::empty());
-        w!(active_websocket_connections, HashMap::init());
+        w!(active_websocket_connections, HashMap::new());
         w!(current_bundle, None);
         w!(
             next_bundle,
@@ -91,7 +91,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(
             assets,
             Assets {
-                path_map: StringArrayHashMap::init(),
+                path_map: StringArrayHashMap::new(),
                 files: ArrayHashMap::new(),
                 refs: Vec::new(),
                 needs_reindex: false,
@@ -126,7 +126,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 root: Box::from(root),
                 types: Box::new([]),
                 routes: Vec::new(),
-                static_routes: StringArrayHashMap::init(),
+                static_routes: StringArrayHashMap::new(),
                 dynamic_routes: ArrayHashMap::new(),
                 pattern_string_arena: Arena::new(),
             }

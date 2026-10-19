@@ -320,7 +320,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            bundled_files: StringArrayHashMap::init(),
+            bundled_files: StringArrayHashMap::new(),
             stale_files: DynamicBitSetUnmanaged::new(),
             edge_lists: Vec::new(),
             edges: Vec::new(),

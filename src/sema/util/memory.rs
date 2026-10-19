@@ -229,14 +229,8 @@ pub type AppendVec<T, A = Global> = Stable<T, AtomicU32, A>;
 pub type LocalVec<T, A = Global> = Stable<T, Cell<u32>, A>;
 
 impl<T, L: Length> Stable<T, L, Global> {
-    pub fn init() -> Self {
-        Self::new_in(Global)
-    }
-}
-
-impl<T, L: Length> Stable<T, L, Global> {
     pub fn new() -> Self {
-        Self::init()
+        Self::new_in(Global)
     }
 }
 

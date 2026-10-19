@@ -25,7 +25,7 @@ impl<'a> Known<'a> {
     pub fn new() -> Self {
         Self {
             at: AncestorMemo::new(),
-            in_function: IdMap::init(),
+            in_function: IdMap::new(),
             bindings: ast_utils::ThisBindingMemo::new(),
             is_module: None,
         }

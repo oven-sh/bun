@@ -204,7 +204,7 @@ pub struct Recording<'a> {
 pub fn write(modules: &[Option<&CodeNames>], recording: &Recording<'_>) -> (Vec<u8>, usize) {
     use std::io::Write;
     let mut text = format!("{VERSION}\n").into_bytes();
-    let mut seen = bun_collections::HashMap::<(u8, u64), ()>::init();
+    let mut seen = bun_collections::HashMap::<(u8, u64), ()>::new();
     let mut line = |seen_as: u8, kind: u8, hash: u64| {
         if seen.insert((seen_as, hash), ()).is_none() {
             let _ = writeln!(text, "{} {hash:016x}", kind as char);
@@ -349,7 +349,7 @@ impl BytecodeOrder {
     /// front made its startup read the functions it only needs later. A module is evaluated if any file says so.
     pub(crate) fn merge(profiles: &[Self]) -> Self {
         fn merge_ranked(lists: Vec<&[u64]>) -> Vec<u64> {
-            let mut seen = bun_collections::HashMap::<u64, ()>::init();
+            let mut seen = bun_collections::HashMap::<u64, ()>::new();
             lists
                 .into_iter()
                 .flatten()

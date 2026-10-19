@@ -268,7 +268,7 @@ impl<'a> Met<'a> {
     #[inline]
     fn new() -> Self {
         Self {
-            seen: IdSet::init(),
+            seen: IdSet::new(),
             active_signatures: SmallVec::new(),
         }
     }

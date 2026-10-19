@@ -219,7 +219,7 @@ impl FFI {
     pub(crate) fn new() -> Self {
         Self {
             dylib: JsCell::new(None),
-            functions: JsCell::new(StringArrayHashMap::init()),
+            functions: JsCell::new(StringArrayHashMap::new()),
             closed: Cell::new(false),
             shared_state: Cell::new(None),
         }
@@ -899,7 +899,7 @@ impl SymbolsMap {
     #[inline]
     fn new() -> Self {
         Self {
-            map: StringArrayHashMap::init(),
+            map: StringArrayHashMap::new(),
         }
     }
 }
@@ -1247,7 +1247,7 @@ impl FFI {
             shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
             functions: JsCell::new(core::mem::replace(
                 &mut compile_c.symbols.map,
-                StringArrayHashMap::init(),
+                StringArrayHashMap::new(),
             )),
             closed: Cell::new(false),
         });
@@ -1382,7 +1382,7 @@ impl FFI {
             return Ok(invalid_options_arg(global));
         };
 
-        let mut symbols = StringArrayHashMap::<Function>::init();
+        let mut symbols = StringArrayHashMap::<Function>::new();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
         if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
@@ -1473,7 +1473,7 @@ impl FFI {
             return Ok(global.to_invalid_arguments(format_args!("Invalid library name")));
         }
 
-        let mut symbols = StringArrayHashMap::<Function>::init();
+        let mut symbols = StringArrayHashMap::<Function>::new();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols
@@ -1607,7 +1607,7 @@ impl FFI {
             return Ok(invalid_options_arg(global));
         };
 
-        let mut symbols = StringArrayHashMap::<Function>::init();
+        let mut symbols = StringArrayHashMap::<Function>::new();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object_value` keeps it alive.
         if let Some(val) = generate_symbols(global, &mut symbols, unsafe { &*object })? {
             // an error while validating symbols

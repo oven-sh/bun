@@ -173,7 +173,7 @@ pub(crate) mod js_bundler {
         pub(crate) fn new() -> Self {
             Self {
                 target: Target::Browser,
-                entry_points: StringSet::empty(),
+                entry_points: StringSet::new(),
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
@@ -202,11 +202,11 @@ pub(crate) mod js_bundler {
                 deprecated_namespace_object_setters: true,
                 tree_shaking: None,
                 names: Names::new(),
-                external: StringSet::empty(),
+                external: StringSet::new(),
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::new(),
-                conditions: StringSet::empty(),
+                conditions: StringSet::new(),
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
@@ -221,15 +221,15 @@ pub(crate) mod js_bundler {
                 fold_chunks: true,
                 module_preload: true,
                 check: false,
-                drop: StringSet::empty(),
-                features: StringSet::empty(),
+                drop: StringSet::new(),
+                features: StringSet::new(),
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::new(),
                 compile: None,
                 files: FileMap::new(),
                 metafile: false,
-                optimize_imports: StringSet::empty(),
+                optimize_imports: StringSet::new(),
             }
         }
     }
@@ -1087,7 +1087,7 @@ pub(crate) mod js_bundler {
                             "allowUnresolved must be an array"
                         )));
                     }
-                    this.allow_unresolved = Some(StringSet::empty());
+                    this.allow_unresolved = Some(StringSet::new());
                     if allow_unresolved_val.get_length(global_this)? > 0 {
                         let mut iter = allow_unresolved_val.array_iterator(global_this)?;
                         while let Some(entry) = iter.next()? {

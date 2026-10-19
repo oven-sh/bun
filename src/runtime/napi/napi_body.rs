@@ -3364,7 +3364,7 @@ extern "C" fn napi_create_threadsafe_function(
         has_queued_finalizer: false,
         lock: Mutex::new(),
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
-        blocking_condvar: Condvar::init(),
+        blocking_condvar: Condvar::new(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         env_dead: AtomicBool::new(false),
         resources_released: AtomicBool::new(false),

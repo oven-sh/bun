@@ -40,15 +40,6 @@ pub struct Mutex {
 }
 
 impl Mutex {
-    #[inline]
-    pub fn init() -> Self {
-        Self {
-            impl_: Impl::init(),
-        }
-    }
-}
-
-impl Mutex {
     /// Const-init an unlocked mutex. Required for `static` items.
     pub const fn new() -> Self {
         Self { impl_: Impl::new() }
@@ -172,17 +163,6 @@ pub(crate) struct DebugImpl {
     /// 0 means it's not locked.
     pub(crate) locking_thread: AtomicU64,
     pub(crate) impl_: ReleaseImpl,
-}
-
-#[cfg(debug_assertions)]
-impl DebugImpl {
-    #[inline]
-    pub(crate) fn init() -> Self {
-        Self {
-            locking_thread: core::sync::atomic::AtomicU64::new(0),
-            impl_: ReleaseImpl::init(),
-        }
-    }
 }
 
 #[cfg(debug_assertions)]
@@ -348,16 +328,6 @@ impl DarwinImpl {
 #[cfg(not(any(windows, target_vendor = "apple")))]
 pub struct FutexImpl {
     state: AtomicU32,
-}
-
-#[cfg(not(any(windows, target_vendor = "apple")))]
-impl FutexImpl {
-    #[inline]
-    pub fn init() -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU32::new(0),
-        }
-    }
 }
 
 #[cfg(not(any(windows, target_vendor = "apple")))]

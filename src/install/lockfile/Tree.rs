@@ -956,7 +956,7 @@ impl RowMap {
     fn new(rows: usize) -> RowMap {
         RowMap {
             first: vec![None; rows],
-            more: super::BunHashMap::init(),
+            more: super::BunHashMap::new(),
         }
     }
 
@@ -2119,10 +2119,10 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     if trees.is_empty() {
         return served;
     }
-    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::init();
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::new();
 
     // The `node_modules` folder of the package placed in `parent` under a name, if it has one.
-    let mut own_folder: HashMap<(Id, PackageNameHash), Id> = HashMap::init();
+    let mut own_folder: HashMap<(Id, PackageNameHash), Id> = HashMap::new();
     for tree in &trees[1..] {
         if tree.is_unlinked_member(trees, hoisted, dependencies) {
             continue;
@@ -2131,7 +2131,7 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
         own_folder.insert((tree.parent, name_hash), tree.id);
     }
 
-    let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::init();
+    let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::new();
     for (tree_id, tree) in trees.iter().enumerate() {
         for &dep_id in tree.dependencies.get(hoisted) {
             placed

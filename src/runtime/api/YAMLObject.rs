@@ -203,7 +203,7 @@ impl<'a> Stringifier<'a> {
         space_value: JSValue,
         known_collection_roots: &'a mut MarkedArgumentBuffer,
     ) -> JsResult<Stringifier<'a>> {
-        let mut prop_names: StringHashMap<usize> = StringHashMap::init();
+        let mut prop_names: StringHashMap<usize> = StringHashMap::new();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
         prop_names.put(b"root", 0)?;
@@ -213,7 +213,7 @@ impl<'a> Stringifier<'a> {
             builder: wtf::StringBuilder::init(),
             indent: 0,
             item_offset: 0,
-            known_collections: HashMap::init(),
+            known_collections: HashMap::new(),
             known_collection_roots,
             array_item_counter: 0,
             prop_names,
@@ -1123,7 +1123,7 @@ fn parse_to_values(
             };
 
         let mut ctx = ParserCtx {
-            seen_objects: HashMap::init(),
+            seen_objects: HashMap::new(),
             stack_check: StackCheck::init(),
             global,
             pending,

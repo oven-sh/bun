@@ -108,7 +108,7 @@ pub struct HashMap<K, V, C = AutoHashContext> {
 
 impl<K, V, C> HashMap<K, V, C> {
     #[inline]
-    pub fn init() -> Self {
+    pub fn new() -> Self {
         Self {
             metadata: Vec::new(),
             slots: Vec::new(),
@@ -120,11 +120,6 @@ impl<K, V, C> HashMap<K, V, C> {
 }
 
 impl<K, V, C> HashMap<K, V, C> {
-    #[inline]
-    pub fn new() -> Self {
-        Self::init()
-    }
-
     #[inline]
     pub fn len(&self) -> usize {
         self.size as usize
@@ -141,7 +136,7 @@ impl<K, V, C> HashMap<K, V, C> {
     /// Release storage.
     #[inline]
     pub fn deinit(&mut self) {
-        *self = Self::init();
+        *self = Self::new();
     }
 
     /// Clear all entries, retaining capacity.
@@ -199,7 +194,7 @@ impl<K, V, C> HashMap<K, V, C> {
 
 impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     pub fn with_capacity(capacity: usize) -> Self {
-        let mut m = Self::init();
+        let mut m = Self::new();
         if capacity > 0 {
             let _ = m.ensure_total_capacity(capacity);
         }
@@ -253,7 +248,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
             // LSAN: this Vec is owned by the map and freed by HashMap's auto-Drop.
             // A leak reported here means the *container* HashMap leaked, not grow().
             slots: Vec::with_capacity(new_cap as usize),
-            ..Self::init()
+            ..Self::new()
         };
         for _ in 0..new_cap {
             map.slots.push(None);

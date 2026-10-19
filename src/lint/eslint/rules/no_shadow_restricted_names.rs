@@ -147,7 +147,7 @@ impl Rule for NoShadowRestrictedNames {
             numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
             restricted,
             reported: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
-            seen: IdMap::init(),
+            seen: IdMap::new(),
         };
         if state.restricted.is_empty() {
             return None;

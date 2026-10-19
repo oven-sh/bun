@@ -62,8 +62,8 @@ impl PerThread {
             entry_points: EntryPointMap::new(),
             bundled_outputs: Vec::new(),
             module_keys: Vec::new(),
-            module_map: StringArrayHashMap::init(),
-            source_maps: StringArrayHashMap::init(),
+            module_map: StringArrayHashMap::new(),
+            source_maps: StringArrayHashMap::new(),
             // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
             // write provenance); outlives `PerThread`.
             vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },

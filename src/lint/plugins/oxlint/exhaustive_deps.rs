@@ -706,8 +706,8 @@ impl<'a> Memo<'a> {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            is_stable: IdMap::init(),
-            is_current_written: IdMap::init(),
+            is_stable: IdMap::new(),
+            is_current_written: IdMap::new(),
             places_of_symbols: None,
             currents: None,
             function_around: AncestorMemo::new(),
@@ -834,7 +834,7 @@ impl<'a> Component<'a> {
         let mut stack: Vec<Frame<'a>> = Vec::new();
         // The functions that have been entered, and from which one in `stack` can be reached.
         let mut open: Vec<Symbol<'a>> = Vec::new();
-        let mut numbers: IdMap<Symbol<'a>, usize> = IdMap::init();
+        let mut numbers: IdMap<Symbol<'a>, usize> = IdMap::new();
         let mut entering = Some((symbol, declared));
         loop {
             if let Some((symbol, declared)) = entering.take() {

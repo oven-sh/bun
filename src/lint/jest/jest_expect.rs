@@ -1146,8 +1146,8 @@ pub(crate) mod no_standalone_expect {
         fn new() -> Self {
             Self {
                 functions: EnclosingFunctions::new(),
-                functions_in_place: IdMap::init(),
-                blocks: IdMap::init(),
+                functions_in_place: IdMap::new(),
+                blocks: IdMap::new(),
             }
         }
     }

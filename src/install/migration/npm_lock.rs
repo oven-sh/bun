@@ -199,7 +199,7 @@ pub(super) fn migrate_packages(
     this.packages.ensure_total_capacity(entry_count)?;
     this.package_index.reserve(entry_count);
 
-    let mut index = StringHashMap::<u32>::init();
+    let mut index = StringHashMap::<u32>::new();
     index.reserve(entry_count);
 
     let silent = manager.options.log_level.is_silent();

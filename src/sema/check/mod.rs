@@ -797,7 +797,7 @@ impl<'s> Program<'s> {
             spread_indices_of_many: rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
-            provisional_shapes: crate::util::memory::Stable::init(),
+            provisional_shapes: crate::util::memory::Stable::new(),
             provisional: rustc_hash::FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
             taint_events: Vec::new(),
             cycle_at: 0,

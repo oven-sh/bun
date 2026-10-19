@@ -30,7 +30,7 @@ impl<'a> State<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            last_reads: IdMap::init(),
+            last_reads: IdMap::new(),
         }
     }
 }

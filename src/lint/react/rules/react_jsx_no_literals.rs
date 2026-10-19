@@ -115,7 +115,7 @@ impl<'a> State<'a> {
         Self {
             scopes: Vec::new(),
             outermost: None,
-            exported_names: IdMap::init(),
+            exported_names: IdMap::new(),
             renamed_import_map: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }

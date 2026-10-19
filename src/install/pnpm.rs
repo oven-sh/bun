@@ -634,7 +634,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
 
         let importer_versions =
-            importer_dep_res_versions.get_or_put(b".", StringArrayHashMap::init)?;
+            importer_dep_res_versions.get_or_put(b".", StringArrayHashMap::new)?;
         *importer_versions.value_ptr = StringArrayHashMap::new();
 
         parse_append_importer_dependencies(
@@ -681,7 +681,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         };
 
         let importer_versions =
-            importer_dep_res_versions.get_or_put(path, StringArrayHashMap::init)?;
+            importer_dep_res_versions.get_or_put(path, StringArrayHashMap::new)?;
         if importer_versions.found_existing {
             return Err(InvalidPnpmLockfile);
         }

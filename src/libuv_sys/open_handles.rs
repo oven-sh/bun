@@ -45,12 +45,20 @@ struct FileEntry {
     close_via_owner: Option<CloseViaOwner>,
 }
 
-#[derive(Default)]
 struct Open {
     /// By handle address.
     handles: HashMap<*mut uv_handle_t, Entry>,
     /// By the boxed `File`'s address (what the reader's `Source` owns).
     files: HashMap<*mut c_void, FileEntry>,
+}
+
+impl Open {
+    fn new() -> Self {
+        Open {
+            handles: HashMap::new(),
+            files: HashMap::new(),
+        }
+    }
 }
 
 std::thread_local! {

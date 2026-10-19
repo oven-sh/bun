@@ -852,7 +852,7 @@ impl SharedCheck {
     fn new() -> Self {
         Self {
             state: Guarded::init(CheckState::Unseen),
-            has_changed: bun_threading::Condvar::init(),
+            has_changed: bun_threading::Condvar::new(),
             blocked: core::sync::atomic::AtomicUsize::new(0),
             carried: std::sync::OnceLock::new(),
         }

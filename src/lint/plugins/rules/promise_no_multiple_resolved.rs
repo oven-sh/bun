@@ -181,7 +181,7 @@ impl<'a> Walk<'a> {
             code_path: None,
             side_by_side: Vec::new(),
             catch_starts: Vec::new(),
-            in_try_block: IdSet::init(),
+            in_try_block: IdSet::new(),
             found: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }

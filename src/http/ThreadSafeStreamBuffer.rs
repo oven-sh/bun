@@ -38,7 +38,7 @@ impl ThreadSafeStreamBuffer {
     pub fn init() -> Self {
         Self {
             buffer: StreamBuffer::new(),
-            mutex: Mutex::init(),
+            mutex: Mutex::new(),
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,

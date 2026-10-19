@@ -169,7 +169,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             tests: Vec::new(),
-            is_dynamic: IdMap::init(),
+            is_dynamic: IdMap::new(),
             is_oxlint: false,
         }
     }

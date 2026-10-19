@@ -85,7 +85,7 @@ impl Config {
         Self {
             transform: default_transform_options(),
             default_loader: Loader::Jsx,
-            macro_map: MacroMap::init(),
+            macro_map: MacroMap::new(),
             tsconfig: None,
             tsconfig_buf: Box::new([]),
             macros_buf: Box::new([]),
@@ -132,7 +132,7 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
-    let mut out = MacroMap::init();
+    let mut out = MacroMap::new();
     bun_core::handle_oom(out.ensure_unused_capacity(src.count()));
     for (k, v) in src.keys().iter().zip(src.values().iter()) {
         // inner map: `StringArrayHashMap<&'static [u8]>` — `&[u8]: Clone` ⇒ inherent `clone()` works.

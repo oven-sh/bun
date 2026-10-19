@@ -934,13 +934,6 @@ impl AsyncPrefixExpression {
 pub struct IdentifierOpts(u8);
 
 impl IdentifierOpts {
-    #[inline]
-    pub fn init() -> Self {
-        Self(0)
-    }
-}
-
-impl IdentifierOpts {
     const ASSIGN_TARGET_MASK: u8 = 0b0000_0011; // bits 0-1
     const IS_DELETE_TARGET: u8 = 1 << 2;
     const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
@@ -1202,7 +1195,7 @@ impl StringVoidMap {
 
     fn init() -> Result<StringVoidMap, bun_core::Error> {
         Ok(StringVoidMap {
-            map: StringHashMap::init(),
+            map: StringHashMap::new(),
         })
     }
 
@@ -1492,7 +1485,7 @@ impl ScanPassResult {
         ScanPassResult {
             import_records: Vec::new(),
             named_imports: ArrayHashMap::new(),
-            used_symbols: ParsePassSymbolUsageMap::init(),
+            used_symbols: ParsePassSymbolUsageMap::new(),
         }
     }
 

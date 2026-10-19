@@ -7579,7 +7579,7 @@ impl H2FrameParser {
             write_buffer: JsCell::new(Vec::<u8>::new()),
             write_buffer_offset: Cell::new(0),
             outbound_queue_size: Cell::new(0),
-            streams: JsCell::new(BunHashMap::init()),
+            streams: JsCell::new(BunHashMap::new()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
@@ -7594,7 +7594,7 @@ impl H2FrameParser {
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
             rewrite_pending_push: Cell::new(0),
-            sctx: JsCell::new(BunHashMap::init()),
+            sctx: JsCell::new(BunHashMap::new()),
             hdr_block: JsCell::new(Vec::new()),
             hdr_meta: JsCell::new(Vec::new()),
         };
@@ -7876,7 +7876,7 @@ impl Drop for H2FrameParser {
         self.detach();
         // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
-        let streams = self.streams.replace(BunHashMap::init());
+        let streams = self.streams.replace(BunHashMap::new());
         for (_, item) in streams.iter() {
             let stream = *item;
             // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via heap::take
@@ -7896,7 +7896,7 @@ impl H2FrameParser {
         if VirtualMachine::get().is_shutting_down() {
             // Free the streams first: `free_resources` releases the refs their signals hold.
             // The map is emptied so a later `Drop` won't double-free.
-            let streams = self.streams.replace(BunHashMap::init());
+            let streams = self.streams.replace(BunHashMap::new());
             for (_, item) in streams.iter() {
                 let stream = *item;
                 // SAFETY: map has been emptied; each entry is freed exactly once.

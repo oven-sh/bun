@@ -253,7 +253,7 @@ impl WalkPlan {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
             let file_entry_bits = c.graph.files.items_entry_bits();
             let css = c.graph.ast.items_css();
-            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::init();
+            let mut chunk_of_key: StringHashMap<u32> = StringHashMap::new();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
                 if matches!(chunk.content, chunk::Content::Javascript(_)) {
                     bun_core::handle_oom(chunk_of_key.put(
@@ -806,7 +806,7 @@ impl EntryWalk {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
-        let mut css_placed: HashMap<u64, ()> = HashMap::init();
+        let mut css_placed: HashMap<u64, ()> = HashMap::new();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
         self.walk(
             c,

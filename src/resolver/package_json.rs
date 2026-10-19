@@ -153,7 +153,7 @@ impl PackageJSON {
             source: bun_ast::Source::new(),
             source_contents: Box::new([]),
             json_tape: None,
-            main_fields: MainFieldMap::init(),
+            main_fields: MainFieldMap::new(),
             module_type: ModuleType::Unknown,
             version: Box::new([]),
             scripts: None,
@@ -162,7 +162,7 @@ impl PackageJSON {
             dependencies: DependencyMap::new(),
             installed_dependency_rows: core::array::from_fn(|_| 0..0),
             side_effects: SideEffects::Unspecified,
-            browser_map: BrowserMap::init(),
+            browser_map: BrowserMap::new(),
             exports: None,
             imports: None,
         }
@@ -316,7 +316,7 @@ impl PackageJSON {
         log: &mut bun_ast::Log,
         json_source: &bun_ast::Source,
     ) -> MacroMap {
-        let mut macro_map = MacroMap::init();
+        let mut macro_map = MacroMap::new();
         if !macros.is_object() {
             return macro_map;
         }
@@ -351,7 +351,7 @@ impl PackageJSON {
                 return;
             }
 
-            let mut map = MacroImportReplacementMap::init();
+            let mut map = MacroImportReplacementMap::new();
             map.reserve(remap_count);
             value.for_each_property(|import_name, remap_key_loc, remap_value| {
                 let valid =
@@ -526,8 +526,8 @@ impl PackageJSON {
             source_contents: Box::new([]),
             json_tape: None,
             module_type: ModuleType::Unknown,
-            browser_map: BrowserMap::init(),
-            main_fields: MainFieldMap::init(),
+            browser_map: BrowserMap::new(),
+            main_fields: MainFieldMap::new(),
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
@@ -709,7 +709,7 @@ impl PackageJSON {
             } else if let js_ast::ExprData::EArrayJSON(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
                 let items = e_array.get().items();
-                let mut map = SideEffectsMap::init();
+                let mut map = SideEffectsMap::new();
                 let mut glob_list = Vec::new();
                 let mut has_globs = false;
                 let mut has_exact = false;
@@ -1008,7 +1008,7 @@ impl PackageJSON {
                         return None;
                     };
                     let obj = obj.get();
-                    let mut map = StringArrayHashMap::<&'static [u8]>::init();
+                    let mut map = StringArrayHashMap::<&'static [u8]>::new();
                     map.ensure_total_capacity(obj.properties().len()).ok()?;
                     for p in obj.properties() {
                         let key = p.key.slice();

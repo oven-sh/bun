@@ -23,7 +23,7 @@ impl<'a> ComponentPaths<'a> {
     fn new() -> Self {
         Self {
             rows: Vec::new(),
-            places: IdMap::init(),
+            places: IdMap::new(),
         }
     }
 }
@@ -149,7 +149,7 @@ impl<'a> Related<'a> {
         Self {
             paths: ComponentPaths::new(),
             references: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            properties: IdMap::init(),
+            properties: IdMap::new(),
         }
     }
 }

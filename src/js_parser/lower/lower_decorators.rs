@@ -798,7 +798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // accessors, static fields, instance fields.
         let mut next_initializer = [0usize; 4];
         let mut has_member_decorators = false;
-        let mut lowered_names: HashMap<u32, ()> = HashMap::init();
+        let mut lowered_names: HashMap<u32, ()> = HashMap::new();
         for prop in class.properties.slice() {
             if prop.ts_decorators.len_u32() == 0 {
                 continue;
@@ -843,7 +843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::new_in(bump),
             BumpVec::new_in(bump),
         ];
-        let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::init();
+        let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::new();
 
         for slot in class.properties.slice_mut().iter_mut() {
             let mut prop = core::mem::replace(slot, Property::new());

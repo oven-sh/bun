@@ -136,7 +136,7 @@ impl Options {
             registry_from_command_line: false,
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::new(),
-            registries: Npm::registry::Map::init(),
+            registries: Npm::registry::Map::new(),
             url_auth: Vec::new(),
             cache_directory: b"",
             enable: Enable::new(),

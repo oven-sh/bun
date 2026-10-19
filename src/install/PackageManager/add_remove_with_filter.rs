@@ -610,7 +610,7 @@ impl PendingWrite {
             );
             let outer = core::mem::replace(
                 &mut manager.updating_packages,
-                core::mem::replace(&mut pending.updating, StringArrayHashMap::init()),
+                core::mem::replace(&mut pending.updating, StringArrayHashMap::new()),
             );
             let summary_workspace =
                 core::mem::replace(&mut manager.workspace_name_hash, pending.target.name_hash);
@@ -705,12 +705,12 @@ pub(super) fn update_filtered_workspaces_and_install(
             if !remove_dependencies_from_package_json(&mut root, &updates) {
                 continue;
             }
-            (Box::from([]), StringArrayHashMap::init())
+            (Box::from([]), StringArrayHashMap::new())
         } else {
             let wanted_len = move_to_front(&mut updates, &wanted);
             reset_e_strings(&mut updates);
             let outer =
-                core::mem::replace(&mut manager.updating_packages, StringArrayHashMap::init());
+                core::mem::replace(&mut manager.updating_packages, StringArrayHashMap::new());
             let mut slice: &mut [UpdateRequest] = &mut updates[..wanted_len];
             let result = add_catalog::edit_target(
                 manager,

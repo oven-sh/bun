@@ -3295,11 +3295,11 @@ impl VirtualMachine {
             addr_of_mut!((*vm).entered_context).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
             addr_of_mut!((*vm).commonjs_custom_extensions)
-                .write(bun_collections::StringArrayHashMap::init());
+                .write(bun_collections::StringArrayHashMap::new());
             addr_of_mut!((*vm).entry_point)
                 .write(bun_bundler::entry_points::ServerEntryPoint::new());
             addr_of_mut!((*vm).origin).write(bun_url::URL::new());
-            addr_of_mut!((*vm).ref_strings).write(bun_collections::HashMap::init());
+            addr_of_mut!((*vm).ref_strings).write(bun_collections::HashMap::new());
             addr_of_mut!((*vm).modules).write(crate::async_module::Queue::new());
             addr_of_mut!((*vm).macro_event_loop).write(EventLoop::new());
             addr_of_mut!((*vm).proxy_env_storage).write(crate::rare_data::ProxyEnvStorage::new());

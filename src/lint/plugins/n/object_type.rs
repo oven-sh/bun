@@ -74,7 +74,7 @@ impl<'a> ExpressionTypes<'a> {
             tracked: Vec::new(),
             came_again_to: None,
             known: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
-            is_never_written: IdMap::init(),
+            is_never_written: IdMap::new(),
         }
     }
 }

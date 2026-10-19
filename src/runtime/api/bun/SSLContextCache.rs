@@ -43,7 +43,7 @@ impl SSLContextCache {
     pub(crate) fn new() -> Self {
         Self {
             map: ArrayHashMap::new(),
-            mutex: Mutex::init(),
+            mutex: Mutex::new(),
             ops_since_compact: 0,
         }
     }

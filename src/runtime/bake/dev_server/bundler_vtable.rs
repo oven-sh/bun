@@ -71,7 +71,7 @@ bun_bundler::link_impl_DevServerHandle! {
         },
         register_barrel_export(barrel_path, alias) => {
             // Silently drop on alloc failure.
-            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path, StringHashMap::init) else {
+            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path, StringHashMap::new) else {
                 return;
             };
             let _ = gop.value_ptr.get_or_put(alias, || ());

@@ -70,6 +70,14 @@ bitflags::bitflags! {
 #[derive(Clone, Copy)]
 pub struct EmptyCopyFileState;
 
+impl EmptyCopyFileState {
+    /// The name the Linux flags have, so `CopyFileState::empty()` is the same on every target.
+    #[inline]
+    pub const fn empty() -> Self {
+        EmptyCopyFileState
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub type CopyFileState = LinuxCopyFileState;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]

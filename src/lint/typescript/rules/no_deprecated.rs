@@ -60,8 +60,8 @@ impl<'a> Deprecations<'a> {
     pub fn new() -> Self {
         Self {
             is_nothing_inherited: false,
-            of_symbols: IdMap::init(),
-            of_signatures: IdMap::init(),
+            of_symbols: IdMap::new(),
+            of_signatures: IdMap::new(),
         }
     }
 }

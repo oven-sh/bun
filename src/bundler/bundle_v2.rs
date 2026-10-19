@@ -911,7 +911,7 @@ pub mod bv2_impl {
                 #[inline]
                 pub fn new() -> Self {
                     Self {
-                        map: bun_collections::StringHashMap::init(),
+                        map: bun_collections::StringHashMap::new(),
                     }
                 }
             }
@@ -6660,7 +6660,7 @@ pub mod bv2_impl {
             if let Some(only) = only_records {
                 estimated_resolve_queue_count = estimated_resolve_queue_count.min(only.len());
             }
-            let mut resolve_queue = ResolveQueue::init();
+            let mut resolve_queue = ResolveQueue::new();
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
@@ -7664,7 +7664,7 @@ pub mod bv2_impl {
             // hoisted to tail position (see end of fn) so a deferred closure doesn't
             // double-borrow `graph`/`this`.
 
-            let mut resolve_queue = ResolveQueue::init();
+            let mut resolve_queue = ResolveQueue::new();
             let mut process_log = true;
 
             if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {

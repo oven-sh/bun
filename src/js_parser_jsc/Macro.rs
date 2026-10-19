@@ -589,7 +589,7 @@ impl<'a> Run<'a> {
             bump,
             log,
             source,
-            visited: VisitMap::init(),
+            visited: VisitMap::new(),
             is_top_level: false,
         };
 

@@ -275,7 +275,7 @@ pub(crate) mod visited {
     impl Map {
         #[inline]
         pub(crate) fn new() -> Self {
-            Self(HashMap::init())
+            Self(HashMap::new())
         }
     }
 

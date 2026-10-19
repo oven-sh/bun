@@ -182,9 +182,9 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
-            segment_info: IdMap::init(),
+            segment_info: IdMap::new(),
             segments_after_chain: None,
-            assignment_references: IdMap::init(),
+            assignment_references: IdMap::new(),
             pauses: None,
         }
     }

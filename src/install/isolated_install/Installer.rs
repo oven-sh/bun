@@ -2298,7 +2298,7 @@ impl<'a> Installer<'a> {
         BinLinks {
             node_modules_path,
             is_behind_link,
-            seen: StringHashMap::init(),
+            seen: StringHashMap::new(),
             abs_target_buf: paths::path_buffer_pool::get(),
             abs_dest_buf: paths::path_buffer_pool::get(),
             rel_buf: paths::path_buffer_pool::get(),

@@ -282,7 +282,7 @@ pub mod api {
         #[inline]
         pub fn new() -> Self {
             Self {
-                scopes: bun_collections::StringArrayHashMap::init(),
+                scopes: bun_collections::StringArrayHashMap::new(),
             }
         }
     }

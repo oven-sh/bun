@@ -164,7 +164,7 @@ fn init_modules() {
         })
         .collect();
 
-    let mut m = bun_collections::StringHashMap::<FallbackModule>::init();
+    let mut m = bun_collections::StringHashMap::<FallbackModule>::new();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
     // thread observes `MODULES`/`MAP` until this returns.
     unsafe {

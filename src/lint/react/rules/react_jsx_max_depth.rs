@@ -38,7 +38,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             depths: Vec::new(),
-            variables: IdMap::init(),
+            variables: IdMap::new(),
             containers: Vec::new(),
             is_any_written: false,
             found: Vec::new(),

@@ -21,7 +21,7 @@ pub(crate) struct ObjectURLRegistry {
 impl ObjectURLRegistry {
     pub(crate) fn new() -> Self {
         Self {
-            map: Guarded::init(HashMap::init()),
+            map: Guarded::init(HashMap::new()),
         }
     }
 }

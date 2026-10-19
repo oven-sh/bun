@@ -532,7 +532,7 @@ impl CreateCommand {
 
                 let mut archive_context = archiver::Context {
                     pluckers,
-                    overwrite_list: bun_collections::StringArrayHashMap::<()>::init(),
+                    overwrite_list: bun_collections::StringArrayHashMap::<()>::new(),
                 };
 
                 {

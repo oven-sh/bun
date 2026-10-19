@@ -413,8 +413,8 @@ impl LookAhead {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            seen: HashMap::init(),
-            waiting: HashMap::init(),
+            seen: HashMap::new(),
+            waiting: HashMap::new(),
             arrived: Vec::new(),
             in_peer_pass: false,
             deferred_peers_seen: 0,
@@ -446,7 +446,7 @@ impl RemotePackages {
     pub(crate) fn new() -> Self {
         Self {
             tasks: Vec::new(),
-            arrived: HashMap::init(),
+            arrived: HashMap::new(),
         }
     }
 }
@@ -1757,16 +1757,16 @@ fn allocate_package_manager(
         wr!(workspace_root_name_hash, 0);
         wr!(workspace_root_version, Box::new([]));
         wr!(task_batch, thread_pool::Batch::new());
-        wr!(task_queue, TaskDependencyQueue::init());
+        wr!(task_queue, TaskDependencyQueue::new());
         wr!(manifests, PackageManifestMap::new());
-        wr!(folders, HashMap::init());
-        wr!(git_repositories, RepositoryMap::init());
-        wr!(git_commits, GitCommitMap::init());
+        wr!(folders, HashMap::new());
+        wr!(git_repositories, RepositoryMap::new());
+        wr!(git_commits, GitCommitMap::new());
         wr!(git_tasks, VecDeque::new());
         wr!(running_git_tasks, AtomicU32::new(0));
         wr!(git_env, bun_ptr::JsCell::new(None));
-        wr!(appended_task_packages, AppendedTaskPackageMap::init());
-        wr!(network_dedupe_map, HashMap::init());
+        wr!(appended_task_packages, AppendedTaskPackageMap::new());
+        wr!(network_dedupe_map, HashMap::new());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::new());
         wr!(network_tarball_batch, thread_pool::Batch::new());
         wr!(network_resolve_batch, thread_pool::Batch::new());
@@ -1798,17 +1798,17 @@ fn allocate_package_manager(
         wr!(local_in_root, Vec::new());
         wr!(alias_rows, Vec::new());
         wr!(patched_versions, None);
-        wr!(known_npm_aliases, NpmAliasMap::init());
+        wr!(known_npm_aliases, NpmAliasMap::new());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
-        wr!(updating_packages, StringArrayHashMap::init());
+        wr!(updating_packages, StringArrayHashMap::new());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(held_messages, None);
-        wr!(manifest_failures, HashMap::init());
+        wr!(manifest_failures, HashMap::new());
         wr!(look_ahead, LookAhead::new());
         wr!(remote_packages, RemotePackages::new());
         wr!(dedupe_report, None);
@@ -2603,7 +2603,7 @@ pub fn init(
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
-        map: bun_collections::StringHashMap::init(),
+        map: bun_collections::StringHashMap::new(),
     };
 
     let mut workspace_name_hash: Option<PackageNameHash> = None;

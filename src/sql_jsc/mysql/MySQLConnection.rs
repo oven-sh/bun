@@ -889,7 +889,7 @@ impl MySQLConnection {
             )),
             auth_response,
             sequence_id: self.sequence_id,
-            connect_attrs: bun_collections::StringHashMap::init(),
+            connect_attrs: bun_collections::StringHashMap::new(),
         };
 
         // Add some basic connect attributes like mysql2

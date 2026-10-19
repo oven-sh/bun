@@ -55,7 +55,7 @@ impl ReplaceableExportMap {
     #[inline]
     pub fn new() -> Self {
         Self {
-            entries: StringArrayHashMap::init(),
+            entries: StringArrayHashMap::new(),
         }
     }
 }

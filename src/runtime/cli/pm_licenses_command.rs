@@ -623,7 +623,7 @@ impl DiskIndex {
         version: &[u8],
     ) -> Option<PackageInfo> {
         let entries = self.entries.get_or_insert_with(|| {
-            let mut entries = StringHashMap::init();
+            let mut entries = StringHashMap::new();
             path.set_length(top_len);
             let _ = path.append(b"node_modules");
             Self::scan_node_modules(path, 0, log, &mut entries);

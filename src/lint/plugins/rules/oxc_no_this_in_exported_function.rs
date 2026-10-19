@@ -23,7 +23,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             functions: AncestorMemo::new(),
-            exports: IdMap::init(),
+            exports: IdMap::new(),
             candidates: Vec::new(),
         }
     }

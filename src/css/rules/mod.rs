@@ -944,7 +944,7 @@ impl StyleRuleKeyMap {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            buckets: bun_collections::HashMap::init(),
+            buckets: bun_collections::HashMap::new(),
             keys: Vec::new(),
         }
     }

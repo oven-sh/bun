@@ -236,7 +236,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
 
     // A split `import()` / `require()` record names its target's chunk
     // (`compute_cross_chunk_dependencies`); "entryPoint" adds the input.
-    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::init();
+    let mut entry_of_chunk: StringHashMap<u32> = StringHashMap::new();
     for chunk in chunks.iter() {
         if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
             entry_of_chunk.put(chunk.unique_key, chunk.entry_point.source_index())?;
@@ -854,7 +854,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
 
     // Build a map of module path -> bytesInOutput (bytes contributed to output)
     // This aggregates from all outputs since a module may appear in multiple chunks
-    let mut bytes_in_output: StringHashMap<u64> = StringHashMap::init();
+    let mut bytes_in_output: StringHashMap<u64> = StringHashMap::new();
 
     // First pass through outputs to collect bytesInOutput for each module
     for (_, out_value) in outputs_obj.iter() {
@@ -887,7 +887,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     // Also collect input file data for sorting
     let mut input_files: Vec<InputFileInfo> = Vec::new();
 
-    let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::init();
+    let mut imported_by: StringHashMap<Vec<&[u8]>> = StringHashMap::new();
 
     // Second pass: collect all input file info and build reverse dependency map
     for (path, input) in inputs_obj.iter() {

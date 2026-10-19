@@ -118,8 +118,8 @@ pub(crate) fn init_external_modules(
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
-        node_modules: StringSet::empty(),
-        abs_paths: StringSet::empty(),
+        node_modules: StringSet::new(),
+        abs_paths: StringSet::new(),
         patterns: default_wildcard_patterns(),
     };
 
@@ -297,7 +297,7 @@ impl TargetExt for Target {
     }
 
     fn out_extensions(self) -> StringHashMap<&'static [u8]> {
-        let mut exts = StringHashMap::<&'static [u8]>::init();
+        let mut exts = StringHashMap::<&'static [u8]>::new();
 
         const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
@@ -728,11 +728,11 @@ impl ESMConditions {
         allow_addons: bool,
         conditions: &[&[u8]],
     ) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let mut default_condition_amp = ConditionsMap::init();
+        let mut default_condition_amp = ConditionsMap::new();
 
-        let mut import_condition_map = ConditionsMap::init();
-        let mut require_condition_map = ConditionsMap::init();
-        let mut style_condition_map = ConditionsMap::init();
+        let mut import_condition_map = ConditionsMap::new();
+        let mut require_condition_map = ConditionsMap::new();
+        let mut style_condition_map = ConditionsMap::new();
 
         let addon_extra = if allow_addons { 1 } else { 0 };
         default_condition_amp.reserve(defaults.len() + 2 + addon_extra + conditions.len());
@@ -835,13 +835,13 @@ pub(crate) fn defines_from_transform_options(
         None => (&[], &[]),
     };
 
-    let mut user_defines: defines::RawDefines = defines::RawDefines::init();
+    let mut user_defines: defines::RawDefines = defines::RawDefines::new();
     user_defines.reserve(input_keys.len() + 4);
     for (i, key) in input_keys.iter().enumerate() {
         user_defines.insert(key.as_ref(), input_values[i].clone());
     }
 
-    let mut environment_defines = defines::UserDefinesArray::init();
+    let mut environment_defines = defines::UserDefinesArray::new();
 
     let mut behavior = api::DotEnvBehavior::disable;
 
@@ -1042,7 +1042,7 @@ pub fn loaders_from_transform_options(
         }
         + DEFAULT_LOADER_EXT.len();
 
-    let mut loaders = StringArrayHashMap::<Loader>::init();
+    let mut loaders = StringArrayHashMap::<Loader>::new();
     loaders.reserve(u32::try_from(total_capacity).expect("int cast") as usize);
     for (i, ext) in input_loaders.extensions.iter().enumerate() {
         loaders.insert(ext, loader_values[i]);
@@ -1413,7 +1413,7 @@ pub use bun_options_types::ForceNodeEnv;
 /// so the outer `StringArrayHashMap::<V: Clone>::clone()` bound is unmet —
 /// rebuild entrywise instead.
 fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
-    let mut out = MacroRemap::init();
+    let mut out = MacroRemap::new();
     for (k, v) in src.iter() {
         bun_core::handle_oom(out.put(k, bun_core::handle_oom(v.clone())));
     }
@@ -1727,7 +1727,7 @@ impl<'a> BundleOptions<'a> {
             write: transform.write.unwrap_or(false),
             external: ExternalModules::new(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
-            out_extensions: StringHashMap::init(), // filled below
+            out_extensions: StringHashMap::new(), // filled below
             env: Env::new(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
@@ -1777,13 +1777,13 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,
-            macro_remap: MacroRemap::init(),
+            macro_remap: MacroRemap::new(),
             no_macros: false,
             conditions: ESMConditions {
-                default: StringArrayHashMap::init(),
-                import: StringArrayHashMap::init(),
-                require: StringArrayHashMap::init(),
-                style: StringArrayHashMap::init(),
+                default: StringArrayHashMap::new(),
+                import: StringArrayHashMap::new(),
+                require: StringArrayHashMap::new(),
+                style: StringArrayHashMap::new(),
             }, // filled below
             tree_shaking: false,
             tree_shaking_override: None,

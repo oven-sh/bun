@@ -222,8 +222,8 @@ impl LinkedMembers {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            members: StringHashMap::init(),
-            real_folders: StringHashMap::init(),
+            members: StringHashMap::new(),
+            real_folders: StringHashMap::new(),
             real_root: Box::new([]),
         }
     }
@@ -1710,10 +1710,10 @@ impl Lockfile {
             // Most lookups find nothing, and a miss is cheap in a table that is at most half full.
             placed: tree::Placed::with_capacity(slice.len() * 2),
             replaced_row: false,
-            shipped_rows: BunHashMap::init(),
+            shipped_rows: BunHashMap::new(),
             in_shipped_folder: false,
-            contested: BunHashMap::init(),
-            contested_rows: BunHashMap::init(),
+            contested: BunHashMap::new(),
+            contested_rows: BunHashMap::new(),
             kept: None,
             older_layout: layout == tree::Layout::Older,
             places: Vec::new(),
@@ -2293,7 +2293,7 @@ impl Lockfile {
             text_lockfile_version: bun_lock::Version::current(),
             packages: bun_collections::MultiArrayList::new(),
             buffers: Buffers::new(),
-            package_index: PackageIndexMap::init(),
+            package_index: PackageIndexMap::new(),
             string_pool: StringPool::new(),
             scratch: Scratch::init(),
             scripts: Scripts::new(),
@@ -2840,7 +2840,7 @@ impl DependencyQueue {
     fn init() -> DependencyQueue {
         DependencyQueue {
             commanded: Lane::init(),
-            asked_as: BunHashMap::init(),
+            asked_as: BunHashMap::new(),
             found: Lane::init(),
             waits_for: None,
         }
@@ -2938,7 +2938,7 @@ impl Scratch {
     fn init() -> Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
-            duplicate_checker_map: DuplicateCheckerMap::init(),
+            duplicate_checker_map: DuplicateCheckerMap::new(),
             unplaced_subtree: DynamicBitSet::new(),
         }
     }

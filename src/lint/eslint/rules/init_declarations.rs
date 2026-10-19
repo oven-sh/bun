@@ -139,7 +139,7 @@ impl<'a> State<'a> {
     pub fn new() -> Self {
         Self {
             declared_namespaces: AncestorMemo::new(),
-            first_ends: IdMap::init(),
+            first_ends: IdMap::new(),
         }
     }
 }

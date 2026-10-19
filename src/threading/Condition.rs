@@ -59,15 +59,6 @@ pub struct Condition {
     impl_: Impl,
 }
 
-impl Condition {
-    #[inline]
-    pub fn init() -> Self {
-        Self {
-            impl_: Impl::init(),
-        }
-    }
-}
-
 /// `parking_lot::Condvar` drop-in alias. Same type, different spelling so
 /// migrated call sites can keep `Condvar::new()` / `notify_one()` / `notify_all()`.
 pub type Condvar = Condition;
@@ -306,17 +297,6 @@ use windows_impl::WindowsImpl;
 struct FutexImpl {
     state: AtomicU32,
     epoch: AtomicU32,
-}
-
-#[cfg(not(windows))]
-impl FutexImpl {
-    #[inline]
-    fn init() -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU32::new(0),
-            epoch: core::sync::atomic::AtomicU32::new(0),
-        }
-    }
 }
 
 #[cfg(not(windows))]

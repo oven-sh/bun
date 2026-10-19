@@ -180,7 +180,7 @@ pub(crate) fn run_as_coordinator(
         } else {
             Vec::new()
         },
-        coverage_files: bun_collections::StringArrayHashMap::init(),
+        coverage_files: bun_collections::StringArrayHashMap::new(),
         last_header_idx: None,
         frame: Frame::new(),
         files_done: 0,

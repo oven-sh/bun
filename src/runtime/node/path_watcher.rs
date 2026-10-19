@@ -128,7 +128,7 @@ impl PathWatcherManager {
     pub(crate) fn new() -> Self {
         Self {
             mutex: Mutex::new(),
-            watchers: UnsafeCell::new(StringArrayHashMap::init()),
+            watchers: UnsafeCell::new(StringArrayHashMap::new()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             platform: UnsafeCell::new(Platform::new()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
@@ -678,7 +678,7 @@ impl Linux {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            wd_map: HashMap::init(),
+            wd_map: HashMap::new(),
         }
     }
 }

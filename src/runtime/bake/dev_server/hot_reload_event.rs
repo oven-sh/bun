@@ -56,14 +56,14 @@ impl HotReloadEvent {
             owner,
             atomics: core::ptr::null_mut(),
             concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask::init(),
-            files: StringArrayHashMap::init(),
-            dirs: StringArrayHashMap::init(),
+            files: StringArrayHashMap::new(),
+            dirs: StringArrayHashMap::new(),
             extra_files: Vec::new(),
             timer: std::time::Instant::now(),
             #[cfg(debug_assertions)]
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
             #[cfg(debug_assertions)]
-            debug_mutex: bun_threading::Mutex::init(),
+            debug_mutex: bun_threading::Mutex::new(),
         }
     }
 

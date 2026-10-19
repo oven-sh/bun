@@ -402,7 +402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             [unwrapped_id.get_usize()];
                                         deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::init());
+                                            .insert(ref_, ImportItemForNamespaceMap::new());
                                         continue 'outer;
                                     }
                                 }
@@ -1607,7 +1607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
                 let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
                 let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
-                let mut fn_stmts: HashMap<Ref, u32> = HashMap::init();
+                let mut fn_stmts: HashMap<Ref, u32> = HashMap::new();
 
                 for stmt in before.iter().copied() {
                     match stmt.data {

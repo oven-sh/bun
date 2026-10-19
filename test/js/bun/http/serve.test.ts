@@ -1633,10 +1633,12 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
           throw new Error("must never be routed");
         },
       });
-      // Fresh connections after the reload (fetch pools per-origin, so mix in
-      // explicit no-keepalive requests to force new native sockets).
+      // Fresh connections after the reload. fetch pools per origin and the
+      // tests of this file share one server, so `keepalive: false` forces new
+      // native sockets. A `connection: close` header does not: such a request
+      // still takes an idle connection from the pool.
       for (let i = 0; i < 8; i++) {
-        const res = await fetch(server.url.origin, { headers: { connection: "close" } });
+        const res = await fetch(server.url.origin, { keepalive: false });
         expect(await res.text()).toBe("second");
       }
     },

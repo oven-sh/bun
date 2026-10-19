@@ -319,10 +319,9 @@ fn fix_as_oxlint<'a>(
             return None;
         }
     }
-    let is_let = statement.flags().contains(Flags::AMBIENT)
-        || declarations
-            .iter()
-            .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
+    let is_let = declarations
+        .iter()
+        .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));
     let after = file.slice(Span::after(var, span.end));
@@ -362,24 +361,20 @@ impl Rule for NoVar {
         {
             return;
         }
-        if let Node::Stmt(parent) = statement.parent()
-            && let StmtKind::Module(module) = parent.kind()
-            && matches!(module.name(), ModuleName::Global)
-            && !statement.is_exported()
-        {
-            return;
-        }
         let span = statement.span_without_export();
-        // oxlint says nothing about ambient declarations, and points at the keyword.
-        let is_oxlint = cx.language().is_oxlint;
-        if is_oxlint
-            && cx
+        // `declare var`, or a `var` in `declare global`, declares that a global exists. Only a `var` becomes a property
+        // of `globalThis`, and only a `var` can be declared in two files, so with `let` the project would stop type
+        // checking. ESLint and oxlint only skip `declare global`.
+        if statement.flags().contains(Flags::AMBIENT)
+            || cx
                 .state
                 .ambient
                 .has_ambient_typescript_ancestor(statement.into())
         {
             return;
         }
+        // oxlint reports only the `var` keyword.
+        let is_oxlint = cx.language().is_oxlint;
         let place = var_keyword(statement).filter(|_| is_oxlint).unwrap_or(span);
         cx.report(place, UNEXPECTED_VAR)
             .called_with(statement)

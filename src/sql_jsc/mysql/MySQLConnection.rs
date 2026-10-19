@@ -551,6 +551,10 @@ impl MySQLConnection {
     }
 
     fn handle_handshake(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        // A server that takes no connection, or none from this host, says so in place of its greeting.
+        if reader.peek().first() == Some(&PacketType::ERROR.0) {
+            return self.handle_unasked(reader);
+        }
         let mut handshake = HandshakeV10::default();
         handshake.decode_internal(reader)?;
         self.server_version = handshake

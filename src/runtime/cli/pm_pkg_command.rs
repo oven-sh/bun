@@ -39,9 +39,10 @@ struct PackageJson {
 struct Segment<'a> {
     /// An index when applied to an array, else a property name. Empty only for `[]` (append).
     name: &'a [u8],
-    /// `a[b]` rather than `a.b`: `files[0]=x` and `files[]=x` create an array, `config.0=x` an object.
+    /// True for `a[b]`, false for `a.b`. `files[0]=x` and `files[]=x` create an array, and
+    /// `config.0=x` creates an object.
     bracketed: bool,
-    /// Offset just past this segment in the key; errors name a value by `&key[..end]`.
+    /// The offset just past this segment in the key. Errors refer to a value as `&key[..end]`.
     end: usize,
 }
 
@@ -399,7 +400,8 @@ impl PmPkgCommand {
     pub(crate) const EMPTY_BRACKETS: &'static str =
         "Empty brackets are not valid syntax for retrieving values.";
 
-    /// As in npm, a name that meets an array (`maintainers.name`) adds `maintainers[0].name`, ...
+    /// Like in npm, a name that's applied to an array (`maintainers.name`) returns
+    /// `maintainers[0].name`, and so on.
     pub(crate) fn query(
         root: Expr,
         key: &[u8],
@@ -412,7 +414,8 @@ impl PmPkgCommand {
         Self::query_in(root, &path, key, &mut Vec::new(), false, out)
     }
 
-    /// `label` spells the path walked so far; it names the value instead of `key` once an array was `expanded`.
+    /// `label` is the path walked so far. Once an array was `expanded`, the value is labeled with
+    /// it instead of `key`.
     fn query_in(
         value: Expr,
         path: &[Segment<'_>],
@@ -504,7 +507,8 @@ impl PmPkgCommand {
         Self::set_in_container(root, b"package.json", key, &path, expr)
     }
 
-    /// As in npm, only the final segment may replace a value; anything else in the way is an error.
+    /// Like in npm, only the final segment may replace a value. Any other value in the way is an
+    /// error.
     fn set_in_container(
         container: &mut Expr,
         container_name: &[u8],
@@ -660,7 +664,7 @@ impl PmPkgCommand {
         true
     }
 
-    /// Splices out an array element or removes a property; returns whether anything was removed.
+    /// Splices out an array element or removes a property. Returns true if anything was removed.
     fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> bool {
         let [segment, rest @ ..] = path else {
             return false;

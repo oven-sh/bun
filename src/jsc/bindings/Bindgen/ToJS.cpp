@@ -30,15 +30,4 @@ extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject*
     return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values, count));
 }
 
-extern "C" EncodedJSValue Bun__Bindgen__constructArray(JSGlobalObject* globalObject, MarkedArgumentBuffer* values)
-{
-    VM& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (values->hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), *values)));
-}
-
 }

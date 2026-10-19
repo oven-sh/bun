@@ -90,15 +90,10 @@ describe("@bun pragma", () => {
       });
     });
 
-    // `// @bun @bun-cjs` does not ask for bytecode, so the loader must not read `<file>.jsc`. The `.jsc` here is
-    // one that JSC accepts for this exact text, so a cache hit in the log shows that the loader read it.
-    const wrapper = (pragma: string) =>
-      `${pragma}\n(function(exports, require, module, __filename, __dirname) {// built with @bytecode\nconsole.log("ran");})\n`;
-    it.concurrent.each([
-      ["// @bun @bun-cjs", false],
-      ["// @bun @bytecode @bun-cjs", true],
-    ])("%s above a line with the text @bytecode: reads the .jsc = %p", async (pragma, readsSidecar) => {
-      const source = wrapper(pragma);
+    // Runs a CommonJS wrapper with a `.jsc` beside it that JSC accepts for this exact text. A cache hit in the
+    // log shows that the loader read the `.jsc`.
+    const runWithSidecar = async (pragma: string, firstCodeLine = "") => {
+      const source = `${pragma}\n(function(exports, require, module, __filename, __dirname) {${firstCodeLine}\nconsole.log("ran");})\n`;
       using dir = tempDir("bun-pragma-sidecar", { "mod.cjs": source });
       const file = path.join(String(dir), "mod.cjs");
       writeFileSync(file + ".jsc", new vm.Script(source, { filename: file, produceCachedData: true }).cachedData!);
@@ -106,19 +101,29 @@ describe("@bun pragma", () => {
         ...bunEnv,
         BUN_JSC_verboseDiskCache: "1",
       });
-      expect({ stdout, cacheHit: stderr.includes("[Disk Cache] Cache hit for sourceCode"), exitCode }).toEqual({
+      return { stdout, readsSidecar: stderr.includes("[Disk Cache] Cache hit for sourceCode"), exitCode };
+    };
+
+    // `// @bun @bun-cjs` does not ask for bytecode, so the loader must not read `<file>.jsc`.
+    it.concurrent.each([
+      ["// @bun @bun-cjs", false],
+      ["// @bun @bytecode @bun-cjs", true],
+    ])("%s above a line with the text @bytecode: reads the .jsc = %p", async (pragma, readsSidecar) => {
+      expect(await runWithSidecar(pragma, "// built with @bytecode")).toEqual({
         stdout: "ran\n",
-        cacheHit: readsSidecar,
+        readsSidecar,
         exitCode: 0,
       });
     });
 
-    // A keyword starts at any `@` of the pragma line, also at one directly after another `@`.
-    it.concurrent("`// @bun @@bun-cjs` is CommonJS", async () => {
-      using dir = tempDir("bun-pragma-line", {
-        "mod.js": `// @bun @@bun-cjs\n(function(exports, require, module, __filename, __dirname) {console.log("ran");})\n`,
-      });
-      expect(await run(String(dir), ["mod.js"])).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+    // A keyword starts at any `@` of the pragma line, also at one directly after another `@` or after a keyword.
+    it.concurrent.each([
+      ["// @bun @@bun-cjs", false],
+      ["// @bun @@bytecode @bun-cjs", true],
+      ["// @bun @bytecode@bun-cjs", true],
+      ["// @bun @bun-cjs@bytecode", true],
+    ])("%s is CommonJS: reads the .jsc = %p", async (pragma, readsSidecar) => {
+      expect(await runWithSidecar(pragma)).toEqual({ stdout: "ran\n", readsSidecar, exitCode: 0 });
     });
   });
 });

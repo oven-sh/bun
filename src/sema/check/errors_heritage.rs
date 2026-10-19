@@ -453,7 +453,7 @@ impl Checker<'_, '_> {
                 let bound = self.bound(*file);
                 let member = bound.symbol_of_declaration(Decl::Property(*written));
                 let flags = match member.is_some() {
-                    true => bound.symbols[member.idx()].flags & SymFlags::CLASS_MEMBER,
+                    true => bound.symbol(member).flags & SymFlags::CLASS_MEMBER,
                     false => SymFlags::empty(),
                 };
                 match flags.intersects(SymFlags::ACCESSOR) {
@@ -758,15 +758,13 @@ impl Checker<'_, '_> {
             _ => None,
         });
         // `interfaceChecked`: once for the interface, at the first of its declarations that is
-        // checked. Each checker of `checkerPool` has that flag. `decls` is in the order of merging,
+        // checked. `decls` is in the order of merging,
         // where the scripts come before every `declare global`.
-        let (files, checker_count) = (self.files(), self.task.checker_count);
-        let checker_of = |f: FileId| files.rank_of_file(f).checked_rem(checker_count);
         let order = |&(f, id): &(FileId, InterfaceId)| {
             self.place_in_program_order(f, self.hir(f)[id].name_pos)
         };
         let first = (interfaces.clone())
-            .filter(|&(f, _)| self.reports_semantic_errors(f) && checker_of(f) == checker_of(file))
+            .filter(|&(f, _)| self.reports_semantic_errors(f))
             .min_by_key(order);
         let is_first = first == Some((file, i));
         let is_first_in_file = interfaces

@@ -86,7 +86,9 @@ fn check_static_member_expression<'a>(_: &PreferKeyboardEventKey, member_expr: E
             .find(|it| it.0.tag() == ExprTag::Number && !it.0.is_parenthesized())
         && let Some(key_name) = get_key_from_code(code)
     {
-        report.fix(|fixer| {
+        // For a key that types a character, `key` depends on the layout and on Shift: `keyCode` 65 is both `a` and `A`.
+        let is_safe = || key_name.len() > 1 && property.name().is_any(&["keyCode", "which"]);
+        report.fix_where_safe(is_safe, |fixer| {
             let mut key_str = Vec::new();
             print_string(&mut key_str, key_name.as_bytes(), b'\'');
             [fixer.replace(property, "key"), fixer.replace(number, key_str)]

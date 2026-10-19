@@ -70,15 +70,12 @@ impl<'p, 's> Checker<'p, 's> {
         if symbol.is_none() {
             return None;
         }
-        let (parent, name) = (
-            bound.symbols[symbol.idx()].parent,
-            bound.symbols[symbol.idx()].name,
-        );
+        let (parent, name) = (bound.symbol(symbol).parent, bound.symbol(symbol).name);
         let is_static = match declaration {
             Decl::Member(member) => hir[member].flags.contains(Flags::STATIC),
             Decl::Expando(_) => true,
             Decl::ThisProperty(_) if parent.is_some() => {
-                bound.lookup(bound.symbols[parent.idx()].exports, name) == Some(symbol)
+                bound.lookup(bound.symbol(parent).exports, name) == Some(symbol)
             }
             _ => false,
         };
@@ -184,8 +181,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> List<'p, (FileId, Decl)> {
         let (bound, files) = (self.bound(file), self.files());
         let symbol = bound.symbol_of_declaration(declaration);
-        if symbol.is_some() && bound.symbols[symbol.idx()].name != known::computed {
-            let parent = bound.symbols[symbol.idx()].parent;
+        if symbol.is_some() && bound.symbol(symbol).name != known::computed {
+            let parent = bound.symbol(symbol).parent;
             let is_static = matches!(declaration, Decl::Member(member)
                 if self.hir(file)[member].flags.contains(Flags::STATIC));
             if parent.is_some()
@@ -318,7 +315,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && let ExprKind::Index { index, .. } = hir[target].kind
                 {
                     let bound = self.bound(file);
-                    let flags = bound.symbols[bound.symbol_of_declaration(decl).idx()].flags;
+                    let flags = bound.symbol(bound.symbol_of_declaration(decl)).flags;
                     computed.push((file, decl, PropKey::Computed(index), flags));
                 }
             }
@@ -362,7 +359,8 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 // "If we have an existing early-bound member, combine its declarations so that we can report an error at each
                 // declaration."
-                let mut declarations = early_symbol(name).map_or(Vec::new(), |it| files.decls(it));
+                let mut declarations =
+                    early_symbol(name).map_or(Vec::new(), |it| files.decls_of(it).into_vec());
                 declarations.extend_from_slice(&there.declarations);
                 conflicts.push(LateBoundConflict::Refused(
                     name,
@@ -414,7 +412,10 @@ impl<'p, 's> Checker<'p, 's> {
                     && !(source_flags | flags).contains(SymFlags::ASSIGNMENT)
             };
             let not_merged = || {
-                let (early, late) = (files.decls(target), source.declarations.clone());
+                let (early, late) = (
+                    files.decls_of(target).into_vec(),
+                    source.declarations.clone(),
+                );
                 LateBoundConflict::NotMerged(early, late, target_flags | source_flags)
             };
             if is_excluded(target_flags) {
@@ -433,7 +434,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let merged = &mut late[index];
                     merged.is_late = false;
                     merged.flags |= target_flags;
-                    merged.declarations.splice(0..0, files.decls(target));
+                    merged.declarations.splice(0..0, files.decls_of(target));
                     let of_target = files.value_declaration(target);
                     let of_source = std::mem::replace(&mut merged.value_declaration, of_target);
                     if let Some(node) = of_source {

@@ -106,8 +106,13 @@ impl<'e> Set<'e> {
                 return Err(Reason::Configuration);
             }
             Ok(Read {
-                ignored: Ignored::new(&options, &environment.cwd, configs.flavor)
-                    .map_err(|_| Reason::Configuration)?,
+                ignored: Ignored::new(
+                    &options,
+                    &environment.cwd,
+                    configs.flavor,
+                    configs.is_native(),
+                )
+                .map_err(|_| Reason::Configuration)?,
                 configs,
                 with_node_modules: options.with_node_modules,
                 allows_unsupported: request.like == Like::BunFormat && options.allow_unsupported,

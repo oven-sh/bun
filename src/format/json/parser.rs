@@ -195,6 +195,8 @@ struct Reader<'t, 'c> {
     line_separators: u32,
     /// The comments from this index on do not know what follows them yet.
     unresolved: usize,
+    /// Set when the reader stops at a token that may be valid on its own, because a different token must come first.
+    expected: Option<Message>,
 }
 
 /// oxfmt's `blank_line_after_comma`: the line breaks between a value and its comma are no empty line.
@@ -246,6 +248,7 @@ pub(super) fn parse(
         line_breaks: 0,
         line_separators: 0,
         unresolved: 0,
+        expected: None,
     };
     reader
         .run()
@@ -257,6 +260,9 @@ impl Reader<'_, '_> {
     #[cold]
     fn reason(&self) -> Reason {
         let rest = self.text.get(self.at..).unwrap_or_default();
+        if let (Some(expected), false) = (self.expected, rest.is_empty()) {
+            return Reason(expected, self.at as u32);
+        }
         // The width of a sign with its operand is written when the operand has been read.
         let is_behind_sign = (self.tree.nodes.iter().rev().take(2))
             .any(|it| it.kind == Kind::Unary && it.width == 0);
@@ -285,6 +291,12 @@ impl Reader<'_, '_> {
         Reason(message, self.at as u32)
     }
 
+    #[cold]
+    fn expects(&mut self, message: Message) -> SyntaxError {
+        self.expected = Some(message);
+        SyntaxError
+    }
+
     #[inline]
     fn peek(&self) -> Option<u8> {
         self.text.get(self.at).copied()
@@ -307,7 +319,7 @@ impl Reader<'_, '_> {
                         return if self.at == self.text.len() {
                             Ok(())
                         } else {
-                            Err(SyntaxError)
+                            Err(self.expects(Message::ExpectedEndOfFile))
                         };
                     }
                     self.after_value(value)?
@@ -527,7 +539,7 @@ impl Reader<'_, '_> {
         self.name(name);
         self.skip_trivia(Owner::property(name), Owner::node(name))?;
         if self.peek() != Some(b':') {
-            return Err(SyntaxError);
+            return Err(self.expects(Message::ExpectedColon));
         }
         self.at += 1;
         self.skip_trivia(Owner::property(name), Owner::node(name))?;
@@ -705,7 +717,11 @@ impl Reader<'_, '_> {
                 })
             }
             Some(byte) if byte == end => Ok(self.close()),
-            _ => Err(SyntaxError),
+            Some(b':' | b'}' | b']') if container == Kind::Object => {
+                Err(self.expects(Message::ExpectedClosingBrace))
+            }
+            Some(b':' | b'}' | b']') => Err(self.expects(Message::ExpectedClosingBracket)),
+            _ => Err(self.expects(Message::ExpectedComma)),
         }
     }
 

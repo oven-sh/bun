@@ -254,7 +254,7 @@ impl NoUnusedModules {
     /// `doPreparation`. Where `listFilesToProcess` throws nothing is found.
     fn prepare<'a>(&self, file: &'a File<'a>) -> Prepared {
         let mut prepared = Prepared {
-            context: Context::of(file.language()),
+            context: Context::of(file.configured_language()),
             is_listed: false,
             ignored_files: FxHashSet::with_hasher(rustc_hash::FxBuildHasher),
             export_list: FxHashMap::with_hasher(rustc_hash::FxBuildHasher),
@@ -339,7 +339,7 @@ impl NoUnusedModules {
                 is_new = true;
                 Box::new(self.prepare(file))
             });
-            if is_new || prepared.context.is_of(file.language()) {
+            if is_new || prepared.context.is_of(file.configured_language()) {
                 return prepared;
             }
             place = &prepared.next;

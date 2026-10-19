@@ -13,6 +13,7 @@ use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
+use crate::js::print::class::write_comments_between_modifiers;
 use crate::js::print::decorators::FormatDecorators;
 use crate::js::print::patterns::FormatBindingPropertyValue;
 use crate::js::print::type_parameters::type_arguments;
@@ -221,6 +222,7 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
     let modifiers = member.modifiers();
     if !modifiers.is_empty() {
         write!(f, FormatDecorators::of_member(member));
+        write_comments_between_modifiers(member, f);
         let written = modifiers
             .iter()
             .fold(Flags::empty(), |all, it| all | it.flag());

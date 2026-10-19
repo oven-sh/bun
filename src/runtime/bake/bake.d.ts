@@ -608,7 +608,16 @@ declare module "bun:bake/client" {
    *
    * Only one callback can be set. This function overwrites the previous one.
    */
-  export function onServerSideReload(cb: () => void | Promise<void>): Promise<void>;
+  export function onServerSideReload(
+    cb: (update: {
+      /**
+       * Whether the update also changed code that runs in the browser, which is already applied.
+       * For a router with `clientPages`, an update to a page has both; an update to a module that
+       * only the server imports has none.
+       */
+      clientCodeChanged: boolean;
+    }) => void | Promise<void>,
+  ): Promise<void>;
 
   /**
    * For a router whose pages also run in the browser (the default React framework of `bun bake`):

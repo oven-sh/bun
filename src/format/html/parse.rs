@@ -478,7 +478,7 @@ impl<'a> Context<'a, '_> {
 }
 
 /// `text.trim().replaceAll(/\s+/g, " ")`
-pub(crate) fn collapse_white_space(value: &[u8]) -> Vec<u8> {
+fn collapse_white_space(value: &[u8]) -> Vec<u8> {
     let mut rest = strings::trim_js_whitespace(value);
     let mut result = Vec::with_capacity(rest.len());
     while let Some(&byte) = rest.first() {

@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::IdMap;
 use bun_lint::utils::ts_utils::is_definition_file;
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 
 /// Disallow the declaration of empty interfaces.
 pub struct NoEmptyInterface {
@@ -66,7 +67,10 @@ impl NoEmptyInterface {
         if is_in_ambient_declaration {
             report.suggest(NO_EMPTY_WITH_SUPER, |fixer| fix(fixer, interface, extended));
         } else {
-            report.fix(|fixer| fix(fixer, interface, extended));
+            report.fix_where_safe(
+                || is_only_declaration(interface),
+                |fixer| (!is_declared_again(interface)).then(|| fix(fixer, interface, extended)),
+            );
         }
     }
 }

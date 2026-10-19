@@ -105,7 +105,8 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
-    /// A symlink to nothing; treated like a missing entry, as `stat()` would report it.
+    /// A symlink whose target doesn't exist. It's treated like a missing entry, which is how
+    /// `stat()` reports it.
     Dangling,
 }
 

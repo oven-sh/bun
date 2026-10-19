@@ -879,7 +879,8 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Like a lifecycle script: the environment install resolved, and no `.env` file on top.
+        // Like a lifecycle script, it gets the environment that the install resolved, with no
+        // `.env` file on top.
         let code =
             std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
         let argv = [
@@ -1217,7 +1218,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // The JSON may still be in the pipe: drain it; only EOF tears the reader's poll down.
+            // The JSON may still be in the pipe, so drain it. Only EOF tears down the reader's
+            // poll.
             #[cfg(not(windows))]
             {
                 let fd = self.ipc_reader.get_fd();

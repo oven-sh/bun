@@ -38,10 +38,11 @@ impl CommentExt for Comment<'_> {
     }
 
     fn is_ignore_comment(self, flavor: Flavor) -> bool {
-        let content = self.content().trim_ascii_start();
+        // Like JavaScript's `trim()`, this also strips no-break spaces.
+        let content = bun_core::strings::trim_js_whitespace_start(self.content());
         // Few comments get past this.
         matches!(content.first(), Some(b'p' | b'o'))
-            && flavor.is_ignore_comment(content.trim_ascii_end())
+            && flavor.is_ignore_comment(bun_core::strings::trim_js_whitespace(content))
     }
 }
 

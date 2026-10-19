@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::oxlint::is_global_by_name;
+use bun_lint::utils::visible::{is_global, visible_value};
 
 /// Disallow unnecessary boolean casts.
 pub struct NoExtraBooleanCast {
@@ -88,6 +89,53 @@ fn prefix<'a>(replaced: Expr<'a>, replacement: ast_utils::TokenOrText<'a>) -> &'
     }
 }
 
+/// Returns the function that `callee` always refers to: a function declaration, or a variable that is initialized with
+/// a function and never reassigned.
+fn visible_function(callee: Expr<'_>) -> Option<Func<'_>> {
+    match callee.symbol()?.declarations().next()? {
+        Declaration::Fn(func) => Some(func),
+        _ => visible_value(callee).as_fn(),
+    }
+}
+
+/// True for `new Promise(..)` or a call to an `async` function.
+fn is_visibly_promise(e: Expr) -> bool {
+    match e.kind() {
+        ExprKind::New(call) => is_global(call.callee(), "Promise"),
+        ExprKind::Call(call) => visible_function(call.callee()).is_some_and(|it| it.is_async() && !it.is_generator()),
+        _ => false,
+    }
+}
+
+/// True if TypeScript would reject `argument` in place of `cast`, which is `!!argument` or `Boolean(argument)`.
+/// TypeScript reports `if (a)`, `a ? b : c` and `a && b` when `a` is always a function (TS2774), a promise (TS2801) or
+/// an enum member (TS2845), and a cast is how people silence that. Deciding what `a` is needs type information, so this
+/// only returns `true` when the file's syntax shows that it's one of these.
+fn is_rejected_by_typescript<'a>(cast: Expr<'a>, argument: Expr<'a>) -> bool {
+    let is_checked = match utils::estree_parent(Node::Expr(cast)) {
+        Node::Stmt(parent) => parent.tag() == StmtTag::If,
+        Node::Expr(parent) => matches!(parent.tag(), ExprTag::Cond | ExprTag::Binary),
+        _ => false,
+    };
+    if !is_checked || cast.file().is_javascript() {
+        return false;
+    }
+    let is_called = |it: Reference<'a>| {
+        it.expr().is_some_and(|e| matches!(e.parent(), Node::Expr(parent) if parent.as_call().is_some_and(|it| it.callee() == e)))
+    };
+    let declaration_of = |e: Expr<'a>| e.symbol().and_then(|it| it.declarations().next());
+    match argument.kind() {
+        ExprKind::Ident(_) => match declaration_of(argument) {
+            Some(Declaration::ImportDefault(_) | Declaration::ImportSpec(_)) => {
+                argument.symbol().is_some_and(|it| it.references().any(is_called))
+            }
+            _ => visible_function(argument).is_some() || is_visibly_promise(visible_value(argument)),
+        },
+        ExprKind::Dot { obj, .. } => matches!(declaration_of(obj), Some(Declaration::Enum(_))),
+        _ => is_visibly_promise(argument),
+    }
+}
+
 impl NoExtraBooleanCast {
     /// ESLint's `isInFlaggedContext`.
     fn is_in_flagged_context<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) -> bool {
@@ -125,7 +173,7 @@ impl NoExtraBooleanCast {
         if !self.is_in_flagged_context(e, cx) {
             return;
         }
-        cx.report(e, UNEXPECTED_NEGATION).fix(|fixer| {
+        cx.report(e, UNEXPECTED_NEGATION).fix_where_safe(|| !is_rejected_by_typescript(e, argument), |fixer| {
             if has_comments_inside(e) {
                 return None;
             }
@@ -145,7 +193,8 @@ impl NoExtraBooleanCast {
         if !call.callee().is_ident("Boolean") || !self.is_in_flagged_context(e, cx) || !calls_boolean(call) {
             return;
         }
-        cx.report(e, UNEXPECTED_CALL).fix(|fixer| {
+        let is_safe = || !call.args().first().is_some_and(|argument| is_rejected_by_typescript(e, argument));
+        cx.report(e, UNEXPECTED_CALL).fix_where_safe(is_safe, |fixer| {
             let mut args = call.args().iter();
             let (Some(argument), None) = (args.next(), args.next()) else {
                 if !call.args().is_empty() {

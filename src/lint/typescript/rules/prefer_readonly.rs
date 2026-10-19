@@ -414,7 +414,8 @@ fn enclosing_class(node: Expr<'_>) -> Option<(Class<'_>, bool)> {
 /// The type to annotate the `PropertyDefinition` with: once it is `readonly`, the type of a literal
 /// that initializes it is not widened any more.
 fn get_type_annotation<'a>(member: Member<'a>, key: Key<'a>) -> Option<Vec<u8>> {
-    if member.ty().is_some() || !matches!(key.kind(), KeyKind::Ident(_)) {
+    // typescript-eslint and tsgolint don't annotate `#a = 0`, so the constructor can't assign other numbers anymore.
+    if member.ty().is_some() || !matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_)) {
         return None;
     }
     let violating_type = member.type_at_location();

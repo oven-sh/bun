@@ -7,7 +7,7 @@
 use super::cli::{Options, Precedence};
 use super::config::is_option_of_prettier;
 use crate::run::Environment;
-use crate::{fs, paths};
+use crate::{fs, git, paths};
 use bun_lint::js_plugin::{Host, Unformatted};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
@@ -92,10 +92,11 @@ impl<'e> Prettier<'e> {
         (path, shown): (&[u8], &[u8]),
         config: Option<&[u8]>,
         writes: bool,
+        only: Option<&git::Files>,
     ) -> Result<bool, Vec<u8>> {
         let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
-        let text =
-            fs::read(path).map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
+        let text = git::read(only, path)
+            .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
         let formatted = (self.format(Some(path), config, &text))
             .map_err(|why| [shown, b": ", &describe(why)].concat())?;
         if formatted == text {

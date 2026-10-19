@@ -126,7 +126,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     None => Key::Symbol(symbol),
                 }
             }
-            ref source => Key::Property(source, prop.name, self.c.compose(prop.mapper, mapper)),
+            ref source => {
+                let own = self.c.mapper_of_prop(prop);
+                Key::Property(source, prop.name, self.c.compose(own, mapper))
+            }
         };
         self.intern_symbol(key, Some((prop, mapper)))
     }
@@ -772,7 +775,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let Some(members) = self.c.members(ty) else {
             return &[];
         };
-        let shape: &'p Shape<'p> = members.shape();
+        let shape: &'p Listed<'p> = members.shape();
         let mut symbols = Vec::with_capacity(shape.props.len());
         for prop in shape.props.iter() {
             symbols.push(self.symbol_of_prop(prop, members.mapper));

@@ -306,7 +306,7 @@ impl Context<'_, '_> {
             }
             false => text,
         };
-        let mut verify = |text: &[u8]| {
+        let mut verify = |text: &[u8], _: bool| {
             let it = Text {
                 path: path_to_verify,
                 physical_path_len: path_to_verify.len(),

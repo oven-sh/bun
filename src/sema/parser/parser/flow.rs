@@ -1466,12 +1466,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let (name, name_pos, end) = self.word();
                 let kind = match extends.is_none() {
                     true => ExprKind::Ident(name),
-                    false => ExprKind::Dot {
-                        obj: extends,
-                        name,
-                        name_pos,
-                        chain: Chain::No,
-                    },
+                    false => self.f.dot((extends, Chain::No), (name, name_pos), end),
                 };
                 extends = self.add_expr(kind, first, end);
                 if !self.eat(T::Dot) {
@@ -1859,7 +1854,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return None;
             }
             self.pop_expr();
-            (constructor, type_args) = (expr, written);
+            (constructor, type_args) = (expr, self.f.list_at(written));
         } else if !is_constructor(self, expression) {
             return None;
         }
@@ -1878,13 +1873,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let base = self.s.ids.len();
         self.s.ids.push(braces.0);
         let args = self.take_ids(base);
+        let type_args = self.f.place_of_list(type_args);
         let call = self.f.add_call(Call {
             callee: head,
             args,
             type_args,
             close_pos: u32::MAX,
             chain: Chain::No,
-            template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::New(call), start)
     }
@@ -2109,14 +2104,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 loop {
                     let (obj, chain) = (pattern, Chain::No);
                     if self.eat(T::Dot) {
-                        let (name, name_pos) = self.identifier_name();
-                        let kind = ExprKind::Dot {
-                            obj,
-                            name,
-                            name_pos,
-                            chain,
-                        };
-                        pattern = self.finish_expr(kind, start);
+                        let name = self.identifier_name();
+                        pattern = self.finish_dot((obj, chain), name, start);
                     } else if self.eat(T::OpenBracket) {
                         if !matches!(self.token(), T::Number | T::BigInt | T::String) {
                             self.fail();

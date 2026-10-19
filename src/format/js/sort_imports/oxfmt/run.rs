@@ -5,8 +5,12 @@ use super::super::sort::stable_sort_by;
 use super::super::{How, SortImports};
 use super::options::{Modifier, Options, Selector};
 use crate::ir::element::{Interned, LineMode};
+use crate::pragma::{has_ignore_pragma, has_pragma};
 use crate::prelude::*;
 use crate::write;
+use bun_core::strings;
+use bun_lint::fix::is_comment_about_the_file;
+use bun_lint::linter::goes_to_flow;
 use std::sync::Arc;
 
 impl SortImports {
@@ -440,6 +444,16 @@ fn transform<'a>(
     out.pop();
 }
 
+/// Wraps [`is_comment_about_the_file`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` apply
+/// to the next statement, so they don't count.
+fn is_about_the_file(comment: Comment<'_>) -> bool {
+    let text = comment.text();
+    is_comment_about_the_file(text, comment.content())
+        // These pragmas decide how Prettier parses the file. It matches them loosely: `// @flow.` counts too.
+        || (strings::contains_char(text, b'@')
+            && (goes_to_flow(text, b"") || has_pragma(text) || has_ignore_pragma(text)))
+}
+
 /// Sorts the runs of imports in a list of statements. Whoever writes the list says what it is
 /// about to write.
 pub(crate) struct ImportRun<'a> {
@@ -449,6 +463,7 @@ pub(crate) struct ImportRun<'a> {
     slot: Option<usize>,
     /// Whether the next statement can be part of a run, if that is known.
     is_next_sortable: Option<bool>,
+    has_seen_import: bool,
     lines: Vec<Line>,
     imports: Vec<Written<'a>>,
     /// Where the line that is being written starts.
@@ -467,6 +482,7 @@ impl<'a> ImportRun<'a> {
                 .map(Arc::clone),
             slot: None,
             is_next_sortable: None,
+            has_seen_import: false,
             lines: Vec::new(),
             imports: Vec::new(),
             line_start: 0,
@@ -556,8 +572,20 @@ impl<'a> ImportRun<'a> {
         let StmtKind::Import(import) = statement.kind() else {
             return;
         };
+        let is_first_of_file = !std::mem::replace(&mut self.has_seen_import, true)
+            && matches!(statement.parent(), Node::File(_));
         if !is_sortable {
             return;
+        }
+        // In `// @ts-nocheck⏎import b from "b";⏎import a from "a";` oxfmt moves the comment along with `b`, and
+        // TypeScript no longer reads it there. Here it stays at the top, along with every comment above it. They're
+        // printed before the run starts.
+        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
+        if is_first_of_file {
+            let count = comments.iter().rposition(is_about_the_file);
+            let (about_the_file, others) = comments.split_at(count.map_or(0, |last| last + 1));
+            write!(f, FormatLeadingComments::Comments(about_the_file));
+            comments = others;
         }
         match self.slot {
             None => self.slot = Some(f.start_capture()),
@@ -570,7 +598,6 @@ impl<'a> ImportRun<'a> {
         self.line_start = f.elements().len();
 
         // One line at a time. What is left for the statement to write is its own line.
-        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
         while let Some(first) = comments.first() {
             // Comments without anything between them belong together.
             let mut end = first.span().end;

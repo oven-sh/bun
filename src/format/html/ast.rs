@@ -57,6 +57,8 @@ bitflags::bitflags! {
         const HAS_CONDITION = 1 << 14;
         /// `shouldPreserveContent`
         const PRESERVES_CONTENT = 1 << 15;
+        /// Set on an element in a Vue file that has `v-pre` or an ancestor with `v-pre`.
+        const IS_IN_V_PRE = 1 << 16;
     }
 }
 

@@ -120,6 +120,16 @@ impl<'c> Words<'c> {
         matches!(self, Words::None) || matches!(self, Words::Slices(words) if words.is_empty())
     }
 
+    fn ends_with_blank(&self) -> bool {
+        let last = match self {
+            Words::None => None,
+            Words::One(word) => Some(*word),
+            Words::Slices(words) => words.last().copied(),
+            Words::Joined(text) => Some(&text[..]),
+        };
+        last.is_some_and(|word| matches!(word.last(), Some(b' ' | b'\t')))
+    }
+
     /// `fill(join(line, words))`
     fn write_fill(&self, out: &mut Elements) {
         let words = match self {
@@ -792,11 +802,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         join_words(lines, self.prose_wrap == ProseWrap::Never)
     }
 
-    /// `getBlockValueLineContents`
+    /// `getBlockValueLineContents`. `column_of_item` is the zero-based column of the item that contains `node`, if any.
     fn block_value_line_contents(
         &self,
         node: &Node<'a>,
-        parent_indent: usize,
+        column_of_item: Option<u32>,
         is_last_descendant: bool,
     ) -> Vec<Words<'a>> {
         if node.position.start.line == node.position.end.line {
@@ -819,10 +829,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     (spaces < line.len()).then_some(spaces)
                 })
                 .unwrap_or(usize::MAX),
-            Some(indent) => (indent as usize + parent_indent).saturating_sub(1),
+            Some(indent) => match column_of_item {
+                Some(column) => column.saturating_add(indent) as usize,
+                None => (indent as usize).saturating_sub(1),
+            },
         };
+        // Only strip spaces. Prettier strips `leading_space_count` characters from every line, spaces or not.
         let raw_lines: Vec<&'a [u8]> = strings::split(content, b"\n")
-            .map(|line| line.get(leading_space_count..).unwrap_or_default())
+            .map(|line| {
+                let spaces = line.iter().take(leading_space_count);
+                &line[spaces.take_while(|&&b| b == b' ').count()..]
+            })
             .collect();
 
         let lines: Vec<Words<'a>> = if self.prose_wrap == ProseWrap::Preserve
@@ -906,23 +923,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             return lines;
         }
-        let is_blank = |words: &Words<'a>| {
-            // For oxfmt, blanks that are left of a line are a part of the value.
-            let is_blank = |word: &[u8]| match self.is_oxfmt {
-                true => word.is_empty(),
-                false => word.iter().all(|b| matches!(b, b' ' | b'\t')),
-            };
-            match words {
-                Words::None => true,
-                Words::One(word) => is_blank(word),
-                Words::Slices(words) => words.iter().all(|word| is_blank(word)),
-                Words::Joined(text) => is_blank(text),
-            }
+        // Spaces past the indentation are part of the value. Prettier treats a line of only spaces as empty.
+        let has_no_text = |words: &Words<'a>| match words {
+            Words::None => true,
+            Words::One(word) => word.is_empty(),
+            Words::Slices(words) => words.iter().all(|word| word.is_empty()),
+            Words::Joined(text) => text.is_empty(),
         };
         let trailing_newline_count = lines
             .iter()
             .rev()
-            .take_while(|words| is_blank(words))
+            .take_while(|words| has_no_text(words))
             .count();
         let removed = match trailing_newline_count {
             0 => 0,
@@ -936,12 +947,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printBlock`
     fn print_block(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
-        let mut parent_indent = 0;
-        let mut ancestor = self.parent(node);
-        while let Some(it) = ancestor {
-            parent_indent += usize::from(matches!(it.kind, Kind::Sequence | Kind::Mapping));
-            ancestor = self.parent(it);
+        let mut item = self.parent(node);
+        while let Some(it) =
+            item.filter(|it| !matches!(it.kind, Kind::MappingItem | Kind::SequenceItem))
+        {
+            item = self.parent(it);
         }
+        let column_of_item = item.map(|it| it.position.start.column.saturating_sub(1));
         self.out.text(if node.kind == Kind::BlockFolded {
             b">"
         } else {
@@ -966,15 +978,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.end_line_suffix();
             }
         }
-        let lines = self.block_value_line_contents(node, parent_indent, is_last_descendant);
+        let lines = self.block_value_line_contents(node, column_of_item, is_last_descendant);
         match node.indent {
             None => {
                 self.out.start_indent(IndentCommand::Dedent);
                 self.start_align(self.tab_width);
             }
+            // The indentation indicator is relative to the item. Prettier keeps the lines in their original columns, so
+            // if the item moves, the value changes or the output isn't valid YAML.
+            Some(indent) if column_of_item.is_some() => {
+                self.out.start_indent(IndentCommand::Dedent);
+                self.start_align(indent);
+            }
             Some(indent) => {
                 self.out.start_indent(IndentCommand::DedentToRoot);
-                self.start_align((indent + parent_indent as u32).saturating_sub(1));
+                self.start_align(indent.saturating_sub(1));
             }
         }
         let out = &mut *self.out;
@@ -987,7 +1005,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 out.hard_line();
             }
             words.write_fill(out);
-            if self.is_oxfmt && !words.is_empty() {
+            // Trailing spaces and tabs are part of the value. Prettier drops them from the last line, because the hard
+            // line after the scalar trims them (prettier#19764).
+            if words.ends_with_blank() {
                 out.keep_blanks();
             }
             if index + 1 != lines.len() {

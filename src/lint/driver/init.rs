@@ -68,8 +68,8 @@ impl Section {
         let before = match fs::read(&path) {
             Ok(before) => before,
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
-                fs::write_new(&path, &self.text(b"\n"))
-                    .map_err(|error| cannot("write", &fs::describe(&error)))?;
+                fs::write_new(cwd, &path, &self.text(b"\n"))
+                    .map_err(|why| cannot("write", &why))?;
                 return Ok(
                     format!("Created bunfig.toml with a [{}] section", self.name).into_bytes(),
                 );

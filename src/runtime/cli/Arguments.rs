@@ -1197,7 +1197,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        // Without a flag, `install.prefer` of bunfig.toml stays.
+        // Without a flag, `install.prefer` from bunfig.toml is kept.
         if args.flag(b"--prefer-offline") {
             ctx.debug.offline_mode_setting =
                 Some(bun_options_types::offline_mode::OfflineMode::Offline);

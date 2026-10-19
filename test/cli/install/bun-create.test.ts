@@ -1042,7 +1042,9 @@ describe.concurrent("GitHub template", () => {
       err: expect.not.stringContaining("error:"),
       exitCode: 0,
     });
-    expect(await Bun.file(join(String(dir), "dest", "package.json")).json()).toEqual({ name: "dest" });
+    // Read as JSONC: a rewrite can keep the comment of the template.
+    const written = await Bun.file(join(String(dir), "dest", "package.json")).text();
+    expect(Bun.JSONC.parse(written)).toEqual({ name: "dest" });
   });
 });
 

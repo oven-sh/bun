@@ -11,6 +11,8 @@ const dialects = [
 ] as const;
 
 const tarball = (files: Record<string, string>) => new Bun.Archive(files, { compress: "gzip" }).bytes();
+// A command that writes package.json back can keep the comments or drop them. Both are read here.
+const readManifest = async (path: string) => Bun.JSONC.parse(await Bun.file(path).text());
 
 // A registry that has every package name at 1.0.0 and 2.0.0 (latest).
 let registry: ReturnType<typeof Bun.serve>;
@@ -76,7 +78,7 @@ describe.each(dialects)("a package.json with %s", (_, write) => {
 
     async function expectRecorded(root: string, manifest: object) {
       expect(await ran(root)).toBeTrue();
-      expect(await Bun.file(join(root, "package.json")).json()).toEqual({ ...manifest, trustedDependencies: ["q"] });
+      expect(await readManifest(join(root, "package.json"))).toEqual({ ...manifest, trustedDependencies: ["q"] });
       expect(await Bun.file(join(root, "bun.lock")).text()).toContain(`"trustedDependencies": [\n    "q",\n  ],`);
     }
 
@@ -185,7 +187,7 @@ describe.each(dialects)("a package.json with %s", (_, write) => {
       stderr: expect.not.stringContaining("error:"),
       exitCode: 0,
     });
-    expect(await Bun.file(join(String(dir), "dest", "package.json")).json()).toEqual({
+    expect(await readManifest(join(String(dir), "dest", "package.json"))).toEqual({
       name: "dest",
       version: "1.0.0",
     });

@@ -21,10 +21,12 @@ import {
   OptionalType,
   type Origin,
   type OverloadDispatch,
+  OwnedUtf8Type,
   rustIdent,
   type RustScope,
   Signature,
   snakeCase,
+  StringType,
   type Type,
   UnionType,
   UnitType,
@@ -560,9 +562,16 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
   const lines: string[] = [];
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
-  signature.args.forEach(({ name, type }, i) => {
+  signature.args.forEach(({ name, type, expected }, i) => {
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
-    lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
+    if (expected) {
+      lines.push(`static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`);
+      lines.push(
+        `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::NodeArgumentContext { ${asciiLiteral(name)}, expected${i}, argument${i}.value() };`,
+      );
+    } else {
+      lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
+    }
     readLast.push(...type.cppReadLast(`converted${i}`, `argument${i}.value()`));
     lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
     if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
@@ -993,9 +1002,12 @@ function rustArgumentName(arg: { name: string }): string {
   return rustIdent(name);
 }
 
-/** A dictionary stays in the frame of the thunk, and the body borrows it. */
-const rustBorrow = (type: Type) =>
-  (type instanceof DefaultType ? type.inner : type) instanceof DictionaryType ? "&" : "";
+/** A dictionary or a string stays in the frame of the thunk, and the body borrows it. */
+function rustBorrow(type: Type) {
+  const inner = type instanceof DefaultType ? type.inner : type;
+  const isString = inner instanceof StringType && !(inner instanceof OwnedUtf8Type);
+  return inner instanceof DictionaryType || isString ? "&" : "";
+}
 const rustParameters = (signature: Signature, scope: RustScope) =>
   signature.args.map(arg => `${rustArgumentName(arg)}: ${rustBorrow(arg.type)}${arg.type.rustType(scope)}`);
 const rustExternParameters = (signature: Signature, scope: RustScope) =>

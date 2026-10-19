@@ -426,7 +426,8 @@ Cache: /home/user/.bun/install/cache
 
 - Dependencies resolve the way `bun install` resolves them, but `node_modules` is not created, lifecycle scripts do not run, and `package.json` and the lockfile are left untouched.
 - With a lockfile, only what is missing from the cache is downloaded: the tarball URLs and git commits the lockfile records.
-- A later `bun install` (or `bun install --offline`) installs from the cache. Without a lockfile, `--offline` cannot tell which commit a `github:` ref or which file a tarball URL stands for, so commit the lockfile if you depend on those.
+- In a monorepo, you only need the root `package.json` and the lockfile. Bun downloads the dependencies of every workspace in the lockfile, even if the workspace isn't on disk yet. That means a Docker layer with `COPY package.json bun.lock ./` and `RUN bun pm fetch` is only rebuilt when one of those two files changes. Also copy `bunfig.toml` and `.npmrc` if they set a registry. Cache entries are keyed by the registry's host, so without them the later `bun install` downloads everything again. The layer also needs any patch files and local tarballs in the lockfile, and any workspace that the root `package.json` depends on with `workspace:`.
+- A later `bun install` (or `bun install --offline`) installs from the cache. Without a lockfile, `--offline` can't tell which commit a `github:` ref points to or which file a tarball URL serves, so commit the lockfile if you depend on those.
 - Packages for another operating system or CPU are skipped; pass `--os` / `--cpu` to fetch them.
 - `-g` fetches the dependencies of globally installed packages.
 - `--dry-run` prints how many packages are missing from the cache and downloads none of them.

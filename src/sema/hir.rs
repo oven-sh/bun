@@ -8,8 +8,8 @@
 
 use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, Places, ToNode};
-use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaHashSet, ArenaVec, Session};
-use crate::util::{FxHashMap, FxHashSet};
+use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
@@ -159,6 +159,76 @@ macro_rules! impl_run {
 impl_run!(IdList);
 impl_run!(Span);
 
+/// Index into [`File::ids`] of a `Cond`'s two branches, which are adjacent. Read them with [`FileIn::branches`].
+#[derive(Copy, Clone, Debug)]
+pub struct BranchesAt(u32);
+
+/// The two branches of `test ? yes : no`.
+#[derive(Copy, Clone, Debug)]
+pub struct Branches {
+    pub yes: ExprId,
+    pub no: ExprId,
+}
+
+/// A 4-byte handle to an `IdList`. The list's start and length are stored in [`File::ids`], except for an empty list,
+/// which has a sentinel. Read it with [`FileIn::list_at`].
+pub struct ListAt<T> {
+    at: u32,
+    _of: PhantomData<T>,
+}
+
+macro_rules! impl_place {
+    ($name:ident) => {
+        impl<T> Copy for $name<T> {}
+        impl<T> Clone for $name<T> {
+            #[inline]
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<T> std::fmt::Debug for $name<T> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(stringify!($name))
+            }
+        }
+    };
+}
+impl_place!(ListAt);
+
+impl BranchesAt {
+    /// `ids` must be the file's [`File::ids`].
+    #[inline]
+    pub fn of(self, ids: &[u32]) -> Branches {
+        let at = self.0 as usize;
+        Branches {
+            yes: ExprId(ids[at]),
+            no: ExprId(ids[at + 1]),
+        }
+    }
+}
+
+impl<T> ListAt<T> {
+    pub const EMPTY: Self = ListAt {
+        at: u32::MAX,
+        _of: PhantomData,
+    };
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.at == u32::MAX
+    }
+
+    /// `ids` must be the file's [`File::ids`].
+    #[inline]
+    pub fn of(self, ids: &[u32]) -> IdList<T> {
+        if self.is_empty() {
+            return IdList::EMPTY;
+        }
+        let at = self.at as usize;
+        IdList::new(ids[at], ids[at + 1])
+    }
+}
+
 impl<T: From<u32>> Span<T> {
     #[inline]
     pub fn iter(self) -> impl DoubleEndedIterator<Item = T> + ExactSizeIterator + Clone {
@@ -240,17 +310,52 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
     }
 }
 
+/// A map for tables that are empty in most files. Entries are sorted by key in an exact-size arena allocation and
+/// found by binary search. It's one word, where a hash map is five.
+pub struct ArenaFewMap<'s, K, V>(ArenaFew<'s, (K, V)>);
+
+impl<'s, K: Ord, V> ArenaFewMap<'s, K, V> {
+    pub fn from_iter_in(entries: impl Iterator<Item = (K, V)>, arena: &'s Arena) -> Self {
+        let mut entries: Vec<(K, V)> = entries.collect();
+        entries.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        ArenaFewMap(ArenaFew::from_iter_in(entries.into_iter(), arena))
+    }
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        let at = self.0.binary_search_by(|entry| entry.0.cmp(key)).ok()?;
+        Some(&self.0[at].1)
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// `contains_key`, under the name a set uses.
+    pub fn contains(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&K, &V)> {
+        self.0.iter().map(|entry| (&entry.0, &entry.1))
+    }
+}
+
 /// Where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
     type List<T: 'static>: DerefMut<Target = [T]>;
-    /// A list that a program adds to when the file is loaded.
-    type Growing<T>: DerefMut<Target = [T]>;
+    /// `BoundIn::symbols`
+    type Symbols: crate::bind::SymbolList;
     /// A list of nodes of a `FileIn`.
     type Nodes<T: 'static>: DerefMut<Target = [T]>;
+    /// A `BoundIn` list of ids that is only read by index.
+    type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
     type Map<K, V>;
-    type Set<K>;
+    /// A map that is empty in most files.
+    type FewMap<K: 'static, V: 'static>;
+    /// A set that is empty in most files.
+    type FewSet<K: 'static>;
     /// A list whose elements own memory on the regular heap.
     type Kept<T: Clone + 'static>: Deref<Target = [T]>;
     /// `FileIn::text`
@@ -265,11 +370,13 @@ pub struct Growable;
 
 impl Storage for Growable {
     type List<T: 'static> = Vec<T>;
-    type Growing<T> = Vec<T>;
+    type Symbols = Vec<crate::bind::GrowingSymbol>;
     type Nodes<T: 'static> = Vec<T>;
+    type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
     type Map<K, V> = FxHashMap<K, V>;
-    type Set<K> = FxHashSet<K>;
+    type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
+    type FewSet<K: 'static> = FxHashSet<K>;
     type Kept<T: Clone + 'static> = Vec<T>;
     type Text = Cow<'static, [u8]>;
     /// For `FileBuilder::lend`.
@@ -281,11 +388,13 @@ pub struct InArena<'s>(PhantomData<&'s Arena>);
 
 impl<'s> Storage for InArena<'s> {
     type List<T: 'static> = Fixed<'s, T>;
-    type Growing<T> = ArenaVec<'s, T>;
+    type Symbols = crate::bind::Symbols<'s>;
     type Nodes<T: 'static> = Fixed<'s, T>;
+    type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
     type Map<K, V> = ArenaHashMap<'s, K, V>;
-    type Set<K> = ArenaHashSet<'s, K>;
+    type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
+    type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. Nothing drops a file of a program, so `Files::load` hands
     /// the list to `Session::keep` and borrows it from there.
     type Kept<T: Clone + 'static> = Cow<'s, [T]>;
@@ -364,6 +473,91 @@ impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+/// Implemented by every id type that `define_id` declares.
+pub trait Id: Copy + From<u32> + Into<u32> + 'static {}
+
+impl<T: Copy + From<u32> + Into<u32> + 'static> Id for T {}
+
+/// Indexed read access to a list of ids. See [`Storage::Ids`].
+pub trait Ids<T> {
+    /// Returns `None` if `index` is out of range.
+    fn id_at(&self, index: usize) -> Option<T>;
+}
+
+impl<T: Copy> Ids<T> for Vec<T> {
+    #[inline]
+    fn id_at(&self, index: usize) -> Option<T> {
+        self.get(index).copied()
+    }
+}
+
+/// A fixed-size list of ids. Ids are stored as `u16` if all of them fit, which is the case in nearly every file, and as
+/// `u32` otherwise.
+pub struct Narrow<'s, T> {
+    /// Each id plus one, so `NONE` is 0. Empty if some id doesn't fit.
+    short: Fixed<'s, u16>,
+    /// Empty if `short` is used.
+    long: Fixed<'s, T>,
+}
+
+impl<T> Default for Narrow<'_, T> {
+    fn default() -> Self {
+        Narrow {
+            short: Fixed::default(),
+            long: Fixed::default(),
+        }
+    }
+}
+
+impl<T: Id> Ids<T> for Narrow<'_, T> {
+    #[inline]
+    fn id_at(&self, index: usize) -> Option<T> {
+        match self.short.get(index) {
+            Some(&id) => Some(T::from(u32::from(id).wrapping_sub(1))),
+            None => self.long.get(index).copied(),
+        }
+    }
+}
+
+impl<'s, T: Id> Narrow<'s, T> {
+    /// Copies `list` into `arena` and clears it. `list` keeps its capacity.
+    pub(crate) fn moved_in(arena: &'s Arena, list: &mut Vec<T>) -> Self {
+        let fits =
+            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
+        if !list.iter().fold(true, fits) {
+            return Narrow {
+                short: Fixed::default(),
+                long: copy_to_arena(list, arena),
+            };
+        }
+        let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
+        let short = Fixed(FixedIn::Arena(ArenaBox::from_iter_in(short, arena)));
+        list.clear();
+        Narrow {
+            short,
+            long: Fixed::default(),
+        }
+    }
+
+    pub(crate) fn shared(&'s self) -> Self {
+        Narrow {
+            short: Fixed::shared(&self.short),
+            long: Fixed::shared(&self.long),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.short.len().max(self.long.len())
+    }
+
+    /// Calls `change` on each id and stores the result in `arena`, so a shared list becomes this program's own copy.
+    pub(crate) fn change_each_in(&mut self, arena: &'s Arena, change: impl FnMut(&mut T)) {
+        let mut all: Vec<T> = (0..self.len()).filter_map(|at| self.id_at(at)).collect();
+        all.iter_mut().for_each(change);
+        *self = Narrow::moved_in(arena, &mut all);
     }
 }
 
@@ -559,8 +753,9 @@ pub enum ExprKind {
     Dot {
         obj: ExprId,
         name: Atom,
-        name_pos: u32,
         chain: Chain,
+        /// Distance from the start of the name to the end of the expression, or [`FAR`]. Use [`FileIn::name_pos`].
+        name_before_end: u16,
     },
     Index {
         obj: ExprId,
@@ -584,10 +779,10 @@ pub enum ExprKind {
         target: ExprId,
         value: ExprId,
     },
+    /// `test ? yes : no`
     Cond {
         test: ExprId,
-        yes: ExprId,
-        no: ExprId,
+        branches: BranchesAt,
     },
     Spread(ExprId),
     Await(ExprId),
@@ -608,7 +803,7 @@ pub enum ExprKind {
     /// `f<T>` that is not called.
     Instantiation {
         expr: ExprId,
-        type_args: IdList<TypeNodeId>,
+        type_args: ListAt<TypeNodeId>,
     },
     Jsx(JsxId),
     /// `import(specifier, ..)`. `args` is never empty: the first is the specifier, a missing expression if there is none.
@@ -619,6 +814,45 @@ pub enum ExprKind {
     ImportMeta,
     /// `new.target`, and the name in the source: any word forms a meta property.
     NewTarget(Atom),
+}
+
+/// `name_before_end` of a `Dot` whose name position is in [`FileIn::far_names`] instead.
+pub const FAR: u16 = u16::MAX;
+
+/// [`FileIn::stmt_modifiers`] for callers that only have the file's list.
+pub fn stmt_modifiers_in(
+    modifiers_of_stmts: &[(StmtId, Span<ModifierId>)],
+    s: StmtId,
+) -> Span<ModifierId> {
+    let found = modifiers_of_stmts.binary_search_by_key(&s, |of| of.0);
+    found.map_or(Span::EMPTY, |at| modifiers_of_stmts[at].1)
+}
+
+/// [`FileIn::template_of`] for callers that only have the file's list.
+pub fn template_in(tagged_templates: &[(CallId, ExprId)], call: CallId) -> ExprId {
+    let found = tagged_templates.binary_search_by_key(&call, |it| it.0);
+    found.map_or(ExprId::NONE, |at| tagged_templates[at].1)
+}
+
+/// [`FileIn::name_pos`] for callers that only have the file's lists.
+#[inline]
+pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
+    match exprs.get(e.idx()) {
+        Some(&Expr {
+            kind: ExprKind::Dot {
+                name_before_end, ..
+            },
+            end,
+            ..
+        }) if name_before_end != FAR => end - u32::from(name_before_end),
+        _ => far_name_pos(far_names, e),
+    }
+}
+
+#[cold]
+fn far_name_pos(far_names: &[(ExprId, u32)], e: ExprId) -> u32 {
+    let found = far_names.binary_search_by_key(&e, |it| it.0);
+    found.map_or(0, |at| far_names[at].1)
 }
 
 /// The kind of an expression, without its payload.
@@ -855,13 +1089,11 @@ impl ExprsByKind {
 pub struct Call {
     pub callee: ExprId,
     pub args: IdList<ExprId>,
-    pub type_args: IdList<TypeNodeId>,
+    pub type_args: ListAt<TypeNodeId>,
     /// Position of the `)`. `u32::MAX` for `new C`. A tagged template has `u32::MAX` or
     /// [`INCOMPLETE_TEMPLATE`].
     pub close_pos: u32,
     pub chain: Chain,
-    /// `TaggedTemplateExpression.Template`. Its substitutions are `args`.
-    pub template: ExprId,
 }
 
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
@@ -1073,6 +1305,10 @@ pub mod rare {
     /// A list of variable declarations is empty or declares with `using`, a `const` or a pattern in it has no initializer and
     /// isn't ambient, or the head of a `for-in` / `for-of` doesn't declare exactly one variable.
     pub const ODD_DECLARATION: u32 = 1 << 26;
+    /// The parser treated a top-level `await`, `for await` or `await using` as a keyword.
+    pub const TOP_LEVEL_AWAIT: u32 = 1 << 27;
+    /// `import.meta`
+    pub const IMPORT_META: u32 = 1 << 28;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1186,8 +1422,6 @@ pub struct Stmt {
     /// Position of its first token, including decorators and modifiers.
     pub start: u32,
     pub loc: TextRange,
-    /// `node.Modifiers()`
-    pub modifiers: Span<ModifierId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2143,6 +2377,9 @@ pub struct FileIn<S: Storage> {
     /// separate column and not a field of `Param`: few parameters have a modifier, and a field
     /// would cost every parameter.
     pub modifiers_of_params: S::Nodes<Span<ModifierId>>,
+    /// `node.Modifiers()` of the statements that have any, sorted by statement. Read it with `stmt_modifiers`. Kept out
+    /// of `Stmt` because only one statement in forty has a modifier.
+    pub modifiers_of_stmts: S::Nodes<(StmtId, Span<ModifierId>)>,
     /// `node.Modifiers()` of the members of object literals that have any: see `prop_modifiers`.
     /// Sorted.
     pub modifiers_of_props: S::Few<(PropId, Span<ModifierId>)>,
@@ -2176,6 +2413,10 @@ pub struct FileIn<S: Storage> {
     /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
     /// innermost first.
     pub non_null_ends: S::Few<(ExprId, u32)>,
+    /// Name positions of the `Dot`s whose name starts more than 65,534 bytes before their end. Sorted by expression.
+    pub far_names: S::Few<(ExprId, u32)>,
+    /// `TaggedTemplateExpression.Template` of each tagged template, sorted by call. The call's `args` are its substitutions.
+    pub tagged_templates: S::Few<(CallId, ExprId)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
     pub jsx_expressions: S::Nodes<(ExprId, u32, u32)>,
@@ -2361,6 +2602,10 @@ impl<S: Storage> FileIn<S> {
             .copied()
             .unwrap_or(Span::EMPTY)
     }
+    /// Returns `node.Modifiers()` of the statement `s`.
+    pub fn stmt_modifiers(&self, s: StmtId) -> Span<ModifierId> {
+        stmt_modifiers_in(&self.modifiers_of_stmts, s)
+    }
     /// `node.Modifiers()` of the member `p` of an object literal.
     pub fn prop_modifiers(&self, p: PropId) -> Span<ModifierId> {
         let found = self
@@ -2526,6 +2771,27 @@ impl<S: Storage> FileIn<S> {
     }
 
     #[inline]
+    pub fn branches(&self, at: BranchesAt) -> Branches {
+        at.of(&self.ids)
+    }
+
+    #[inline]
+    pub fn list_at<T>(&self, list: ListAt<T>) -> IdList<T> {
+        list.of(&self.ids)
+    }
+
+    /// Returns `TaggedTemplateExpression.Template`, or `NONE` if `call` isn't a tagged template.
+    pub fn template_of(&self, call: CallId) -> ExprId {
+        template_in(&self.tagged_templates, call)
+    }
+
+    /// Returns the position of the name in the `Dot` expression `e`.
+    #[inline]
+    pub fn name_pos(&self, e: ExprId) -> u32 {
+        name_pos_in(&self.exprs, &self.far_names, e)
+    }
+
+    #[inline]
     pub fn id_at<T: From<u32>>(&self, list: IdList<T>, i: usize) -> T {
         debug_assert!(i < list.len());
         T::from(self.ids[list.start as usize + i])
@@ -2552,7 +2818,6 @@ impl FileBuilder {
             kind: StmtKind::Empty,
             start: pos,
             loc: TextRange::default(),
-            modifiers: Span::EMPTY,
         });
         self.set_stmt_kind(stmt, kind);
         stmt
@@ -2573,6 +2838,44 @@ impl FileBuilder {
         let start = self.ids.len() as u32;
         self.ids.extend(items.iter().map(|&i| i.into()));
         IdList::new(start, items.len() as u32)
+    }
+    pub fn place_of_branches(&mut self, branches: Branches) -> BranchesAt {
+        let at = self.ids.len() as u32;
+        self.ids.extend([branches.yes.0, branches.no.0]);
+        BranchesAt(at)
+    }
+    pub fn place_of_list<T>(&mut self, list: IdList<T>) -> ListAt<T> {
+        if list.is_empty() {
+            return ListAt::EMPTY;
+        }
+        let at = self.ids.len() as u32;
+        self.ids.extend([list.start, list.len]);
+        ListAt {
+            at,
+            _of: PhantomData,
+        }
+    }
+    /// Builds the kind for `obj.name`. The caller must add it as the very next expression, ending at `end`.
+    #[inline]
+    pub fn dot(
+        &mut self,
+        (obj, chain): (ExprId, Chain),
+        (name, name_pos): (Atom, u32),
+        end: u32,
+    ) -> ExprKind {
+        let before_end = end.checked_sub(name_pos);
+        let near = before_end.and_then(|it| u16::try_from(it).ok());
+        let name_before_end = near.filter(|&it| it != FAR).unwrap_or_else(|| {
+            let next = ExprId(self.exprs.len() as u32);
+            self.far_names.push((next, name_pos));
+            FAR
+        });
+        ExprKind::Dot {
+            obj,
+            name,
+            chain,
+            name_before_end,
+        }
     }
     /// `A.B.C`: each name with its position.
     pub fn entity_name(&mut self, names: impl Iterator<Item = (Atom, u32)>) -> Span<NameId> {
@@ -2617,7 +2920,8 @@ macro_rules! long_lists {
             jsx_expressions,
             modifiers,
             names,
-            body_starts
+            body_starts,
+            modifiers_of_stmts
         );
     };
 }
@@ -2655,6 +2959,7 @@ macro_rules! file_in_arena {
             body_starts: $long!($this.body_starts),
             after_skipped: $few!($this.after_skipped),
             modifiers_of_params: $long!($this.modifiers_of_params),
+            modifiers_of_stmts: $long!($this.modifiers_of_stmts),
             modifiers_of_props: $few!($this.modifiers_of_props),
             unclosed_literals: $few!($this.unclosed_literals),
             stray_decorators: $few!($this.stray_decorators),
@@ -2666,6 +2971,8 @@ macro_rules! file_in_arena {
             exports_from_expressions: $few!($this.exports_from_expressions),
             parens: $long!($this.parens),
             non_null_ends: $few!($this.non_null_ends),
+            far_names: $few!($this.far_names),
+            tagged_templates: $few!($this.tagged_templates),
             jsx_expressions: $long!($this.jsx_expressions),
             jsx_pragmas: $this.jsx_pragmas,
             jsdoc_comments: $few!($this.jsdoc_comments),
@@ -2941,8 +3248,8 @@ pub fn is_entity_name_expression(hir: &File, e: ExprId) -> bool {
 
 /// `IsPropertyAccessEntityNameExpression` for `e` itself, ignoring enclosing parentheses.
 pub fn is_property_access_entity_name_expression(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Dot { obj, name_pos, .. }
-        if !is_private_name_at(hir, name_pos) && is_entity_name_expression(hir, obj))
+    matches!(hir[e].kind, ExprKind::Dot { obj, .. }
+        if !is_private_name_at(hir, hir.name_pos(e)) && is_entity_name_expression(hir, obj))
 }
 
 /// `ExpressionIsAlias`
@@ -3094,5 +3401,5 @@ pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Module(m) if hir[s].start == hir[m].name_pos)
 }
 
-const _: () = assert!(std::mem::size_of::<Expr>() <= 24);
+const _: () = assert!(std::mem::size_of::<Expr>() <= 20);
 const _: () = assert!(std::mem::size_of::<TypeNode>() <= 32);

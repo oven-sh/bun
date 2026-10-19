@@ -124,6 +124,18 @@ fn has_variable<'a>(file: &'a File<'a>, scope: Scope<'a>, name: &[u8]) -> bool {
         }
 }
 
+/// Returns the members used from every namespace that is imported before `declaration`. Those imports' fixes can be
+/// applied in the same pass as this one, and each imports a member under its own name when it can.
+fn members_of_namespaces_before<'a>(declaration: Stmt<'a>, scope: Scope<'a>) -> Vec<Cow<'a, [u8]>> {
+    let imports = declaration.file().stmts_of_kind(StmtTag::Import);
+    let before = imports.filter(|it| it.span().start < declaration.span().start);
+    let namespaces = before.filter_map(|it| match it.kind() {
+        StmtKind::Import(import) => scope.get_name(import.namespace()?.name()),
+        _ => None,
+    });
+    namespaces.flat_map(Symbol::references).filter_map(Member::around).map(|it| it.property).collect()
+}
+
 /// One name of upstream's `generateLocalNames`. `has`: `nameConflicts[name].has(..)`
 fn generate_local_name(
     name: &[u8],
@@ -148,7 +160,8 @@ fn generate_local_name(
 #[inline(never)]
 fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span) -> Option<Vec<Fix>> {
     let file = fixer.file();
-    let namespace_variable = Node::Stmt(declaration).scope().get_name(local.name())?;
+    let declared_in = Node::Stmt(declaration).scope();
+    let namespace_variable = declared_in.get_name(local.name())?;
     if namespace_variable.declarations().next().and_then(Declaration::name_span) != Some(local.span()) {
         return None;
     }
@@ -182,15 +195,22 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
 
     let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
     let mut named_import_specifiers = Vec::new();
+    // Upstream only checks those two scopes, so it misses a module-level name when the member is two or more functions
+    // deep. It also doesn't track the names that other fixes in this pass declare.
+    let mut handed_out = members_of_namespaces_before(declaration, declared_in);
     for import_name in import_names {
         let conflicts = import_name_conflicts.get(import_name)?;
-        let has =
-            |name: &[u8]| conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name));
+        let has = |name: &[u8]| {
+            conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name))
+                || handed_out.iter().any(|it| **it == *name)
+                || !utils::names::is_free(name, declared_in, conflicts.iter().map(|it| it.0))
+        };
         let local_name = generate_local_name(import_name, &has, local.bytes());
         named_import_specifiers.push(match local_name == import_name {
             true => import_name.to_vec(),
             false => [import_name, b" as ", &local_name[..]].concat(),
         });
+        handed_out.push(Cow::Owned(local_name.clone()));
         import_local_names.insert(import_name, local_name);
     }
     if named_import_specifiers.is_empty() {

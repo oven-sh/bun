@@ -28,6 +28,12 @@ export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
+export const stringLength = b.fn({ args: { text: b.string.default("absent") }, returns: b.usize });
+export const expectedByNode = b.fn({
+  args: { text: b.string, data: b.bytes({ from: ["string", "buffer"] }).optional, flag: b.bool.default(false) },
+  expected: { text: ["string"], data: ["Buffer", "TypedArray", "DataView", "string"] },
+  returns: b.usize,
+});
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
@@ -102,6 +108,7 @@ const bytesOfWith = (options: BytesOptions) =>
   b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
 export const bytesOf = bytesOfWith({ from: ["string", "buffer"] });
 export const bytesOfString = bytesOfWith({ from: ["string"] });
+export const bytesOfRefusingStringObject = bytesOfWith({ from: ["string", "buffer"], refuse: ["stringObject"] });
 export const bytesOfBufferOrBlob = bytesOfWith({ from: ["buffer", "blob"] });
 export const bytesOfOrToString = bytesOfWith({ from: ["string", "buffer", "blob"], otherwise: "toString" });
 export const bytesOfRefusingUndefined = bytesOfWith({

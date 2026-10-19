@@ -10,9 +10,9 @@ interface ErrnoError {
   errno: number;
 }
 
-const newRawSocketFd = $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2);
-const listenRawFd = $newRustFunction("udp_socket.rs", "jsDgramListenFd", 1);
-const closeRawFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
+const newRawSocketFd = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
+const listenRawFd = $bindgen("udp_socket.bind.ts", "dgramListenFd");
+const closeRawFd = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
 
 // Just enough of internalBinding('tcp_wrap').TCP for vendored dgram tests to
 // produce a listening stream descriptor and assert it gets rejected.

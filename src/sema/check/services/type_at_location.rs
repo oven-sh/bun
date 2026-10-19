@@ -137,7 +137,9 @@ impl Checker<'_, '_> {
         // `getTypeOfNode` of its name is the type of the alias target.
         let required = self.bound(file).pat_symbol[pat.idx()];
         if required.is_some()
-            && self.bound(file).symbols[required.idx()]
+            && self
+                .bound(file)
+                .symbol(required)
                 .flags
                 .contains(SymFlags::ALIAS)
         {
@@ -231,7 +233,7 @@ impl Checker<'_, '_> {
         let ExprKind::Ident(name) = hir[e].kind else {
             return None;
         };
-        let crate::bind::Parent::Stmt(stmt) = bound.expr_parent[e.idx()] else {
+        let crate::bind::Parent::Stmt(stmt) = bound.parent_of_expr(e) else {
             return None;
         };
         if stmt.is_none()

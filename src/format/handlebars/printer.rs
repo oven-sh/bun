@@ -340,14 +340,14 @@ impl<'a> Printer<'a> {
             let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
             let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
             let value =
-                match strings::trim_js_whitespace(&raw[front_matter.value.0..front_matter.value.1])
-                {
-                    b"" if is_yaml || is_toml => Doc::EMPTY,
-                    value if is_yaml => crate::yaml::document(value, self.options)
-                        .and_then(doc::text_to_doc)
-                        .ok()?,
-                    _ => return None,
-                };
+                strings::trim_js_whitespace_start(&raw[front_matter.value.0..front_matter.value.1]);
+            let value = match crate::front_matter::trim_end_to_last_line(value) {
+                b"" if is_yaml || is_toml => Doc::EMPTY,
+                value if is_yaml => crate::yaml::document(value, self.options)
+                    .and_then(doc::text_to_doc)
+                    .ok()?,
+                _ => return None,
+            };
             Some((language, value))
         });
         let Some((language, value)) = formatted else {

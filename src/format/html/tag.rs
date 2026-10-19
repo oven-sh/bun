@@ -45,7 +45,7 @@ impl<'o> Tags<'_, '_, 'o> {
     }
 
     /// Whether what follows the node writes the end of its closing tag.
-    fn lends_closing_tag_end_marker(self, id: Id) -> bool {
+    pub(crate) fn lends_closing_tag_end_marker(self, id: Id) -> bool {
         match (self.tree.next(id), self.tree.parent(id)) {
             (Some(next), _) => self.needs_to_borrow_prev_closing_tag_end_marker(next),
             (None, Some(parent)) => self.needs_to_borrow_last_child_closing_tag_end_marker(parent),
@@ -108,9 +108,19 @@ impl<'o> Tags<'_, '_, 'o> {
             Kind::IeConditionalStartComment => b"]><!-->",
             Kind::Interpolation => b"}}",
             Kind::AngularIcuExpression => b"}",
-            Kind::Element if node.has(Flags::IS_SELF_CLOSING) => b"/>",
+            Kind::Element if node.has(Flags::IS_SELF_CLOSING) && !self.stays_without_slash(id) => {
+                b"/>"
+            }
             _ => b">",
         });
+    }
+
+    /// True if `id` is a void element written without a slash, like `<br>`, and is printed verbatim. The marker it
+    /// lends is then `>`. Prettier assumes `/>`, so `<img a=b>c` becomes `<img a=/>c`.
+    fn stays_without_slash(self, id: Id) -> bool {
+        let end = self.tree[id].span.end as usize;
+        self.tree.has_prettier_ignore(id)
+            && (self.options.original_text.get(..end)).is_some_and(|text| !text.ends_with(b"/>"))
     }
 
     /// Whether what is in `id` is written as it is, and `id` has no end tag that says where that ends. Prettier takes it to

@@ -4689,7 +4689,9 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
 // For node:inspector, which reports the port it bound even if the process object is immutable.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDebugPort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     setDebugPort(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

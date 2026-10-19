@@ -2503,7 +2503,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkThisExpression`
     pub(super) fn check_this_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
-        let (this, node) = (hir.node(e), self.span_of_expr(file, e));
+        let this = hir.node(e);
+        let node = |c: &Self| c.span_of_expr(file, e);
         let mut container = hir.get_this_container(this, true, true);
         let (mut captured_by_arrow_function, mut this_in_computed_property_name) = (false, false);
         if hir.kind(container) == Kind::Constructor {
@@ -2533,17 +2534,17 @@ impl<'p, 's> Checker<'p, 's> {
                 .iter()
                 .any(|d| d.0 == DecoratorOwner::Class(hir.class_of(hir.parent(container))))
         {
-            self.error_at(node, 2816, &[]);
+            self.error_at(node(self), 2816, &[]);
         }
         match hir.kind(container) {
             _ if this_in_computed_property_name => {
-                self.error_at(node, 2465, &[]);
+                self.error_at(node(self), 2465, &[]);
             }
             Kind::ModuleDeclaration => {
-                self.error_at(node, 2331, &[]);
+                self.error_at(node(self), 2331, &[]);
             }
             Kind::EnumDeclaration => {
-                self.error_at(node, 2332, &[]);
+                self.error_at(node(self), 2332, &[]);
             }
             _ => {}
         }
@@ -2565,7 +2566,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .is_some_and(|t| !is_global_this(self, t));
             let (from, to) = self.get_error_range_for_node(file, container);
             let shadowed = is_shadowed.then(|| self.new_diagnostic((file, from, to), 2738, &[]));
-            let diagnostic = self.error_at(node, 2683, &[]);
+            let diagnostic = self.error_at(node(self), 2683, &[]);
             if let Some(shadowed) = shadowed {
                 diagnostic.add_related_info(shadowed);
             }
@@ -2575,7 +2576,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.p.files.options.no_implicit_this
             && is_global_this(self, t)
         {
-            self.error_at(node, 7041, &[]);
+            self.error_at(node(self), 7041, &[]);
         }
         // `getFlowTypeOfReference(node, thisType)`
         if container != Node::FILE {

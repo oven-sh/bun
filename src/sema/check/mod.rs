@@ -882,6 +882,7 @@ impl<'s> Program<'s> {
             instantiations_computed: 0,
             recent_instantiations: Default::default(),
             recent_composed: Default::default(),
+            recent_with_this: Default::default(),
             recent_const_type_variables: Default::default(),
             recent_derived_sigs: Default::default(),
             known_mapped_prop_types: Default::default(),
@@ -1632,6 +1633,8 @@ pub struct Checker<'p, 's> {
     recent_instantiations: instantiate::Recent,
     /// The entries most recently read from or written to `Program::composed`.
     recent_composed: instantiate::Recent,
+    /// The references that `type_with_this_argument_ex` made most recently, keyed by the reference and the argument.
+    recent_with_this: instantiate::Recent,
     /// `is_const_type_variable`, keyed by the type and 1 + the depth.
     recent_const_type_variables: instantiate::Recent,
     /// Keyed by a signature and a `relate::DerivedSig`.

@@ -352,16 +352,28 @@ impl FlowType {
 }
 
 /// `sharedFlows[sharedFlowStart:]`
-#[derive(Default)]
 struct SharedFlows {
-    inline_entries: SmallVec<[(FlowId, FlowType); 8]>,
-    /// Overflow entries, added once `inline_entries` was full.
+    /// The first entries. Only the first `count` are in use.
+    first_entries: [(FlowId, FlowType); 8],
+    count: usize,
+    /// Overflow entries, added once `first_entries` was full.
     overflow_entries: FxHashMap<FlowId, FlowType>,
+}
+
+impl Default for SharedFlows {
+    fn default() -> Self {
+        SharedFlows {
+            first_entries: [(FlowId::NONE, FlowType::new(TypeId::NEVER, false)); 8],
+            count: 0,
+            overflow_entries: FxHashMap::default(),
+        }
+    }
 }
 
 impl SharedFlows {
     fn get(&self, flow: FlowId) -> Option<FlowType> {
-        match self.inline_entries.iter().find(|known| known.0 == flow) {
+        let first_entries = &self.first_entries[..self.count];
+        match first_entries.iter().find(|known| known.0 == flow) {
             Some(known) => Some(known.1),
             None if self.overflow_entries.is_empty() => None,
             None => {
@@ -377,8 +389,9 @@ impl SharedFlows {
         if self.get(flow).is_some() {
             return;
         }
-        if self.inline_entries.len() < self.inline_entries.inline_size() {
-            self.inline_entries.push((flow, ty));
+        if let Some(free) = self.first_entries.get_mut(self.count) {
+            *free = (flow, ty);
+            self.count += 1;
         } else {
             cold_path();
             self.overflow_entries.insert(flow, ty);

@@ -1318,6 +1318,10 @@ impl<'p, 's> Checker<'p, 's> {
         if t & tf::NEVER != 0 {
             return false;
         }
+        // Every rule below is about a primitive or `any` as the source, or about `object` or a union as the target.
+        if s & (tf::PRIMITIVE | tf::ANY) == 0 && t & (tf::NON_PRIMITIVE | tf::UNION) == 0 {
+            return false;
+        }
         if s & tf::STRING_LIKE != 0 && t & tf::STRING != 0
             || s & tf::NUMBER_LIKE != 0 && t & tf::NUMBER != 0
             || s & tf::BIGINT_LIKE != 0 && t & tf::BIGINT != 0

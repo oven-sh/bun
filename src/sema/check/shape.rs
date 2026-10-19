@@ -2658,7 +2658,12 @@ impl<'p, 's> Checker<'p, 's> {
         need_apparent_type: bool,
     ) -> TypeId {
         match self.data(ty) {
-            TypeData::Ref { target, .. } => {
+            TypeData::Ref { target, args } => {
+                // FOR SPEED: every `this.x` in a class asks for the class with the same `this` argument.
+                if let Some(known) = self.recent_with_this.get(ty.0, this_argument.0) {
+                    return TypeId(known);
+                }
+                let is_given = args.actual().is_some();
                 let declared = self.declared_type(*target);
                 let args = self.type_arguments(ty);
                 if !matches!(self.data(declared), TypeData::Ref { .. })
@@ -2669,10 +2674,15 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let with_this: SmallVec<[TypeId; 8]> =
                     args.iter().copied().chain([this_argument]).collect();
-                self.intern_key(TypeKey::Ref {
+                let result = self.intern_key(TypeKey::Ref {
                     target: *target,
                     args: &with_this,
-                })
+                });
+                // Same rule as for `recent_instantiations`. Deferred type arguments can still change.
+                if is_given && (ty.is_local() || this_argument.is_local() || !result.is_local()) {
+                    (self.recent_with_this).put(ty.0, this_argument.0, result.0);
+                }
+                result
             }
             TypeData::Intersection(parts) => {
                 let with_this: Vec<TypeId> = parts
@@ -7051,6 +7061,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getResolvedBaseConstraint(ty, nil)`: the widest type `ty` can be, with no type parameter at
     /// the top level. `None` means `noConstraintType` or `circularConstraintType`.
     pub(super) fn resolved_base_constraint(&mut self, ty: TypeId) -> Option<TypeId> {
+        // FOR SPEED: most requests are for a type parameter or a `this` type whose constraint is known. This is the
+        // path they take through `next_base_constraint`.
+        if matches!(
+            self.data(ty),
+            TypeData::TypeParam(..) | TypeData::ThisParam(_)
+        ) && self.unresolved_renamed_params.is_empty()
+            && let Some((known, _)) = self.known_constraint(ty)
+        {
+            return known;
+        }
         // A union or intersection has its own `resolvedBaseConstraint`, with or without type variables.
         if !matches!(
             self.data(ty),

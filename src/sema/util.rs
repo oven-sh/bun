@@ -78,7 +78,7 @@ impl<T> SharedSort<T> for [T] {
     }
 }
 
-#[inline]
+#[inline(always)]
 pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
     let mut h = FxHasher::default();
     value.hash(&mut h);

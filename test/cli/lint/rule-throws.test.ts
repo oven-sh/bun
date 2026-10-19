@@ -1,15 +1,16 @@
 // What happens when a rule throws instead of reporting, for example because a file named in its options is missing. A rule of a
 // JavaScript plugin throws for real. A native rule calls `cx.throw()`, which has to look the same.
-import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-// A process that runs a rule in JavaScript starts a VM, which takes seconds in a debug build.
-const timeout = isDebug || isASAN ? 120_000 : 10_000;
+// A process that runs a rule in JavaScript starts a VM. In a debug build that takes seconds, and with several of them at once
+// more than the 5 s that a test has by default. No lane of CI runs a debug build, and each lane sets its own limit.
+if (isDebug) setDefaultTimeout(120_000);
 
 /** Runs `bun lint ...args` in a temporary directory with `files`. `written`: what is in each of `reads` afterwards. */
 async function lint(files: Record<string, string>, args: string[], reads: string[] = []) {
@@ -102,18 +103,24 @@ function together() {
   const paths: string[] = [];
   let count = 0;
   let run: ReturnType<typeof json> | undefined;
+  const start = async () => {
+    const found = await json(all, paths);
+    // Each diagnostic is about a file of one of the projects. One about anything else would be in no test.
+    expect(found.diagnostics.filter(it => !/^project-\d+[\\/]/.test(it.filename))).toEqual([]);
+    return found;
+  };
   return (files: Record<string, string>, args: string[]) => {
     const name = `project-${count++}`;
     for (const [path, text] of Object.entries(files)) all[`${name}/${path}`] = text;
     paths.push(...args.map(it => `${name}/${it}`));
     return async (): Promise<Found> => {
-      const { diagnostics, exitCode, tidy } = await (run ??= json(all, paths));
+      const { diagnostics, exitCode, tidy } = await (run ??= start());
       const own = diagnostics
         .map(it => ({ ...it, filename: it.filename.replaceAll("\\", "/") }))
         .filter(it => it.filename.startsWith(`${name}/`))
         .map(it => ({ ...it, filename: it.filename.slice(name.length + 1) }));
-      // The exit code is 1 as soon as one project has an error. It says something about this project only if a run of this
-      // project alone ends with the same.
+      // The exit code is that of all the projects: 1 as soon as one of them has an error. What can be said of one project
+      // is whether it has an error of its own, and that has to be so for every project of the run, or for none.
       const alone = own.some(it => it.severity === "error") ? 1 : 0;
       expect({ name, exitCode }).toEqual({ name, exitCode: alone });
       return { diagnostics: own, exitCode, tidy: text => tidy(text).replaceAll(`<dir>/${name}/`, "<dir>/") };
@@ -143,22 +150,22 @@ describe.concurrent("with an oxlint config", () => {
   // The projects in which a rule throws and which need no flag, by what the rules in them are set to. The run of those that
   // are set to "warn" has no rule that is set to "error", so its exit code is what the errors of these rules alone make it.
   const thrown = { warn: together(), error: together() };
+  const severities = ["warn", "error"] as const;
 
   // All of this is what oxlint 1.87 prints.
   describe("a JavaScript rule that throws", () => {
-    for (const severity of ["warn", "error"] as const) {
-      const found = thrown[severity]({ ...files, ...withPlugin({ "mini/in-create": severity }) }, names);
-      test(`in create() is an error in every file when it's set to ${severity}`, { timeout }, async () => {
-        const result = await found();
-        expect(diagnostics(result)).toEqual(
-          [
-            ...["a.js", "disabled.js", "no-identifier.js"].map(it => failed(it, missing)),
-            ...debuggers("a.js", "no-identifier.js"),
-          ].sort(),
-        );
-        expect(result.exitCode).toBe(1);
-      });
-    }
+    test.each(
+      severities.map(it => [it, thrown[it]({ ...files, ...withPlugin({ "mini/in-create": it }) }, names)] as const),
+    )("in create() is an error in every file when it's set to %s", async (_, found) => {
+      const result = await found();
+      expect(diagnostics(result)).toEqual(
+        [
+          ...["a.js", "disabled.js", "no-identifier.js"].map(it => failed(it, missing)),
+          ...debuggers("a.js", "no-identifier.js"),
+        ].sort(),
+      );
+      expect(result.exitCode).toBe(1);
+    });
 
     // These come before the tests below: those wait for the two runs that the tests above have started, and each of these
     // has a process of its own.
@@ -167,7 +174,7 @@ describe.concurrent("with an oxlint config", () => {
       [["--max-warnings", "0"], true],
       [["--deny-warnings"], true],
       [["--fix"], true],
-    ])("with %j", { timeout }, async (flags, hasWarnings) => {
+    ])("with %j", async (flags, hasWarnings) => {
       const config = withPlugin({ "mini/in-create": "warn" });
       const result = await json({ ...files, ...config }, [...flags, "a.js"]);
       const found = diagnostics(result).map(it => it.replace(" error eslint", " warning eslint"));
@@ -175,35 +182,36 @@ describe.concurrent("with an oxlint config", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    for (const severity of ["warn", "error"] as const) {
-      const found = thrown[severity]({ ...files, ...withPlugin({ "mini/in-listener": severity }) }, names);
-      test(`in a listener is an error where the listener runs when it's set to ${severity}`, { timeout }, async () => {
-        const result = await found();
-        expect(diagnostics(result)).toEqual(
-          [
-            ...["a.js", "disabled.js"].map(it => failed(it, missing)),
-            ...debuggers("a.js", "no-identifier.js"),
-            "no-identifier.js warning mini(fine): fine saw a debugger",
-          ].sort(),
-        );
-        expect(result.exitCode).toBe(1);
-      });
-    }
+    test.each(
+      severities.map(it => [it, thrown[it]({ ...files, ...withPlugin({ "mini/in-listener": it }) }, names)] as const),
+    )("in a listener is an error where the listener runs when it's set to %s", async (_, found) => {
+      const result = await found();
+      expect(diagnostics(result)).toEqual(
+        [
+          ...["a.js", "disabled.js"].map(it => failed(it, missing)),
+          ...debuggers("a.js", "no-identifier.js"),
+          "no-identifier.js warning mini(fine): fine saw a debugger",
+        ].sort(),
+      );
+      expect(result.exitCode).toBe(1);
+    });
 
-    for (const [rule, error] of [
-      ["mini/reports-first", missing],
-      ["mini/range-error", "RangeError: Invalid count value: -1"],
-      ["mini/own-class", "AllowanceError: no file"],
-      ["mini/two-lines", "Error: line one\nline two"],
-      ["mini/not-an-error", "Unknown error"],
-    ]) {
-      const found = thrown.warn({ ...files, ...withPlugin({ [rule]: "warn" }) }, ["a.js"]);
-      test(rule, { timeout }, async () => {
-        const result = await found();
-        expect(diagnostics(result)).toEqual([failed("a.js", error), ...debuggers("a.js")]);
-        expect(result.exitCode).toBe(1);
-      });
-    }
+    test.each(
+      [
+        ["mini/reports-first", missing],
+        ["mini/range-error", "RangeError: Invalid count value: -1"],
+        ["mini/own-class", "AllowanceError: no file"],
+        ["mini/two-lines", "Error: line one\nline two"],
+        ["mini/not-an-error", "Unknown error"],
+      ].map(
+        ([rule, error]) =>
+          [rule, error, thrown.warn({ ...files, ...withPlugin({ [rule]: "warn" }) }, ["a.js"])] as const,
+      ),
+    )("%s", async (_, error, found) => {
+      const result = await found();
+      expect(diagnostics(result)).toEqual([failed("a.js", error), ...debuggers("a.js")]);
+      expect(result.exitCode).toBe(1);
+    });
   });
 
   // import/no-cycle makes `bun lint` look at these files a second time, when it knows all of them.
@@ -211,7 +219,7 @@ describe.concurrent("with an oxlint config", () => {
     `import { it as other } from "./${other}";\nexport const it = (\n  <b c={other}>\n    <e />\n  </b>\n);\n`;
   const cycles = (...names: string[]) => names.map(it => `${it} warning import(no-cycle): Dependency cycle detected`);
 
-  test("the error of a JavaScript rule stays when a rule about several files is on too", { timeout }, async () => {
+  test("the error of a JavaScript rule stays when a rule about several files is on too", async () => {
     const config = oxlintrc(
       { "import/no-cycle": "warn", "mini/in-listener": "warn" },
       { plugins: ["import"], jsPlugins: ["./plugin.mjs"] },
@@ -266,13 +274,18 @@ describe.concurrent("with an oxlint config", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    test("prints what a JavaScript rule that throws prints in every format", { timeout }, async () => {
+    test("prints what a JavaScript rule that throws prints in every format", async () => {
       const formats = ["default", "stylish", "unix", "github", "checkstyle", "junit", "gitlab", "json"];
       const files = { "plugin.mjs": plugin, "a.jsx": element };
       const native = oxlintrc({ "react/jsx-indent": ["warn", -1] }, { plugins: ["react"] });
       const script = oxlintrc({ "mini/range-error": "warn" }, { jsPlugins: ["./plugin.mjs"] });
       // What isn't the same in every run or on every machine: how long it took, how many threads there are, and the
       // fingerprint, which is a hash of the message, which has the path of the temporary directory in it.
+      const unsteady = new Map([
+        ["start_time", "<time>"],
+        ["threads_count", "<threads>"],
+        ["fingerprint", "<hash>"],
+      ]);
       const steady = (text: string) =>
         text
           .replace(/[\d.]+m?s\b|(?<="start_time": )[\d.]+/g, "<time>")
@@ -280,17 +293,24 @@ describe.concurrent("with an oxlint config", () => {
           .replace(/(?<="fingerprint": ")\w+/g, "<hash>");
       const print = async (format: string) => {
         const [ofNative, ofScript] = await Promise.all(
-          [native, script].map(async config => {
-            const result = await lint({ ...files, ...config }, ["-f", format, "a.jsx"]);
-            return { stdout: steady(result.tidy(result.stdout)), stderr: result.stderr, exitCode: result.exitCode };
-          }),
+          [native, script].map(config => lint({ ...files, ...config }, ["-f", format, "a.jsx"])),
         );
-        expect({ format, ...ofNative }).toEqual({ format, ...ofScript });
-        expect({ format, ...ofScript }).toMatchObject({ stderr: "", exitCode: 1 });
-        return [format, ofScript.stdout] as const;
+        const said = (run: typeof ofScript) => ({
+          stdout: steady(run.tidy(run.stdout)),
+          stderr: run.stderr,
+          exitCode: run.exitCode,
+        });
+        expect({ format, ...said(ofNative) }).toEqual({ format, ...said(ofScript) });
+        expect({ format, ...said(ofScript) }).toMatchObject({ stderr: "", exitCode: 1 });
+        // A format that is JSON is pinned as what it says. In its text, `tidy` takes what is escaped for a path: `\n` is
+        // `/n` then.
+        if (format !== "json" && format !== "gitlab") return [format, said(ofScript).stdout] as const;
+        const read = (key: string, value: unknown) =>
+          unsteady.get(key) ?? (typeof value === "string" ? ofScript.tidy(value) : value);
+        return [format, JSON.parse(ofScript.stdout, read)] as const;
       };
       // Two formats at a time: each is one more process that runs a rule in JavaScript.
-      const printed: (readonly [string, string])[] = [];
+      const printed: (readonly [string, unknown])[] = [];
       for (let at = 0; at < formats.length; at += 2) {
         printed.push(...(await Promise.all(formats.slice(at, at + 2).map(print))));
       }
@@ -318,32 +338,43 @@ describe.concurrent("with an oxlint config", () => {
         Finished in <time> on 1 file with 1 rules using <threads> threads.
         "
         ,
-          "gitlab": 
-        "[
-          {
-            "description": "Error running JS plugin./nFile path: <dir>/a.jsx/nRangeError: Invalid count value: -1",
-            "check_name": "",
-            "fingerprint": "<hash>",
-            "severity": "critical",
-            "location": {
-              "path": "a.jsx",
-              "lines": {
-                "begin": 0,
-                "end": 0
-              }
-            }
-          }
-        ]"
+          "gitlab": [
+            {
+              "check_name": "",
+              "description": 
+        "Error running JS plugin.
+        File path: <dir>/a.jsx
+        RangeError: Invalid count value: -1"
         ,
-          "json": 
-        "{ "diagnostics": [{"message": "Error running JS plugin./nFile path: <dir>/a.jsx/nRangeError: Invalid count value: -1","severity": "error","filename": "a.jsx","labels": []}],
-                      "number_of_files": 1,
-                      "number_of_rules": 1,
-                      "threads_count": <threads>,
-                      "start_time": <time>
-                    }
-                    "
+              "fingerprint": "<hash>",
+              "location": {
+                "lines": {
+                  "begin": 0,
+                  "end": 0,
+                },
+                "path": "a.jsx",
+              },
+              "severity": "critical",
+            },
+          ],
+          "json": {
+            "diagnostics": [
+              {
+                "filename": "a.jsx",
+                "labels": [],
+                "message": 
+        "Error running JS plugin.
+        File path: <dir>/a.jsx
+        RangeError: Invalid count value: -1"
         ,
+                "severity": "error",
+              },
+            ],
+            "number_of_files": 1,
+            "number_of_rules": 1,
+            "start_time": "<time>",
+            "threads_count": "<threads>",
+          },
           "junit": 
         "<?xml version="1.0" encoding="UTF-8"?>
         <testsuites name="Oxlint" tests="1" failures="0" errors="1">
@@ -469,40 +500,42 @@ describe.concurrent("with an oxlint config", () => {
     ];
 
     // All of this is what oxlint 1.87 prints, in its order.
-    test("is all there when nothing throws", { timeout }, async () => {
+    test("is all there when nothing throws", async () => {
       const result = await json({ ...plugins, ...config({}), "a.js": code }, ["a.js"]);
       expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, ...ofPlugins]));
       expect(result.exitCode).toBe(0);
     });
 
-    for (const [rule, where] of [
-      ["throws-in-create", "in create"],
-      ["throws-early", "early"],
-      ["throws-late", "late"],
-      ["throws-at-exit", "at exit"],
-      ["throws-in-before", "in before"],
-      ["throws-in-after", "in after"],
-      ["reports-then-throws", "after reporting"],
-    ]) {
-      const found = thrown.warn({ ...plugins, ...config({ [`alpha/${rule}`]: "warn" }), "a.js": code }, ["a.js"]);
-      test(`alpha/${rule}: the built-in rules' findings stay, those of both plugins go`, { timeout }, async () => {
-        const result = await found();
-        expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, `Error: boom ${where}`]));
-        expect(result.exitCode).toBe(1);
-      });
-    }
+    test.each(
+      [
+        ["throws-in-create", "in create"],
+        ["throws-early", "early"],
+        ["throws-late", "late"],
+        ["throws-at-exit", "at exit"],
+        ["throws-in-before", "in before"],
+        ["throws-in-after", "in after"],
+        ["reports-then-throws", "after reporting"],
+      ].map(([rule, where]) => {
+        const files = { ...plugins, ...config({ [`alpha/${rule}`]: "warn" }), "a.js": code };
+        return [rule, where, thrown.warn(files, ["a.js"])] as const;
+      }),
+    )("alpha/%s: the built-in rules' findings stay, those of both plugins go", async (_, where, found) => {
+      const result = await found();
+      expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, `Error: boom ${where}`]));
+      expect(result.exitCode).toBe(1);
+    });
 
     const twice = thrown.warn(
       { ...plugins, ...config({ "alpha/throws-late": "warn", "alpha/throws-early": "warn" }), "a.js": code },
       ["a.js"],
     );
-    test("the first throw counts", { timeout }, async () => {
+    test("the first throw counts", async () => {
       const result = await twice();
       expect(inOrder(result)).toEqual(inFile("a.js", [...builtIn, "Error: boom early"]));
       expect(result.exitCode).toBe(1);
     });
 
-    test("another file keeps everything", { timeout }, async () => {
+    test("another file keeps everything", async () => {
       const files = { "a.js": code, "b.js": code.replace("late", "soon") };
       const result = await json({ ...plugins, ...config({ "alpha/throws-late": "warn" }), ...files }, [
         "--threads",
@@ -517,7 +550,7 @@ describe.concurrent("with an oxlint config", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    test("a comment that disables a plugin's rule is unused then", { timeout }, async () => {
+    test("a comment that disables a plugin's rule is unused then", async () => {
       const disabled = `/* oxlint-disable alpha/vars, no-debugger */\n${code}`;
       const flags = ["--report-unused-disable-directives", "a.js"];
       const kept = ["eslint(no-var) 55+3", "eslint(eqeqeq) 73+2", "eslint(no-var) 101+3", "eslint(eqeqeq) 119+2"];
@@ -539,7 +572,7 @@ describe.concurrent("with an oxlint config", () => {
       expect([fine.exitCode, thrown.exitCode, all.exitCode]).toEqual([0, 1, 1]);
     });
 
-    test("with a rule about several files", { timeout }, async () => {
+    test("with a rule about several files", async () => {
       const importing = (other: string) =>
         `import { it as other } from "./${other}";\nexport const it = other;\n${code}`;
       const files = { "a.js": importing("b.js"), "b.js": importing("a.js").replace("late", "soon") };
@@ -578,7 +611,6 @@ describe.concurrent("with an oxlint config", () => {
 
     test.each(["throws-in-create", "throws-late", "throws-at-exit"])(
       "--fix still applies the built-in rules' fixes: alpha/%s",
-      { timeout },
       async rule => {
         const files = { ...plugins, ...config({ "beta/fixes": "warn", [`alpha/${rule}`]: "warn" }), "a.js": code };
         // Two fixes, both of no-var. `beta/fixes` has two more, which are gone with the rest of what the plugins found.
@@ -624,7 +656,7 @@ describe.concurrent("with an oxlint config", () => {
         "eslint(no-var) 115+3",
       ];
 
-      test("they report when nothing throws", { timeout }, async () => {
+      test("they report when nothing throws", async () => {
         const result = await json(project({}), ["a.jsx"]);
         expect(inOrder(result).sort()).toEqual(
           inFile("a.jsx", [
@@ -642,18 +674,19 @@ describe.concurrent("with an oxlint config", () => {
         expect(result.exitCode).toBe(0);
       });
 
-      for (const [name, rules, error] of [
-        ["one of them throws", { "react/jsx-indent": ["warn", -1] }, "RangeError: Invalid count value: -1"],
-        ["a JavaScript rule throws", { "alpha/throws-at-exit": "warn" }, "Error: boom at exit"],
-        ["both throw", { "alpha/throws-at-exit": "warn", "react/jsx-indent": ["warn", -1] }, "Error: boom at exit"],
-      ] as const) {
-        const found = thrown.warn(project(rules), ["a.jsx"]);
-        test(`${name}: only the findings of oxlint's own rules stay`, { timeout }, async () => {
-          const result = await found();
-          expect(inOrder(result)).toEqual(inFile("a.jsx", [...own, error]));
-          expect(result.exitCode).toBe(1);
-        });
-      }
+      test.each(
+        (
+          [
+            ["one of them throws", { "react/jsx-indent": ["warn", -1] }, "RangeError: Invalid count value: -1"],
+            ["a JavaScript rule throws", { "alpha/throws-at-exit": "warn" }, "Error: boom at exit"],
+            ["both throw", { "alpha/throws-at-exit": "warn", "react/jsx-indent": ["warn", -1] }, "Error: boom at exit"],
+          ] as const
+        ).map(([name, rules, error]) => [name, error, thrown.warn(project(rules), ["a.jsx"])] as const),
+      )("%s: only the findings of oxlint's own rules stay", async (_, error, found) => {
+        const result = await found();
+        expect(inOrder(result)).toEqual(inFile("a.jsx", [...own, error]));
+        expect(result.exitCode).toBe(1);
+      });
     });
   });
 });
@@ -668,17 +701,13 @@ describe.concurrent("with an ESLint config", () => {
 
   // All of this is what ESLint 10.12 prints after "Oops! Something went wrong!" and before the stack, but for the first
   // word: it has the name of the error there.
-  test.each(["warn", "error"])(
-    "a JavaScript rule set to %s that throws in a listener ends the run",
-    { timeout },
-    async severity => {
-      const { stdout, stderr, exitCode } = await lint({ ...files, ...config("in-listener", severity) }, names);
-      expect(stderr).toBe(
-        `error: allowance file 'allow.json' is missing\nOccurred while linting <dir>/a.js:1\nRule: "mini/in-listener"\n`,
-      );
-      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
-    },
-  );
+  test.each(["warn", "error"])("a JavaScript rule set to %s that throws in a listener ends the run", async severity => {
+    const { stdout, stderr, exitCode } = await lint({ ...files, ...config("in-listener", severity) }, names);
+    expect(stderr).toBe(
+      `error: allowance file 'allow.json' is missing\nOccurred while linting <dir>/a.js:1\nRule: "mini/in-listener"\n`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 2 });
+  });
 
   const loading = (name: string) => `Error while loading rule 'mini/create-throws-${name}': `;
   test.each([
@@ -691,7 +720,7 @@ describe.concurrent("with an ESLint config", () => {
     ["symbol", "Cannot create property 'message' on symbol 'Symbol(s)'"],
     ["undefined", "Cannot read properties of undefined (reading 'message')"],
     ["null", "Cannot read properties of null (reading 'message')"],
-  ])("a JavaScript rule that throws in create() ends the run: %s", { timeout }, async (name, said) => {
+  ])("a JavaScript rule that throws in create() ends the run: %s", async (name, said) => {
     const { stdout, stderr, exitCode } = await lint({ ...files, ...config(`create-throws-${name}`, "warn") }, names);
     // Without the `Rule:` line that a throw in a listener has.
     expect(stderr).toBe(`error: ${said}\nOccurred while linting <dir>/a.js\n`);

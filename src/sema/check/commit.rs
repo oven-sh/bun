@@ -656,10 +656,8 @@ impl<'s> Checker<'_, 's> {
             return;
         }
         let (of_records, of_nodes) = self.task.logged_since_rest();
-        let (already, cycles_compared) = (
-            self.task.compared_with_cycles(),
-            view.cycles_compared.get(),
-        );
+        let (already, cycles_compared) =
+            (self.task.compared_with_cycles(), view.cycles_compared.get());
         let rings = self.p.commits.rings.lock();
         let from = rings.partition_point(|ring| ring.number <= at_rest.min(compared));
         let is_of_later_file = |commit: u32| {

@@ -5027,6 +5027,21 @@ describe("css tests", () => {
     // fonTfamily in @font-face
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
+    // A name that starts with a keyword stays as written in `local()`, the
+    // `font-family` property and the `font` shorthand.
+    minify_test(
+      '@font-face { src: local(Emoji One), url(a.woff2) format("woff2") }',
+      '@font-face{src:local(Emoji One),url(a.woff2) format("woff2")}',
+    );
+    minify_test(".foo { font-family: serif A; }", ".foo{font-family:serif A}");
+    minify_test(".foo { font: 12px emoji A; }", ".foo{font:12px emoji A}");
+    // An unquoted name of two or more identifiers is their values joined by one space.
+    minify_test(".foo { font-family: Helvetica Neue, sans-serif; }", ".foo{font-family:Helvetica Neue,sans-serif}");
+    minify_test(".foo { font-family: Foo \\31 23; }", '.foo{font-family:"Foo 123"}');
+    minify_test(".foo { font-family: A\\ B C; }", ".foo{font-family:A B C}");
+    minify_test(".foo { font: 12px A\\ B C; }", ".foo{font:12px A B C}");
+    minify_test(".foo { font-family: A\\,B C\\+D; }", '.foo{font-family:"A,B C+D"}');
+    minify_test(".foo { font-family: Font Awesome\\ 5 Free; }", '.foo{font-family:"Font Awesome 5 Free"}');
 
     prefix_test(
       `
@@ -8010,13 +8025,118 @@ describe("css tests", () => {
       "@font-palette-values --x{font-family:A,B;font-family:1}",
     );
 
-    // A list that a generic family or another token breaks is invalid. It is
-    // dropped, and it must not come back in a spelling that a browser accepts.
-    minify_test("@font-palette-values --x { font-family: serif }", "@font-palette-values --x{}");
-    minify_test("@font-palette-values --x { font-family: A, serif }", "@font-palette-values --x{}");
-    minify_test('@font-palette-values --x { font-family: "A", serif }', "@font-palette-values --x{}");
-    minify_test("@font-palette-values --x { font-family: A, SERIF }", "@font-palette-values --x{}");
+    // Browsers do not agree on which identifiers are generic families, so an
+    // identifier prints as the source wrote it. Each browser then reads the
+    // output as it reads the source: a name in one, an invalid list in another.
+    minify_test("@font-palette-values --x { font-family: emoji }", "@font-palette-values --x{font-family:emoji}");
+    minify_test("@font-palette-values --x { font-family: fangsong }", "@font-palette-values --x{font-family:fangsong}");
+    minify_test(
+      "@font-palette-values --x { font-family: A, ui-rounded }",
+      "@font-palette-values --x{font-family:A,ui-rounded}",
+    );
+    minify_test("@font-palette-values --x { font-family: EMOJI }", "@font-palette-values --x{font-family:EMOJI}");
+    minify_test("@font-palette-values --x { font-family: emoji A }", "@font-palette-values --x{font-family:emoji A}");
+    minify_test(
+      "@font-palette-values --x { font-family: Emoji One }",
+      "@font-palette-values --x{font-family:Emoji One}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: inherit A }",
+      "@font-palette-values --x{font-family:inherit A}",
+    );
+    minify_test("@font-palette-values --x { font-family: serif A }", "@font-palette-values --x{font-family:serif A}");
+    minify_test(
+      "@font-palette-values --x { font-family: A, emoji B, C }",
+      "@font-palette-values --x{font-family:A,emoji B,C}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: emoji/**/A }",
+      "@font-palette-values --x{font-family:emoji A}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: \\ui-rounded }",
+      "@font-palette-values --x{font-family:ui-rounded}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: serif\\ A }",
+      "@font-palette-values --x{font-family:serif\\ A}",
+    );
+    minify_test("@font-palette-values --x { font-family: \\  }", "@font-palette-values --x{font-family:\\ }");
+    minify_test(
+      "@font-palette-values --x { font-family: A inherit }",
+      "@font-palette-values --x{font-family:A inherit}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: Z; font-family: -webkit-body \\31 23, emoji }",
+      "@font-palette-values --x{font-family:Z;font-family:-webkit-body \\31 23,emoji}",
+    );
+    // Each identifier of a run keeps its own escapes. An escape that ends in a
+    // space keeps that space in front of the space between two identifiers.
+    minify_test(
+      "@font-palette-values --x { font-family: \\31 23 B }",
+      "@font-palette-values --x{font-family:\\31 23 B}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: serif\\ A B }",
+      "@font-palette-values --x{font-family:serif\\ A B}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: A \\31  B }",
+      "@font-palette-values --x{font-family:A \\31  B}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: A \\31/**/B }",
+      "@font-palette-values --x{font-family:A \\31  B}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: A \\31, B }",
+      "@font-palette-values --x{font-family:A \\31 ,B}",
+    );
+    minify_test("@font-palette-values --x { font-family: A\\  B }", "@font-palette-values --x{font-family:A\\  B}");
+    minify_test('@font-palette-values --x { font-family: "emoji" }', '@font-palette-values --x{font-family:"emoji"}');
+    minify_test(
+      "@media print{@font-palette-values --x{font-family:emoji}}",
+      "@media print{@font-palette-values --x{font-family:emoji}}",
+    );
+    minify_test("@font-palette-values --x{font-family:emoji A", "@font-palette-values --x{font-family:emoji A}");
+    minify_test(
+      "@font-palette-values --x { font-family: Z; font-family: emoji }",
+      "@font-palette-values --x{font-family:Z;font-family:emoji}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: Z; base-palette: 1; font-family: emoji A }",
+      "@font-palette-values --x{font-family:Z;base-palette:1;font-family:emoji A}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: emoji; font-family: 1 }",
+      "@font-palette-values --x{font-family:emoji;font-family:1}",
+    );
+
+    // Chrome 153 rejects each of these lists. They print as written too, so
+    // they stay invalid there: they do not come back in another spelling.
+    minify_test("@font-palette-values --x { font-family: serif }", "@font-palette-values --x{font-family:serif}");
+    minify_test("@font-palette-values --x { font-family: A, serif }", "@font-palette-values --x{font-family:A,serif}");
+    minify_test(
+      '@font-palette-values --x { font-family: "A", serif }',
+      "@font-palette-values --x{font-family:A,serif}",
+    );
+    minify_test("@font-palette-values --x { font-family: A, SERIF }", "@font-palette-values --x{font-family:A,SERIF}");
+    minify_test("@font-palette-values --x { font-family: inherit }", "@font-palette-values --x{font-family:inherit}");
+
+    test("a second pass does not change the font-family", () => {
+      const once = ['"Emoji One"', "Emoji One", "A, emoji B", "serif\\ A B", "A \\31  B"].map(value =>
+        minify_test_with_options(`@font-palette-values --x { font-family: ${value} }`, ""),
+      );
+      expect(once.map(css => minify_test_with_options(css, ""))).toEqual(once);
+    });
+
+    // A list that another token breaks is invalid. It is dropped, and it must
+    // not come back in a spelling that a browser accepts.
     minify_test("@font-palette-values --x { font-family: A, }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: emoji, }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: emoji 1 }", "@font-palette-values --x{}");
+    minify_test('@font-palette-values --x { font-family: emoji "A" }', "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: emoji !important }", "@font-palette-values --x{}");
     minify_test("@font-palette-values --x { font-family: A, var(--x) }", "@font-palette-values --x{}");
     minify_test('@font-palette-values --x { font-family: A "B" }', "@font-palette-values --x{}");
     minify_test("@font-palette-values --x { font-family: A) }", "@font-palette-values --x{}");
@@ -8035,6 +8155,18 @@ describe("css tests", () => {
       "@font-palette-values --x{font-family:Z}",
     );
 
+    const build = async (cwd: string, ...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./in.css", ...flags],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
     test("bun build keeps every family of a font-family list", async () => {
       using dir = tempDir("css-font-palette-values-list", {
         "in.css": [
@@ -8045,18 +8177,7 @@ describe("css tests", () => {
         ].join("\n"),
       });
 
-      const build = async (...flags: string[]) => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "./in.css", ...flags],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode };
-      };
-      const [minified, pretty] = await Promise.all([build("--minify"), build()]);
+      const [minified, pretty] = await Promise.all([build(String(dir), "--minify"), build(String(dir))]);
 
       expect(minified).toEqual({
         stdout:
@@ -8082,6 +8203,64 @@ describe("css tests", () => {
 
             @font-palette-values --three {
               font-family: A, B, C;
+              base-palette: 1;
+            }
+          ` + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("bun build prints a font-family with a generic family keyword as written", async () => {
+      using dir = tempDir("css-font-palette-values-keyword", {
+        "in.css": [
+          "@font-palette-values --a{font-family:emoji;base-palette:1}",
+          "@font-palette-values --b{font-family:A, ui-rounded;base-palette:1}",
+          "@font-palette-values --c{font-family:fangsong;base-palette:1}",
+          "@font-palette-values --d{font-family:emoji A;base-palette:1}",
+          "@font-palette-values --e{font-family:A, serif;base-palette:1}",
+          "",
+        ].join("\n"),
+      });
+
+      const [minified, pretty] = await Promise.all([build(String(dir), "--minify"), build(String(dir))]);
+
+      expect(minified).toEqual({
+        stdout:
+          "@font-palette-values --a{font-family:emoji;base-palette:1}" +
+          "@font-palette-values --b{font-family:A,ui-rounded;base-palette:1}" +
+          "@font-palette-values --c{font-family:fangsong;base-palette:1}" +
+          "@font-palette-values --d{font-family:emoji A;base-palette:1}" +
+          "@font-palette-values --e{font-family:A,serif;base-palette:1}\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(pretty).toEqual({
+        stdout:
+          indoc`
+            /* in.css */
+            @font-palette-values --a {
+              font-family: emoji;
+              base-palette: 1;
+            }
+
+            @font-palette-values --b {
+              font-family: A, ui-rounded;
+              base-palette: 1;
+            }
+
+            @font-palette-values --c {
+              font-family: fangsong;
+              base-palette: 1;
+            }
+
+            @font-palette-values --d {
+              font-family: emoji A;
+              base-palette: 1;
+            }
+
+            @font-palette-values --e {
+              font-family: A, serif;
               base-palette: 1;
             }
           ` + "\n",

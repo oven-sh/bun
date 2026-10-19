@@ -2,8 +2,8 @@
 //
 // The data types (FontWeight / AbsoluteFontWeight / FontSize /
 // AbsoluteFontSize / RelativeFontSize /
-// FontStretch / FontStretchKeyword / FontFamily / GenericFontFamily /
-// FontStyle / FontVariantCaps / LineHeight / Font /
+// FontStretch / FontStretchKeyword / FontFamily / FamilyName /
+// GenericFontFamily / FontStyle / FontVariantCaps / LineHeight / Font /
 // FontProperty / FontHandler) are real and referenced
 // by `properties_generated.rs`, `declaration.rs`, and
 // `rules/{font_face,font_palette_values}.rs`.
@@ -341,34 +341,8 @@ impl FontFamily {
             return Ok(FontFamily::Generic(value));
         }
 
-        // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-        let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
-        // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
-        let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
-        {
-            if string.is_none() {
-                let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(value) });
-                string = Some(s);
-            }
-
-            if let Some(s) = string.as_mut() {
-                s.push(b' ');
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(ident) });
-            }
-        }
-
-        let final_value: *const [u8] = match string {
-            Some(s) => std::ptr::from_ref::<[u8]>(s.into_bump_slice()),
-            None => value,
-        };
-
-        Ok(FontFamily::FamilyName(final_value))
+        let (first, run) = parse_ident_run(input, |run, ident| run.extend_from_slice(ident))?;
+        Ok(FontFamily::FamilyName(run.unwrap_or(first)))
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -461,6 +435,90 @@ impl Clone for FontFamily {
             FontFamily::Generic(g) => FontFamily::Generic(*g),
             FontFamily::FamilyName(n) => FontFamily::FamilyName(*n),
         }
+    }
+}
+
+/// Reads `<ident-token>+` with no reserved-word check: browsers judge the whole run, so
+/// `A inherit` is a name. Returns the first identifier and, when more follow, the run with a
+/// space after each identifier but the last. `append` writes one identifier of a run.
+#[inline]
+fn parse_ident_run(
+    input: &mut css::Parser,
+    append: impl Fn(&mut bun_alloc::ArenaVec<'_, u8>, &[u8]),
+) -> CssResult<(*const [u8], Option<*const [u8]>)> {
+    // SAFETY: arena outlives the returned slices (parser source/arena lives for 'bump).
+    let bump: &'static bun_alloc::Arena =
+        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
+    let first: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
+    // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
+    let mut run: Option<bun_alloc::ArenaVec<'_, u8>> = None;
+    while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>)) {
+        if run.is_none() {
+            let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
+            // SAFETY: arena-owned slice valid for 'bump.
+            append(&mut s, unsafe { crate::arena_str(first) });
+            run = Some(s);
+        }
+
+        if let Some(s) = run.as_mut() {
+            s.push(b' ');
+            // SAFETY: arena-owned slice valid for 'bump.
+            append(s, unsafe { crate::arena_str(ident) });
+        }
+    }
+
+    Ok((
+        first,
+        run.map(|s| std::ptr::from_ref::<[u8]>(s.into_bump_slice())),
+    ))
+}
+
+/// A [family name](https://drafts.csswg.org/css-fonts-4/#family-name-syntax) where the grammar
+/// has no `<generic-family>`: `<string> | <ident-token>+`.
+///
+/// Browsers disagree on which identifiers are generic keywords, so there is no keyword table:
+/// identifiers print as the source wrote them, and a lone `serif` or `inherit` is kept.
+#[derive(Clone, Copy)]
+pub enum FamilyName {
+    /// The value of a string. `FontFamily::to_css` decides if it keeps its quotes.
+    String(*const [u8]),
+    /// The value of a lone identifier.
+    Ident(*const [u8]),
+    /// Two or more identifiers, each serialized, with a space after each but the last.
+    Idents(*const [u8]),
+}
+
+impl FamilyName {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        if let Ok(value) = input.try_parse(|p| p.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+            return Ok(FamilyName::String(value));
+        }
+
+        let (first, run) = parse_ident_run(input, |run, ident| {
+            // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
+            let _ = css::serializer::serialize_identifier(ident, run);
+        })?;
+        Ok(match run {
+            Some(run) => FamilyName::Idents(run),
+            None => FamilyName::Ident(first),
+        })
+    }
+
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        match *self {
+            FamilyName::String(val) => FontFamily::FamilyName(val).to_css(dest),
+            // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FamilyName)
+            FamilyName::Ident(val) => dest.serialize_identifier(unsafe { crate::arena_str(val) }),
+            // SAFETY: arena-owned slice valid for 'bump (parser/printer arena outlives FamilyName)
+            FamilyName::Idents(val) => dest.write_str(unsafe { crate::arena_str(val) }),
+        }
+    }
+}
+
+impl crate::generics::ToCss for FamilyName {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+        FamilyName::to_css(self, dest)
     }
 }
 

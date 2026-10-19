@@ -69,7 +69,7 @@ impl FontPaletteValuesRule {
 /// See [FontPaletteValuesRule](FontPaletteValuesRule).
 pub enum FontPaletteValuesProperty {
     /// The `font-family` property.
-    FontFamily(SmallList<crate::css_properties::font::FontFamily, 1>),
+    FontFamily(SmallList<crate::css_properties::font::FamilyName, 1>),
     /// The `base-palette` property.
     BasePalette(BasePalette),
     /// The `override-colors` property.
@@ -229,7 +229,7 @@ pub(crate) struct FontPaletteValuesDeclarationParser {}
 
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
-    use crate::css_properties::font::FontFamily;
+    use crate::css_properties::font::FamilyName;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
@@ -250,16 +250,13 @@ const _: () = {
                 b"font-family" => {
                     // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
                     // The raw-token fallback below is only for a value whose first item does not parse.
-                    if let Ok(mut family) = FontFamily::parse(input) {
-                        let mut families: SmallList<FontFamily, 1> = SmallList::default();
+                    if let Ok(mut family) = FamilyName::parse(input) {
+                        let mut families: SmallList<FamilyName, 1> = SmallList::default();
                         loop {
-                            if matches!(family, FontFamily::Generic(_)) {
-                                return Err(input.new_custom_error(ParserError::invalid_declaration));
-                            }
                             families.append(family);
                             match input.next().map(|token| matches!(token, css::Token::Comma)) {
                                 Err(_) => return Ok(FontPaletteValuesProperty::FontFamily(families)),
-                                Ok(true) => family = FontFamily::parse(input)?,
+                                Ok(true) => family = FamilyName::parse(input)?,
                                 Ok(false) => return Err(input.new_custom_error(ParserError::invalid_declaration)),
                             }
                         }

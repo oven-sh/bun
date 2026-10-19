@@ -605,7 +605,7 @@ function syncSink(fd: number) {
     write(data: any) {
       if (typeof data === "string") data = Buffer.from(data);
       else if (data instanceof ArrayBuffer) data = new Uint8Array(data);
-      else if (data === null) throw $ERR_STREAM_NULL_VALUES();
+      else if (data == null) throw $ERR_STREAM_NULL_VALUES();
       else if (!ArrayBuffer.isView(data)) {
         throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], data);
       }
@@ -631,7 +631,6 @@ function syncSink(fd: number) {
     },
     flush: () => 0,
     end: () => 0,
-    _getFd: () => fd,
   };
 }
 

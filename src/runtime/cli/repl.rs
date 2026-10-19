@@ -303,10 +303,12 @@ impl History {
         None
     }
 
+    /// `None` at the newest end: the line being typed is already shown.
     fn next(&mut self) -> Option<&[u8]> {
-        if self.position < self.entries.len() {
-            self.position += 1;
+        if self.position >= self.entries.len() {
+            return None;
         }
+        self.position += 1;
 
         if self.position == self.entries.len() {
             // Keep ownership in History; reset_position() frees temp_line.
@@ -314,11 +316,7 @@ impl History {
             return self.temp_line.as_deref();
         }
 
-        if self.position < self.entries.len() {
-            return Some(&self.entries[self.position]);
-        }
-
-        None
+        Some(&self.entries[self.position])
     }
 
     fn reset_position(&mut self) {
@@ -2474,11 +2472,9 @@ impl<'a> Repl<'a> {
                     if let Some(next_line) = self.history.next() {
                         let next_line = next_line.to_vec();
                         let _ = self.line_editor.set(&next_line);
-                    } else {
-                        self.line_editor.clear();
+                        self.suggestion.clear();
+                        self.refresh_line();
                     }
-                    self.suggestion.clear();
-                    self.refresh_line();
                 }
                 Key::Tab => self.handle_tab(),
                 Key::Home => {

@@ -1133,6 +1133,19 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("down arrow at the newest end of the history keeps the line being typed", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("40 + 2");
+      await waitFor("40 + 2");
+      // No Up came before it, so there is no newer line to show.
+      send("\x1b[B");
+      send("\n");
+      send('"second" + "Input"\n');
+      await waitFor("secondInput");
+      expect(allOutput()).toMatch(/^42\r?$/m);
+    });
+  });
+
   test("tab completes REPL commands", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send(".he");

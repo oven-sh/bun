@@ -1,13 +1,15 @@
 use bun_paths::strings;
 use core::ffi::c_int;
 
-use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
+pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
@@ -155,26 +157,6 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
-    /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
-    /// already-parsed [`Encoding`], so callers that must inspect the encoding
-    /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
-    /// twice.
-    pub(crate) fn from_js_with_encoding(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding: Encoding,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        if value.js_type() == jsc::JSType::DOMWrapper {
-            if let Some(blob) = value.as_class_ref::<Blob>() {
-                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
-            }
-        }
-        match StringOrBuffer::from_js_with_encoding(global, value, encoding)? {
-            Some(s) => Ok(Some(Self::StringOrBuffer(s))),
-            None => Ok(None),
-        }
-    }
-
     pub(crate) fn from_js_with_encoding_value_allow_request_response(
         global: &JSGlobalObject,
         value: JSValue,
@@ -237,44 +219,6 @@ impl BlobOrStringOrBuffer {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-
-/// # Safety
-/// As the type's `from_js_async` parser or owned constructor builds it — JS
-/// buffers pinned and GC-rooted, strings thread-isolated — nothing in it is
-/// thread-affine: a work-pool job may read it and the JS thread drops it.
-pub(crate) unsafe trait ThreadIsolatedArg {}
-
-/// A `T` built by its `from_js_async` parser or owned constructor (see
-/// [`ThreadIsolatedArg`]); nothing else constructs one.
-pub(crate) struct ThreadIsolated<T>(T);
-
-impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
-    /// # Safety
-    /// `value` was built as [`ThreadIsolatedArg`] describes (async parse or
-    /// owned data only).
-    #[inline]
-    pub(crate) unsafe fn new(value: T) -> Self {
-        Self(value)
-    }
-}
-
-// SAFETY: `new`'s contract is exactly what makes the value sendable.
-unsafe impl<T: ThreadIsolatedArg> Send for ThreadIsolated<T> {}
-
-impl<T> core::ops::Deref for ThreadIsolated<T> {
-    type Target = T;
-    #[inline]
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> core::ops::DerefMut for ThreadIsolated<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
 
 /// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
 /// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
@@ -671,13 +615,12 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-pub(crate) fn js_assert_encoding_valid(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let value = call_frame.argument(0);
-    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn assert_encoding_valid<'a>(
+    cx: &mut JsScope<'a>,
+    encoding: JsLocal<'a>,
+) -> JsResult<()> {
+    Encoding::assert(encoding.to_js(), cx.global(), Encoding::Utf8)?;
+    Ok(())
 }
 
 impl Encoding {

@@ -299,7 +299,7 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
                 }
             },
         };
-        // Neither the next flag nor a word with a redirect glued to it.
+        // It must not be the next flag, or a word with a redirect attached to it.
         let Some(workspace) = workspace.filter(|workspace| {
             !workspace.is_empty()
                 && workspace[0] != b'-'
@@ -309,7 +309,8 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
         };
         selects_workspaces = true;
         flags.extend_from_slice(b" --filter=");
-        // npm also takes the workspace's folder; `--filter` tells a path from a name by the dot.
+        // npm also accepts the workspace's folder. `--filter` tells a path from a name by the
+        // leading dot.
         if strings::contains_char(workspace, b'/') && !matches!(workspace[0], b'@' | b'.' | b'/') {
             flags.extend_from_slice(b"./");
         }
@@ -324,7 +325,8 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
     command.len()
 }
 
-/// Without a POSIX shell, `bun exec --no-env-file`: like `sh`, it adds no `.env*` file to the envp.
+/// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`
+/// file to the environment.
 pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
 
 impl<'a> ScriptArgv<'a> {
@@ -384,11 +386,13 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
-/// The linker, not the script's cwd, says what a failed optional dependency's script removes.
+/// The linker, not the script's cwd, determines what gets removed when an optional dependency's
+/// script fails.
 pub enum InstallCtx<'a> {
     Isolated {
         entry_id: entry::Id,
-        /// Raw `*mut`: `on_task_complete`/`start_task` mutate it from an exit-handler callback.
+        /// A raw `*mut`, because `on_task_complete` and `start_task` mutate it from an exit-handler
+        /// callback.
         installer: *mut Installer<'a>,
     },
     /// The package is `node_modules/<package_name>` of this tree.
@@ -398,7 +402,8 @@ pub enum InstallCtx<'a> {
     },
 }
 
-/// What the hoisted linker placed whose scripts have not all run yet. Main thread only.
+/// The packages that the hoisted linker placed and whose scripts haven't all run yet. Main thread
+/// only.
 pub(crate) type UnfinishedScripts =
     std::rc::Rc<core::cell::RefCell<Vec<(crate::lockfile_real::tree::Id, Box<[u8]>)>>>;
 
@@ -591,7 +596,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe {
             if !(*this).has_incremented_alive_count {
                 (*this).has_incremented_alive_count = true;
-                // .monotonic is okay: only read and written on the main thread.
+                // Relaxed is enough, because it's only read and written on the main thread.
                 let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -610,7 +615,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unsafe {
                 if (*this).has_incremented_alive_count {
                     (*this).has_incremented_alive_count = false;
-                    // .monotonic is okay: only read and written on the main thread.
+                    // Relaxed is enough, because it's only read and written on the main thread.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
                 Self::ensure_not_in_heap(this);
@@ -742,7 +747,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            // `envp` is the chain's; these two differ per script.
+            // `envp` is shared by the whole chain. These two variables differ per script.
             let lifecycle_event = [
                 b"npm_lifecycle_event=".as_slice(),
                 (*this).script_name(),
@@ -768,7 +773,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     res => {
                         #[cfg(windows)]
                         {
-                            // On error the `uv::Pipe`s stay ours; `WindowsStdio` has no `Drop`.
+                            // On error, this function still owns the `uv::Pipe`s, because
+                            // `WindowsStdio` has no `Drop`.
                             let mut spawn_options = spawn_options;
                             spawn_options.stdout.deinit();
                             spawn_options.stderr.deinit();
@@ -892,16 +898,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
+                // Write the raw bytes. Formatting them would replace invalid UTF-8 with U+FFFD.
+                let _ = Output::error_writer().write_all(stdout.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
+                let _ = Output::error_writer().write_all(stderr.as_slice());
+                let _ = Output::error_writer().write_all(b"\n");
                 stderr.clear();
                 stderr.shrink_to_fit();
             }
@@ -921,7 +928,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         if self.has_incremented_alive_count {
             self.has_incremented_alive_count = false;
-            // .monotonic is okay: only read and written on the main thread.
+            // Relaxed is enough, because it's only read and written on the main thread.
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
 
@@ -1137,7 +1144,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    /// Both linkers take a package in place for installed: removed, the next install runs them.
+    /// Both linkers treat a package that's at its final path as installed. Removing these packages
+    /// makes the next install run their scripts.
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
         if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {

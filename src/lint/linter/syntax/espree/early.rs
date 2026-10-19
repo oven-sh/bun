@@ -847,16 +847,15 @@ impl<'a> Checks<'a, '_> {
                     | hir::StmtKind::ExportNamed(_)
                     | hir::StmtKind::ExportStar { .. }
                     | hir::StmtKind::ExportDefault(_)
-            ) || !raw.modifiers.is_empty()
-                && hir
-                    .modifiers
-                    .get(raw.modifiers.range())
-                    .unwrap_or_default()
-                    .iter()
-                    .any(is_export);
+            ) || hir
+                .modifiers
+                .get(hir.stmt_modifiers(hir::StmtId(i as u32)).range())
+                .unwrap_or_default()
+                .iter()
+                .any(is_export);
             let is_nested = !matches!(
-                bound.stmt_parent.get(i),
-                None | Some(Parent::None | Parent::File)
+                bound.parent_of_stmt(hir::StmtId(i as u32)),
+                Parent::None | Parent::File
             );
             if is_module_syntax && is_nested && !self.file.is_in_jsdoc(raw.start) {
                 self.fail(
@@ -2263,22 +2262,52 @@ impl<'a> Checks<'a, '_> {
         if self.lacks(rare::ODD_JUMP) {
             return;
         }
-        for it in self.file.stmts_of_kind(StmtTag::Labeled) {
-            let StmtKind::Labeled { label, .. } = it.kind() else {
+        let labeled: Vec<_> = (self.file.stmts_of_kind(StmtTag::Labeled))
+            .filter_map(|it| match it.kind() {
+                StmtKind::Labeled { label, .. } => Some((it, label)),
+                _ => None,
+            })
+            .collect();
+        // Walking up from each label of `a: b: c: ..` to look for a duplicate name is quadratic. Instead, visit the
+        // labels from the outermost in and track the open ones by name. Nested labels in the same function share an
+        // outermost label, which is part of the key.
+        let mut from_outside: Vec<usize> = (0..labeled.len()).collect();
+        from_outside.sort_unstable_by_key(|&index| labeled[index].0.span().start);
+        let mut label_around: AncestorMemo<'a, Option<Stmt<'a>>> = AncestorMemo::default();
+        let mut outermost_of: FxHashMap<u32, u32> = FxHashMap::default();
+        let mut open: FxHashMap<_, SmallVec<[usize; 1]>> = FxHashMap::default();
+        let mut first_of: Vec<Option<Stmt<'a>>> = vec![None; labeled.len()];
+        for index in from_outside {
+            let (it, label) = labeled[index];
+            let around = label_around.find(Node::Stmt(it), |_, parent| match parent {
+                Node::Func(_) => Some(None),
+                Node::Stmt(outer) if outer.tag() == StmtTag::Labeled => Some(Some(outer)),
+                _ => None,
+            });
+            let outermost = (around.flatten())
+                .and_then(|outer| outermost_of.get(&outer.id().0).copied())
+                .unwrap_or_else(|| it.id().0);
+            outermost_of.insert(it.id().0, outermost);
+            let same_name = open.entry((outermost, label)).or_default();
+            let start = it.span().start;
+            while (same_name.last()).is_some_and(|&outer| labeled[outer].0.span().end <= start) {
+                same_name.pop();
+            }
+            first_of[index] = same_name.last().map(|&outer| labeled[outer].0);
+            same_name.push(index);
+        }
+        for (&(it, label), first) in labeled.iter().zip(first_of) {
+            let Some(first) = first else {
                 continue;
             };
-            let first = (Node::Stmt(it).ancestors())
-                .take_while(|it| !matches!(it, Node::Func(_)))
-                .find(|it| matches!(it, Node::Stmt(outer) if matches!(outer.kind(), StmtKind::Labeled { label: name, .. } if name == label)));
-            let is_repeated = first.is_some();
-            if let (true, Some(first)) = (self.is_oxc, first) {
+            if self.is_oxc {
                 let (first, again) = (
                     self.token_span(first.span().start),
                     self.token_span(it.span().start),
                 );
                 let error = self.redeclared("Label", label.bytes(), first, again);
                 self.report(error);
-            } else if is_repeated {
+            } else {
                 self.fail(
                     it.span().start,
                     [b"Label '", label.bytes(), b"' is already declared"].concat(),

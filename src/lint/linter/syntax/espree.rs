@@ -142,9 +142,9 @@ fn is_module_syntax(statement: &Stmt) -> bool {
     matches!(
         statement.tag(),
         StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar | StmtTag::ExportDefault
-    ) || (statement.try_raw()).is_some_and(|raw| {
+    ) || (statement.try_raw()).is_some_and(|_| {
         (modifiers
-            .get(raw.modifiers.range())
+            .get(statement.file().hir.stmt_modifiers(statement.id()).range())
             .unwrap_or_default()
             .iter())
         .any(is_export)
@@ -365,7 +365,8 @@ impl Candidates {
                 // `keywords_as_names`
                 Kind::Ident(name) => name.is_keyword_identifier(),
                 // `private_names`: `a.#b`
-                Kind::Dot { name_pos, .. } => {
+                Kind::Dot { .. } => {
+                    let name_pos = file.hir.name_pos(hir::ExprId(i as u32));
                     has_private_names && text.get(name_pos as usize) == Some(&b'#')
                 }
                 // `operators`: `??` beside `&&` or `||`

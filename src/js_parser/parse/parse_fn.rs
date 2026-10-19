@@ -583,7 +583,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
         // The lexer is on the token after the expression, and has recorded the comments between the two.
         if !p.lexer.react_hooks_next_line_suppressions.is_empty() {
-            let end = p.lexer.end_before_trailing_react_hooks_suppressions();
+            let end = p
+                .lexer
+                .end_before_trailing_react_hooks_suppressions(arrow_loc.i());
             p.record_react_compiler_fn_end(arrow_loc, end);
         }
 

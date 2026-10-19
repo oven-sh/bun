@@ -1449,7 +1449,7 @@ describe("bundler", () => {
   });
 
   // Which functions a comment that switches a rule of React hooks off for ESLint keeps the compiler from. Each
-  // case is one file, with the exports that babel-plugin-react-compiler 1.0.0 compiles of it.
+  // case is one file, with the exports that babel-plugin-react-compiler 1.0.0 compiles of it (@babel/core 7.29).
   {
     const NEXT_LINE = "// eslint-disable-next-line react-hooks/exhaustive-deps";
     const NEXT_LINE_INLINE = "/* eslint-disable-next-line react-hooks/exhaustive-deps */";
@@ -1597,7 +1597,33 @@ describe("bundler", () => {
             ${BODY} }`,
         "A",
       ],
+      [
+        "next-line in the first and in the second of three functions",
+        `
+          export function A({ color }) {
+            ${NEXT_LINE}
+            ${BODY}
+          }
+          export function B({ color }) {
+            ${NEXT_LINE}
+            ${BODY}
+          }
+          ${C}`,
+        "C",
+      ],
       // Outside of every function it is for none.
+      [
+        "next-line above the first and in the second of three functions",
+        `
+          ${NEXT_LINE}
+          ${A}
+          export function B({ color }) {
+            ${NEXT_LINE}
+            ${BODY}
+          }
+          ${C}`,
+        "A C",
+      ],
       [
         "next-line after the closing brace",
         `
@@ -1644,6 +1670,25 @@ describe("bundler", () => {
         `
           export const A = ({ color }) => <div style={{ color }} />
           ${NEXT_LINE}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "two next-lines after an arrow with an expression body",
+        `
+          export const A = ({ color }) => <div style={{ color }} />
+          ${NEXT_LINE}
+          ${NEXT_LINE}
+          ${B}`,
+        "A B",
+      ],
+      [
+        "next-line and other comments after an arrow with an expression body",
+        `
+          export const A = ({ color }) => <div style={{ color }} />
+          ${NEXT_LINE}
+          // another comment
+          /* and one more */
           ${B}`,
         "A B",
       ],
@@ -1878,6 +1923,18 @@ describe("bundler", () => {
           ${B}`,
         "B",
       ],
+      [
+        "no comment, with a statement in a function in a default of a memo() callback",
+        `
+          import { memo } from "react";
+          const table = {};
+          export const A = memo(({ color, pick = table[() => { const one = 1; return one; }] }) => {
+            const style = { color };
+            return <div style={style}>{String(pick)}</div>;
+          });
+          ${B}`,
+        "A B",
+      ],
       // The compiler does not take a function with such a default at all.
       [
         "no comment, with a function as a parameter default",
@@ -1902,6 +1959,17 @@ describe("bundler", () => {
           }
           ${B}`,
         "B",
+      ],
+      [
+        "next-line as the text of a JSX child after `? (x) :`",
+        `
+          export function A({ color, yes }: any) {
+            const style = { color };
+            return yes ? (style) : <div style={style}>${NEXT_LINE}
+            </div>;
+          }
+          ${B}`,
+        "A B",
       ],
       [
         "next-line in the type parameters of an arrow",

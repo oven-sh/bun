@@ -1985,18 +1985,20 @@ impl<'a> Lexer<'a> {
         true
     }
 
-    /// Where the expression that the parser just left ends, as far as the comments in
-    /// `react_hooks_next_line_suppressions` can tell: those between it and the current
-    /// token are after it. The lexer is one token ahead and has already recorded them.
+    /// Where the expression that starts at `start` and that the parser just left ends, as
+    /// far as the comments in `react_hooks_next_line_suppressions` can tell: those between
+    /// it and the current token are after it. The lexer is one token ahead and has already
+    /// recorded them.
     #[cold]
-    pub(crate) fn end_before_trailing_react_hooks_suppressions(&self) -> usize {
+    pub(crate) fn end_before_trailing_react_hooks_suppressions(&self, start: usize) -> usize {
         let mut end = self.start;
         for comment in self.react_hooks_next_line_suppressions.iter().rev() {
-            let comment_end = (comment.loc.start + comment.len) as usize;
-            if comment_end > end || !self.is_trivia(comment_end, end) {
+            let comment_start = comment.loc.start as usize;
+            let comment_end = comment_start + comment.len as usize;
+            if comment_start < start || !self.is_trivia(comment_end, end) {
                 break;
             }
-            end = comment.loc.start as usize;
+            end = comment_start;
         }
         end
     }

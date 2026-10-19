@@ -118,7 +118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_may_replace_body = self.react_compiler_may_replace_body;
         // For a function expression `open_parens_loc` is that of the expression, which is where it starts. A
         // function statement has its start in `react_compiler_fn_spans`.
-        let rc_binding = self.take_react_compiler_candidate(
+        let rc_candidate = self.take_react_compiler_candidate(
             func.name.map(|n| n.ref_),
             open_parens_loc,
             body_loc,
@@ -145,7 +145,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        if rc_binding.is_some() {
+        let rc_binding = rc_candidate.map(|candidate| candidate.binding);
+        if let Some(candidate) = rc_candidate {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
@@ -156,7 +157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .map(|n| n.ref_)
                     .filter(|r| r.is_valid())
                     .or(rc_binding),
-                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+                in_react_hoc: candidate.in_react_hoc,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)

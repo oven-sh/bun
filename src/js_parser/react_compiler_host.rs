@@ -164,6 +164,14 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
+/// What `visit_stmt` named for a candidate, as [`P::take_react_compiler_candidate`] took it.
+#[derive(Clone, Copy)]
+pub(crate) struct ReactCompilerCandidate {
+    /// `Ref::NONE`: the candidate has no binding.
+    pub(crate) binding: js_ast::Ref,
+    pub(crate) in_react_hoc: bool,
+}
+
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
@@ -189,9 +197,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Takes the binding that `visit_stmt` named if the function at `loc` is the candidate, before its parameters
-    /// are visited, so that a function among them is not taken for it. Sets `react_compiler_may_replace_body` for
-    /// the visit: the caller restores it.
+    /// Takes what `visit_stmt` named if the function at `loc` is the candidate, before its parameters are visited:
+    /// a function among them is not taken for it, and a statement among them does not reset `in_react_hoc`. Sets
+    /// `react_compiler_may_replace_body` for the visit: the caller restores it.
     #[inline]
     pub(crate) fn take_react_compiler_candidate(
         &mut self,
@@ -199,7 +207,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         loc: bun_ast::Loc,
         body_loc: bun_ast::Loc,
         body: &[js_ast::Stmt],
-    ) -> Option<js_ast::Ref> {
+    ) -> Option<ReactCompilerCandidate> {
         // Few functions are a candidate, and none is without the compiler: the rest is out of line.
         if self.react_compiler_candidate_name.is_none() {
             return None;
@@ -214,24 +222,28 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         loc: bun_ast::Loc,
         body_loc: bun_ast::Loc,
         body: &[js_ast::Stmt],
-    ) -> Option<js_ast::Ref> {
-        let candidate = self.react_compiler_candidate_name.take()?;
+    ) -> Option<ReactCompilerCandidate> {
+        let binding = self.react_compiler_candidate_name.take()?;
+        let in_react_hoc = core::mem::take(&mut self.react_compiler_in_react_hoc);
         if !self.react_compiler_may_replace_body
             && let Some(rc) = self.react_compiler.as_deref()
         {
             let name = name
                 .filter(|r| r.is_valid())
-                .or(Some(candidate))
+                .or(Some(binding))
                 .filter(|r| *r != js_ast::Ref::NONE)
                 .map(|r| self.load_name_from_ref(r));
             self.react_compiler_may_replace_body = rc.may_compile(
                 name,
-                self.react_compiler_in_react_hoc,
+                in_react_hoc,
                 self.has_react_hooks_suppression(loc, body_loc),
                 body,
             );
         }
-        Some(candidate)
+        Some(ReactCompilerCandidate {
+            binding,
+            in_react_hoc,
+        })
     }
 
     /// Whether a comment keeps the React Compiler from the function at `loc` whose body is at `body_loc`: an

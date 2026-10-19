@@ -870,6 +870,377 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  describe("JSX support", () => {
+    // A stand-in for a JSX runtime package, so that no third-party code runs. Each element names
+    // the function that made it, and `globalThis.jsxLoads` lists the entry points that were evaluated.
+    const jsxPackage = (name: string, root = "") => {
+      const entry = (file: string, specifier: string, ...fns: string[]) => [
+        `${root}node_modules/${name}/${file}.js`,
+        [
+          `(globalThis.jsxLoads ??= []).push(${JSON.stringify(specifier)});`,
+          `exports.Fragment = "Fragment";`,
+          ...fns.map(
+            fn => `exports.${fn} = (type, props) => ({ type, props, via: ${JSON.stringify(`${specifier} ${fn}`)} });`,
+          ),
+        ].join("\n"),
+      ];
+      return Object.fromEntries([
+        [`${root}node_modules/${name}/package.json`, JSON.stringify({ name, version: "0.0.0" })],
+        entry("jsx-dev-runtime", `${root}${name}/jsx-dev-runtime`, "jsxDEV"),
+        entry("jsx-runtime", `${root}${name}/jsx-runtime`, "jsx", "jsxs"),
+        entry("index", `${root}${name}`, "createElement"),
+      ]);
+    };
+
+    const development = { NODE_ENV: "development" };
+    const production = { NODE_ENV: "production" };
+
+    // `--no-install`: a runtime that is not there is an error, never a request to the registry.
+    async function runBunIn(cwd: string, args: string[], env: Record<string, string> = development) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--no-install", ...args],
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd,
+        env: { ...bunEnv, NO_COLOR: "1", ...env },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
+    }
+
+    test("evaluates an element, a fragment and a component at the prompt", async () => {
+      using dir = tempDir("repl-jsx", jsxPackage("react"));
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          // Input without JSX imports no JSX runtime.
+          "const n: number = 1",
+          "typeof globalThis.jsxLoads",
+          'var el = <div id="a">x</div>',
+          "el.type",
+          "var fr = <></>",
+          "fr.type",
+          "function Hello(props: { name: string }) { return <b>{props.name}</b>; }",
+          // This input has no JSX: the component calls the runtime that its own input imported.
+          'Hello({ name: "bun" }).props.children',
+          '(<Hello name="bun" />).type === Hello',
+          // Four inputs imported the runtime. It was evaluated once.
+          "globalThis.jsxLoads",
+          ".exit",
+        ],
+        { cwd: String(dir), env: development },
+      );
+      expect(outputs).toEqual([
+        "1",
+        '"undefined"',
+        '{\n  type: "div",\n  props: {\n    id: "a",\n    children: "x",\n  },\n  via: "react/jsx-dev-runtime jsxDEV",\n}',
+        '"div"',
+        '{\n  type: "Fragment",\n  props: {},\n  via: "react/jsx-dev-runtime jsxDEV",\n}',
+        '"Fragment"',
+        "undefined",
+        '"bun"',
+        "true",
+        '[ "react/jsx-dev-runtime" ]',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("evaluates JSX in multi-line input, .editor, .load and .copy", async () => {
+      using dir = tempDir("repl-jsx-entries", {
+        ...jsxPackage("react"),
+        // A written import beside JSX: the input awaits it after the import of the runtime.
+        "lib.tsx": [
+          `import { createElement } from "react";`,
+          `var loaded = <p className="from-file">loaded</p>;`,
+          `[loaded.props.className, loaded.via, createElement("b").via].join(", ");`,
+          ``,
+        ].join("\n"),
+      });
+      const { stdout, outputs, stderr, exitCode } = await runRepl(
+        [
+          "var list = (",
+          "  <ul>",
+          "    <li>one</li>",
+          "  </ul>",
+          ")",
+          "list.props.children.type",
+          ".editor",
+          "var edited = <em>typed</em>;",
+          "edited.type",
+          // Ctrl+D ends editor mode and evaluates what was typed.
+          "\x04.load lib.tsx",
+          ".copy (<i>copied</i>).props.children",
+          ".exit",
+        ].join("\n") + "\n",
+        { cwd: String(dir), env: development },
+      );
+      expect(outputs).toEqual([
+        '{\n  type: "ul",\n  props: {\n    children: {\n      type: "li",\n      props: {\n        children: "one",\n      },\n      via: "react/jsx-dev-runtime jsxDEV",\n    },\n  },\n  via: "react/jsx-dev-runtime jsxDEV",\n}',
+        '"li"',
+        expect.stringMatching(/^\/\/ Entering editor mode .*\n+"em"$/),
+        'Loading lib.tsx...\n"from-file, react/jsx-dev-runtime jsxDEV, react createElement"',
+        "Copied 6 characters to clipboard",
+      ]);
+      expect(stdout).toContain(`\x1b]52;c;${btoa("copied")}\x07`);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e and -p evaluate JSX", async () => {
+      using dir = tempDir("repl-jsx-eval", jsxPackage("react"));
+      const run = (...args: string[]) => runBunIn(String(dir), ["repl", ...args]);
+      expect(
+        await Promise.all([
+          run("-p", '(<div id="a">x</div>).type'),
+          run("--print", "(<></>).type"),
+          run("-e", "console.log((<div />).via)"),
+          run("--eval", "console.log((<></>).via)"),
+          // An input that starts with `{` and is an object literal.
+          run("-p", "{ el: <div /> }.el.type"),
+          // `require` and `module` beside JSX: the REPL still imports the runtime with `import()`.
+          run(
+            "-e",
+            'const { basename } = require("node:path"); module.exports = <div title={basename("/a/b")} />; console.log(module.exports.props.title, module.exports.via)',
+          ),
+          // No JSX: the runtime is not evaluated.
+          run("-e", "console.log(typeof globalThis.jsxLoads)"),
+        ]),
+      ).toEqual([
+        { stdout: '"div"\n', stderr: "", exitCode: 0 },
+        { stdout: '"Fragment"\n', stderr: "", exitCode: 0 },
+        { stdout: "react/jsx-dev-runtime jsxDEV\n", stderr: "", exitCode: 0 },
+        { stdout: "react/jsx-dev-runtime jsxDEV\n", stderr: "", exitCode: 0 },
+        { stdout: '"div"\n', stderr: "", exitCode: 0 },
+        { stdout: "b react/jsx-dev-runtime jsxDEV\n", stderr: "", exitCode: 0 },
+        { stdout: "undefined\n", stderr: "", exitCode: 0 },
+      ]);
+    });
+
+    // Each row runs the same code with `bun -e` and with `bun repl -e`. NODE_ENV agrees with the
+    // setting of the row, so neither has to win over the other.
+    test.each([
+      { name: "development", code: "console.log((<div />).via)", via: "react/jsx-dev-runtime jsxDEV" },
+      { name: "production", env: production, code: "console.log((<div />).via)", via: "react/jsx-runtime jsx" },
+      {
+        name: "production, static children",
+        env: production,
+        code: "console.log((<div><a /><b /></div>).via)",
+        via: "react/jsx-runtime jsxs",
+      },
+      {
+        name: "a key after a spread",
+        code: 'console.log((<div {...{ a: 1 }} key="k" />).via)',
+        via: "react createElement",
+      },
+      {
+        // Two generated imports in one input: the runtime, and the package itself for createElement.
+        name: "an element, a key after a spread and a fragment",
+        code: 'console.log([<a />, <b {...{ a: 1 }} key="k" />, <></>].map(e => e.via).join(", "))',
+        via: "react/jsx-dev-runtime jsxDEV, react createElement, react/jsx-dev-runtime jsxDEV",
+      },
+      {
+        name: "a written import beside JSX",
+        code: 'import { createElement } from "react"; console.log((<a />).via, createElement("b").via)',
+        via: "react/jsx-dev-runtime jsxDEV react createElement",
+      },
+      {
+        name: "a key after a spread, with a tsconfig jsxImportSource",
+        tsconfig: { jsx: "react-jsxdev", jsxImportSource: "preact" },
+        code: 'console.log((<div {...{ a: 1 }} key="k" />).via, (<b />).via)',
+        via: "preact createElement preact/jsx-dev-runtime jsxDEV",
+      },
+      {
+        name: "tsconfig jsxImportSource",
+        tsconfig: { jsx: "react-jsxdev", jsxImportSource: "preact" },
+        code: "console.log((<div />).via)",
+        via: "preact/jsx-dev-runtime jsxDEV",
+      },
+      {
+        name: "--jsx-import-source",
+        env: production,
+        flags: ["--jsx-import-source", "preact"],
+        code: "console.log((<div />).via)",
+        via: "preact/jsx-runtime jsx",
+      },
+      {
+        name: "@jsxImportSource pragma",
+        code: "/** @jsxImportSource preact */ console.log((<div />).via)",
+        via: "preact/jsx-dev-runtime jsxDEV",
+      },
+    ])("imports what a file imports: $name", async ({ env, tsconfig, flags = [], code, via }) => {
+      using dir = tempDir("repl-jsx-runtime", {
+        ...jsxPackage("react"),
+        ...jsxPackage("preact"),
+        ...(tsconfig && { "tsconfig.json": JSON.stringify({ compilerOptions: tsconfig }) }),
+      });
+      const expected = { stdout: `${via}\n`, stderr: "", exitCode: 0 };
+      const [asFile, inRepl] = await Promise.all([
+        runBunIn(String(dir), [...flags, "-e", code], env),
+        runBunIn(String(dir), ["repl", ...flags, "-e", code], env),
+      ]);
+      expect({ asFile, inRepl }).toEqual({ asFile: expected, inRepl: expected });
+    });
+
+    test("a component keeps the JSX runtime of its own input", async () => {
+      using dir = tempDir("repl-jsx-own-runtime", {
+        ...jsxPackage("react"),
+        ...jsxPackage("preact"),
+        ...jsxPackage("react", "other/"),
+        "preact.tsx": "/** @jsxImportSource preact */\nvar loaded = <i />;\nloaded.via;\n",
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          "function Component() { return <div />; }",
+          "Component().via",
+          // Each of the next three JSX inputs imports another runtime under the same local name.
+          "/** @jsxImportSource preact */ (<b />).via",
+          "Component().via",
+          ".load preact.tsx",
+          "Component().via",
+          // After a chdir, an import at the prompt resolves from the new directory.
+          'void process.chdir("other")',
+          "(<u />).via",
+          "Component().via",
+          ".exit",
+        ],
+        { cwd: String(dir), env: development },
+      );
+      expect(outputs).toEqual([
+        "undefined",
+        '"react/jsx-dev-runtime jsxDEV"',
+        '"preact/jsx-dev-runtime jsxDEV"',
+        '"react/jsx-dev-runtime jsxDEV"',
+        'Loading preact.tsx...\n"preact/jsx-dev-runtime jsxDEV"',
+        '"react/jsx-dev-runtime jsxDEV"',
+        "undefined",
+        '"other/react/jsx-dev-runtime jsxDEV"',
+        '"react/jsx-dev-runtime jsxDEV"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("JSX input adds no name of its own to the global object", async () => {
+      using dir = tempDir("repl-jsx-globals", jsxPackage("react"));
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          // The parser names a generated import's namespace symbol after its path (`jsx_dev_runtime`,
+          // `react`) and gives each binding a fixed name. The REPL never assigns to those names.
+          "var jsx_dev_runtime = 1, react = 2, jsxDEV_7x81h0kn = 3, Fragment_8vg9x3sq = 4, createElement_mvmpqhxp = 5",
+          "var before = new Set(Object.keys(globalThis)); before.size > 0",
+          "(<div />).via",
+          "(<></>).via",
+          // A key after a spread imports createElement from the package itself.
+          '(<div {...{ a: 1 }} key="k" />).via',
+          "[jsx_dev_runtime, react, jsxDEV_7x81h0kn, Fragment_8vg9x3sq, createElement_mvmpqhxp]",
+          // `_` is the REPL's own, and `jsxLoads` is the stand-in's.
+          'Object.keys(globalThis).filter(name => !before.has(name) && name !== "_" && name !== "jsxLoads")',
+          ".exit",
+        ],
+        { cwd: String(dir), env: development },
+      );
+      expect(outputs).toEqual([
+        "5",
+        "true",
+        '"react/jsx-dev-runtime jsxDEV"',
+        '"react/jsx-dev-runtime jsxDEV"',
+        '"react createElement"',
+        "[ 1, 2, 3, 4, 5 ]",
+        "[]",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      { name: "a tsconfig", tsconfig: { jsx: "react", jsxFactory: "h", jsxFragmentFactory: "Frag" } },
+      { name: "flags", flags: ["--jsx-runtime", "classic", "--jsx-factory", "h", "--jsx-fragment", "Frag"] },
+      { name: "pragmas", pragmas: "/** @jsxRuntime classic */ /** @jsx h */ /** @jsxFrag Frag */ " },
+    ])(
+      "the classic runtime from $name calls the factory and imports nothing",
+      async ({ tsconfig, flags = [], pragmas = "" }) => {
+        using dir = tempDir("repl-jsx-classic", {
+          ...jsxPackage("react"),
+          ...(tsconfig && { "tsconfig.json": JSON.stringify({ compilerOptions: tsconfig }) }),
+        });
+        const code =
+          pragmas +
+          `var h = (...args) => args, Frag = "Frag";` +
+          `console.log(JSON.stringify([<div id="a">x</div>, <></>]), typeof globalThis.jsxLoads);`;
+        expect(await runBunIn(String(dir), ["repl", ...flags, "-e", code])).toEqual({
+          stdout: `[["div",{"id":"a"},"x"],["Frag",null]] undefined\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("names the JSX runtime that is not installed", async () => {
+      // With a node_modules directory, bun does not install a missing package by itself.
+      using dir = tempDir("repl-jsx-missing", { "node_modules/.keep": "" });
+      const notFound = expect.stringMatching(/^error: Cannot find module 'react\/jsx-dev-runtime' from /);
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          "<div />",
+          // As in a file, the import of the runtime comes first: when it fails, nothing of the input runs.
+          "globalThis.ready = 1; function App() { return <div />; }",
+          "[globalThis.ready, typeof App]",
+          ".exit",
+        ],
+        { cwd: String(dir), env: development },
+      );
+      expect(outputs).toEqual([notFound, notFound, '[ undefined, "undefined" ]']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      expect(await runBunIn(String(dir), ["repl", "-e", 'console.log("ran"); if (false) { <div /> }'])).toEqual({
+        stdout: "",
+        stderr: notFound,
+        exitCode: 1,
+      });
+    });
+
+    test("asks the registry for the runtime when no node_modules directory is found", async () => {
+      const requests: string[] = [];
+      using registry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${new URL(req.url).pathname}`);
+          return new Response("not found", { status: 404 });
+        },
+      });
+      // Only `project` has a node_modules directory.
+      using dir = tempDir("repl-jsx-registry", { ...jsxPackage("react", "project/"), "outside/.keep": "" });
+      const env = {
+        ...development,
+        BUN_CONFIG_REGISTRY: `http://127.0.0.1:${registry.port}/`,
+        BUN_INSTALL_CACHE_DIR: path.join(String(dir), ".bun-cache"),
+      };
+      const notFound = expect.stringMatching(/^error: Cannot find module 'react\/jsx-dev-runtime' from /);
+
+      // Input without JSX asks for nothing. The registry's answer is kept: one request for two JSX inputs.
+      const outside = await runRepl(["1 + 1", "(<a />).via", "(<b />).via", ".exit"], {
+        cwd: path.join(String(dir), "outside"),
+        env,
+      });
+      expect({ outputs: outside.outputs, requests }).toEqual({
+        outputs: ["2", notFound, notFound],
+        requests: ["GET /react"],
+      });
+
+      // The runtime resolves from the working directory at the time of the input.
+      requests.length = 0;
+      const project = await runRepl(["(<a />).via", 'void process.chdir("../outside")', "(<b />).via", ".exit"], {
+        cwd: path.join(String(dir), "project"),
+        env,
+      });
+      expect({ outputs: project.outputs, requests }).toEqual({
+        outputs: ['"project/react/jsx-dev-runtime jsxDEV"', "undefined", notFound],
+        requests: ["GET /react"],
+      });
+    });
+  });
+
   describe("-e / --eval and -p / --print", () => {
     async function runReplWith(args: string[]) {
       await using proc = Bun.spawn({

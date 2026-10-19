@@ -22,6 +22,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
+use bun_jsc::bindgen::JsPayload as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
@@ -3356,7 +3357,7 @@ fn transpile_source_code_of_any_provenance(
             let html_bundle = crate::api::HTMLBundle::init(global_object, path.text);
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global_object),
+                jsvalue_for_export: html_bundle.into_js_value(global_object),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()

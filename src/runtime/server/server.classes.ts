@@ -345,17 +345,4 @@ export default [
     klass: {},
     values: ["server"],
   }),
-
-  define({
-    name: "HTMLBundle",
-    noConstructor: true,
-    refCounted: true,
-    proto: {
-      index: {
-        getter: "getIndex",
-        cache: true,
-      },
-    },
-    klass: {},
-  }),
 ];

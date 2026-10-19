@@ -23,6 +23,7 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
@@ -755,7 +756,14 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
+        // SAFETY: the host function that parses a server's options is on the JS thread and holds no other scope.
+        let html_bundle = unsafe {
+            JsScope::with(init_ctx.global.as_mut_ptr(), |cx| {
+                let wrapper = HTMLBundle::from_js(&cx.heap, argument)?;
+                Some(wrapper.with(&cx.payloads, RefPtr::this_ptr))
+            })
+        };
+        if let Some(html_bundle) = html_bundle {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());

@@ -316,6 +316,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
   "Glob.bind.ts": "typeof Bun",
+  "HTMLBundle.bind.ts": null,
   "HashObject.bind.ts": "typeof Bun.hash & { wyhash: typeof Bun.hash }",
   "JSON5Object.bind.ts": "typeof Bun.JSON5",
   "JSONCObject.bind.ts": "typeof Bun.JSONC",

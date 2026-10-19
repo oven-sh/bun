@@ -56,7 +56,6 @@ mod explain_relation;
 mod expr;
 mod flow;
 mod grammarchecks;
-pub mod help;
 mod infer;
 mod instantiate;
 pub mod jsdoc;
@@ -1074,7 +1073,6 @@ impl<'s> Program<'s> {
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
             stack_base: stack_pointer(),
             stack_limit: 6 << 20,
-            help: Default::default(),
             work: 0,
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
@@ -2111,7 +2109,6 @@ pub struct Checker<'p, 's> {
     /// The stack pointer when the checker was created, and how far below that it may go.
     stack_base: usize,
     stack_limit: usize,
-    help: help::HelpState,
     /// Number of queries made so far.
     pub work: u64,
     /// Number of `begin_scope` calls so far for a result that's permanent once stored. It excludes

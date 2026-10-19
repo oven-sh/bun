@@ -418,8 +418,7 @@ impl View<'_> {
 /// ends, not when its task commits.
 ///
 /// - A thread that's about to start an outermost measurement claims the symbol (`Program::claim_variances`).
-/// - A thread that finds the symbol claimed waits, and then takes the result. Meanwhile it helps with slow comparisons
-///   (`Checker::claim_variances_or_help`).
+/// - A thread that finds the symbol claimed waits, and then takes the result.
 /// - When an outermost measurement ends, its results are shared immediately if `Checker::share_measured_variances`
 ///   allows it. They go to `Program::serial_variances`, which `variances_worker` checks before it measures and which
 ///   every commit is compared with. So every later commit agrees with them.
@@ -433,7 +432,7 @@ impl View<'_> {
 struct Claims {
     /// Lock order: take this lock before `Program::serial_variances`'s.
     table: Guarded<FxHashMap<Sym, Claim>>,
-    /// Signaled when a claim ends, variances are shared, or a task requests help.
+    /// Signaled when a claim ends or variances are shared.
     has_changed: Condvar,
 }
 
@@ -447,14 +446,6 @@ struct Claim {
     is_given_up: bool,
 }
 
-/// What `Program::claim_variances` does while another thread has the claim.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum IfTaken {
-    Wait,
-    /// Returns `VarianceClaim::Taken`.
-    Return,
-}
-
 /// The result of `Program::claim_variances`.
 pub(super) enum VarianceClaim<'s> {
     /// The variances are already shared, possibly after a wait.
@@ -463,8 +454,6 @@ pub(super) enum VarianceClaim<'s> {
     Mine,
     /// The caller measures, without a claim.
     Unclaimed,
-    /// Another thread has the claim, and the caller didn't want to wait.
-    Taken,
 }
 
 /// Why a claim ends without a result.
@@ -482,12 +471,7 @@ pub(super) enum NotShared {
 impl<'s> Program<'s> {
     /// See `Claims`. The caller is about to start an outermost measurement of `sym`'s variances. It isn't measuring
     /// yet, so it has no claim. `may_claim` is true if its result has a chance of being shared.
-    pub(super) fn claim_variances(
-        &self,
-        sym: Sym,
-        may_claim: bool,
-        if_taken: IfTaken,
-    ) -> VarianceClaim<'s> {
+    pub(super) fn claim_variances(&self, sym: Sym, may_claim: bool) -> VarianceClaim<'s> {
         let claims = &self.commits.claims;
         let mut table = claims.table.lock();
         loop {
@@ -497,9 +481,6 @@ impl<'s> Program<'s> {
             }
             match table.get(&sym) {
                 Some(claim) if claim.is_given_up => return VarianceClaim::Unclaimed,
-                Some(claim) if claim.is_taken && if_taken == IfTaken::Return => {
-                    return VarianceClaim::Taken;
-                }
                 Some(claim) if claim.is_taken => {}
                 _ if !may_claim => return VarianceClaim::Unclaimed,
                 _ => {
@@ -509,26 +490,6 @@ impl<'s> Program<'s> {
             }
             claims.has_changed.wait_guarded(&mut table);
         }
-    }
-
-    pub(super) fn is_claimed(&self, sym: Sym) -> bool {
-        let table = self.commits.claims.table.lock();
-        table.get(&sym).is_some_and(|claim| claim.is_taken)
-    }
-
-    /// Waits until `Claims::has_changed` is signaled, unless `sym` isn't claimed.
-    pub(super) fn wait_while_claimed(&self, sym: Sym) {
-        let claims = &self.commits.claims;
-        let mut table = claims.table.lock();
-        if table.get(&sym).is_some_and(|claim| claim.is_taken) {
-            claims.has_changed.wait_guarded(&mut table);
-        }
-    }
-
-    /// Call after posting a help request. See `Checker::claim_variances_or_help`.
-    pub(super) fn wake_claim_waiters(&self) {
-        drop(self.commits.claims.table.lock());
-        self.commits.claims.has_changed.notify_all();
     }
 
     /// See `Claims`. Call when an outermost measurement ends.
@@ -693,7 +654,6 @@ impl<'s> Checker<'_, 's> {
     fn is_commit_due(&self) -> bool {
         self.task.commits()
             && !self.task.is_trusted()
-            && !self.is_helper()
             && self.task.buffer().logged() >= KEYS_PER_COMMIT
     }
 

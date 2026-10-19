@@ -1461,30 +1461,6 @@ where
         (self.published.get_acquire(spread, key).copied()).ok_or(true)
     }
 
-    /// Stores an entry that `insert` would write to the shared part immediately in the task-local part instead, where the
-    /// task's next commit picks it up. Returns false and stores nothing for any other entry, or if the key has one.
-    ///
-    /// This isn't a `Task::hold_back`. The caller guarantees that a task that misses the entry only has to recompute it.
-    pub fn insert_deferred(&self, task: &Task<'s>, key: K, value: V, stored: Stored) -> bool {
-        let spread = spread_in_window(&key);
-        let own = || task.buffer().typed(&self.slot)?.get(spread, &key).copied();
-        if !task.may_write_immediately(self.slot.number(), stored)
-            || key.is_bound(&task.own)
-            || value.is_bound(&task.own)
-            || stays_in_task(task, &key)
-            || own().is_some()
-            || self.published(task, spread, &key).is_some()
-        {
-            return false;
-        }
-        let own = task.buffer().typed_or_new(&self.slot);
-        let new_index = own.len();
-        own.insert(spread, key, value);
-        task.buffer()
-            .log_record(self.slot.number(), new_index as u32);
-        true
-    }
-
     /// `spread` is `key`'s hash.
     #[inline]
     fn published(&self, task: &Task<'s>, spread: u64, key: &K) -> Option<V> {

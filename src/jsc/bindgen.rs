@@ -50,7 +50,7 @@ impl<'a> JsHeap<'a> {
     ///
     /// # Safety
     /// Nothing it is passed to runs JavaScript. Throwing tells the debugger, which can, so after a throw the body
-    /// returns without reading what it borrowed.
+    /// returns without reading what it borrowed, and a `&mut self` method does not throw through it.
     #[inline(always)]
     pub unsafe fn global(&self) -> &JSGlobalObject {
         self.global_object()
@@ -81,13 +81,9 @@ impl<'a> JsHeap<'a> {
         &self,
         utf16: Vec<u16>,
     ) -> Result<'a, JsLocal<'a, JSString>> {
-        if utf16.len() > bun_core::String::max_length() {
-            return Err(self.string_too_long());
-        }
-        JsLocal::from_js_result(crate::bun_string_jsc::owned_utf16_into_js(
-            self.global_object(),
-            utf16,
-        ))
+        crate::bun_string_jsc::try_owned_utf16_into_js(self.global_object(), utf16)
+            .map(JsLocal::from_raw)
+            .ok_or_else(|| self.string_too_long())
     }
 
     /// One of the strings every global object has.
@@ -177,28 +173,19 @@ impl<'a> JsHeap<'a> {
     /// What [`JSGlobalObject::throw_illegal_constructor`] throws.
     #[cold]
     pub fn illegal_constructor(&self) -> Error<'a> {
-        self.error_with_code(
-            ErrorCode::ILLEGAL_CONSTRUCTOR,
-            format_args!("Illegal constructor"),
-        )
+        Error::unthrown(self.global_object().create_illegal_constructor_error())
     }
 
     /// What [`JSGlobalObject::throw_string_too_long`] throws.
     #[cold]
     pub fn string_too_long(&self) -> Error<'a> {
-        self.error_with_code(
-            ErrorCode::STRING_TOO_LONG,
-            format_args!("Cannot create a string longer than 2147483647 characters"),
-        )
+        Error::unthrown(self.global_object().create_string_too_long_error())
     }
 
     /// What [`JSGlobalObject::throw_memory_allocation_failed`] throws.
     #[cold]
     pub fn memory_allocation_failed(&self) -> Error<'a> {
-        self.error_with_code(
-            ErrorCode::MEMORY_ALLOCATION_FAILED,
-            format_args!("Failed to allocate memory"),
-        )
+        Error::unthrown(self.global_object().create_memory_allocation_failed_error())
     }
 }
 

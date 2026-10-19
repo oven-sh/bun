@@ -54,6 +54,18 @@ const exceptions: Record<string, [recorded: string, printed: string]> = {
   "generated gen 5952": ["there there here", "\u00A0there there here"],
   "generated gen2 738": ["words text", "\u00A0 words text"],
 };
+// `<p>a</p> b`: the plugin puts the text on the next line and keeps the blank in front of it, which goes the next time. Bun
+// prints at once what is printed the next time. The cases with such a text.
+const unstable = new Set([
+  "white space between inline elements",
+  "a text that starts with a blank is filled in another way",
+  "generated gen2 820",
+  "generated gen2 3006",
+  "generated gen2 566",
+  "generated gen 5770",
+  "generated gen2 3469",
+  "generated gen 4336",
+]);
 // `bun fmt --debug-check-svelte` is compiled into debug and canary builds only.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
@@ -67,10 +79,23 @@ describe.concurrent("Svelte", () => {
     test.each(["prettier", "oxfmt"] as const)(`as %s: ${options}`, async tool => {
       const names = group.map((_, index) => `${index}.svelte`);
       const files = Object.fromEntries(group.map((it, index) => [names[index], it.input]));
-      const result = await format({ ...configs[tool], ...files }, names);
+      // What is recorded, to be formatted once more.
+      const recorded = group.flatMap((it, index) =>
+        unstable.has(it.name) ? [[`${index}.again.svelte`, it[tool]!]] : [],
+      );
+      const all = [...names, ...recorded.map(([name]) => name)];
+      const result = await format({ ...configs[tool], ...files, ...Object.fromEntries(recorded) }, all);
       for (const [index, it] of group.entries()) {
         // What is refused stays as it is.
         let output = it[tool] ?? it.input;
+        if (unstable.has(it.name)) {
+          const again = result.files[all.indexOf(`${index}.again.svelte`)];
+          expect({ name: it.name, output: again.replace(/[ \t]/g, "") }).toEqual({
+            name: it.name,
+            output: output.replace(/[ \t]/g, ""),
+          });
+          output = again;
+        }
         if (it.name in exceptions) {
           const [recorded, printed] = exceptions[it.name];
           expect({ name: it.name, count: output.split(recorded).length - 1 }).toEqual({ name: it.name, count: 1 });
@@ -99,6 +124,20 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     expect(await format({ "a.svelte": input }, ["a.svelte"])).toMatchObject({
       stderr: "",
       files: [output],
+      exitCode: 0,
+    });
+  });
+
+  // The component, what Bun makes of it, and what the plugin makes of it the first time.
+  test.each([
+    ["<p>x</p> y\n", "<p>x</p>\ny\n", "<p>x</p>\n y\n"],
+    ["Hello <div>a</div> world\n", "Hello <div>a</div>\nworld\n", "Hello <div>a</div>\n world\n"],
+    ["<div><p>x</p> y</div>\n", "<div>\n  <p>x</p>\n  y\n</div>\n", "<div>\n  <p>x</p>\n   y\n</div>\n"],
+  ])("text behind a block element is formatted once and for all: %j", async (before, after, ofPlugin) => {
+    const files = { "a.svelte": before, "b.svelte": after, "c.svelte": ofPlugin };
+    expect(await format(files, Object.keys(files))).toMatchObject({
+      stderr: "",
+      files: [after, after, after],
       exitCode: 0,
     });
   });

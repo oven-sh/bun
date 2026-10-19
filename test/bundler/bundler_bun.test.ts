@@ -498,6 +498,9 @@ error: Hello World`,
         import "./hashbang-banner.js";
         import "./defined-name.js";
         import "./defined-property.js";
+        import "./optional-chain.js";
+        import "./other-property.js";
+        import "./other-object.js";
       `,
       "/read.js": `// @bun\nvar __require = import.meta.require;\nconsole.log(__require("./lib/bundled.cjs").x);`,
       "/let.js": `// @bun\nlet __require = import.meta.require;\nconsole.log("let", __require("./dep.cjs").x);`,
@@ -519,6 +522,9 @@ error: Hello World`,
       ),
       "/defined-name.js": `// @bun\nvar definedName = import.meta.require;\nconsole.log("defined name", definedName("./dep.cjs").x);`,
       "/defined-property.js": `// @bun\nvar definedRoot = import.meta.require;\nconsole.log("defined property", definedRoot("./dep.cjs").x, typeof definedRoot.resolve);`,
+      "/optional-chain.js": `// @bun\nvar load = import.meta?.require;\nconsole.log("optional chain", load("./dep.cjs").x);`,
+      "/other-property.js": `// @bun\nvar locate = import.meta.resolve;\nconsole.log("other property", typeof locate("./dep.cjs"));`,
+      "/other-object.js": `// @bun\nvar host = { require: x => ({ x: "host " + x }) };\nvar load = host.require;\nconsole.log("other object", load("./dep.cjs").x, typeof import.meta.url);`,
       "/lib/bundled.cjs": `exports.x = "bundled";`,
       "/dep.cjs": `exports.x = "left";`,
     },
@@ -544,6 +550,9 @@ error: Hello World`,
         "hashbang banner left",
         "defined name left",
         "defined property left function",
+        "optional chain left",
+        "other property string",
+        "other object host ./dep.cjs string",
       ].join("\n"),
     },
     onAfterBundle(api) {
@@ -1137,6 +1146,7 @@ error: Hello World`,
       "// @bun @bun-cjs",
     ],
     ["bytecode", "index.js", `{ "name": "lib", "main": "dist/index.js" }`, "// @bun @bytecode @bun-cjs"],
+    ["hashbang", "index.js", `{ "name": "lib", "main": "dist/index.js" }`, "#!/usr/bin/env bun\n// @bun @bun-cjs"],
   ] as const) {
     itBundled(`bun/RequireWrittenByBunOntoCjsForBun-${kind}`, {
       files: {

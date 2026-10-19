@@ -5036,7 +5036,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match (decl.binding.data, decl.value.map(|value| value.data)) {
                     (BindingData::BObject(object), Some(ExprData::EImportMeta(_))) => {
                         if let [property] = object.properties()
-                            && property.flags.is_empty()
                             && property.default_value.is_none()
                             && matches!(property.key.data, ExprData::EString(key) if key.eql_comptime(b"require"))
                         {

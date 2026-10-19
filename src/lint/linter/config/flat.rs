@@ -67,8 +67,7 @@ pub(super) struct Reader<'r> {
     pub(super) defaults: usize,
     /// The names of the plugins of the configuration that are not built in: [`AnsweredBy::Package`].
     pub(super) foreign_prefixes: Vec<Box<[u8]>>,
-    /// The names under which the configuration has a plugin that is built in, other than the one that is usual for it:
-    /// [`AnsweredBy::Alias`].
+    /// The other names of built-in plugins: [`AnsweredBy::Alias`].
     pub(super) aliases: Vec<(Box<[u8]>, Plugin)>,
     /// How many of `js_plugins` and of `js_locations`, from the first, are [`NamedPlugin`]s.
     pub(super) named: usize,
@@ -81,21 +80,18 @@ pub(super) struct Reader<'r> {
 /// Who answers for the plugin that a configuration has as `prefix`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum AnsweredBy {
-    /// The rules here: the plugin has the name that is usual for it.
+    /// The rules here: the plugin has its usual name.
     Here,
-    /// The rules here, under the name that the configuration has for the plugin, which is the package that they answer in place
-    /// of: `ts` or `node` in `@antfu/eslint-config`. Its rules are called what the configuration calls them, in reports and in
-    /// comments.
+    /// The rules here, under the configuration's name for the plugin: `ts` for `@typescript-eslint/eslint-plugin` in
+    /// `@antfu/eslint-config`. Reports and comments use that name.
     Alias(Plugin),
-    /// The package, which runs as what it is: JavaScript.
+    /// The package: JavaScript.
     Package,
 }
 
-/// Who answers for the plugin that a configuration has as `prefix`. `name`: what the plugin says it is called, with its version,
-/// if it says so. It is implemented here if it has the name that is usual for it, or if it says it is the package that the
-/// rules here answer in place of. If another plugin has the name, as `import-x` has `import` in `@antfu/eslint-config`, it
-/// runs as what it is: JavaScript. The same if the rules here [do not answer for it](Registry::answers_for) and
-/// `can_be_loaded`: the configuration says where its own are.
+/// `name`: what the plugin says it is called, with its version, if it says so. A plugin is built in under its usual name, or
+/// under any name if it says it is the package that the rules here replace. Not if the rules here
+/// [do not answer for it](Registry::answers_for) and `can_be_loaded`.
 fn answered_by(
     registry: &Registry,
     prefix: &[u8],
@@ -133,9 +129,8 @@ fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<&'j [u8]> {
     name.as_str().or_else(|| module().map(package_of))
 }
 
-/// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not built in
-/// to `foreign`, and those under which a built-in plugin [is known by another name](AnsweredBy::Alias) to `aliases`. An object
-/// can have the rules of a plugin that an object after it has.
+/// Collects the [foreign](AnsweredBy::Package) and the [other](AnsweredBy::Alias) names of the plugins in `json`, which is what
+/// a configuration file exports or a part of it. An object can have the rules of a plugin that an object after it has.
 fn add_plugin_names(
     registry: &Registry,
     json: &Json,
@@ -403,8 +398,7 @@ impl Reader<'_> {
         ]);
     }
 
-    /// The plugin that is implemented here that the configuration calls `prefix`: by the name that is usual for it, or by one
-    /// of its own.
+    /// The built-in plugin that the configuration calls `prefix`, by its usual name or by an alias.
     pub(super) fn plugin_of(&self, prefix: &[u8]) -> Option<Plugin> {
         let alias = self.aliases.iter().find(|it| *it.0 == *prefix);
         alias.map_or_else(|| Plugin::of_prefix(prefix), |it| Some(it.1))
@@ -564,7 +558,7 @@ impl Reader<'_> {
                     if entry.meta.hands_back && setting.severity != Severity::Off && is_new {
                         self.handing_back.push(prefix.into());
                     }
-                    // A rule of a plugin under another name keeps that name: it is what the configuration calls it.
+                    // Under an alias the rule keeps the configuration's name.
                     if !is_alias {
                         setting.id = crate::linter::RuleId::Known(entry.meta).to_vec().into();
                     }
@@ -719,7 +713,7 @@ impl Reader<'_> {
             let is_built_in =
                 match answered_by(self.registry, prefix, called(name, located), can_be_loaded) {
                     AnsweredBy::Here => true,
-                    // Unless the name is also that of another plugin, in another object or in bunfig.toml: see `from_flat`.
+                    // Not if another plugin has the name too: see `from_flat`.
                     AnsweredBy::Alias(_) => self.aliases.iter().any(|it| *it.0 == prefix[..]),
                     AnsweredBy::Package => false,
                 };
@@ -1005,7 +999,7 @@ impl Config {
             &mut reader.foreign_prefixes,
             &mut reader.aliases,
         );
-        // Under a name that another plugin has too, in another object or in bunfig.toml, nothing is built in.
+        // A name that another plugin has too, in another object or in bunfig.toml, is foreign everywhere.
         let foreign = &reader.foreign_prefixes;
         reader.aliases.retain(|it| !foreign.contains(&it.0));
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);

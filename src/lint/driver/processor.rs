@@ -59,7 +59,6 @@ impl Context<'_, '_> {
     /// The rule that a message about a file with `config` names.
     fn find_rule(&self, config: &ResolvedConfig, id: &[u8]) -> RuleId {
         if let Some(entry) = config.find_rule(self.linter.registry(), id) {
-            // Of a plugin under a name of the configuration, the rule is called what the configuration calls it.
             return match config.alias_of(parse_rule_id(id).0) {
                 Some(_) => RuleId::Named(entry.meta, id.into()),
                 None => RuleId::Known(entry.meta),

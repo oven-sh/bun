@@ -271,8 +271,8 @@ pub struct ResolvedConfig {
     /// The plugins that are configured and that are not implemented here, by the prefix of their
     /// rules. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
-    /// The plugins that are configured under a name other than the one that is usual for them, and that are implemented
-    /// here: `ts` for `@typescript-eslint/eslint-plugin`. Their rules are called what the configuration calls them.
+    /// The built-in plugins that are configured under another name: `ts` for `@typescript-eslint/eslint-plugin`. Their
+    /// rules keep the configuration's name.
     pub aliases: Vec<(Box<[u8]>, Plugin)>,
     /// The plugins of an `eslint.config.js` as `--print-config` has them, but for ESLint's own: `prefix:name@version`.
     pub printed_plugins: Vec<Box<[u8]>>,
@@ -425,8 +425,7 @@ impl ResolvedConfig {
         (self.js_rules.iter()).find(|it| Arc::ptr_eq(&it.configured.rule, rule))
     }
 
-    /// The plugin that is implemented here that the configuration has as `prefix`, under a name other than the one that is
-    /// usual for it: one of `aliases`, and the name as the configuration has it.
+    /// One of `aliases`, with the name as the configuration has it.
     pub fn alias_of(&self, prefix: &[u8]) -> Option<(&[u8], Plugin)> {
         let found = self.aliases.iter().find(|it| *it.0 == *prefix)?;
         Some((&found.0, found.1))

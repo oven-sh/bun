@@ -688,7 +688,7 @@ pub struct Config {
     js_locations: Vec<(Box<[u8]>, Json)>,
     /// Objects, for different files, have different plugins under one name.
     has_twins: bool,
-    /// The names under which the objects have a plugin that is implemented here, other than the one that is usual for it.
+    /// [`ResolvedConfig::aliases`] of all objects.
     aliases: Vec<(Box<[u8]>, Plugin)>,
     heads: Heads,
     cache: Cache,
@@ -1729,8 +1729,7 @@ impl Config {
                 true => registry.base_of(&setting.id),
                 false => None,
             };
-            // Also a rule of a plugin that the configuration has under a name of its own: it is called what the configuration
-            // calls it.
+            // Also a rule under an alias: it keeps the configuration's name.
             let is_aliased = native.is_some() && config.alias_of(prefix).is_some();
             let name: Option<Arc<[u8]>> =
                 (base.is_some() || is_aliased).then(|| Arc::from(&setting.id[..]));
@@ -1837,7 +1836,7 @@ impl Config {
             let mut implemented: Vec<Plugin> = Vec::new();
             let is_foreign =
                 |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);
-            // Under a name of its own a plugin is found by that name alone: `config.aliases`.
+            // An alias is found by `config.aliases` alone.
             let is_alias = |it: &&&[u8]| config.alias_of(it).is_some();
             let built_in = plugins.iter().filter(|it| !is_foreign(it) && !is_alias(it));
             for plugin in built_in.filter_map(|it| Plugin::of_prefix(it)) {

@@ -208,7 +208,7 @@ struct Running<'r, S> {
     entry: &'static RuleEntry,
     /// What the configuration has for it.
     configured: Option<&'r ConfiguredRule>,
-    /// What a comment calls it, if the comment alone turns it on, under [a name of the configuration](Named::Aliased).
+    /// Its name, if a comment alone turns it on under an [alias](Named::Aliased).
     alias: Option<Arc<[u8]>>,
     severity: Severity,
     /// [`Slot::in_oxlint`]
@@ -281,8 +281,8 @@ enum Named<'c> {
     Native(&'static RuleEntry),
     /// One that has a [name](ConfiguredRule::name).
     Instance(&'c ConfiguredRule, &'c Arc<[u8]>),
-    /// One of a plugin that the configuration has under a name of its own ([`ResolvedConfig::alias_of`]), which a comment
-    /// names and the configuration does not: the name, and the rule.
+    /// One that a comment names under an [alias](ResolvedConfig::alias_of) and the configuration does not: the rule, and
+    /// the alias.
     Aliased(&'static RuleEntry, &'c [u8]),
     Js(&'c Arc<js_plugin::Rule>),
 }

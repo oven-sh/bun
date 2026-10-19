@@ -275,8 +275,7 @@ impl Plugin {
         Plugin::answers_in_place_of(prefix, None)
     }
 
-    /// The plugin whose rules answer in place of those of `package`, with a configuration of ESLint, whatever name the
-    /// configuration has the package under.
+    /// The plugin whose rules answer in place of those of `package`, under any name.
     pub(crate) fn in_place_of_package(package: &[u8]) -> Option<Plugin> {
         let is_it = |it: &Plugin| match it.names().under_eslint {
             UnderEslint::InPlaceOf(Some(usual), _) => usual.as_bytes() == package,

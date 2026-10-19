@@ -916,8 +916,7 @@ impl ServerWebSocket {
 
             let _loop_guard = vm.enter_event_loop_scope();
 
-            // Before the abort listeners run: `message` can point into the loop's receive
-            // buffer, and a listener that ticks the event loop lets a read overwrite it.
+            // Before the abort listeners run: they can tick the loop and overwrite `message`.
             let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {

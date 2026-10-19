@@ -9,6 +9,15 @@ type DeclarationPosition = (bool, FileId, u32);
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
+/// What `add_types_to_intersection` finds out about a type if it only has to read the flags of its members.
+#[derive(Copy, Clone)]
+struct MembersByFlags {
+    /// The flags that the members add to `includes`.
+    includes: u32,
+    /// The member that has one of the `tf::UNIT` flags.
+    unit: Option<TypeId>,
+}
+
 /// How much `create_union` read to build its result.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Inspected {
@@ -1590,20 +1599,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::UNRESOLVED;
         }
         let strict = self.p.files.options.strict_null_checks;
-        // No value is both an object and null or undefined, or belongs to two disjoint domains.
-        let overlaps_another_domain = |domain: u32| {
-            includes & domain != 0 && includes & (tf::DISJOINT_DOMAINS & !domain) != 0
-        };
-        if strict
-            && includes & tf::NULLABLE != 0
-            && includes & (tf::OBJECT | tf::NON_PRIMITIVE | tf::INCLUDES_EMPTY_OBJECT) != 0
-            || overlaps_another_domain(tf::NON_PRIMITIVE)
-            || overlaps_another_domain(tf::STRING_LIKE)
-            || overlaps_another_domain(tf::NUMBER_LIKE)
-            || overlaps_another_domain(tf::BIGINT_LIKE)
-            || overlaps_another_domain(tf::ES_SYMBOL_LIKE)
-            || overlaps_another_domain(tf::VOID_LIKE)
-        {
+        if Self::has_disjoint_domains(includes, strict) {
             return TypeId::NEVER;
         }
         if includes & (tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) != 0
@@ -1733,6 +1729,59 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// True if no value is in all the types that have added `includes`: none is both an object and null or undefined, or
+    /// belongs to two disjoint domains.
+    #[inline]
+    fn has_disjoint_domains(includes: u32, strict_null_checks: bool) -> bool {
+        let overlaps_another_domain = |domain: u32| {
+            includes & domain != 0 && includes & (tf::DISJOINT_DOMAINS & !domain) != 0
+        };
+        strict_null_checks
+            && includes & tf::NULLABLE != 0
+            && includes & (tf::OBJECT | tf::NON_PRIMITIVE | tf::INCLUDES_EMPTY_OBJECT) != 0
+            || overlaps_another_domain(tf::NON_PRIMITIVE)
+            || overlaps_another_domain(tf::STRING_LIKE)
+            || overlaps_another_domain(tf::NUMBER_LIKE)
+            || overlaps_another_domain(tf::BIGINT_LIKE)
+            || overlaps_another_domain(tf::ES_SYMBOL_LIKE)
+            || overlaps_another_domain(tf::VOID_LIKE)
+    }
+
+    /// Returns `None` if `add_types_to_intersection` does more with `ty` than read flags: it replaces a fresh literal
+    /// type, asks an object type that can count as `{}` for its members, or meets `any`, `unknown` or `never`.
+    fn members_by_flags(&self, ty: TypeId) -> Option<MembersByFlags> {
+        if !self.has_no_fresh_literal(ty) {
+            return None;
+        }
+        let members = match self.data(ty) {
+            TypeData::Intersection(members) => &members[..],
+            _ => std::slice::from_ref(&ty),
+        };
+        let mut found = MembersByFlags {
+            includes: 0,
+            unit: None,
+        };
+        for &member in members {
+            let flags = self.flags(member);
+            let is_read_by_flags = match self.data(member) {
+                TypeData::Intersection(_) => false,
+                TypeData::Ref { .. } | TypeData::Tuple { .. } => true,
+                _ => flags & (tf::OBJECT | tf::ANY | tf::UNKNOWN | tf::NEVER) == 0,
+            };
+            if !is_read_by_flags || flags & tf::UNIT != 0 && found.unit.is_some() {
+                return None;
+            }
+            if flags & tf::UNIT != 0 {
+                found.unit = Some(match member {
+                    TypeId::MISSING => TypeId::UNDEFINED,
+                    _ => member,
+                });
+            }
+            found.includes |= flags & tf::INCLUDES_MASK;
+        }
+        Some(found)
+    }
+
     /// `checkCrossProductUnion`
     pub(super) fn check_cross_product_union(&mut self, types: &[TypeId]) -> bool {
         self.checked_cross_product_union_size(types).is_some()
@@ -1807,13 +1856,45 @@ impl<'p, 's> Checker<'p, 's> {
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
+        // `("a" & keyof T | "b" & keyof T | ..) & ("a" & keyof U | "b" & keyof U | ..)`: nearly every combination has two
+        // different literal types, and the flags say so. `members_by_flags` of the alternatives of each of `set`, and
+        // where those of each begin.
+        let strict = self.p.files.options.strict_null_checks;
+        let mut by_flags: smallvec::SmallVec<[Option<MembersByFlags>; 16]> = Default::default();
+        let mut starts: smallvec::SmallVec<[usize; 4]> = Default::default();
+        for &ty in set.iter().filter(|_| strict) {
+            starts.push(by_flags.len());
+            let alternatives = self.parts(ty).iter();
+            by_flags.extend(alternatives.map(|&it| self.members_by_flags(it)));
+        }
         for i in 0..size {
             let mut n = i;
+            // `add_types_to_intersection` of the combination, or `None` if it takes more than the flags.
+            let mut combined = strict.then_some(MembersByFlags {
+                includes: 0,
+                unit: None,
+            });
             for j in (0..set.len()).rev() {
+                let mut chosen = 0;
                 if let TypeData::Union(alternatives) = self.data(set[j]) {
-                    constituents[j] = alternatives[n % alternatives.len()];
+                    chosen = n % alternatives.len();
+                    constituents[j] = alternatives[chosen];
                     n /= alternatives.len();
                 }
+                let start = starts.get(j).copied().unwrap_or(0);
+                let one = by_flags.get(start + chosen).copied().flatten();
+                combined = combined.zip(one).map(|(all, one)| MembersByFlags {
+                    // No value has two different unit types: see `add_types_to_intersection`.
+                    includes: match (all.unit, one.unit) {
+                        (Some(a), Some(b)) if a != b => tf::NON_PRIMITIVE,
+                        _ => 0,
+                    } | all.includes
+                        | one.includes,
+                    unit: all.unit.or(one.unit),
+                });
+            }
+            if combined.is_some_and(|it| Self::has_disjoint_domains(it.includes, strict)) {
+                continue;
             }
             let one = self.intersection_ex(&constituents, no_constraint_reduction, None);
             if !one.is_never() {

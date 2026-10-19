@@ -218,7 +218,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     handle.finished = true;
     try {
       // In place of the callback that ServerResponse#end() armed, in its async context.
-      if (handle.onflushed) AsyncContextFrame.run(onwritableFrame, handle.onflushed, handle);
+      const { onflushed } = handle;
+      if (onflushed) AsyncContextFrame.run(onwritableFrame, onflushed, handle);
     } catch (err) {
       // A 'finish' listener that throws must not unwind into the socket's write callbacks or 'close' listeners.
       reportError(err);

@@ -1,0 +1,28 @@
+{
+  "_id": "test-native-binlink-scripts-native",
+  "name": "test-native-binlink-scripts-native",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-scripts-native",
+      "version": "1.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "_id": "test-native-binlink-scripts-native@1.0.0",
+      "dist": {
+        "integrity": "sha512-kt2CGpfPQvZtS/dvulDmVbhzsWBEKeFbdTMydbeRlgXb3e1R+3Nra1TMMNc6MI+PguYx1ySa++6R/IGbpRWKSg==",
+        "shasum": "544a6825bfef5b1045de248ef5ac5e36475c51ab",
+        "tarball": "http://localhost:4873/test-native-binlink-scripts-native/-/test-native-binlink-scripts-native-1.0.0.tgz"
+      }
+    }
+  }
+}

@@ -2,27 +2,28 @@
   "_id": "test-native-binlink-scripts",
   "name": "test-native-binlink-scripts",
   "dist-tags": {
-    "latest": "2.0.0"
+    "latest": "5.0.0"
   },
   "versions": {
     "1.0.0": {
       "name": "test-native-binlink-scripts",
       "version": "1.0.0",
       "bin": {
-        "scripts-test-cmd": "./bin/cmd.js"
+        "scripts-test-cmd": "./bin/missing.js"
       },
       "scripts": {
+        "preinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'preinstall-ran'),'')\"",
         "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
       },
       "optionalDependencies": {
-        "test-native-binlink-target": "1.0.0"
+        "test-native-binlink-scripts-native": "1.0.0"
       },
       "_id": "test-native-binlink-scripts@1.0.0",
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-+OefVghnEY8Tlmf3RlvR9/GVOQJaUBxne8GTUPaiY20mDGXkN8n3jNk/kboKZgrQ/idGfSxvGvYKuswwcnVgvQ==",
-        "shasum": "5c49929dbfeb586a8857631dfed592e8cd58858b",
+        "integrity": "sha512-xGCvKCMTqHAg2YD3Nt8H+Qt6rNu7d7j+4MVSL32AdEX7dKNyT50z4O3Cjb7cASVPJviDPiCZNmzZAQ3QGxIbWg==",
+        "shasum": "44b50789cf6007201a0ed74865168ed5cbfbc7b5",
         "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-1.0.0.tgz"
       }
     },
@@ -33,15 +34,80 @@
         "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
       },
       "optionalDependencies": {
-        "test-native-binlink-target": "1.0.0"
+        "test-native-binlink-scripts-native": "1.0.0"
       },
       "_id": "test-native-binlink-scripts@2.0.0",
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-HJ6xtCzK+BTmQwRdFDi27R1JSYAWq0KKdB6fIVjhHlnr8OwcuSBivnisM0nIqxFE+UkVq1bNtmu9imtkn2/9bw==",
-        "shasum": "cb2081cbb62cda894bf0f7bbd94c30ae42f4079d",
+        "integrity": "sha512-ytBr6RqC6byBv/+VnaKE7yIkZitjOvUuHKAkFOXosOVlCOcE6QGhtNgGb430Rk5YKvAWsLHhsH1xnhjhXZClQw==",
+        "shasum": "9aa77283ca739a5fa446cd88fdc1eef591e560ec",
         "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "test-native-binlink-scripts",
+      "version": "3.0.0",
+      "bin": {
+        "scripts-test-cmd": "./bin/cmd.js",
+        "scripts-test-other": "./bin/other.js"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-scripts-native": "1.0.0"
+      },
+      "_id": "test-native-binlink-scripts@3.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-dzEQ4+UtXDhLk5MZqslrwuue0OMLCzxEsSKKInJI0J1JSrICQFMqPeTZCPjEJhqvmfORThZ56/QB0ncERWSSzQ==",
+        "shasum": "69c8902dc178a3bcdfd147cf0440b56e9506e7c2",
+        "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-3.0.0.tgz"
+      }
+    },
+    "4.0.0": {
+      "name": "test-native-binlink-scripts",
+      "version": "4.0.0",
+      "directories": {
+        "bin": "./tools"
+      },
+      "scripts": {
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-scripts-native": "1.0.0"
+      },
+      "_id": "test-native-binlink-scripts@4.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-EPnWNiaOl+T/alg4+2Tf9N0+vpRQ3FOQqUc/ybJJi8RrtAHYnnO6Xls+8mdJXyyAJDULVSIBHt3t1olc7lwNAQ==",
+        "shasum": "76aab75a2d7c98d2a25fb3c0b29a9595f683dee9",
+        "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-4.0.0.tgz"
+      }
+    },
+    "5.0.0": {
+      "name": "test-native-binlink-scripts",
+      "version": "5.0.0",
+      "bin": {
+        "scripts-test-cmd": "./bin/cmd.js"
+      },
+      "scripts": {
+        "preinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'preinstall-ran'),'')\"",
+        "postinstall": "node -e \"require('fs').writeFileSync(require('path').join(__dirname,'postinstall-ran'),'')\""
+      },
+      "optionalDependencies": {
+        "test-native-binlink-scripts-native": "1.0.0"
+      },
+      "_id": "test-native-binlink-scripts@5.0.0",
+      "_hasInstallScript": true,
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-2/P7h5+UvPwATZFJwdXQAc+CAdX5ezAjm0GhgPUEwbusvVHaYQhuh/4uzP4scxfHh4W3GM/lgbZ7pko5ZsBokA==",
+        "shasum": "f1365738309ac3e401a8dae2ee2d59ac3d69e10a",
+        "tarball": "http://localhost:4873/test-native-binlink-scripts/-/test-native-binlink-scripts-5.0.0.tgz"
       }
     }
   }

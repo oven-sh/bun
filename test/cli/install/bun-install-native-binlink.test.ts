@@ -546,13 +546,22 @@ describe.concurrent("native binlink optimization", () => {
   });
 
   // The platform package stands in for the lifecycle scripts of a nativeDependencies package only
-  // when the bins are linked into it. In every other case the package needs its own scripts. The
-  // postinstall of esbuild, for example, fetches the binary when the platform package is missing.
-  describe("runs the lifecycle scripts when the bins are not linked into the platform package", () => {
+  // when the bins are redirected into it. In every other case the package needs its own scripts.
+  // The postinstall of esbuild, for example, fetches the binary when the platform package is missing.
+  describe("lifecycle scripts follow the redirect of the bins", () => {
+    const skip = "test-postinstall-skip";
+    const skipNative = "test-postinstall-skip-native";
+    const skipParent = "test-postinstall-skip-parent";
+    const scripts = "test-native-binlink-scripts";
+    const scriptsNative = "test-native-binlink-scripts-native";
+
     async function setup(opts: {
       linker: "hoisted" | "isolated";
-      name: string;
-      version: string;
+      deps: Record<string, string>;
+      native: string[];
+      // `null` leaves the key out. The default is `native`.
+      trusted?: string[] | null;
+      ignoreScripts?: string[];
       registry?: TestRegistry;
       extraEnv?: object;
     }) {
@@ -561,146 +570,433 @@ describe.concurrent("native binlink optimization", () => {
       const env: NodeJS.Dict<string> = { ...bunEnv, ...opts.extraEnv };
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+      const nodeModules = join(packageDir, "node_modules");
 
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "test-app",
-          version: "1.0.0",
-          dependencies: { [opts.name]: opts.version },
-          nativeDependencies: [opts.name],
-          trustedDependencies: [opts.name],
-        }),
-      );
+      async function writeManifest(changes: { deps?: Record<string, string>; trusted?: string[] | null } = {}) {
+        const trusted = changes.trusted !== undefined ? changes.trusted : opts.trusted;
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: changes.deps ?? opts.deps,
+            nativeDependencies: opts.native,
+            trustedDependencies: trusted === undefined ? opts.native : (trusted ?? undefined),
+            ignoreScripts: opts.ignoreScripts,
+          }),
+        );
+      }
+      await writeManifest();
 
-      async function install(...args: string[]) {
+      async function bun(...args: string[]) {
         await using proc = spawn({
-          cmd: [bunExe(), "install", ...args],
+          cmd: [bunExe(), ...args],
           cwd: packageDir,
           stdout: "pipe",
           stdin: "ignore",
           stderr: "pipe",
           env,
         });
-        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      async function install(...args: string[]) {
+        const { stderr, exitCode } = await bun("install", ...args);
         expect(stderr).not.toContain("error:");
         expect(exitCode).toBe(0);
       }
 
-      // `bin` is what the command in `node_modules/.bin` prints.
-      async function installed(platformPackage: string, binName?: string) {
-        const nodeModules = join(packageDir, "node_modules");
-        const pkg = realpathSync(join(nodeModules, opts.name));
-        let bin: string | undefined;
-        if (binName) {
+      // What the command prints.
+      async function run(name: string, binDir = join(nodeModules, ".bin")) {
+        await using proc = spawn({
+          cmd: [binEntry(binDir, name)],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "inherit",
+          env,
+        });
+        const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return stdout.trim();
+      }
+
+      // The lifecycle scripts that ran in the package.
+      function ran(dir = join(nodeModules, opts.native[0])) {
+        const pkg = realpathSync(dir);
+        return ["preinstall", "postinstall"].filter(script => existsSync(join(pkg, `${script}-ran`)));
+      }
+
+      // Both linkers put a dependency beside the package that depends on it.
+      function hasBeside(platformPackage: string, dir = join(nodeModules, opts.native[0])) {
+        return existsSync(join(realpathSync(dir), "..", platformPackage, "package.json"));
+      }
+
+      // The `node_modules` that holds the dependencies of `name`.
+      function scopeOf(name: string, version: string) {
+        return opts.linker === "hoisted"
+          ? join(nodeModules, name, "node_modules")
+          : join(nodeModules, ".bun", `${name}@${version}`, "node_modules");
+      }
+
+      return { packageDir, packageJson, nodeModules, writeManifest, bun, install, run, ran, hasBeside, scopeOf };
+    }
+
+    function failDownloadOf(tarball: string) {
+      return new TestRegistry({
+        intercept: request =>
+          request.url.endsWith(`/${tarball}`) ? new Response("not found", { status: 404 }) : undefined,
+      }).start();
+    }
+
+    for (const linker of ["hoisted", "isolated"] as const) {
+      test(`--omit=optional, then --offline, leave the platform package out (${linker})`, async () => {
+        const { nodeModules, install, run, ran, hasBeside } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0" },
+          native: [skip],
+        });
+        const state = async () => ({ platform: hasBeside(skipNative), ran: ran(), bin: await run("skip-test-cmd") });
+        const expected = { platform: false, ran: ["postinstall"], bin: "shim v2.0.0" };
+
+        await install("--omit=optional");
+        expect(await state()).toEqual(expected);
+
+        // The cache does not have the platform package, so `--offline` cannot place it.
+        await rm(nodeModules, { recursive: true, force: true });
+        await install("--offline");
+        expect(await state()).toEqual(expected);
+      });
+
+      test(`the platform package fails to download (${linker})`, async () => {
+        using registry = failDownloadOf(`${skipNative}-2.0.0.tgz`);
+        const { nodeModules, install, run, ran, hasBeside } = await setup({
+          linker,
+          registry,
+          deps: { [skip]: "2.0.0" },
+          native: [skip],
+        });
+        const state = async () => ({ platform: hasBeside(skipNative), ran: ran(), bin: await run("skip-test-cmd") });
+        const expected = { platform: false, ran: ["postinstall"], bin: "shim v2.0.0" };
+
+        await install();
+        expect(await state()).toEqual(expected);
+
+        // From bun.lock the download fails while the packages are placed, not while they are resolved.
+        await rm(nodeModules, { recursive: true, force: true });
+        await install();
+        expect(await state()).toEqual(expected);
+      });
+
+      test(`the platform package does not have the bin (${linker})`, async () => {
+        const { install, run, ran, hasBeside } = await setup({ linker, deps: { [scripts]: "1.0.0" }, native: [scripts] });
+
+        await install();
+        expect({ platform: hasBeside(scriptsNative), ran: ran(), bin: await run("scripts-test-cmd") }).toEqual({
+          platform: true,
+          ran: ["preinstall", "postinstall"],
+          bin: "shim v1.0.0",
+        });
+      });
+
+      test(`the platform package has one of two bins (${linker})`, async () => {
+        const { install, run, ran } = await setup({ linker, deps: { [scripts]: "3.0.0" }, native: [scripts] });
+
+        await install();
+        expect({
+          ran: ran(),
+          cmd: await run("scripts-test-cmd"),
+          other: await run("scripts-test-other"),
+        }).toEqual({ ran: ["postinstall"], cmd: "native", other: "other v3.0.0" });
+      });
+
+      test(`the platform package has no file in the directories.bin folder (${linker})`, async () => {
+        const { install, run, ran } = await setup({ linker, deps: { [scripts]: "4.0.0" }, native: [scripts] });
+
+        await install();
+        expect({ ran: ran(), bin: await run("scripts-test-tool") }).toEqual({
+          ran: ["postinstall"],
+          bin: "tool v4.0.0",
+        });
+      });
+
+      // Without a bin, no link shows that the platform package is usable.
+      test(`the package has no bin (${linker})`, async () => {
+        const { install, ran, hasBeside } = await setup({ linker, deps: { [scripts]: "2.0.0" }, native: [scripts] });
+
+        await install();
+        expect({ platform: hasBeside(scriptsNative), ran: ran() }).toEqual({ platform: true, ran: ["postinstall"] });
+      });
+
+      test(`BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER=1 (${linker})`, async () => {
+        const { install, run, ran, hasBeside } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0" },
+          native: [skip],
+          extraEnv: { BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER: "1" },
+        });
+
+        await install();
+        expect({ platform: hasBeside(skipNative), ran: ran(), bin: await run("skip-test-cmd") }).toEqual({
+          platform: true,
+          ran: ["postinstall"],
+          bin: "shim v2.0.0",
+        });
+      });
+
+      test(`the redirect also stands in for a preinstall (${linker})`, async () => {
+        const { install, run, ran } = await setup({ linker, deps: { [scripts]: "5.0.0" }, native: [scripts] });
+
+        await install();
+        expect({ ran: ran(), bin: await run("scripts-test-cmd") }).toEqual({ ran: [], bin: "native" });
+      });
+
+      // `--omit=optional` cuts the platform package out of the dependencies of the package, and the
+      // root still installs it.
+      test(`--omit=optional with the platform package as a direct dependency (${linker})`, async () => {
+        const { install, run, ran } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0", [skipNative]: "2.0.0" },
+          native: [skip],
+        });
+
+        await install("--omit=optional");
+        expect({ ran: ran(), bin: await run("skip-test-cmd") }).toEqual({ ran: [], bin: "native v2.0.0" });
+      });
+
+      test(`two packages in one node_modules and a nested copy each get their own answer (${linker})`, async () => {
+        const { nodeModules, install, run, ran, scopeOf } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0", [scripts]: "1.0.0", [skipParent]: "1.0.0" },
+          native: [skip, scripts],
+        });
+        const nested = scopeOf(skipParent, "1.0.0");
+
+        const state = async () => ({
+          skip: ran(join(nodeModules, skip)),
+          scripts: ran(join(nodeModules, scripts)),
+          nested: ran(join(nested, skip)),
+          skipBin: await run("skip-test-cmd"),
+          scriptsBin: await run("scripts-test-cmd"),
+          nestedBin: await run("skip-test-cmd", join(nested, ".bin")),
+        });
+        const expected = {
+          skip: [],
+          scripts: ["preinstall", "postinstall"],
+          nested: [],
+          skipBin: "native v2.0.0",
+          scriptsBin: "shim v1.0.0",
+          nestedBin: "native v1.0.0",
+        };
+
+        await install();
+        expect(await state()).toEqual(expected);
+
+        await rm(nodeModules, { recursive: true, force: true });
+        await install();
+        expect(await state()).toEqual(expected);
+      });
+
+      // Hoisted: the platform package of the nested copy is in a node_modules below it, which is
+      // placed later. The answer waits for it.
+      test(`the platform package of a nested copy fails to download (${linker})`, async () => {
+        using registry = failDownloadOf(`${skipNative}-1.0.0.tgz`);
+        const { nodeModules, install, run, ran, scopeOf } = await setup({
+          linker,
+          registry,
+          deps: { [skip]: "2.0.0", [skipParent]: "1.0.0" },
+          native: [skip],
+        });
+        const nested = scopeOf(skipParent, "1.0.0");
+
+        await install();
+        expect({
+          hoisted: ran(),
+          nested: ran(join(nested, skip)),
+          hoistedBin: await run("skip-test-cmd"),
+          nestedBin: await run("skip-test-cmd", join(nested, ".bin")),
+        }).toEqual({ hoisted: [], nested: ["postinstall"], hoistedBin: "native v2.0.0", nestedBin: "shim v1.0.0" });
+      });
+
+      for (const [gate, options, args] of [
+        ["a package that is not trusted", { trusted: [] }, []],
+        ["--ignore-scripts", {}, ["--ignore-scripts"]],
+        ["a package in ignoreScripts", { ignoreScripts: [scripts] }, []],
+      ] as const) {
+        test(`${gate} runs no script without the redirect either (${linker})`, async () => {
+          const { install, run, ran } = await setup({
+            linker,
+            deps: { [scripts]: "1.0.0" },
+            native: [scripts],
+            ...options,
+          });
+
+          await install(...args);
+          expect({ ran: ran(), bin: await run("scripts-test-cmd") }).toEqual({ ran: [], bin: "shim v1.0.0" });
+        });
+      }
+
+      test(`a package in place that becomes trusted runs its scripts without the redirect (${linker})`, async () => {
+        const { writeManifest, install, run, ran } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0" },
+          native: [skip],
+          trusted: null,
+        });
+        const state = async () => ({ ran: ran(), bin: await run("skip-test-cmd") });
+
+        await install("--omit=optional");
+        expect(await state()).toEqual({ ran: [], bin: "shim v2.0.0" });
+
+        await writeManifest({ trusted: [skip] });
+        await install("--omit=optional");
+        expect(await state()).toEqual({ ran: ["postinstall"], bin: "shim v2.0.0" });
+      });
+
+      test(`a package in place that becomes trusted keeps the redirect and runs no script (${linker})`, async () => {
+        const { writeManifest, install, run, ran } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0" },
+          native: [skip],
+          trusted: null,
+        });
+        const state = async () => ({ ran: ran(), bin: await run("skip-test-cmd") });
+
+        await install();
+        expect(await state()).toEqual({ ran: [], bin: "native v2.0.0" });
+
+        await writeManifest({ trusted: [skip] });
+        await install();
+        expect(await state()).toEqual({ ran: [], bin: "native v2.0.0" });
+      });
+
+      test(`bun add --trust of a package in place runs its scripts without the redirect (${linker})`, async () => {
+        const { packageJson, bun, install, run, ran } = await setup({
+          linker,
+          deps: { [skip]: "2.0.0" },
+          native: [skip],
+          trusted: null,
+        });
+
+        await install("--omit=optional");
+        const { stderr, exitCode } = await bun("add", "--trust", `${skip}@2.0.0`, "--omit=optional");
+        expect(stderr).not.toContain("error:");
+        expect({
+          ran: ran(),
+          bin: await run("skip-test-cmd"),
+          trusted: JSON.parse(readFileSync(packageJson, "utf8")).trustedDependencies,
+        }).toEqual({ ran: ["postinstall"], bin: "shim v2.0.0", trusted: [skip] });
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    // The nested copy waits for the `node_modules` below it, so its scripts are not decided when the
+    // script of the other package fails. It goes, like a package whose scripts did not all run: in
+    // place it would count as installed, and the next install would give it no answer.
+    test("a failed script removes a package whose answer waits (hoisted)", async () => {
+      const failing = "lifecycle-failing-postinstall";
+      const deps = { [skip]: "2.0.0", [skipParent]: "1.0.0" };
+      const { nodeModules, writeManifest, bun, install, run, ran, scopeOf } = await setup({
+        linker: "hoisted",
+        deps: { ...deps, [failing]: "1.0.0" },
+        native: [skip],
+        // The main thread places a trusted package itself, so the order of the packages is fixed.
+        trusted: [skip, skipNative, skipParent, failing],
+      });
+      const nested = scopeOf(skipParent, "1.0.0");
+
+      await install("--lockfile-only");
+      const { stderr, exitCode } = await bun("install");
+      expect(stderr).toContain(`script from "${failing}" exited with 1`);
+      expect({
+        root: existsSync(join(nodeModules, skip, "package.json")),
+        nested: existsSync(join(nested, skip)),
+      }).toEqual({ root: true, nested: false });
+      expect(exitCode).toBe(1);
+
+      await writeManifest({ deps });
+      await install();
+      expect({ ran: ran(join(nested, skip)), bin: await run("skip-test-cmd", join(nested, ".bin")) }).toEqual({
+        ran: [],
+        bin: "native v1.0.0",
+      });
+    });
+
+    describe("bun add -g", () => {
+      async function setupGlobal(linker: "hoisted" | "isolated") {
+        const { packageDir } = await verdaccio.createTestDir({ bunfigOpts: { linker } });
+        const binDir = join(packageDir, "global-bin-dir");
+        const globalDir = join(packageDir, "global-install-dir", "install", "global");
+        const env: NodeJS.Dict<string> = { ...bunEnv };
+        env.BUN_INSTALL = join(packageDir, "global-install-dir");
+        env.BUN_INSTALL_BIN = binDir;
+        env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+        env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+        await Promise.all([
+          mkdir(binDir, { recursive: true }),
+          mkdir(globalDir, { recursive: true }).then(() =>
+            writeFile(
+              join(globalDir, "package.json"),
+              JSON.stringify({ dependencies: {}, nativeDependencies: [skip], trustedDependencies: [skip] }),
+            ),
+          ),
+        ]);
+
+        async function add() {
           await using proc = spawn({
-            cmd: [binEntry(join(nodeModules, ".bin"), binName)],
+            cmd: [bunExe(), "add", "-g", `--config=${join(packageDir, "bunfig.toml")}`, `${skip}@2.0.0`],
+            cwd: packageDir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env,
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { stderr, exitCode };
+        }
+
+        const postinstallRan = () =>
+          existsSync(join(realpathSync(join(globalDir, "node_modules", skip)), "postinstall-ran"));
+        return { packageDir, binDir, env, add, postinstallRan };
+      }
+
+      for (const linker of ["hoisted", "isolated"] as const) {
+        test(`links the bin into the platform package and runs no script (${linker})`, async () => {
+          const { packageDir, binDir, env, add, postinstallRan } = await setupGlobal(linker);
+
+          const { stderr, exitCode } = await add();
+          expect(stderr).not.toContain("error:");
+          await using proc = spawn({
+            cmd: [binEntry(binDir, "skip-test-cmd")],
             cwd: packageDir,
             stdout: "pipe",
             stdin: "ignore",
             stderr: "inherit",
             env,
           });
-          [bin] = await Promise.all([proc.stdout.text(), proc.exited]);
-        }
-        return {
-          // Both linkers put a dependency beside the package that depends on it.
-          platformPackage: existsSync(join(pkg, "..", platformPackage, "package.json")),
-          postinstallRan: existsSync(join(pkg, "postinstall-ran")),
-          bin: bin?.trim(),
-        };
+          const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect({ postinstallRan: postinstallRan(), bin: stdout.trim() }).toEqual({
+            postinstallRan: false,
+            bin: "native v2.0.0",
+          });
+          expect(exitCode).toBe(0);
+        });
+
+        test(`reports a bin name that something else has taken once (${linker})`, async () => {
+          const { binDir, add } = await setupGlobal(linker);
+          await writeFile(join(binDir, isWindows ? "skip-test-cmd.exe" : "skip-test-cmd"), "not a bin of the package");
+
+          const { stderr, exitCode } = await add();
+          expect(stderr.split("\n").filter(line => line.includes("failed to link"))).toEqual([
+            expect.stringContaining("EEXIST"),
+          ]);
+          expect(readFileSync(join(binDir, isWindows ? "skip-test-cmd.exe" : "skip-test-cmd"), "utf8")).toBe(
+            "not a bin of the package",
+          );
+          expect(exitCode).toBe(1);
+        });
       }
-
-      return { packageDir, install, installed };
-    }
-
-    for (const linker of ["hoisted", "isolated"] as const) {
-      test(`--omit=optional, then --offline, leave the platform package out (${linker})`, async () => {
-        const { packageDir, install, installed } = await setup({
-          linker,
-          name: "test-postinstall-skip",
-          version: "2.0.0",
-        });
-        const expected = { platformPackage: false, postinstallRan: true, bin: "shim v2.0.0" };
-
-        await install("--omit=optional");
-        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual(expected);
-
-        // The cache does not have the platform package, so `--offline` cannot place it.
-        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-        await install("--offline");
-        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual(expected);
-      });
-
-      test(`the platform package fails to download (${linker})`, async () => {
-        using registry = new TestRegistry({
-          intercept: request =>
-            request.url.endsWith("/test-postinstall-skip-native-2.0.0.tgz")
-              ? new Response("not found", { status: 404 })
-              : undefined,
-        }).start();
-        const { install, installed } = await setup({
-          linker,
-          registry,
-          name: "test-postinstall-skip",
-          version: "2.0.0",
-        });
-
-        await install();
-        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual({
-          platformPackage: false,
-          postinstallRan: true,
-          bin: "shim v2.0.0",
-        });
-      });
-
-      test(`the platform package does not have the bin (${linker})`, async () => {
-        const { install, installed } = await setup({
-          linker,
-          name: "test-native-binlink-scripts",
-          version: "1.0.0",
-        });
-
-        await install();
-        expect(await installed("test-native-binlink-target", "scripts-test-cmd")).toEqual({
-          platformPackage: true,
-          postinstallRan: true,
-          bin: "shim v1.0.0",
-        });
-      });
-
-      // Without a bin, no link shows that the platform package is usable.
-      test(`the package has no bin (${linker})`, async () => {
-        const { install, installed } = await setup({
-          linker,
-          name: "test-native-binlink-scripts",
-          version: "2.0.0",
-        });
-
-        await install();
-        expect(await installed("test-native-binlink-target")).toEqual({
-          platformPackage: true,
-          postinstallRan: true,
-          bin: undefined,
-        });
-      });
-
-      test(`BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER=1 (${linker})`, async () => {
-        const { install, installed } = await setup({
-          linker,
-          name: "test-postinstall-skip",
-          version: "2.0.0",
-          extraEnv: { BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER: "1" },
-        });
-
-        await install();
-        expect(await installed("test-postinstall-skip-native", "skip-test-cmd")).toEqual({
-          platformPackage: true,
-          postinstallRan: true,
-          bin: "shim v2.0.0",
-        });
-      });
-    }
+    });
   });
 });
 

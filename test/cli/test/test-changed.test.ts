@@ -393,6 +393,24 @@ describe.concurrent("bun test --changed", () => {
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
   });
+
+  test("a WebAssembly read out of bounds throws in a selected test", async () => {
+    using dir = tempDir("test-changed-wasm-oob", {
+      "package.json": JSON.stringify({ name: "wasm-oob", type: "module" }),
+      // (memory 1) (func (export "f") (param i32) (result i32) (i32.load (local.get 0)))
+      "oob.test.ts": `import { test, expect } from "bun:test";
+const bytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,6,1,0x60,1,0x7f,1,0x7f, 3,2,1,0, 5,3,1,0,1, 7,5,1,1,0x66,0,0, 0x0a,9,1,7,0,0x20,0,0x28,2,0,0x0b]);
+const { f } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+test("oob", () => expect(() => f(70000)).toThrow(WebAssembly.RuntimeError));
+`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "oob.test.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain("(pass) oob");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that

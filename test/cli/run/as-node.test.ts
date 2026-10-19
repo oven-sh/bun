@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { copyFileSync, symlinkSync } from "node:fs";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -8,6 +9,25 @@ describe("fake node cli", () => {
       "index.ts": "console.log(Bun.version)",
     });
     expect(fakeNodeRun(temp, join(temp, "index.ts")).stdout).toBe(Bun.version);
+  });
+  test(`is node when started as ${isWindows ? "node.EXE" : "NODE"}`, async () => {
+    using temp = tempDir("node-by-name", {});
+    if (isWindows) {
+      copyFileSync(bunExe(), join(String(temp), "node.exe"));
+    } else {
+      symlinkSync(bunExe(), join(String(temp), "NODE"));
+    }
+    await using proc = Bun.spawn({
+      cmd: [join(String(temp), isWindows ? "node.EXE" : "NODE")],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing script");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
   test("doesnt resolve bins", () => {
     using temp = tempDir("fake-node", {

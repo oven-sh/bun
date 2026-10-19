@@ -59,6 +59,8 @@ pub mod api {
     pub struct TransformOptions {
         /// jsx
         pub jsx: Option<Jsx>,
+        /// from `--jsx-side-effects`, which alone leaves the rest of `jsx` to tsconfig.json
+        pub jsx_side_effects: bool,
         /// tsconfig_override
         pub tsconfig_override: Option<Box<[u8]>>,
         /// origin
@@ -93,8 +95,10 @@ pub mod api {
         pub serve: Option<bool>,
         /// env_files
         pub env_files: Vec<Box<[u8]>>,
-        /// disable_default_env_files
+        /// `--no-env-file` or `env = false` in bunfig.toml. Holds for the whole process.
         pub disable_default_env_files: bool,
+        /// Set by Bun itself: the VM reads no default `.env` file at its start, what it builds later does.
+        pub skip_default_env_files: bool,
         /// extension_order
         pub extension_order: Vec<Box<[u8]>>,
         /// no_summary

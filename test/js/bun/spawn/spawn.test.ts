@@ -2367,3 +2367,24 @@ describe.skipIf(!isPosix)("a spawn while fd 0, 1 or 2 is closed", () => {
     });
   });
 });
+
+// An ignored SIGCHLD survives exec. The kernel then reaps a child before its parent can wait for it.
+it.skipIf(isWindows)("reports the exit code of a child when the parent process ignores SIGCHLD", async () => {
+  await using proc = spawn({
+    cmd: [
+      "sh",
+      "-c",
+      'trap "" CHLD; exec "$0" "$@"',
+      bunExe(),
+      "-e",
+      `console.log(await Bun.spawn(["sh", "-c", "exit 3"]).exited)`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("3\n");
+  expect(exitCode).toBe(0);
+});

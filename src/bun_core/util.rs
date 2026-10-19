@@ -4566,6 +4566,24 @@ pub mod spawn_ffi {
     }
 }
 
+/// Call before a spawn: under an inherited `SIG_IGN` on SIGCHLD the kernel reaps the child and `waitpid` fails with ECHILD.
+#[cfg(unix)]
+pub fn keep_children_waitable() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // SAFETY: `current` is a valid out-param, and with `SIG_DFL` a valid disposition.
+        unsafe {
+            let mut current: libc::sigaction = crate::ffi::zeroed();
+            if libc::sigaction(libc::SIGCHLD, core::ptr::null(), &raw mut current) == 0
+                && current.sa_sigaction == libc::SIG_IGN
+            {
+                current.sa_sigaction = libc::SIG_DFL;
+                libc::sigaction(libc::SIGCHLD, &raw const current, core::ptr::null_mut());
+            }
+        }
+    });
+}
+
 /// Stdin disposition for [`spawn_sync_inherit`] / [`spawn_sync_inherit_no_stdin`].
 /// The `Ignore` case wires fd 0 to `/dev/null` (`NUL` on Windows) so the
 /// child never blocks on a TTY read.
@@ -4594,6 +4612,8 @@ fn spawn_sync_inherit_impl(
     if argv.is_empty() {
         return Err(crate::CrateError::FileNotFound);
     }
+    #[cfg(unix)]
+    keep_children_waitable();
     #[cfg(unix)]
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
     // `cargs` for the duration of the spawn; `ptrs`/`environ` are null-

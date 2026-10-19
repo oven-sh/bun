@@ -22,7 +22,7 @@ pub(crate) use bun_lint_driver::cli::HELP;
 /// build has none of it.
 const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
-fn change_directory(cwd: &[u8]) {
+pub(crate) fn change_directory(cwd: &[u8]) {
     // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
     let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
     if let bun_sys::Result::Err(err) = changed {
@@ -36,7 +36,7 @@ fn change_directory(cwd: &[u8]) {
 }
 
 /// `--cwd` among the flags of `bun`, which precede `command`.
-fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     let mut found = None;
     let mut args = bun_core::argv().into_iter();
     while let Some(arg) = args.next() {

@@ -608,6 +608,28 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it.each([
+    [["--reporter=junit", "--reporter=dots", "--reporter-outfile=junit.xml"], true],
+    [["--reporter-outfile=junit.xml"], false],
+  ])("%j writes the report: %p", async (flags, written) => {
+    await using tmpDir = tempDir("junit-and-dots", {
+      "package.json": "{}",
+      "a.test.js": `test("one", () => {});`,
+    });
+    await using proc = spawn([bunExe(), "test", ...flags], {
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("1 pass");
+    if (flags.includes("--reporter=dots")) expect(stderr).not.toContain("(pass)");
+    expect(await file(join(String(tmpDir), "junit.xml")).exists()).toBe(written);
+    expect(exitCode).toBe(0);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

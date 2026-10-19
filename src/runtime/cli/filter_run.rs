@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 #[cfg(unix)]
@@ -8,6 +8,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
+use crate::cli::multi_run::{AbortHandler, SHOULD_ABORT};
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
@@ -35,8 +36,7 @@ struct ScriptConfig {
     // ../node_modules/.bin
     // ../../node_modules/.bin
     // and so forth, in addition to the user's $PATH.
-    #[allow(non_snake_case)]
-    PATH: Box<[u8]>,
+    env: FilterArg::ScriptEnv,
     elide_count: Option<usize>,
 }
 
@@ -97,45 +97,26 @@ impl<'a> ProcessHandle<'a> {
 
         let argv = ScriptArgv::new(state.shell_bin, handle.config.combined)?;
         let start_time = Instant::now();
-        let spawned: spawn::SpawnProcessResult = 'brk: {
-            // Get the envp with the PATH configured
-            // There's probably a more optimal way to do this where you have a Vec shared
-            // instead of creating a new one for each process
-            let env_ptr = state.env;
-            // The guard below borrows `env_ptr`.
-            let env_of_script = env_ptr;
-            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
-            let env = unsafe { &mut *env_ptr };
-            // Copy to owned — `original_path` borrows env.map which is
-            // mutated by put() below.
-            let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
-            let _ = env.map.put(b"PATH", &handle.config.PATH);
-            // Restores PATH unconditionally at block exit (success OR error).
-            // Keep the guard armed for the whole block so `?` early-returns also
-            // restore.
-            scopeguard::defer! {
-                // SAFETY: env_ptr valid for the run loop lifetime (see above).
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            }
-            // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
+        let spawned: spawn::SpawnProcessResult = {
+            let config = handle.config;
             let envp = crate::cli::script_or_command::with_package_script(
-                unsafe { &mut *env_of_script },
-                &handle.config.script_name,
+                // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
+                unsafe { &mut *state.env },
+                &config.script_name,
                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &handle.config.package_json_path,
+                    &config.package_json_path,
                 ),
-                |env| env.map.create_null_delimited_env_map(),
+                |env| config.env.create_envp(&env.map, &config.script_name),
             )?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
-            break 'brk unsafe {
+            unsafe {
                 spawn::spawn_process(
                     &handle.options,
                     argv.as_ptr(),
                     envp.as_ptr().cast::<*const c_char>(),
                 )
-            }??;
-            // `_guard` drops here (or on `?` above), restoring PATH.
+            }??
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
@@ -334,7 +315,7 @@ struct State<'a> {
     shell_bin: Option<&'static ZStr>,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
-    // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
+    // by Transpiler; ProcessHandle::start mutates `env.map` so a
     // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
     // own raw-ptr field. Reborrow `&mut *env` at use sites.
     env: *mut bun_dotenv::Loader,
@@ -738,81 +719,6 @@ impl<'a> State<'a> {
     }
 }
 
-struct AbortHandler;
-
-static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-// Atomic because it is set from a signal handler.
-
-impl AbortHandler {
-    #[cfg(unix)]
-    extern "C" fn posix_signal_handler(
-        sig: i32,
-        info: *const bun_sys::posix::siginfo_t,
-        _: *const c_void,
-    ) {
-        let _ = sig;
-        let _ = info;
-        SHOULD_ABORT.store(true, Ordering::SeqCst);
-    }
-
-    #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(
-        dw_ctrl_type: bun_sys::windows::DWORD,
-    ) -> bun_sys::windows::BOOL {
-        if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
-            SHOULD_ABORT.store(true, Ordering::SeqCst);
-            return bun_sys::windows::TRUE;
-        }
-        bun_sys::windows::FALSE
-    }
-
-    fn install() {
-        #[cfg(unix)]
-        {
-            // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-            let mut act: libc::sigaction = bun_core::ffi::zeroed();
-            act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-            // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
-                libc::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let res = bun_sys::c::SetConsoleCtrlHandler(
-                Some(Self::windows_ctrl_handler),
-                bun_sys::windows::TRUE,
-            );
-            if res == 0 {
-                if bun_core::env::IS_DEBUG {
-                    bun_core::warn!("Failed to set abort handler\n");
-                }
-            }
-        }
-    }
-
-    fn uninstall() {
-        // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
-        #[cfg(windows)]
-        {
-            // (None, FALSE) clears the ignore attribute; it does NOT unregister
-            // a handler routine — pass the address.
-            let _ = bun_sys::c::SetConsoleCtrlHandler(
-                Some(Self::windows_ctrl_handler),
-                bun_sys::windows::FALSE,
-            );
-        }
-    }
-}
-
-#[cfg(windows)]
-fn windows_is_terminal() -> bool {
-    let res = bun_sys::windows::GetFileType(bun_sys::Fd::stdout().native());
-    res == bun_sys::windows::FILE_TYPE_CHAR
-}
-
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> crate::Result<core::convert::Infallible> {
@@ -872,6 +778,7 @@ pub(crate) fn run_scripts_with_filter(
         let run_in_bun = ctx.debug.run_in_bun;
         let path_var: Vec<u8> =
             RunCommand::path_for_run(this_transpiler.env_mut(), path, None, path, run_in_bun)?;
+        let package_env = FilterArg::ScriptEnv::new(&path_var, Some(&package.json));
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()
@@ -932,7 +839,7 @@ pub(crate) fn run_scripts_with_filter(
                 script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
                 deps,
-                PATH: Box::<[u8]>::from(&path_var[..]),
+                env: package_env.clone(),
                 elide_count: ctx.bundler_options.elide_lines,
             });
         }
@@ -986,20 +893,15 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
-        pretty_output: {
-            #[cfg(windows)]
-            {
-                windows_is_terminal() && Output::enable_ansi_colors_stdout()
-            }
-            #[cfg(not(windows))]
-            {
-                Output::enable_ansi_colors_stdout()
-            }
-        },
+        pretty_output: Output::is_stdout_ansi_terminal(),
         shell_bin,
         aborted: false,
         env: env_ptr,
     };
+    if state.pretty_output {
+        // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+        FilterArg::force_color_in_scripts(unsafe { &mut *env_ptr });
+    }
 
     // initialize the handles
     // Self-referential — each `state.handles[i].state` points back at

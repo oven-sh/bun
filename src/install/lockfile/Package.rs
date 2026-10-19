@@ -2495,7 +2495,7 @@ impl Package<u64> {
                                 log,
                                 source,
                                 dependencies_q.loc,
-                                "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    \"bun\": \"latest\"\n  }}",
                                 bstr::BStr::new(group.prop)
                             );
                             return Err(crate::Error::InvalidPackageJSON);
@@ -2616,7 +2616,7 @@ impl Package<u64> {
                                     log,
                                     source,
                                     value_loc_of(source, key_loc),
-                                    "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                    "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    \"bun\": \"latest\"\n  }}",
                                     bstr::BStr::new(group.prop)
                                 );
                                 return Err(crate::Error::InvalidPackageJSON);
@@ -2651,7 +2651,7 @@ impl Package<u64> {
                             log,
                             source,
                             dependencies_q.loc,
-                            "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                            "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    \"bun\": \"latest\"\n  }}",
                             bstr::BStr::new(group.prop)
                         );
                     }

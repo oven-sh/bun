@@ -18,8 +18,6 @@ use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use crate::cli::Command;
 
 const SKIP_LIST: &[&[u8]] = &[
-    // skip hidden directories
-    b".",
     // skip node_modules
     b"node_modules",
     // skip .git folder
@@ -323,6 +321,71 @@ impl SelectedPackages {
     }
 }
 
+/// The variables of one package's scripts, over the environment that all scripts of a run share.
+#[derive(Clone)]
+pub(crate) struct ScriptEnv(Vec<(Box<[u8]>, Box<[u8]>)>);
+
+impl ScriptEnv {
+    /// What `json` has no value for keeps that of the package that `bun` was started in.
+    pub(crate) fn new(path: &[u8], json: Option<&bun_resolver::PackageJSON>) -> Self {
+        let mut env = Self(Vec::new());
+        env.set(b"PATH", path);
+        let Some(json) = json else {
+            return env;
+        };
+        env.set(b"npm_package_json", json.source.path.text);
+        if !json.name.is_empty() {
+            env.set(b"npm_package_name", &json.name);
+        }
+        if !json.version.is_empty() {
+            env.set(b"npm_package_version", &json.version);
+        }
+        if let Some(config) = json.config.as_deref() {
+            for (key, value) in config.iter() {
+                env.set(&strings::concat(&[b"npm_package_config_", &key[..]]), value);
+            }
+        }
+        env
+    }
+
+    fn set(&mut self, key: &[u8], value: &[u8]) {
+        self.0.push((key.into(), value.into()));
+    }
+
+    /// The environment block of the script `name`. Empty: a command that is not in `package.json`.
+    pub(crate) fn create_envp(
+        &self,
+        shared: &bun_dotenv::Map,
+        name: &[u8],
+    ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_alloc::AllocError> {
+        let mut map = shared.clone_with_allocator()?;
+        for (key, value) in &self.0 {
+            map.put(key, value)?;
+        }
+        if !name.is_empty() {
+            map.put(b"npm_lifecycle_event", name)?;
+        }
+        map.create_null_delimited_env_map()
+    }
+}
+
+/// For a run on a terminal: scripts write to pipes, where most programs leave colors out.
+pub(crate) fn force_color_in_scripts(env: &mut bun_dotenv::Loader) {
+    use bun_core::output::{ColorDepth, Source};
+    let decided: [&[u8]; 3] = [b"FORCE_COLOR", b"NO_COLOR", b"NODE_DISABLE_COLORS"];
+    if decided.iter().any(|key| env.map.get(key).is_some()) {
+        return;
+    }
+    let depth: &[u8] = match Source::color_depth() {
+        ColorDepth::C16m => b"3",
+        ColorDepth::C256 => b"2",
+        // Windows terminals show 16 million colors and set neither `TERM` nor `COLORTERM`.
+        ColorDepth::None if cfg!(windows) => b"3",
+        ColorDepth::C16 | ColorDepth::None => b"1",
+    };
+    let _ = env.map.put(b"FORCE_COLOR", depth);
+}
+
 // Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
 // a `NonNull` rather than a `Box` because moving a `Box` asserts unique access, which the
 // `GlobWalkerIterator` borrowing the walker would violate.
@@ -393,6 +456,24 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
+    /// The file system looks up an entry without glob syntax, so it decides whether case matters.
+    fn find_literal(&self) -> Option<glob::walk::MatchedPath> {
+        let pattern: &[u8] = &self.patterns[self.pattern_idx];
+        if glob::detect_glob_syntax(pattern)
+            || strings::split_any(pattern, b"/\\").any(glob_ignore_fn)
+        {
+            return None;
+        }
+        let mut buf = path_buffer_pool::get();
+        let path = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+            self.root_dir,
+            &mut buf[..],
+            &[pattern],
+        )?;
+        let stat = bun_sys::stat(path).ok()?;
+        bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode).then(|| path.as_bytes().into())
+    }
+
     /// As in `bun install`, a `!` entry removes a glob match, but never a path that's listed
     /// literally.
     fn is_excluded(&self, package_json_path: &[u8]) -> bool {
@@ -410,6 +491,10 @@ impl<'a> PackageFilterIterator<'a> {
             let Some(active) = &mut self.active else {
                 if self.pattern_idx >= self.patterns.len() {
                     return Ok(None);
+                }
+                if let Some(path) = self.find_literal() {
+                    self.pattern_idx += 1;
+                    return Ok(Some(path));
                 }
                 self.active = Some(self.start_walk()?);
                 continue;

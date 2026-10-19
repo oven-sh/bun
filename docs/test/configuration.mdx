@@ -138,6 +138,21 @@ pathIgnorePatterns = [
   Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely. Bun does not merge the two.
 </Note>
 
+### File Patterns
+
+`filePatterns` replaces the default test file rule (a name that ends in `.test`, `_test`, `.spec` or `_spec` before its extension) with your own glob patterns.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# Single pattern
+filePatterns = "**/*.itest.ts"
+
+# Multiple patterns
+filePatterns = ["**/*.dom.test.tsx", "**/__tests__/*.unit.ts"]
+```
+
+Each pattern is matched against the file's path relative to the project root, like `pathIgnorePatterns`. `*` does not cross a `/`, so `*.itest.ts` matches only in the project root and `**/*.itest.ts` matches at any depth. A pattern that starts with `!` excludes what it matches. Only files with a JavaScript or TypeScript extension are considered. Filters and `pathIgnorePatterns` still apply, and a file passed by path runs whether or not it matches. With `coverageSkipTestFiles`, coverage also skips the files that match.
+
 ## Reporters
 
 ### JUnit Reporter
@@ -203,6 +218,15 @@ The `smol` mode reduces memory usage by:
 Use it in memory-constrained environments, such as CI runners, or for large test suites.
 
 ## Test execution
+
+### isolate
+
+Run each test file in a fresh global object, like [`--isolate`](/test/parallel#--isolate). Default `false`. `--no-isolate` on the command line overrides it.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+isolate = true
+```
 
 ### concurrentTestGlob
 

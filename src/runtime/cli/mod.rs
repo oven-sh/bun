@@ -333,12 +333,6 @@ impl colon_list_type::ColonListValue for &'static [u8] {
     }
 }
 
-#[cold]
-fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
-    let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
-    Global::exit(1);
-}
-
 // ─── Cli (entry point) ───────────────────────────────────────────────────────
 pub(crate) mod cli {
     use super::*;
@@ -632,26 +626,21 @@ pub(crate) mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
+    /// Whether `argv0` ends in `name` in any case, with or without `.exe`: npm's `bun/bin/bunx.exe`, `bunx.EXE` by `PATHEXT`.
+    fn is_invoked_as(argv0: &[u8], name: &[u8]) -> bool {
+        fn without<'a>(text: &'a [u8], end: &[u8]) -> Option<&'a [u8]> {
+            let (rest, found) = text.split_at_checked(text.len().checked_sub(end.len())?)?;
+            found.eq_ignore_ascii_case(end).then_some(rest)
+        }
+        without(without(argv0, b".exe").unwrap_or(argv0), name).is_some()
+    }
+
     fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+        is_invoked_as(argv0, b"bunx")
     }
 
     fn is_node(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
-        }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"node")
-        }
+        is_invoked_as(argv0, b"node")
     }
 
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.
@@ -754,24 +743,60 @@ pub(crate) mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        let Some(mut first_arg_name) = iter.next() else {
-            return Tag::AutoCommand;
-        };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
+        // A flag of `bun` can have its value in the next argument, as in `bun --cwd dir run dev`.
+        let mut after_value = false;
+        let name = loop {
+            let Some(arg) = iter.next() else {
+                return Tag::AutoCommand;
+            };
+            if !arg.starts_with(b"-") {
+                break arg;
+            }
+            let flag = strings::split_once_char(arg, b'=').map_or(arg, |it| it.0);
+            if arg[1..].starts_with(b"e") || matches!(flag, b"--eval" | b"--print") {
+                return Tag::AutoCommand;
+            }
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
-            match iter.next() {
-                Some(n) => first_arg_name = n,
-                None => return Tag::AutoCommand,
+            if !arguments::value_is_next_arg(arg) {
+                continue;
             }
-        }
+            let Some(value) = iter.next() else {
+                return Tag::AutoCommand;
+            };
+            // Commands give these flags other meanings: `bun -p install` is `bun install --production`.
+            if !after_value && command_named(value) != Tag::AutoCommand {
+                break value;
+            }
+            after_value = true;
+            // What follows names a script of other packages, or is for the code.
+            if matches!(arg, b"--filter" | b"-F" | b"-p") {
+                return Tag::AutoCommand;
+            }
+        };
 
+        use super::script_or_command::{Runs, is_of_the_project, runs};
+        let tag = command_named(name);
+        let project_has_it = match tag {
+            Tag::AutoCommand | Tag::RunCommand => false,
+            Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => is_of_the_project(name),
+            // `bun --cwd dir build` is `bun build` only if the project has no `build` to run. Scripts have `bun` in `PATH`.
+            _ if after_value => {
+                tag == Tag::ReservedCommand || name == b"bun" || runs(name) != Runs::Command
+            }
+            _ => false,
+        };
+        match project_has_it {
+            true => Tag::AutoCommand,
+            false => tag,
+        }
+    }
+
+    /// The command that `name` spells, or `AutoCommand`.
+    fn command_named(name: &[u8]) -> Tag {
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
-        let x = RootCommandMatcher::r#match(first_arg_name);
+        let x = RootCommandMatcher::r#match(name);
         // PERF: `if x == const` is a chain of compares rather than a jump
         // table on the packed u96 — profile if it shows up on a hot path.
         if x == RootCommandMatcher::case(b"init") {
@@ -805,7 +830,7 @@ pub(crate) mod command {
             return Tag::ReplCommand;
         }
         if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
-            for arg in argv.iter() {
+            for arg in bun::argv().iter() {
                 if arg == b"-g" || arg == b"--global" {
                     return Tag::AddCommand;
                 }
@@ -862,22 +887,13 @@ pub(crate) mod command {
             return Tag::AuditCommand;
         }
         if x == RootCommandMatcher::case(b"check") {
-            return match super::script_or_command::is_of_the_project(b"check") {
-                true => Tag::AutoCommand,
-                false => Tag::CheckCommand,
-            };
+            return Tag::CheckCommand;
         }
         if x == RootCommandMatcher::case(b"lint") {
-            return match super::script_or_command::is_of_the_project(b"lint") {
-                true => Tag::AutoCommand,
-                false => Tag::LintCommand,
-            };
+            return Tag::LintCommand;
         }
         if x == RootCommandMatcher::case(b"fmt") {
-            return match super::script_or_command::is_of_the_project(b"fmt") {
-                true => Tag::AutoCommand,
-                false => Tag::FormatCommand,
-            };
+            return Tag::FormatCommand;
         }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
@@ -909,9 +925,6 @@ pub(crate) mod command {
             if bun_core::Environment::ENABLE_FUZZILLI {
                 return Tag::FuzzilliCommand;
             }
-            return Tag::AutoCommand;
-        }
-        if x == RootCommandMatcher::case(b"-e") {
             return Tag::AutoCommand;
         }
         Tag::AutoCommand
@@ -1290,7 +1303,12 @@ pub(crate) mod command {
             return run_command::RunCommand::exec_node_repl(ctx);
         }
 
-        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+        // `bun run -e code <target>` runs the target.
+        if (tag == Tag::AutoCommand || no_target) && !ctx.runtime_options.eval.script.is_empty() {
+            if no_target {
+                // The "run" of `bun run -e code` is not an argument of the code.
+                ctx.positionals.clear();
+            }
             lint_command::read_program_of_script(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
@@ -1334,7 +1352,9 @@ pub(crate) mod command {
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        print_help_if_asked_before(&argv, b"init", Tag::InitCommand);
+        change_directory_before(b"init");
+        super::init_command::InitCommand::exec(after_command(&argv, b"init"))
     }
 
     #[cold]
@@ -1400,7 +1420,7 @@ pub(crate) mod command {
     }
 
     /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
-    fn after_command<'a>(
+    pub(crate) fn after_command<'a>(
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
@@ -1414,6 +1434,13 @@ pub(crate) mod command {
             }
         }
         &[]
+    }
+
+    /// Applies `--cwd` among the flags of `bun`, which precede `command`, for a command that reads argv itself.
+    fn change_directory_before(command: &[u8]) {
+        if let Some(cwd) = lint_command::cwd_before(command) {
+            lint_command::change_directory(cwd);
+        }
     }
 
     /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
@@ -1718,7 +1745,10 @@ pub(crate) mod command {
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
-                    if !strings::has_prefix(slice, b"--") {
+                    // What precedes the command is the value of a flag of `bun`.
+                    if !strings::has_prefix(slice, b"--")
+                        && (positional_i > 0 || matches!(slice, b"create" | b"c"))
+                    {
                         if positional_i == 1 {
                             template_name_start = remainder_i + 2;
                         }
@@ -1746,6 +1776,7 @@ pub(crate) mod command {
             Global::exit(0);
         }
 
+        change_directory_before(positionals[0]);
         let template_name = positionals[1];
 
         // if template_name is "react" — deprecated; redirect to react-app/vite.

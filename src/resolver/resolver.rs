@@ -1643,11 +1643,16 @@ impl<'a> Resolver<'a> {
                 }
             }
 
+            // Imports only, as in Node. For `EntryPointRun` the option holds `--preserve-symlinks-main`.
+            let preserve_symlinks =
+                self.opts.preserve_symlinks && kind != ast::ImportKind::EntryPointBuild;
+
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+            if !preserve_symlinks && let Some(query) = dir.get_entry(self.generation, name.filename)
+            {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };

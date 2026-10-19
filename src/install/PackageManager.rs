@@ -2034,7 +2034,7 @@ impl<'a> PackageJsonWalk<'a> {
             );
             if !matches!(&opened, Err(e) if e.get_errno() == bun_sys::E::ENOENT)
                 && dir.len() != self.cwd.len()
-                && is_shared_directory(dir)
+                && bun_sys::is_shared_directory(dir)
             {
                 bun_core::warn!(
                     "ignoring package.json in <b>{}<r>: directory is writable by other users",
@@ -2247,22 +2247,6 @@ fn find_workspace_root_above<'a>(
         }
     }
     Ok(None)
-}
-
-/// Returns true if `dir` is sticky and group- or world-writable, like `/tmp`. Any local user can
-/// create a `package.json` there.
-#[cfg(unix)]
-fn is_shared_directory(dir: &[u8]) -> bool {
-    use bun_sys::S;
-    !bun_sys::stat(&ZBox::from_bytes(dir)).is_ok_and(|st| {
-        let mode = st.st_mode as bun_sys::Mode;
-        mode & S::ISVTX == 0 || mode & (S::IWGRP | S::IWOTH) == 0
-    })
-}
-
-#[cfg(not(unix))]
-fn is_shared_directory(_: &[u8]) -> bool {
-    false
 }
 
 /// Finds the project that `dir` is in, the way `init` does: the directory of the nearest
@@ -3167,7 +3151,6 @@ fn init_with_runtime_once(
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
-        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         let _ = manager.progress.start(b"", 0);
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;

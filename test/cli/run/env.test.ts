@@ -254,6 +254,85 @@ test.concurrent(".env value expansion", async () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+const printExpanded =
+  "console.log(JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('XP_')))));";
+
+test.concurrent(".env value expansion of a key from further down the file, and of the key itself", async () => {
+  using dir = tempDir("dotenv-expand-in-file", {
+    ".env": [
+      "XP_Z=$XP_Y",
+      "XP_Y=$XP_X",
+      "XP_X=1",
+      "XP_PORT=${XP_PORT:-3000}",
+      "XP_SELF=$XP_SELF-bar",
+      "XP_URL=u:$XP_PASS@h",
+      "XP_PASS=abc\\$def",
+      "XP_LOOP_A=a$XP_LOOP_B",
+      "XP_LOOP_B=b$XP_LOOP_A",
+    ].join("\n"),
+    "index.ts": printExpanded,
+  });
+  const { stdout } = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual({
+    XP_Z: "1",
+    XP_Y: "1",
+    XP_X: "1",
+    XP_PORT: "3000",
+    XP_SELF: "-bar",
+    XP_URL: "u:abc$def@h",
+    XP_PASS: "abc$def",
+    XP_LOOP_A: "ab",
+    XP_LOOP_B: "b",
+  });
+});
+
+test.concurrent(".env values that existing projects depend on", async () => {
+  using dir = tempDir("dotenv-expand-pinned", {
+    ".env": [
+      "XP_VAR=hello",
+      "XP_URL=https://x.dev/path#frag",
+      "XP_PASSWORD=pa$$w0rd",
+      "XP_SINGLE_QUOTED='p$XP_VAR'",
+      "XP_DEFAULT=${XP_NOPE:-fallback}",
+      "XP_EMPTY=",
+      "XP_EMPTY_IS_SET=${XP_EMPTY:-fallback}",
+      "XP_EXPORTED=${XP_EXPORTED:-3000}",
+      "XP_EXPORTED_AS_IS=$XP_EXPORTED_DOLLAR",
+    ].join("\n"),
+    "index.ts": printExpanded,
+  });
+  const { stdout } = await bunRun(`${dir}/index.ts`, { XP_EXPORTED: "9", XP_EXPORTED_DOLLAR: "a$XP_VAR" });
+  expect(JSON.parse(stdout)).toEqual({
+    XP_VAR: "hello",
+    XP_URL: "https://x.dev/path",
+    XP_PASSWORD: "pa$",
+    XP_SINGLE_QUOTED: "phello",
+    XP_DEFAULT: "fallback",
+    XP_EMPTY: "",
+    XP_EMPTY_IS_SET: "",
+    XP_EXPORTED: "9",
+    XP_EXPORTED_DOLLAR: "a$XP_VAR",
+    XP_EXPORTED_AS_IS: "a$XP_VAR",
+  });
+});
+
+test.concurrent("$VAR in an env file sees the files that win over it, and no other file", async () => {
+  const winner = "XP_WINNER=w\nXP_REF=[$XP_BASE]\nXP_PORT=${XP_BASE:-3000}\n";
+  const loser = "XP_BASE=4000\nXP_SEES_WINNER=$XP_WINNER\n";
+  using dir = tempDir("dotenv-expand-other-file", {
+    ".env.local": winner,
+    ".env": loser,
+    "first.env": loser,
+    "second.env": winner,
+    "index.ts": printExpanded,
+  });
+  const expected = { XP_WINNER: "w", XP_REF: "[]", XP_PORT: "3000", XP_BASE: "4000", XP_SEES_WINNER: "w" };
+  const defaults = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(defaults.stdout)).toEqual(expected);
+  const explicit = await bunRun([`--env-file=${dir}/first.env`, `--env-file=${dir}/second.env`, `${dir}/index.ts`]);
+  expect(JSON.parse(explicit.stdout)).toEqual(expected);
+});
+
 test(".env ${VAR:-default} with nested references (issue #32411)", async () => {
   // https://github.com/oven-sh/bun/issues/32411
   // `${` pairs with its matching `}` by depth and the `:-` default is expanded

@@ -6,7 +6,7 @@
 use bstr::BStr;
 use bun_bundler::options;
 use bun_core::ZStr;
-use bun_core::{self, Global, Output, env_var};
+use bun_core::{self, Global, Output, env_var, strings};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_options_types::schema::api;
@@ -81,6 +81,8 @@ enum ConfigFile {
     User,
     /// `./bunfig.toml`
     Project,
+    /// See [`find_config_above`].
+    ProjectAbove,
     /// `--config`
     Named,
 }
@@ -136,7 +138,80 @@ fn load_bunfig(
         log: log_ptr,
         level: original_level,
     };
-    Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)
+    let is_above_cwd = file == ConfigFile::ProjectAbove;
+    let is_project_file = is_above_cwd || file == ConfigFile::Project;
+    Bunfig::parse(
+        cmd,
+        &source,
+        is_project_file,
+        is_above_cwd,
+        ctx,
+        tool,
+        counts,
+    )
+}
+
+/// Whether the package.json in `root` lists `dir`, which is below `root`, as a workspace. `None` if it has no `workspaces`.
+fn lists_workspace(root: &[u8], dir: &[u8], buf: &mut PathBuffer) -> Option<bool> {
+    let path = join_config_path(root, b"package.json", buf)?;
+    let source = bun_ast::to_source(path, Default::default()).ok()?;
+    bun_ast::stmt::data::Store::create();
+    bun_ast::expr::data::Store::create();
+    let _store_reset = bun_ast::StoreResetGuard::new();
+    let mut log = bun_ast::Log::init();
+    let Ok(json) = bun_parsers::json::ParsedJson::parse_package_json(&source, &mut log) else {
+        return Some(false);
+    };
+    let workspaces = json.root.get(b"workspaces")?;
+    let patterns = workspaces.get(b"packages").unwrap_or(workspaces);
+    let bun_ast::ExprData::EArrayJSON(patterns) = patterns.data else {
+        return Some(false);
+    };
+    let dir = bun_paths::string_paths::without_leading_path_separator(&dir[root.len()..]);
+    let patterns = patterns.get().items().iter().filter_map(|it| match it {
+        bun_ast::E::JsonValue::String(pattern) => Some(pattern.slice()),
+        _ => None,
+    });
+    Some(bun_glob::any_matches(patterns.map(|pattern| {
+        let pattern = strings::remove_leading_dot_slash(pattern);
+        bun_glob::r#match(strings::without_trailing_slash(pattern), dir)
+    })))
+}
+
+/// The nearest bunfig.toml above `cwd` that is in the same project: not above the nearest package.json, or the workspace root that lists it.
+fn find_config_above<'buf>(cwd: &[u8], buf: &'buf mut PathBuffer) -> Option<&'buf ZStr> {
+    // A dependency's scripts and a compiled executable are not part of the project they run in.
+    if StandaloneModuleGraph::get_ref().is_some()
+        || bun_paths::string_paths::path_contains_node_modules_folder(cwd)
+    {
+        return None;
+    }
+    let mut config_dir = cwd;
+    loop {
+        config_dir = bun_core::dirname(config_dir)?;
+        if bun_sys::exists_z(join_config_path(config_dir, b"bunfig.toml", buf)?)
+            && !bun_sys::is_shared_directory(config_dir)
+        {
+            break;
+        }
+    }
+    let mut root = cwd;
+    while !bun_sys::exists_z(join_config_path(root, b"package.json", buf)?) {
+        root = bun_core::dirname(root)?;
+    }
+    if config_dir.len() < root.len() {
+        let package_dir = root;
+        loop {
+            root = bun_core::dirname(root)?;
+            if let Some(is_listed) = lists_workspace(root, package_dir, buf) {
+                if !is_listed || config_dir.len() < root.len() {
+                    return None;
+                }
+                break;
+            }
+        }
+    }
+    join_config_path(config_dir, b"bunfig.toml", buf)
 }
 
 /// The user's own file, once.
@@ -237,6 +312,23 @@ fn load_config_path_for_tool(
     } else {
         ConfigFile::Named
     };
+    let looks_above = matches!(
+        cmd,
+        CommandTag::AutoCommand
+            | CommandTag::RunCommand
+            | CommandTag::TestCommand
+            | CommandTag::BuildCommand
+    );
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if auto_loaded
+        && looks_above
+        && !bun_sys::exists_z(config_path)
+        && let Some(cwd) = ctx.args.absolute_working_dir.as_deref()
+        && let Some(above) = find_config_above(cwd, &mut buf)
+    {
+        let file = ConfigFile::ProjectAbove;
+        return load_bunfig(cmd, file, above, ctx, tool, Counts::Everything);
+    }
     load_bunfig(cmd, file, config_path, ctx, tool, Counts::Everything)
 }
 

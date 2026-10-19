@@ -540,6 +540,9 @@ impl<'a> Coordinator<'a> {
                     bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
             }
+            frame::Kind::SnapshotWriteFailed => {
+                self.reporter.worker_snapshot_write_failed = true;
+            }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
     }
@@ -1035,11 +1038,11 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
     }
 }
 
-/// Coordinator-side SIGINT/SIGTERM handling. The handler records the signal
-/// and wakes the loop; `Coordinator::drive` checks it and tears down workers
-/// itself so we don't do non-signal-safe work in the handler. Linux PDEATHSIG
-/// and the Windows Job Object are the safety net for when the coordinator
-/// can't run this (SIGKILL).
+/// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
+/// flag and wakes the loop; `Coordinator::drive` checks it and tears down workers itself so we
+/// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
+/// Windows Job Object are the safety net for when the coordinator can't run
+/// this (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
 
@@ -1049,9 +1052,7 @@ pub(crate) mod abort_handler {
     /// The loop `Coordinator::drive` ticks. Set by `install`, cleared by `uninstall`.
     static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
 
-    /// Signal context on POSIX; the console control thread on Windows. The
-    /// poll retries on EINTR, so without the wakeup `drive` reads the flag
-    /// only when something else ends the poll.
+    /// In signal context (Windows: the console control thread). The poll retries on EINTR: wake it.
     fn request_abort(signal: i32) {
         ABORT_SIGNAL.store(signal, Ordering::Release);
         let loop_ = LOOP.load(Ordering::Acquire);

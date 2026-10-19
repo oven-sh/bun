@@ -232,7 +232,6 @@ pub(crate) fn install_hoisted_packages(
     if log_level.show_progress() {
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
         let progress = &mut this.progress;
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         let root_node = progress.start(b"", 0);
         download_node = root_node.start(ProgressStrings::download(), 0);
         install_node = root_node.start(ProgressStrings::install(), hoisted_len);

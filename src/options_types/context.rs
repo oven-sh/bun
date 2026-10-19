@@ -44,6 +44,44 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    pub cli_overrides: CliOverrides,
+}
+
+/// Settings given as flags, which a bunfig.toml that is read after the flags are applied leaves alone.
+#[derive(Clone, Copy, Default)]
+pub struct CliOverrides {
+    /// `--define`
+    pub define: bool,
+    /// `--loader`
+    pub loaders: bool,
+    /// `--jsx-runtime`
+    pub jsx_runtime: bool,
+    /// `--jsx-factory`
+    pub jsx_factory: bool,
+    /// `--jsx-fragment`
+    pub jsx_fragment: bool,
+    /// `--jsx-import-source`
+    pub jsx_import_source: bool,
+    /// `--console-depth`
+    pub console_depth: bool,
+    /// `--install`, `-i` or `--no-install`
+    pub auto_install: bool,
+    /// `--no-macros`
+    pub macros: bool,
+    /// `--shell`
+    pub shell: bool,
+    /// `--bun`
+    pub run_in_bun: bool,
+    /// `--coverage-reporter`
+    pub coverage_reporter: bool,
+    /// `--coverage-dir`
+    pub coverage_dir: bool,
+    /// `--rerun-each`
+    pub rerun_each: bool,
+    /// `--retry`
+    pub retry: bool,
+    /// `--no-isolate`
+    pub no_isolate: bool,
 }
 
 impl Default for ContextData {
@@ -84,6 +122,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            cli_overrides: CliOverrides::default(),
         }
     }
 }
@@ -439,6 +478,8 @@ pub struct TestOptions {
     pub coverage: CodeCoverageOptions,
     pub path_ignore_patterns: Vec<Box<[u8]>>,
     pub path_ignore_patterns_from_cli: bool,
+    /// `[test] filePatterns`: which files are tests. Empty: the ones with a test suffix.
+    pub file_patterns: Vec<Box<[u8]>>,
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `test_filter_regex()`.
@@ -523,6 +564,7 @@ impl Default for TestOptions {
             coverage: CodeCoverageOptions::default(),
             path_ignore_patterns: Vec::new(),
             path_ignore_patterns_from_cli: false,
+            file_patterns: Vec::new(),
             test_filter_pattern: None,
             test_filter_regex: None,
             // Under ASAN every spawned `bun` child is several-× heavier in
@@ -632,6 +674,16 @@ pub struct HeapProf {
     pub text_format: bool,
     pub name: Box<[u8]>,
     pub dir: Box<[u8]>,
+}
+
+impl RuntimeOptions {
+    /// `--preserve-symlinks-main` or `NODE_PRESERVE_SYMLINKS_MAIN=1`.
+    pub fn preserve_symlinks_main_enabled(&self) -> bool {
+        self.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false)
+    }
 }
 
 impl Default for RuntimeOptions {

@@ -507,19 +507,17 @@ impl UpgradeCommand {
 
     #[cold]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        let args = bun_core::argv();
-        if args.len() > 2 {
-            for arg in args.iter().skip(2) {
-                if !strings::contains(arg, b"--") {
-                    bun_core::pretty_error!(
-                        "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
-                    );
-                    for arg_err in args.iter().skip(2) {
-                        bun_core::pretty_error!(" {}", bstr::BStr::new(arg_err));
-                    }
-                    bun_core::pretty_errorln!("` instead.");
-                    Global::exit(1);
+        let args = Command::after_command(bun_core::argv().as_slice(), b"upgrade");
+        for arg in args {
+            if !strings::contains(arg.as_bytes(), b"--") {
+                bun_core::pretty_error!(
+                    "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
+                );
+                for arg_err in args {
+                    bun_core::pretty_error!(" {}", bstr::BStr::new(arg_err.as_bytes()));
                 }
+                bun_core::pretty_errorln!("` instead.");
+                Global::exit(1);
             }
         }
 

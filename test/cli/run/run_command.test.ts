@@ -79,6 +79,53 @@ describe("bun", () => {
     expect(err).toContain('Script not found "nope"');
     expect(exitCode).toBe(1);
   });
+
+  describe.each(["buildall", "--if-present buildall"])("bun run %s, below a package that has the script", args => {
+    const run = (packageJson: string) => {
+      using dir = tempDir("package-json-below-a-package", {
+        "package.json": JSON.stringify({ name: "root", scripts: { buildall: "echo root" } }),
+        "packages/a/package.json": packageJson,
+      });
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: join(String(dir), "packages", "a"),
+        cmd: [bunExe(), "run", ...args.split(" ")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return { stdout: stdout.toString().trim(), stderr: stderr.toString(), exitCode };
+    };
+
+    test("a package.json that fails to parse is an error", () => {
+      expect(run(`{\n<<<<<<< HEAD\n  "scripts": { "buildall": "echo a" }\n}`)).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining(join("packages", "a", "package.json") + ":2:1"),
+        exitCode: 1,
+      });
+    });
+
+    test.each(["\n", "[]"])("a package.json that is %j is no package.json", packageJson => {
+      expect(run(packageJson)).toEqual({ stdout: "root", stderr: "$ echo root\n", exitCode: 0 });
+    });
+  });
+
+  test.skipIf(isWindows)("a program in node_modules/.bin runs beside a package.json that fails to parse", () => {
+    using dir = tempDir("broken-package-json-bin", {
+      "package.json": "{",
+      "node_modules/.bin/tool": "#!/bin/sh\necho tool\n",
+    });
+    chmodSync(join(String(dir), "node_modules", ".bin", "tool"), 0o755);
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "tool"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBeEmpty();
+    expect(stdout.toString()).toBe("tool\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // A working directory can be PATH_MAX - 1 bytes long. A file in it whose own path no longer fits a path buffer
@@ -140,6 +187,19 @@ describe.concurrent.skipIf(!isLinux)("a working directory close to PATH_MAX", ()
       expect(await run(["x", "hello"], project.cwd)).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
     });
   });
+});
+
+test.skipIf(isWindows)("runs an entry point that is a pipe", async () => {
+  await using proc = Bun.spawn({
+    cmd: ["sh", "-c", `echo 'console.log(process.argv.slice(1).join())' | "$0" /dev/stdin extra`, bunExe()],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("/dev/stdin,extra\n");
+  expect(exitCode).toBe(0);
 });
 
 test.if(isWindows)("[windows] A file in drive root runs", async () => {

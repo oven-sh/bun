@@ -962,6 +962,8 @@ pub(crate) struct CommandLineReporter {
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub(crate) worker_ipc_file_idx: Option<u32>,
+    /// Set in the `--parallel` coordinator when a worker could not write its snapshots.
+    pub(crate) worker_snapshot_write_failed: bool,
     /// Errors thrown by the test now running, captured while a reporter
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
@@ -1729,6 +1731,16 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
                     return false;
                 }
             }
+            let file_patterns = &runner.test_options.file_patterns;
+            if !file_patterns.is_empty() {
+                let rel_path = resolve_path::relative(FileSystem::instance().top_level_dir, slice);
+                let results = file_patterns
+                    .iter()
+                    .map(|it| bun_glob::r#match(it, rel_path));
+                if bun_glob::any_matches(results) {
+                    return false;
+                }
+            }
         }
     }
 
@@ -1835,6 +1847,13 @@ impl TestCommand {
             .iter()
             .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
             .collect();
+        // SAFETY: as for `path_ignore_patterns_view`.
+        let file_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
+            .test_options
+            .file_patterns
+            .iter()
+            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
+            .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
@@ -1881,6 +1900,7 @@ impl TestCommand {
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
+            worker_snapshot_write_failed: false,
             test_failure: None,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
@@ -1918,7 +1938,7 @@ impl TestCommand {
         // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
         if ctx.test_options.test_worker {
             ctx.args.env_files.clear();
-            ctx.args.disable_default_env_files = true;
+            ctx.args.skip_default_env_files = true;
         }
 
         bun_ast::initialize_store();
@@ -2024,6 +2044,8 @@ impl TestCommand {
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
             unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+        // SAFETY: as for `path_ignore_patterns`.
+        scanner.file_patterns = unsafe { bun_ptr::detach_lifetime(&file_patterns_view[..]) };
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2687,12 +2709,22 @@ impl TestCommand {
 
         let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
             && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+        let is_coverage_too_low = coverage_options.enabled
+            && coverage_options.fractions.failing
+            && coverage_options.fail_on_low_coverage;
+        if is_coverage_too_low {
+            pretty_errorln!(
+                "<r><red>error<r><d>:<r> coverage below <b>coverageThreshold<r> (functions {:.2}%, lines {:.2}%)",
+                coverage_options.fractions.functions * 100.0,
+                coverage_options.fractions.lines * 100.0
+            );
+            Output::flush();
+        }
         if should_fail_on_no_tests
             || summary.fail > 0
-            || (coverage_options.enabled
-                && coverage_options.fractions.failing
-                && coverage_options.fail_on_low_coverage)
+            || is_coverage_too_low
             || !write_snapshots_success
+            || reporter.worker_snapshot_write_failed
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;

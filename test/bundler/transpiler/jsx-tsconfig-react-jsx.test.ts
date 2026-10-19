@@ -145,3 +145,24 @@ describe("removed solid jsx runtime", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+test.concurrent.each(["react-jsxDEV", "react-jsxdev"])(
+  'bunfig.toml jsx = "%s" selects the development runtime',
+  async jsx => {
+    using dir = tempDir("jsx-bunfig-dev", {
+      "bunfig.toml": `jsx = "${jsx}"\n`,
+      "m.jsx": `export const a = <div />;\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "m.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`from "react/jsx-dev-runtime"`);
+    expect(exitCode).toBe(0);
+  },
+);

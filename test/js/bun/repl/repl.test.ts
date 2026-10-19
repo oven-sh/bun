@@ -1079,6 +1079,27 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 
+  // The poll that the REPL waits in for a promise is not ended by a signal: it retries on
+  // EINTR. The timer keeps the loop parked in that poll, and the idle GC timer is off so that
+  // nothing else ends it.
+  test("SIGINT interrupts an await while the event loop is parked", async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor, proc }) => {
+        // "parked" is printed from inside the wait, when the REPL's SIGINT handler is installed.
+        // The echo of this line does not contain the word.
+        send(
+          "await new Promise(() => { setTimeout(() => console.log('par' + 'ked'), 1); setTimeout(() => {}, 600000); })\n",
+        );
+        await waitFor("parked");
+        proc.kill("SIGINT");
+        await waitFor(/\u276f|> /);
+        send("1 + 1\n");
+        await waitFor("2");
+      },
+      { env: { BUN_GC_TIMER_DISABLE: "1" } },
+    );
+  });
+
   test("require works in terminal", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("typeof require\n");

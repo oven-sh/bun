@@ -1372,8 +1372,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
       });
     });
-    it("a termination that interrupts the script still ends the JS caller", async () => {
-      // The addon leaves what napi_run_script reports pending and returns.
+    it("a termination that interrupts the script does not let a catch block of the JS caller start", async () => {
+      // The addon leaves what napi_run_script reports pending and returns. `caught` is written twice before the
+      // call, so that the increment in the catch block is a plain store that no trap check can stop.
       const fixture = `
         const vm = require("vm");
         const { test_napi_run_script } = require(process.argv[2]);
@@ -1382,20 +1383,27 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         let code;
         try {
           vm.runInThisContext(
-            'try { run(); ran.push("after the call"); } catch { ran.push("catch"); } finally { ran.push("finally"); }',
+            \`
+              var caught = 0;
+              caught = 0;
+              function call() {
+                try { run(); ran.push("after the call"); } catch { caught++; ran.push("catch"); } finally { ran.push("finally"); }
+              }
+              call();
+            \`,
             { timeout: 100 },
           );
         } catch (e) {
           code = e.code;
         }
-        console.log(JSON.stringify({ started: globalThis.started, code, ran }));
+        console.log(JSON.stringify({ started: globalThis.started, code, caught: globalThis.caught, ran }));
       `;
       const [node, bun] = await Promise.all([
         runFixtureWith(await nodeExeMatchingAbi(), [], fixture),
         runFixtureWith(bunExe(), [], fixture),
       ]);
       expect(bun).toEqual({
-        stdout: JSON.stringify({ started: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT", ran: [] }),
+        stdout: JSON.stringify({ started: true, code: "ERR_SCRIPT_EXECUTION_TIMEOUT", caught: 0, ran: [] }),
         stderr: "",
         exitCode: 0,
       });

@@ -3064,8 +3064,10 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     NakedPtr<Exception> returnedException;
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
-    if (returnedException) {
-        env->scheduleException(returnedException->value());
+    if (returnedException) [[unlikely]] {
+        // A termination stays the cell: the env throws it again by identity, so no catch block of the caller runs.
+        bool isTermination = vm.isTerminationException(returnedException.get());
+        env->scheduleException(isTermination ? JSValue(returnedException.get()) : returnedException->value());
         return napi_set_last_error(env, napi_generic_failure);
     }
 

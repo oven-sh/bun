@@ -1020,8 +1020,7 @@ test(
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "node-http-server-close-last-connection-fixture.js")],
-      // The fixture ends itself before the test can time out, so that a row that hangs shows in the rows it prints.
-      env: { ...bunEnv, DEADLINE_MS: isCI || isASAN || isDebug ? "60000" : "4000" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

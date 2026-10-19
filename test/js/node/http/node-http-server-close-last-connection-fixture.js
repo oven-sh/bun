@@ -23,8 +23,6 @@ process.on("uncaughtException", err => {
   err.events.push("uncaught " + err.message);
 });
 process.on("exit", () => console.log(JSON.stringify(results)));
-// A row that never ends must not hold the test until its timeout: the rows printed so far show which one it is.
-if (process.env.DEADLINE_MS) setTimeout(() => process.exit(1), +process.env.DEADLINE_MS).unref();
 
 function row(name, protocol, run) {
   const events = (results[name] = []);

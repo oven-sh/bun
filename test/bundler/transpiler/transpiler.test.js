@@ -192,15 +192,49 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
       ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
-    it("bails out or strips `this` when the index is a call/assignment target", () => {
+    it("bails out when the index is a call/assignment target", () => {
       // `[obj.m][0]()` calls through a Reference into the temporary array,
-      // so `this` is the array; inlining to `obj.m()` would bind `this` to
-      // `obj`. Match the sibling folds and emit `(0, obj.m)()`.
-      ts.expectPrintedMin_("x = [obj.m][0]()", "x = (0, obj.m)()");
-      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = (0, obj[m])()");
+      // so `this` is the array literal itself. Neither `obj.m()` nor
+      // `(0, obj.m)()` reproduces that, so the fold must not fire in call
+      // position at all. That includes plain identifiers and function
+      // expressions: `[y][0]()` calls `y` with `this` set to the array.
+      ts.expectPrintedMin_("x = [obj.m][0]()", "x = [obj.m][0]()");
+      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = [obj[m]][0]()");
       ts.expectPrintedMin_("x = [obj.m][0]", "x = obj.m");
-      ts.expectPrintedMin_("x = [y][0]()", "x = y()");
-      ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
+      ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
+      ts.expectPrintedMin_("x = [() => y][0]()", "x = [() => y][0]()");
+      ts.expectPrintedMin_("x = [obj.m][0]?.()", "x = [obj.m][0]?.()");
+      ts.expectPrintedMin_("x = [obj.m]?.[0]()", "x = [obj.m][0]()");
+      ts.expectPrintedMin_("x = [0, y][1]()", "x = [0, y][1]()");
+      // A tagged template calls the tag with the same `this` as a call.
+      ts.expectPrintedMin_("x = [obj.m][0]`a`", "x = [obj.m][0]`a`");
+      ts.expectPrintedMin_("x = [y][0]`a`", "x = [y][0]`a`");
+      ts.expectPrintedMin_("x = ({f: obj.m}).f`a`", "x = { f: obj.m }.f`a`");
+      ts.expectPrintedMin_("x = ({f: y}).f`a`", "x = { f: y }.f`a`");
+      // A comma or a ternary strips `this` from a tag as it does from a callee.
+      ts.expectPrintedMin_("x = (0, obj.m)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (1 ? obj.m : 0)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (0 ? 0 : obj.m)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (0, y)`a`", "x = y`a`");
+      // The comma is decided as a callee before its left side is visited.
+      ts.expectPrintedMin_("x = (() => f(), obj.m)()", "x = (0, obj.m)()");
+      ts.expectPrintedMin_("x = (() => f`a`, obj.m)`a`", "x = (0, obj.m)`a`");
+      // A test with no side effect of its own still strips `this`.
+      ts.expectPrintedMin_("x = (typeof y ? obj.m : 0)()", "x = (0, obj.m)()");
+      ts.expectPrintedMin_("x = ({} ? obj.m : 0)`a`", "x = (0, obj.m)`a`");
+      ts.expectPrintedMin_("x = (!typeof y ? 0 : obj.m)()", "x = (0, obj.m)()");
+      // A single-use local is not substituted into a tag either.
+      ts.expectPrintedMin_(
+        "function f() { let t = obj.m; return t`x` }",
+        "function f() {\n  let t = obj.m;\n  return t`x`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function f() { let t = obj.m; return t() }",
+        "function f() {\n  let t = obj.m;\n  return t();\n}",
+      );
+      // `new` does not thread `this` through the callee Reference, so the
+      // fold still fires there.
+      ts.expectPrintedMin_("x = new [C][0]()", "x = new C");
 
       // `[x][0] = v` writes into the temporary, not `x`. Same for `"s"[n]`.
       ts.expectPrintedMin_("[obj.p][0] = 5", "[obj.p][0] = 5");
@@ -230,6 +264,16 @@ describe("Bun.Transpiler", () => {
         check("chain pure", () => [[0, /* @__PURE__ */ a?.()]][0]?.[1].c, "TypeError");
         var obj = { n: "obj", m() { return this === obj; } };
         check("this",       () => [obj.m][0](), "=> false");
+        obj.who = function () { return Array.isArray(this); };
+        var who = obj.who;
+        check("this arr dot",   () => [obj.who][0](), "=> true");
+        check("this arr ident", () => [who][0](), "=> true");
+        check("this arr opt",   () => [obj.who][0]?.(), "=> true");
+        check("this arr multi", () => [0, who][1](), "=> true");
+        check("this arr fn",    () => [function () { return Array.isArray(this); }][0](), "=> true");
+        check("this arr tag",   () => [who][0]\`\`, "=> true");
+        function tag() { return typeof this === "object" && this !== null && this.f === tag; }
+        check("this obj tag",   () => ({ f: tag }).f\`\`, "=> true");
         var o2 = { p: 1 };
         check("assign",     () => ([o2.p][0] = 5, o2.p), "=> 1");
         var ab = { b: class {} };
@@ -252,6 +296,13 @@ describe("Bun.Transpiler", () => {
         "chain cont: ok",
         "chain pure: ok",
         "this: ok",
+        "this arr dot: ok",
+        "this arr ident: ok",
+        "this arr opt: ok",
+        "this arr multi: ok",
+        "this arr fn: ok",
+        "this arr tag: ok",
+        "this obj tag: ok",
         "assign: ok",
         "new obj: ok",
       ]);

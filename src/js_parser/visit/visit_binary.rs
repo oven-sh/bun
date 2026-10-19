@@ -99,6 +99,10 @@ pub struct BinaryExpressionVisitor {
 
     /// Input for visiting the left child
     pub(crate) left_in: ExprIn,
+
+    /// The node is the callee of a call or the tag of a template, which pass `this`.
+    /// Decided before the left child is visited: a call in there overwrites `p.call_target`.
+    pub(crate) is_call_target: bool,
 }
 
 impl BinaryExpressionVisitor {
@@ -107,16 +111,14 @@ impl BinaryExpressionVisitor {
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
-        // Snapshot the handle for the identity check / tail re-wrap, then take
-        // the working `&mut` via `StoreRef::DerefMut` — the arena-backref
-        // invariant is encapsulated there. The borrow is on the `v.e` field
-        // only, so `v.loc` reads below split-borrow cleanly.
+        // Snapshot the handle for the tail re-wrap, then take the working
+        // `&mut` via `StoreRef::DerefMut` — the arena-backref invariant is
+        // encapsulated there. The borrow is on the `v.e` field only, so
+        // `v.loc` reads below split-borrow cleanly.
         let e_handle: StoreRef<E::Binary> = v.e;
-        let e_ptr: *mut E::Binary = e_handle.as_ptr();
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
+        let is_call_target = v.is_call_target;
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 

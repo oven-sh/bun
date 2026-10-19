@@ -2328,6 +2328,25 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     pub fn lex(&mut self) -> Result<(), LexerError> {
+        self.lex_tokens()?;
+        self.report_unclosed_quote();
+        Ok(())
+    }
+
+    fn report_unclosed_quote(&mut self) {
+        let msg: &[u8] = match self.chars.state {
+            CharState::Normal => return,
+            CharState::Single => b"Unclosed single quote",
+            CharState::Double => b"Unclosed double quote",
+        };
+        // After an early error return (`|&`, a JS object ref in double quotes) the rest of the
+        // script is lexed out of context, so the state can be a quote that the script closes.
+        if self.errors.is_empty() {
+            self.add_error(msg);
+        }
+    }
+
+    fn lex_tokens(&mut self) -> Result<(), LexerError> {
         loop {
             // Fast path: bulk-consume runs of non-special bytes in Normal state.
             // The guard-arm chain below does not compile to a jump table in

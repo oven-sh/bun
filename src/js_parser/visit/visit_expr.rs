@@ -1022,6 +1022,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if is_delete_target {
                                 p.delete_target = dot.data;
                             }
+                            if p.options.bundle
+                                && (in_.assign_target != js_ast::AssignTarget::None
+                                    || is_delete_target)
+                                && let Data::EIdentifier(target) = e_.target.data
+                            {
+                                p.note_unfolded_write_through_unwrapped_require(target.ref_);
+                            }
 
                             // don't call visitExprInOut on `dot` because we've already visited `target` above!
                             *e = dot;
@@ -1129,36 +1136,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // errors.
         if p.options.bundle
             && (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
-            && matches!(e_.target.data.tag(), Tag::EIdentifier)
-            && p.symbols[e_
-                .target
-                .data
-                .e_identifier()
-                .expect("infallible: variant checked")
-                .ref_
-                .inner_index() as usize]
-                .kind
-                == js_ast::symbol::Kind::Import
+            && let Data::EIdentifier(target) = e_.target.data
         {
-            let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
-            p.log().add_range_error_fmt(
-                Some(p.source),
-                r,
-                format_args!(
-                    "Cannot assign to property on import \"{}\"",
-                    // `original_name: StoreStr` has a safe `Deref<Target=[u8]>`.
-                    BStr::new(
-                        &*p.symbols[e_
-                            .target
-                            .data
-                            .e_identifier()
-                            .expect("infallible: variant checked")
-                            .ref_
-                            .inner_index() as usize]
-                            .original_name,
-                    )
-                ),
-            );
+            if p.symbols[target.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import {
+                let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    r,
+                    format_args!(
+                        "Cannot assign to property on import \"{}\"",
+                        // `original_name: StoreStr` has a safe `Deref<Target=[u8]>`.
+                        BStr::new(&*p.symbols[target.ref_.inner_index() as usize].original_name)
+                    ),
+                );
+            } else {
+                p.note_unfolded_write_through_unwrapped_require(target.ref_);
+            }
         }
 
         // `e_` is `StoreRef<E::Index>` — mutations above wrote through
@@ -1230,6 +1223,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Op::UnDelete => {
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                // `delete x?.a` does not pass through `maybe_rewrite_property_access`.
+                if p.options.bundle
+                    && let Data::EDot(dot) = e_.value.data
+                    && dot.optional_chain.is_some()
+                    && let Data::EIdentifier(target) = dot.target.data
+                {
+                    p.note_unfolded_write_through_unwrapped_require(target.ref_);
+                }
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);

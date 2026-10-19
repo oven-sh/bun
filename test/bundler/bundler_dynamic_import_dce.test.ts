@@ -3589,8 +3589,9 @@ describe("bundler", () => {
     },
   });
 
-  // The assign-target bail must not catch unwrapped `const m = require()`
-  // namespaces — `m.foo = v` on those is a build-time error (esbuild parity).
+  // `m.foo = v` through an unwrapped `const m = require()` of an ES module is
+  // a build-time error: an ES module has no `module.exports` to write. The
+  // linker reports it (`report_writes_through_require`).
   itBundled("dynamic_import_dce/UnwrapCjsAssignStillErrors", {
     files: {
       "/entry.js": /* js */ `

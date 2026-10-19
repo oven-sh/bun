@@ -235,6 +235,37 @@ pub(crate) fn scan_imports_and_exports(
                 .iter()
                 .enumerate()
             {
+                // A write through an unwrapped `require()` needs `module.exports`: keep the target CommonJS.
+                if record.flags.contains(ImportRecordFlags::REQUIRE_IS_WRITTEN)
+                    && let Some(namespace) = unwrapped_requires(col_ref!(parts_list)[id].as_slice())
+                        .find(|(_, index)| *index as usize == import_record_index)
+                        .map(|(namespace, _)| namespace)
+                {
+                    let other = record.source_index.get() as usize;
+                    let has_module_exports = record.source_index.is_valid()
+                        && other < col_ref!(exports_kind).len()
+                        // A lifted file is `Esm` with no ES module syntax of its own.
+                        && (matches!(
+                            col_ref!(exports_kind)[other],
+                            ExportsKind::None | ExportsKind::Cjs
+                        ) || col_ref!(ast_flags_list)[other]
+                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM))
+                        // An `ExportsKind::None` file can have no wrapper symbol (`needs_wrapper_ref`).
+                        && col_ref!(wrapper_refs)[other].is_valid()
+                        // The target can export the ES namespace of an external package, which rejects a write.
+                        && !col_ref!(import_records_list)[other].as_slice().iter().any(|inner| {
+                            inner.flags.contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
+                                && !inner.source_index.is_valid()
+                        })
+                        && variable_holds_require(this, namespace);
+                    if has_module_exports {
+                        col!(exports_kind)[other] = ExportsKind::Cjs;
+                        col!(flags)[other].wrap = WrapKind::Cjs;
+                    } else {
+                        report_writes_through_require(this, id, namespace);
+                    }
+                }
+
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -1444,6 +1475,61 @@ pub(crate) fn scan_imports_and_exports(
 #[inline]
 fn should_call_runtime_require(format: options::Format) -> bool {
     format != Format::Cjs
+}
+
+/// The unwrapped `require()` calls of a file: the variable that holds the value, and the import record.
+fn unwrapped_requires(parts: &[bun_ast::Part]) -> impl Iterator<Item = (Ref, u32)> + '_ {
+    parts
+        .iter()
+        .filter(|part| part.tag == bun_ast::PartTag::ImportToConvertFromRequire)
+        .flat_map(|part| part.stmts.slice())
+        .filter_map(|stmt| match stmt.data {
+            bun_ast::StmtData::SImport(import) => {
+                Some((import.namespace_ref, import.import_record_index))
+            }
+            _ => None,
+        })
+}
+
+/// Whether nothing assigns `namespace` and no other declaration has its name (the parser links those symbols).
+fn variable_holds_require(this: &LinkerContext, namespace: Ref) -> bool {
+    let symbols = &this.graph.symbols;
+    symbols
+        .get_const(namespace)
+        .is_some_and(|symbol| !symbol.has_link() && !symbol.has_been_assigned_to())
+        && !symbols.symbols_for_source[namespace.source_index() as usize]
+            .iter()
+            .any(|symbol| symbol.has_link() && symbols.follow(symbol.link.get()).eql(namespace))
+}
+
+/// Reports the first write to each named key through `namespace` as `Cannot assign to import`.
+#[cold]
+fn report_writes_through_require(this: &LinkerContext, id: usize, namespace: Ref) {
+    let named_imports = &this.graph.ast.items_named_imports()[id];
+    let source = &this.parse_graph().input_files.items_source()[id];
+    let symbols = &this.graph.symbols;
+    let variable = symbols.follow(namespace);
+    let mut writes: Vec<(bun_ast::Loc, &[u8])> = named_imports
+        .keys()
+        .iter()
+        .zip(named_imports.values())
+        .filter(|(item, named_import)| {
+            !named_import.alias_is_star
+                && symbols.follow(named_import.namespace_ref).eql(variable)
+                && symbols
+                    .get_const(**item)
+                    .is_some_and(|symbol| symbol.has_been_assigned_to())
+        })
+        .filter_map(|(_, named_import)| Some((named_import.alias_loc, named_import.alias?.slice())))
+        .collect();
+    writes.sort_unstable_by_key(|(loc, _)| loc.start);
+    for (loc, name) in writes {
+        this.log_disjoint().add_range_error_fmt(
+            Some(source),
+            source.range_of_identifier(loc),
+            format_args!("Cannot assign to import \"{}\"", bstr::BStr::new(name)),
+        );
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

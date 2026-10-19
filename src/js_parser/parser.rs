@@ -459,7 +459,7 @@ pub struct DeferredImportNamespace {
     /// Scope the namespace binding lives in. Used by
     /// `imports_to_convert_from_dynamic_import` to bail when a direct
     /// `eval()` can observe the binding by name. Unused by
-    /// `imports_to_convert_from_require`.
+    /// `imports_to_convert_from_require`, except to mark a `var` that a block or an unbraced body can skip.
     pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 

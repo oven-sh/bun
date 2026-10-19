@@ -2821,4 +2821,427 @@ describe("bundler", () => {
     },
     run: { file: "/run.mjs", stdout: "19.0.0,1:19.0.0,false,undefined" },
   });
+
+  // A property write through `require()` of a package on the list. Node
+  // writes `module.exports` there. The parser leaves the write as written and
+  // the linker keeps the package a CommonJS module, so each `require()` of it
+  // is that `module.exports`. Every `stdout` below is what Node prints, except
+  // the order in `InAFunction`: a `require()` of a package on the list is an
+  // import, so the package runs when its importer loads.
+  const unwrappedLiftedReact = { ...unwrappedReactPackageJson, ...unwrappedReactTargets.Lifted };
+  const unwrappedRequireWrites: Record<string, [entry: string, stdout: string]> = {
+    NewKey: [
+      `const React = require("react"); React.other = "patched"; console.log(React.other, require("react").other);`,
+      "patched patched",
+    ],
+    ExistingExport: [
+      `const React = require("react"); React.version = "v2"; console.log(React.version, require("react").version, React.read());`,
+      "v2 v2 1:v2",
+    ],
+    Delete: [
+      `const React = require("react"); console.log(delete React.count, React.count, "count" in require("react"), React.read());`,
+      "true undefined false undefined:19.0.0",
+    ],
+    OptionalChainDelete: [
+      `const React = require("react"); console.log(delete React?.count, React.count, require("react").read());`,
+      "true undefined undefined:19.0.0",
+    ],
+    Update: [
+      `const React = require("react"); React.count++; React.count += 10; --React.count; console.log(React.count, require("react").read());`,
+      "11 11:19.0.0",
+    ],
+    DestructuringTarget: [
+      `const React = require("react"); [React.a] = [1]; ({ k: React.b } = { k: 2 }); for (React.c of [3]) {} console.log(React.a, React.b, React.c, Object.keys(require("react")).join());`,
+      "1 2 3 version,count,useEffect,read,a,b,c",
+    ],
+    InlineCall: [`require("react").extra = 1; console.log(require("react").extra);`, "1"],
+    ComputedKey: [
+      `const React = require("react"); const k = "other"; React[k] = "patched"; delete React["cou" + "nt"]; console.log(React.other, require("react").other, React.count, React.read());`,
+      "patched patched undefined undefined:19.0.0",
+    ],
+    InAFunction: [
+      `console.log("start"); function patch() { const React = require("react"); React.other = "patched"; return React; } console.log(patch().other, patch() === require("react"), "default" in patch());`,
+      "loaded\nstart\npatched true false",
+    ],
+    BesideADestructuringRequire: [
+      `const { version, count } = require("react"); const React = require("react"); React.version = "v2"; console.log(version, count, React.version, require("react").version);`,
+      "19.0.0 1 v2 v2",
+    ],
+  };
+  for (const [name, [entry, stdout]] of Object.entries(unwrappedRequireWrites)) {
+    itBundled(`cjs2esm/UnwrappedRequireWrite${name}`, {
+      files: {
+        "/entry.js": entry,
+        ...unwrappedReactPackageJson,
+        "/node_modules/react/index.js":
+          name === "InAFunction" ? `console.log("loaded");` + unwrappedReactBody : unwrappedReactBody,
+      },
+      cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+      run: { stdout },
+    });
+  }
+  itBundled("cjs2esm/UnwrappedRequireWriteTypeScriptImportEquals", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import React = require("react");
+        React.other = "patched";
+        React.version = "v2";
+        console.log(React.other, React.version, require("react").other);
+      `,
+      ...unwrappedLiftedReact,
+    },
+    run: { stdout: "patched v2 patched" },
+  });
+  // With `minifySyntax` a constant key folds to a name after the visit of the access.
+  itBundled("cjs2esm/UnwrappedRequireWriteMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        React["o" + "ther"] = "patched";
+        delete React["cou" + "nt"];
+        console.log(React.other, require("react").other, React.read());
+      `,
+      ...unwrappedLiftedReact,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: { stdout: "patched patched undefined:19.0.0" },
+  });
+  itBundled("cjs2esm/UnwrappedRequireWriteCli", {
+    files: {
+      "/entry.js": unwrappedRequireWrites.NewKey[0],
+      ...unwrappedLiftedReact,
+    },
+    backend: "cli",
+    run: { stdout: "patched patched" },
+  });
+
+  // Another file that reads the package gets the same object, as a `require()`
+  // and as an import.
+  const unwrappedRequireWriter = {
+    "/writer.js": /* js */ `
+      const React = require("react");
+      React.other = "patched";
+      React.version = "v2";
+      React.count++;
+      delete React.useEffect;
+    `,
+    ...unwrappedLiftedReact,
+  };
+  itBundled("cjs2esm/UnwrappedRequireWriteReadInAnotherFile", {
+    files: {
+      "/entry.js": /* js */ `
+        const R = require("react");
+        const before = R.version;
+        require("./writer.js");
+        console.log(before, R.other, R.version, R.count, typeof R.useEffect, R.read(), Object.keys(R).join());
+      `,
+      ...unwrappedRequireWriter,
+    },
+    run: { stdout: "19.0.0 patched v2 2 undefined 2:v2 version,count,read,other" },
+  });
+  itBundled("cjs2esm/UnwrappedRequireWriteReadThroughImports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./writer.js";
+        import R, { version, count } from "react";
+        import * as S from "react";
+        console.log(R.other, R.version, version, count, S.version, typeof S.useEffect, R.read());
+      `,
+      ...unwrappedRequireWriter,
+    },
+    run: { stdout: "patched v2 v2 2 v2 undefined 2:v2" },
+  });
+  itBundled("cjs2esm/UnwrappedRequireWriteSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        const React = require("react");
+        React.other = "patched";
+        React.version = "v2";
+        console.log("a", React.other, React.version, require("./shared.js").read());
+      `,
+      "/b.js": /* js */ `
+        import React, { version } from "react";
+        import { read } from "./shared.js";
+        console.log("b", version, React.other, read());
+      `,
+      "/shared.js": /* js */ `
+        exports.read = function () { return require("react").version; };
+      `,
+      ...unwrappedLiftedReact,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    run: [
+      { file: "/out/a.js", stdout: "a patched v2 v2" },
+      { file: "/out/b.js", stdout: "b 19.0.0 undefined 19.0.0" },
+    ],
+  });
+  for (const name of ["Redirect", "DevelopmentRedirect", "Wrapped"] as const) {
+    itBundled(`cjs2esm/UnwrappedRequireWriteOf${name}Package`, {
+      files: {
+        "/entry.js": /* js */ `
+          const React = require("react");
+          React.other = "patched";
+          React.version = "v2";
+          React.count++;
+          console.log(delete React.useEffect, React.other, require("react").other, React.read(), Object.keys(React).join());
+        `,
+        ...unwrappedReactPackageJson,
+        ...unwrappedReactTargets[name],
+      },
+      run: { stdout: "true patched patched 2:v2 version,count,read,other" },
+    });
+  }
+  // With `NODE_ENV` defined and no minification, react/index.js keeps its wrapper and the
+  // production file behind it stays lifted. An assignment reaches it through the setters.
+  itBundled("cjs2esm/UnwrappedRequireWriteOfProductionRedirectPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        React.other = "patched";
+        React.version = "v2";
+        React.count++;
+        console.log(React.other, require("react").other, React.read());
+      `,
+      ...unwrappedReactPackageJson,
+      ...unwrappedReactTargets.DevelopmentRedirect,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    run: { stdout: "patched patched 2:v2" },
+  });
+
+  // An external package is an `import * as` in the output, which has no `module.exports`
+  // to write: the error stays.
+  for (const target of ["browser", "node", "bun"] as const) {
+    itBundled(`cjs2esm/UnwrappedRequireWriteOfExternalPackage_${target}`, {
+      files: {
+        "/entry.js": unwrappedRequireWrites.NewKey[0],
+        ...unwrappedLiftedReact,
+      },
+      external: ["react"],
+      target,
+      bundleErrors: { "/entry.js": ['Cannot assign to import "other"'] },
+    });
+  }
+  // A file that requires an external package can have the ES namespace of that package
+  // as its `module.exports`.
+  for (const [name, index] of Object.entries({
+    ReExportsAnExternalPackage: `globalThis.loaded = true; module.exports = require("react");`,
+    HoldsAnExternalPackage: `if (globalThis) { module.exports = require("react"); }`,
+  })) {
+    itBundled(`cjs2esm/UnwrappedRequireWriteOfPackageThat${name}`, {
+      files: {
+        "/entry.js": `const ReactIs = require("react-is"); ReactIs.other = "patched"; console.log(ReactIs.other);`,
+        "/node_modules/react-is/package.json": `{ "name": "react-is", "version": "19.0.0", "main": "index.js" }`,
+        "/node_modules/react-is/index.js": index,
+        ...unwrappedLiftedReact,
+      },
+      external: ["react"],
+      target: "node",
+      bundleErrors: { "/entry.js": ['Cannot assign to import "other"'] },
+    });
+  }
+  // An ES module has no `module.exports` to write (`dynamic_import_dce/UnwrapCjsAssignStillErrors`).
+  // The error is at the first write to each key. A read and a write in dead code have none.
+  const unwrappedEsModuleReact = {
+    "/node_modules/react/index.js": `export const foo = 0; export const bar = 2; export const zed = 3;`,
+    "/node_modules/react/package.json": `{ "name": "react", "main": "./index.js" }`,
+  };
+  itBundled("cjs2esm/UnwrappedRequireWriteOfEsModule", {
+    files: {
+      "/entry.js": /* js */ `
+        const R = require("react");
+        console.log(R.foo);
+        require("./writer.js");
+      `,
+      "/writer.js": /* js */ `
+        const m = require("react");
+        console.log(m.foo, m.zed);
+        if (false) m.zed = 0;
+        m.foo = 1;
+        m.foo = 2;
+        delete m.bar;
+      `,
+      ...unwrappedEsModuleReact,
+    },
+    bundleErrors: { "/writer.js": ['Cannot assign to import "foo"', 'Cannot assign to import "bar"'] },
+  });
+  // A computed key and a write in dead code build as written there.
+  itBundled("cjs2esm/UnwrappedRequireComputedWriteOfEsModule", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("react");
+        const key = "foo";
+        m[key] = 1;
+        if (false) m.bar = 1;
+        console.log(m.foo, m.bar);
+      `,
+      ...unwrappedEsModuleReact,
+    },
+    cjs2esm: true,
+    run: { stdout: "0 2" },
+  });
+  // A file with no statement has a wrapper too.
+  itBundled("cjs2esm/UnwrappedRequireWriteOfEmptyPackage", {
+    files: {
+      "/entry.js": unwrappedRequireWrites.NewKey[0],
+      ...unwrappedReactPackageJson,
+      "/node_modules/react/index.js": `"use strict";`,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    run: { stdout: "patched patched" },
+  });
+  // A file of a package that is not on the list has a wrapper symbol only when one of its
+  // statements needs the wrapper. With no symbol there is nothing to call: the error stays.
+  itBundled("cjs2esm/UnwrappedRequireWriteOfFileWithNoWrapperSymbol", {
+    files: {
+      "/entry.js": `console.log(require("react").read());`,
+      ...unwrappedReactPackageJson,
+      "/node_modules/react/index.js": /* js */ `
+        var dep = require("unlisted");
+        dep.other = "patched";
+        exports.read = function () { return dep.other; };
+      `,
+      "/node_modules/unlisted/package.json": `{ "name": "unlisted", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/unlisted/index.js": `function unused() {}`,
+    },
+    bundleErrors: { "/node_modules/react/index.js": ['Cannot assign to import "other"'] },
+  });
+
+  // A variable that is not sure to hold the package keeps the error: something assigns
+  // it, another declaration shares its name, or it is a `var` that a block or a statement
+  // without braces can skip.
+  const unwrappedRequireRebinds: Record<string, string> = {
+    AssignedLater: `let R = require("react"); R.other = "patched"; R = { other: "own" }; console.log(R.other);`,
+    AssignedInAFunction: `let R = require("react"); R.other = "patched"; function rebind() { R = require("scheduler"); } rebind(); console.log(R.other);`,
+    DeclaredTwice: `var R = require("react"); var R = require("scheduler"); R.other = "patched"; console.log(R.other);`,
+    DeclaredAfterAnotherValue: `var R = { other: "own" }; var R = require("react"); R.other = "patched"; console.log(R.other);`,
+    DeclaredAfterAFunction: `function write() { function R() {} var R = require("react"); R.other = "patched"; return R.other; } console.log(write());`,
+    DeclaredInABlock: `function write(load) { if (load) { var R = require("react"); } if (R) R.other = "patched"; return R ? R.other : "none"; } console.log(write(false));`,
+    DeclaredWithoutBraces: `if (globalThis.load) var R = require("react"); if (R) R.other = "patched"; console.log(R ? R.other : "none");`,
+  };
+  for (const [name, entry] of Object.entries(unwrappedRequireRebinds)) {
+    itBundled(`cjs2esm/UnwrappedRequireWriteThroughVariable${name}`, {
+      files: {
+        "/entry.js": entry,
+        ...unwrappedLiftedReact,
+        "/node_modules/scheduler/package.json": `{ "name": "scheduler", "version": "0.25.0", "main": "index.js" }`,
+        "/node_modules/scheduler/index.js": `exports.now = function () { return "now"; };`,
+      },
+      bundleErrors: { "/entry.js": ['Cannot assign to import "other"'] },
+    });
+  }
+  // A `const` or `let` of a block, and a `var` at the top of a function, hold the package
+  // wherever code can name them.
+  itBundled("cjs2esm/UnwrappedRequireWriteThroughVariableOfABlock", {
+    files: {
+      "/entry.js": /* js */ `
+        {
+          const React = require("react");
+          React.other = "patched";
+          console.log(React.other, require("react").other);
+        }
+        function write() {
+          var React = require("react");
+          React.useLayoutEffect = React.useEffect;
+          return React.useLayoutEffect === require("react").useEffect;
+        }
+        console.log(write());
+      `,
+      ...unwrappedLiftedReact,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    run: { stdout: "patched patched\ntrue" },
+  });
+
+  // A write inside a package on the list, through a `require()` of another
+  // package on the list, of a file of its own, and of a package that is not.
+  itBundled("cjs2esm/UnwrappedRequireWriteInsideAnUnwrappedPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        const ReactDOM = require("react-dom");
+        const React = require("react");
+        console.log(ReactDOM.render(), React.fromDom, require("unlisted").y);
+      `,
+      "/node_modules/react-dom/package.json": `{ "name": "react-dom", "version": "19.0.0", "main": "index.js" }`,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var React = require("react");
+        var helper = require("./helper");
+        var unlisted = require("unlisted");
+        var data = require("unlisted/data.json");
+        React.fromDom = "dom";
+        helper.x = 2;
+        unlisted.y = 3;
+        data.z = 4;
+        exports.render = function () {
+          return [React.fromDom, React.version, helper.x, helper.get(), unlisted.y, unlisted.get(), data.z, require("unlisted/data.json").z].join();
+        };
+      `,
+      "/node_modules/react-dom/helper.js": `exports.x = 1; exports.get = function () { return exports.x; };`,
+      "/node_modules/unlisted/package.json": `{ "name": "unlisted", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/unlisted/index.js": `module.exports = { y: 1, get: function () { return module.exports.y; } };`,
+      "/node_modules/unlisted/data.json": `{ "x": 1 }`,
+      ...unwrappedLiftedReact,
+    },
+    run: { stdout: "dom,19.0.0,2,2,3,3,4,4 dom 3" },
+  });
+  // Only the package that is written keeps its wrapper.
+  itBundled("cjs2esm/UnwrappedRequireWriteKeepsOtherPackagesLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        React.other = "patched";
+        const ReactDOM = require("react-dom");
+        console.log(ReactDOM.render(), require("scheduler").now());
+      `,
+      ...unwrappedLiftedReact,
+      "/node_modules/scheduler/package.json": `{ "name": "scheduler", "version": "0.25.0", "main": "index.js" }`,
+      "/node_modules/scheduler/index.js": `exports.now = function () { return "now"; };`,
+      "/node_modules/react-dom/package.json": `{ "name": "react-dom", "version": "19.0.0", "main": "index.js" }`,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var React = require("react");
+        var Scheduler = require("scheduler");
+        exports.render = function () {
+          return [React.version, React.other, Scheduler.now()].join();
+        };
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    run: { stdout: "19.0.0,patched,now now" },
+  });
+  // A write in code that the parser finds dead leaves the package lifted.
+  itBundled("cjs2esm/UnwrappedRequireWriteInDeadCodeStaysLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from "react";
+        const React = require("react");
+        const key = "dead";
+        if (false) React.dead = 1;
+        if (false) React[key] = 1;
+        false && (React.dead = 2);
+        false && delete React?.count;
+        console.log(React.dead, React.count, React.version, version);
+      `,
+      ...unwrappedLiftedReact,
+    },
+    cjs2esm: true,
+    run: { stdout: "undefined 1 19.0.0 19.0.0" },
+  });
+  // So does a build that only reads.
+  itBundled("cjs2esm/UnwrappedRequireReadOnlyStaysLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        const React = require("react");
+        const key = "count";
+        const copy = { ...React };
+        console.log(React.version, React[key], React.read(), require("react").missing, copy.count, Object.keys(React).join());
+      `,
+      ...unwrappedLiftedReact,
+    },
+    cjs2esm: true,
+    run: { stdout: "19.0.0 1 1:19.0.0 undefined 1 version,count,useEffect,read" },
+  });
 });

@@ -208,6 +208,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
+                            // A write through an unwrapped `require()` stays a property access.
+                            let written_require = if can_track_dynamic_import_member {
+                                None
+                            } else {
+                                p.unwrapped_require_record(id.ref_)
+                            };
+                            if written_require.is_some() && p.is_control_flow_dead {
+                                break 'sw;
+                            }
                             // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
                             let existing = p
                                 .import_items_for_namespace
@@ -255,6 +264,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     new_ref
                                 }
                             };
+
+                            if let Some(import_record_index) = written_require {
+                                p.note_write_through_unwrapped_require(
+                                    import_record_index,
+                                    Some((
+                                        id.ref_,
+                                        name,
+                                        LocRef {
+                                            loc: name_loc,
+                                            ref_,
+                                        },
+                                    )),
+                                );
+                                break 'sw;
+                            }
 
                             // Undo the usage count for the namespace itself. This is used later
                             // to detect whether the namespace symbol has ever been "captured"

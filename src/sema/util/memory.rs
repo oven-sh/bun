@@ -984,7 +984,7 @@ struct Retired<C> {
 pub unsafe trait Series<C, A>: Sized {
     fn new_in(alloc: A) -> Self;
     /// Returns the pointer of `series` for reading, or `None` if it's known to be null.
-    fn existing(&self, series: usize, order: Ordering) -> Option<&AtomicPtr<C>>;
+    fn existing(&self, series: usize) -> Option<&AtomicPtr<C>>;
     /// Returns the pointer of `series` for writing.
     fn entry(&self, series: usize) -> &AtomicPtr<C>;
     fn for_each(&self, visit: impl FnMut(&AtomicPtr<C>));
@@ -1000,7 +1000,7 @@ unsafe impl<C, A, const N: usize> Series<C, A> for Fixed<C, N> {
         Fixed([const { AtomicPtr::new(null_mut()) }; N])
     }
     #[inline(always)]
-    fn existing(&self, series: usize, _: Ordering) -> Option<&AtomicPtr<C>> {
+    fn existing(&self, series: usize) -> Option<&AtomicPtr<C>> {
         Some(&self.0[series])
     }
     #[inline(always)]
@@ -1066,10 +1066,11 @@ unsafe impl<C, A: Allocator + Clone> Series<C, A> for Growing<C, A> {
         Growing(std::array::from_fn(|_| Chunks::new_in(alloc.clone())))
     }
     #[inline(always)]
-    fn existing(&self, series: usize, order: Ordering) -> Option<&AtomicPtr<C>> {
+    fn existing(&self, series: usize) -> Option<&AtomicPtr<C>> {
         let (heads, index) = self.split(series);
         let Located { chunk, offset } = Heads::<C, A>::locate(index);
-        let base = heads.bases[chunk].load(order);
+        // A writer of another series, under another lock, may have just installed the chunk.
+        let base = heads.bases[chunk].load(Ordering::Acquire);
         if base.is_null() {
             return None;
         }
@@ -1129,7 +1130,7 @@ impl<C: Zeroed, A: Allocator + Clone, S: Series<C, A>> Newest<C, A, S> {
     /// else has ordered the last `replace` before this call.
     #[inline]
     pub fn get(&self, series: usize, order: Ordering) -> &[C] {
-        let Some(newest) = self.newest.existing(series, order) else {
+        let Some(newest) = self.newest.existing(series) else {
             return &[];
         };
         let newest = Slice(newest.load(order));

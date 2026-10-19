@@ -16,7 +16,7 @@ use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
 use crate::update_transitive::{
     DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
-    plannable_peer_rows, print_kept_patched, redirect_moved_edges,
+    plannable_peer_rows, print_kept_patched, redirect_moved_edges, warn_unchecked_sources,
 };
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
@@ -38,7 +38,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
-use crate::package_manager_real::enqueue::add_dependency_error;
+use crate::package_manager_real::enqueue::{self, add_dependency_error};
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
@@ -513,6 +513,13 @@ pub fn install_with_manager(
 
                     builder.clamp();
 
+                    manager
+                        .summary
+                        .overridden_names
+                        .clone_from(&all_name_hashes);
+                    let rows = lockfile::DependencySlice::new(off, len);
+                    Diff::keep_while_refreshing(manager, 0, root.dependencies, rows);
+
                     let invalidates_rows = (manager.summary.overrides_changed
                         && !all_name_hashes.is_empty())
                         || manager.summary.catalogs_changed;
@@ -678,6 +685,7 @@ pub fn install_with_manager(
     manager.log_held();
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
+    warn_unchecked_sources(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
@@ -1811,8 +1819,14 @@ fn enqueue_named_updates(
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
+        let row = dependency_i as DependencyID;
         let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
-        let package_id = manager.lockfile.buffers.resolutions[dependency_i];
+        // A dependency that is refreshed is already queued, like one that has no package.
+        let package_id = if manager.lockfile.is_refreshing(row) {
+            invalid_package_id
+        } else {
+            manager.lockfile.buffers.resolutions[dependency_i]
+        };
         let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
             continue;
         };
@@ -1822,7 +1836,7 @@ fn enqueue_named_updates(
         }
         matched.set(request);
         if collect_latest_rows {
-            named.latest_rows.push(dependency_i as DependencyID);
+            named.latest_rows.push(row);
         }
         // The root's link to a workspace has no version to update. Other dependencies on that name
         // can only link to the workspace while it stays resolved.
@@ -1834,13 +1848,21 @@ fn enqueue_named_updates(
         }
         if dependency.behavior.is_peer() {
             if plannable_peers.is_set(dependency_i) {
-                peer_rows.push(dependency_i as DependencyID);
+                peer_rows.push(row);
             }
             continue;
         }
-        manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
-        named.moved.push((dependency_i as DependencyID, package_id));
-        enqueue_row(manager, dependency_i as DependencyID);
+        let refreshes_in_place = enqueue::may_refresh_in_place(&dependency)
+            && (manager.lockfile.get_parent_pkg_of_dependency(row)).is_some_and(|declarer| {
+                enqueue::refreshes_in_place(manager, declarer, &dependency, package_id)
+            });
+        if refreshes_in_place {
+            manager.lockfile.mark_refreshing(row);
+        } else {
+            manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
+        }
+        named.moved.push((row, package_id));
+        enqueue_row(manager, row);
     }
 
     reject_unknown_update_requests(

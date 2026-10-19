@@ -2610,8 +2610,7 @@ pub(crate) fn install_isolated_packages(
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
-                            );
-                            Ok(())
+                            )
                         }
                         _ => package_manager::enqueue_tarball_for_download(
                             installer.manager_mut(),

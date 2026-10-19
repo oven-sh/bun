@@ -101,6 +101,11 @@ pub(crate) struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Honour `[Symbol.for("nodejs.util.inspect.custom")]` / `Bun.inspect.custom`
+    /// on a value instead of walking its properties. On for matcher diffs
+    /// (same as `toBe` / `console.log`), off for snapshots so `.snap` bytes
+    /// do not change.
+    pub(crate) inspect_custom: bool,
 }
 
 impl JestPrettyFormat {
@@ -146,7 +151,8 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
-            let tag = Tag::get(vals[0], global)?;
+            fmt.inspect_custom = options.inspect_custom;
+            let tag = fmt.tag_of(vals[0], global)?;
 
             if tag.tag == Tag::String {
                 if options.enable_colors {
@@ -192,6 +198,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.inspect_custom = options.inspect_custom;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -207,7 +214,7 @@ impl JestPrettyFormat {
                     }
                     any = true;
 
-                    tag = Tag::get(this_value, global)?;
+                    tag = fmt.tag_of(this_value, global)?;
                     if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
                         tag.tag = Tag::StringPossiblyFormatted;
                     }
@@ -229,7 +236,7 @@ impl JestPrettyFormat {
                         let _ = writer.write_all(b" ");
                     }
                     any = true;
-                    tag = Tag::get(this_value, global)?;
+                    tag = fmt.tag_of(this_value, global)?;
                     if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
                         tag.tag = Tag::StringPossiblyFormatted;
                     }
@@ -318,6 +325,11 @@ pub(crate) struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    /// See [`FormatOptions::inspect_custom`].
+    pub(crate) inspect_custom: bool,
+    /// `(this, hook)` found by [`Formatter::tag_of`] for the value it tagged
+    /// `Tag::CustomFormatted`. Consumed by the matching `format` call.
+    custom_inspect: Option<(JSValue, JSValue)>,
 }
 
 impl<'a> Formatter<'a> {
@@ -332,7 +344,98 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            inspect_custom: false,
+            custom_inspect: None,
         }
+    }
+
+    /// [`Tag::get`], plus the `inspect.custom` probe when
+    /// [`Formatter::inspect_custom`] is set. The probe runs after the JSType
+    /// classification and only for tags whose printer walks the value's
+    /// contents, so TypedArray / Buffer, DOM wrappers, Proxy and Date keep
+    /// their current output. A callable hook is stashed for the `format` call
+    /// that follows and the value is tagged [`Tag::CustomFormatted`].
+    pub(crate) fn tag_of(&mut self, value: JSValue, global: &JSGlobalObject) -> JsResult<TagResult> {
+        let base = Tag::get(value, global)?;
+        if !self.inspect_custom {
+            return Ok(base);
+        }
+        if !matches!(
+            base.tag,
+            Tag::Object | Tag::Array | Tag::Map | Tag::Set | Tag::Error | Tag::Function | Tag::Class
+        ) || base.cell == JSType::ProxyObject
+            || !base.cell.can_get()
+        {
+            return Ok(base);
+        }
+        match value.fast_get(global, jsc::BuiltinName::InspectCustom)? {
+            Some(hook) if hook.is_callable() => {
+                self.custom_inspect = Some((value, hook));
+                Ok(TagResult { tag: Tag::CustomFormatted, cell: base.cell })
+            }
+            _ => Ok(base),
+        }
+    }
+
+    /// Print a value tagged [`Tag::CustomFormatted`]: call its hook, write a
+    /// string result verbatim, otherwise format the result. A hook that
+    /// returns `this` falls back to the default printer for that value once
+    /// (same as `util.inspect` and the console formatter).
+    ///
+    /// Kept out of line so `format`'s frame, which sits on the stack once per
+    /// nesting level, does not grow by this function's locals.
+    #[inline(never)]
+    fn print_custom_formatted<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+        value: JSValue,
+    ) -> JsResult<()> {
+        if self.failed {
+            return Ok(());
+        }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.failed = true;
+            return Err(self.global_this.throw_stack_overflow());
+        }
+        let global = self.global_this;
+        let hook = match self.custom_inspect.take() {
+            Some((this, hook)) if this == value => hook,
+            // `tag_of` ran for another value in between (a peek before the
+            // loop that prints). Look the hook up again.
+            _ => match value.fast_get(global, jsc::BuiltinName::InspectCustom)? {
+                Some(hook) if hook.is_callable() => hook,
+                _ => {
+                    let tag = Tag::get(value, global)?;
+                    return self.format::<W, ENABLE_ANSI_COLORS>(tag, writer, value, global);
+                }
+            },
+        };
+        const MAX_DEPTH: u32 = 8;
+        let result = jsc::console_object::call_custom_inspect(
+            global,
+            hook,
+            value,
+            MAX_DEPTH.saturating_sub(self.indent),
+            MAX_DEPTH,
+            ENABLE_ANSI_COLORS,
+        )?;
+        if result.is_string() {
+            let view = result.to_js_string_view(global)?;
+            let str = view.to_encoded_slice();
+            self.add_for_new_line(str.len);
+            let mut writer = WrappedWriter::new(writer);
+            writer.print(format_args!("{}", str));
+            if writer.failed {
+                self.failed = true;
+            }
+            return Ok(());
+        }
+        let tag = if result == value {
+            Tag::get(result, global)?
+        } else {
+            self.tag_of(result, global)?
+        };
+        self.format::<W, ENABLE_ANSI_COLORS>(tag, writer, result, global)
     }
 
     pub(crate) fn good_time_for_a_new_line(&mut self) -> bool {
@@ -403,6 +506,10 @@ pub(crate) enum Tag {
 
     JSX,
     Event,
+    /// The value has a callable `inspect.custom` hook and
+    /// [`Formatter::inspect_custom`] is set. Only [`Formatter::tag_of`]
+    /// produces it.
+    CustomFormatted,
 }
 
 impl Tag {
@@ -639,7 +746,7 @@ impl<'a> Formatter<'a> {
                         ),
 
                         // undefined is overloaded to mean the '%o" field
-                        Tag::Undefined => match Tag::get(next_value, global_this) {
+                        Tag::Undefined => match self.tag_of(next_value, global_this) {
                             Ok(tag) => self.format::<W, ENABLE_ANSI_COLORS>(
                                 tag, writer.ctx, next_value, global_this,
                             ),
@@ -777,7 +884,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if ctx.formatter.write_indent(ctx.writer).is_err() {
             return;
         }
-        let Ok(key_tag) = Tag::get(key, global_object) else { return };
+        let Ok(key_tag) = ctx.formatter.tag_of(key, global_object) else { return };
 
         if ctx
             .formatter
@@ -789,7 +896,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if ctx.writer.write_all(b" => ").is_err() {
             return;
         }
-        let Ok(value_tag) = Tag::get(value, global_object) else { return };
+        let Ok(value_tag) = ctx.formatter.tag_of(value, global_object) else { return };
         if ctx
             .formatter
             .format::<W, ENABLE_ANSI_COLORS>(value_tag, ctx.writer, value, ctx.formatter.global_this)
@@ -826,7 +933,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if ctx.formatter.write_indent(ctx.writer).is_err() {
             return;
         }
-        let Ok(key_tag) = Tag::get(next_value, global_object) else { return };
+        let Ok(key_tag) = ctx.formatter.tag_of(next_value, global_object) else { return };
         if ctx
             .formatter
             .format::<W, ENABLE_ANSI_COLORS>(
@@ -918,7 +1025,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        let Ok(tag) = Tag::get(value, global_this) else { return };
+        let Ok(tag) = ctx.formatter.tag_of(value, global_this) else { return };
 
         if tag.cell.is_hidden() {
             return;
@@ -1091,6 +1198,8 @@ impl<'a> Formatter<'a> {
         // cannot be used here because it would hold `&mut self` across the match body.
         let result: JsResult<()> = (|| {
             match FORMAT {
+                // `Formatter::format` routes this tag to `print_custom_formatted`.
+                Tag::CustomFormatted => unreachable!(),
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_utf8(self.global_this)?;
                     let slice = str.slice();
@@ -1416,7 +1525,7 @@ impl<'a> Formatter<'a> {
                         let inner: JsResult<()> = (|| {
                             {
                                 let element = value.get_index(self.global_this, 0)?;
-                                let tag = Tag::get(element, self.global_this)?;
+                                let tag = self.tag_of(element, self.global_this)?;
 
                                 was_good_time = was_good_time
                                     || !tag.tag.is_primitive()
@@ -1455,7 +1564,7 @@ impl<'a> Formatter<'a> {
                                 self.write_indent(writer.ctx).expect("unreachable");
 
                                 let element = value.get_index(self.global_this, i)?;
-                                let tag = Tag::get(element, self.global_this)?;
+                                let tag = self.tag_of(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, element, self.global_this,
@@ -1909,7 +2018,7 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 ));
 
-                                let tag = Tag::get(message_value, self.global_this)?;
+                                let tag = self.tag_of(message_value, self.global_this)?;
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, message_value, self.global_this,
                                 )?;
@@ -1929,7 +2038,7 @@ impl<'a> Formatter<'a> {
                                 let data: JSValue = value
                                     .fast_get(self.global_this, jsc::BuiltinName::Data)?
                                     .unwrap_or(JSValue::UNDEFINED);
-                                let tag = Tag::get(data, self.global_this)?;
+                                let tag = self.tag_of(data, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
                                     tag, writer.ctx, data, self.global_this,
@@ -1948,7 +2057,7 @@ impl<'a> Formatter<'a> {
                                         pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                     ));
 
-                                    let tag = Tag::get(data, self.global_this)?;
+                                    let tag = self.tag_of(data, self.global_this)?;
                                     self.format::<W, ENABLE_ANSI_COLORS>(
                                         tag, writer.ctx, data, self.global_this,
                                     )?;
@@ -2035,8 +2144,9 @@ impl<'a> Formatter<'a> {
                             self.quote_strings = true;
 
                             let inner: JsResult<()> = (|| {
+                                let tag = self.tag_of(key_value, self.global_this)?;
                                 self.format::<W, ENABLE_ANSI_COLORS>(
-                                    Tag::get(key_value, self.global_this)?,
+                                    tag,
                                     writer.ctx,
                                     key_value,
                                     self.global_this,
@@ -2084,7 +2194,7 @@ impl<'a> Formatter<'a> {
                                         continue;
                                     }
 
-                                    let tag = Tag::get(property_value, self.global_this)?;
+                                    let tag = self.tag_of(property_value, self.global_this)?;
 
                                     if tag.cell.is_hidden() {
                                         continue;
@@ -2190,8 +2300,10 @@ impl<'a> Formatter<'a> {
                                                     let r: JsResult<()> = (|| {
                                                         self.write_indent(writer.ctx)
                                                             .expect("unreachable");
+                                                        let tag =
+                                                            self.tag_of(children, self.global_this)?;
                                                         self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(children, self.global_this)?,
+                                                            tag,
                                                             writer.ctx,
                                                             children,
                                                             self.global_this,
@@ -2228,8 +2340,10 @@ impl<'a> Formatter<'a> {
                                                                 self.global_this,
                                                                 u32::try_from(j).unwrap(),
                                                             )?;
+                                                            let tag =
+                                                                self.tag_of(child, self.global_this)?;
                                                             self.format::<W, ENABLE_ANSI_COLORS>(
-                                                                Tag::get(child, self.global_this)?,
+                                                                tag,
                                                                 writer.ctx,
                                                                 child,
                                                                 self.global_this,
@@ -2576,6 +2690,7 @@ impl<'a> Formatter<'a> {
             Tag::Event => {
                 self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
+            Tag::CustomFormatted => self.print_custom_formatted::<W, ENABLE_ANSI_COLORS>(writer, value),
         };
         self.global_this = prev_global_this;
         r

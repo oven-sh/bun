@@ -959,7 +959,7 @@ impl BuiltinName {
     pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
-    pub(crate) const InspectCustom: Self = Self::inspectCustom;
+    pub const InspectCustom: Self = Self::inspectCustom;
     pub const HighWaterMark: Self = Self::highWaterMark;
     pub const Path: Self = Self::path;
     pub const Stream: Self = Self::stream;

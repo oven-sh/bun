@@ -578,7 +578,7 @@ impl JSType {
         }
     }
 
-    pub(crate) fn can_get(self) -> bool {
+    pub fn can_get(self) -> bool {
         matches!(
             self,
             JSType::Array

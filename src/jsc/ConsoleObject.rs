@@ -1479,7 +1479,9 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
+pub use formatter::{
+    Formatter, Tag, TagOptions, TagPayload, TagResult, call_custom_inspect, visited,
+};
 
 pub mod formatter {
     use super::*;
@@ -3205,6 +3207,26 @@ pub mod formatter {
         ) -> JSValue;
     }
 
+    /// Call a user `[util.inspect.custom]` / `[Bun.inspect.custom]` function
+    /// with Node's `(depth, options, inspect)` argument shape. `depth` is the
+    /// remaining depth budget and `max_depth` the configured maximum, so the
+    /// hook sees the same values `util.inspect` passes. Propagates a thrown
+    /// exception as `JsError`.
+    pub fn call_custom_inspect(
+        global: &JSGlobalObject,
+        function: JSValue,
+        this: JSValue,
+        depth: u32,
+        max_depth: u32,
+        colors: bool,
+    ) -> JsResult<JSValue> {
+        crate::from_js_host_call(global, || {
+            JSC__JSValue__callCustomInspectFunction(
+                global, function, this, depth, max_depth, colors,
+            )
+        })
+    }
+
     // ───────────────────────────────────────────────────────────────────────
     // print_as — the big tag-dispatched printer
     // ───────────────────────────────────────────────────────────────────────
@@ -3782,16 +3804,14 @@ pub mod formatter {
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
             // in here.
-            let result = crate::from_js_host_call(self.global_this, || {
-                JSC__JSValue__callCustomInspectFunction(
-                    self.global_this,
-                    self.custom_formatted_object.function,
-                    self.custom_formatted_object.this,
-                    u32::from(self.max_depth.saturating_sub(self.depth)),
-                    u32::from(self.max_depth),
-                    C,
-                )
-            })?;
+            let result = call_custom_inspect(
+                self.global_this,
+                self.custom_formatted_object.function,
+                self.custom_formatted_object.this,
+                u32::from(self.max_depth.saturating_sub(self.depth)),
+                u32::from(self.max_depth),
+                C,
+            )?;
             // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_

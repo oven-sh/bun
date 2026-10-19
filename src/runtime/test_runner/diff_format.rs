@@ -28,6 +28,7 @@ impl<'a> DiffFormatter<'a> {
             add_newline: false,
             flush: false,
             quote_strings: true,
+            inspect_custom: true,
         };
         let mut received_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(
@@ -77,6 +78,22 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
+        if !self.not && self.received_string == self.expected_string {
+            // Two different values printed alike (an `inspect.custom` hook on
+            // both, for example). A diff would show nothing; say so, as Jest
+            // and `toBe` do.
+            let expected = bstr::BStr::new(&self.expected_string);
+            return if diff_config.enable_ansi_colors {
+                write!(
+                    f,
+                    "Expected: {GREEN}{expected}{RESET}\nReceived: serializes to the same string",
+                    GREEN = bun_core::output::ansi::GREEN,
+                    RESET = bun_core::output::ansi::RESET,
+                )
+            } else {
+                write!(f, "Expected: {expected}\nReceived: serializes to the same string")
+            };
+        }
         print_diff_main(
             self.not,
             &self.received_string,

@@ -6611,6 +6611,8 @@ describe("css tests", () => {
       "@supports (display: grid) or (display: grid) { a { color: red } }",
       "@supports (display:grid){a{color:red}}",
     );
+    minify_test("@supports (--a: 1) or (--a: 1) { a { color: red } }", "@supports (--a:1){a{color:red}}");
+    minify_test("@supports (foo-bar: 1) or (foo-bar: 1) { a { color: red } }", "@supports (foo-bar:1){a{color:red}}");
     minify_test(
       "@import url(x.css) supports((-webkit-mask: none) or (mask: none));",
       '@import "x.css" supports((-webkit-mask:none) or (mask:none));',
@@ -6678,6 +6680,14 @@ describe("css tests", () => {
     minify_test(
       "@supports selector(a > b) { .a { color: red } } @supports selector(a > b) { .b { color: blue } }",
       "@supports selector(a > b){.a{color:red}.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (--a: 1) { .a { color: red } } @supports (--a: 1) { .b { color: blue } }",
+      "@supports (--a:1){.a{color:red}.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (foo-bar: 1) { .a { color: red } } @supports (foo-bar: 1) { .b { color: blue } }",
+      "@supports (foo-bar:1){.a{color:red}.b{color:#00f}}",
     );
     // https://github.com/oven-sh/bun/issues/24770
     minify_test(

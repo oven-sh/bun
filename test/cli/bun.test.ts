@@ -491,7 +491,7 @@ describe("bun", () => {
         : 0;
 
       test.concurrent.skipIf(bashVersion < 4)("bash offers files and scripts, also after a flag", async () => {
-        using dir = tempDir("completions-bash", { ...project, "bun.bash": await script("bash") });
+        using dir = tempDir("completions-bash", { ...project, "two words.ts": "", "bun.bash": await script("bash") });
         const expected = {
           "bun sr": ["src/"],
           "bun src/": ["src/index.ts", "src/other.ts"],
@@ -503,6 +503,7 @@ describe("bun", () => {
           "bun --cwd . run src/o": ["src/other.ts"],
           "bun test te": ["test/"],
           "bun myscript.ts fo": ["foo.txt"],
+          "bun tw": ["two words.ts"],
           "bun --silent add --p": ["--peer", "--production"],
           // As before.
           "bun add --p": ["--peer", "--production"],

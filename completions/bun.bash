@@ -3,14 +3,14 @@ _file_arguments() {
     local pattern="${1}";
     local file;
 
-    for file in $(compgen -f -- "${cur_word}"); do
+    while IFS= read -r file; do
         if [[ -d "${file}" ]]; then
             # a subcommand goes before a directory of the same name: `bun te<TAB>` gives `bun test `
             [[ " ${COMPREPLY[*]} " == *" ${file} "* ]] || COMPREPLY+=( "${file}/" );
         elif [[ "${file}" == ${pattern} ]]; then
             COMPREPLY+=( "${file}" );
         fi
-    done
+    done < <(compgen -f -- "${cur_word}")
 
     # no space after a directory, so that the next <TAB> lists what is in it
     [[ "${#COMPREPLY[@]}" -eq 1 && "${COMPREPLY[0]}" == */ ]] && compopt -o nospace 2>/dev/null;

@@ -1942,13 +1942,6 @@ mod tests {
                 root.get_object(b"name").is_some()
             )
             .unwrap();
-            writeln!(
-                out,
-                "has_any={} {}",
-                root.has_any_property_named(&[b"zzz", b"private"]),
-                root.has_any_property_named(&[b"zzz"])
-            )
-            .unwrap();
 
             let deps = root.get(b"deps").unwrap();
             assert!(deps.is_object());

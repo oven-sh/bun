@@ -1251,6 +1251,27 @@ test("--parallel forwards --conditions to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel forwards --jsx-side-effects to workers", async () => {
+  const fixture = `import {test,expect} from "bun:test"; let calls = 0; const h = () => void calls++; test("t",()=>{ <div />; expect(calls).toBe(1); });`;
+  using dir = tempDir("parallel-jsx-side-effects", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+    "a.test.tsx": fixture,
+    "b.test.tsx": fixture,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--jsx-side-effects"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel: workers get the --env-file values and skip the default .env", async () => {
   const fixture = `import {test,expect} from "bun:test"; test("env", () => { expect(process.env.BUNTEST_CUSTOM).toBe("1"); expect(process.env.BUNTEST_DOTENV).toBeUndefined(); });`;
   using dir = tempDir("parallel-env-file", {

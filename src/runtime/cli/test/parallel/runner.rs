@@ -420,9 +420,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             "--jsx-runtime={}",
             jsx_runtime_tag_name(jsx.runtime)
         ))?);
-        if jsx.side_effects {
-            argv.push(lit(b"--jsx-side-effects\0"));
-        }
+    }
+    if ctx.args.jsx_side_effects {
+        argv.push(lit(b"--jsx-side-effects\0"));
     }
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));

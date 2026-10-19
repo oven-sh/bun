@@ -2293,7 +2293,7 @@ describe("direct stream edge cases over Bun.serve", () => {
               // The body yields until the server returns it. A count of turns cannot bound that:
               // the kernel decides when the abort reaches the server, and the macOS loopback
               // delivers from another thread. The deadline only ends a server that never returns it.
-              const deadline = Date.now() + 3000;
+              const deadline = Date.now() + 10_000;
               while (Date.now() < deadline) {
                 await later();
                 yield "more";

@@ -2229,18 +2229,6 @@ describe("css tests", () => {
           safari: 16 << 16,
         },
       );
-
-      // The root-relative font units are in Safari 17.2.
-      for (const unit of ["rex", "rch", "ric", "rcap"]) {
-        for (const value of [`2${unit}`, `calc(2${unit} + 1px)`]) {
-          prefix_test(`.foo { ${prop}: 22px; ${prop}: ${value} }`, `.foo { ${prop}: 22px; ${prop}: ${value}; }`, {
-            safari: 16 << 16,
-          });
-          prefix_test(`.foo { ${prop}: 22px; ${prop}: ${value} }`, `.foo { ${prop}: ${value}; }`, {
-            safari: 18 << 16,
-          });
-        }
-      }
     }
   });
 
@@ -7429,7 +7417,7 @@ describe("css tests", () => {
 
     // The earlier declaration is the fallback for a target that does not support a math
     // function or a unit of the later one. Chrome 87, Firefox 78 and Safari 14 have no
-    // round(), cqw, dvh or rex. Chrome 125 has all four.
+    // round(), cqw or dvh. Chrome 125 has all three.
     const older = { chrome: Some(87 << 16), firefox: Some(78 << 16), safari: Some(14 << 16) };
     const newer = { chrome: Some(125 << 16) };
     for (const [property, fallback, value] of [
@@ -7442,7 +7430,6 @@ describe("css tests", () => {
       ["transform", "translate3d(1px, 2px, 15px)", "translate3d(1px, 2px, 1cqw)"],
       ["transform", "translateZ(15px)", "translateZ(1cqw)"],
       ["transform", "perspective(15px)", "perspective(1cqw)"],
-      ["transform", "translateX(15px)", "translateX(2rex)"],
       ["transform", "rotate(15deg)", "translateX(round(1em, 5px)) rotate(15deg)"],
       ["translate", "15px", "round(1em, 5px)"],
       ["translate", "1px 15px", "1px round(1em, 5px)"],

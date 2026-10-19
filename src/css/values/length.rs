@@ -167,19 +167,19 @@ define_length_units! {
     /// A length in `ex` unit. An `ex` is equal to the x-height of the font.
     Ex: b"ex" => Some(Feature::ExUnit),
     /// A length in the `rex` unit. A `rex` is equal to the value of the `ex` unit on the root element.
-    Rex: b"rex" => Some(Feature::RexUnit),
+    Rex: b"rex" => None,
     /// A length in the `ch` unit. A `ch` is equal to the width of the zero ("0") character in the current font.
     Ch: b"ch" => Some(Feature::ChUnit),
     /// A length in the `rch` unit. An `rch` is equal to the value of the `ch` unit on the root element.
-    Rch: b"rch" => Some(Feature::RchUnit),
+    Rch: b"rch" => None,
     /// A length in the `cap` unit. A `cap` is equal to the cap-height of the font.
     Cap: b"cap" => Some(Feature::CapUnit),
     /// A length in the `rcap` unit. An `rcap` is equal to the value of the `cap` unit on the root element.
-    Rcap: b"rcap" => Some(Feature::RcapUnit),
+    Rcap: b"rcap" => None,
     /// A length in the `ic` unit. An `ic` is equal to the width of the "水" (CJK water ideograph) character in the current font.
     Ic: b"ic" => Some(Feature::IcUnit),
     /// A length in the `ric` unit. An `ric` is equal to the value of the `ic` unit on the root element.
-    Ric: b"ric" => Some(Feature::RicUnit),
+    Ric: b"ric" => None,
     /// A length in the `lh` unit. An `lh` is equal to the computed value of the `line-height` property.
     Lh: b"lh" => Some(Feature::LhUnit),
     /// A length in the `rlh` unit. An `rlh` is equal to the value of the `lh` unit on the root element.

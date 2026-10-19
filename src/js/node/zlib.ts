@@ -874,7 +874,7 @@ class ZstdDecompress extends Zstd {
 }
 
 // Legacy alias on the C++ wrapper object.
-$newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3)(NativeZlib.prototype, "jsref", {
+require("internal/shared").defineBuiltinProperty(NativeZlib.prototype, "jsref", {
   __proto__: null,
   get() {
     return this[owner_symbol];

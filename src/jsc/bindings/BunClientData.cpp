@@ -278,7 +278,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty, (JSC::JSGlobalObject *
 
     bool isImmutable = builtin->hasImmutableProperties();
     if (isImmutable) {
-        // What builds a lazy property may run JavaScript.
+        // Building a lazy property may run JavaScript, which must not happen while the write is allowed.
         JSC::PropertySlot slot(builtin, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
         builtin->methodTable()->getOwnPropertySlot(builtin, globalObject, key, slot);
         RETURN_IF_EXCEPTION(scope, {});
@@ -310,7 +310,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty, (JSC::JSGlobalObject *
 
     bool isImmutable = builtin->hasImmutableProperties();
     if (isImmutable && !builtin->staticPropertiesReified()) {
-        // What builds a lazy property may run JavaScript.
+        // Building a lazy property may run JavaScript, which must not happen while the write is allowed.
         builtin->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }

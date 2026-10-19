@@ -143,13 +143,13 @@ JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValu
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);
 // For an object of `owner`'s that is API (`Bun.dns`, `process.versions`), not state (`Bun.env`): immutable if `owner` is, with the objects it holds.
 JSC::JSValue namespaceObjectOf(JSC::VM&, JSC::JSObject* owner, JSC::JSValue namespaceObject);
-// Object.defineProperty(), `delete` and Object.setPrototypeOf() that an immutable built-in accepts. They run no JavaScript meanwhile.
+// For built-in modules, through internal/shared: Object.defineProperty(), `delete` and Object.setPrototypeOf() that work on an immutable built-in too. No JavaScript runs while the write is allowed.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDefineBuiltinProperty);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDeleteBuiltinProperty);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetBuiltinPrototype);
 // JSGlobalObject::didCreateBuiltin() for a built-in module.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDidCreateBuiltin);
-// What they are given: the prototypes themselves, whatever the globals of those names hold by now.
+// Targets for those three. A program can give the globals `Blob`, `Performance` and `process` other values, so a module does not look there.
 JSC::JSValue blobPrototype(Zig::GlobalObject*);
 JSC::JSValue performancePrototype(Zig::GlobalObject*);
 JSC::JSValue processPrototype(Zig::GlobalObject*);

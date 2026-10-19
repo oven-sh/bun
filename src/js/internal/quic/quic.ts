@@ -148,7 +148,7 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
 const kClientHttp = Symbol("kClientHttp");
 const kNoteClientHttp = Symbol("kNoteClientHttp");
 
-const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
+const { defineBuiltinProperty } = require("internal/shared");
 const kSocketAddressHandle = Symbol("kSocketAddressHandle");
 defineBuiltinProperty(SocketAddress.prototype, kSocketAddressHandle, {
   __proto__: null,

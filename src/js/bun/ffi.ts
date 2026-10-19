@@ -75,7 +75,7 @@ const nativeDLOpen = ffi.dlopen;
 const nativeCallback = ffi.callback;
 const closeCallback = ffi.closeCallback;
 const nativeCFunction = ffi.cfunction;
-const deleteBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDeleteBuiltinProperty", 2);
+const { deleteBuiltinProperty } = require("internal/shared");
 deleteBuiltinProperty(ffi, "callback");
 deleteBuiltinProperty(ffi, "closeCallback");
 deleteBuiltinProperty(ffi, "cfunction");

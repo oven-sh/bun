@@ -12,7 +12,13 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const {
+  throwNotImplemented,
+  warnNotImplementedOnce,
+  defineBuiltinProperty,
+  setBuiltinPrototype,
+  didCreateBuiltin,
+} = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -113,8 +119,6 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
-
-const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -293,8 +297,8 @@ function injectFakeEmitter(Class) {
   for (const [methodName, value] of emitterMethods) {
     Object.defineProperty(inherited, methodName, { value, writable: true, enumerable: false, configurable: true });
   }
-  $newCppFunction("BunClientData.cpp", "jsFunctionDidCreateBuiltin", 1)(inherited);
-  $newCppFunction("BunClientData.cpp", "jsFunctionSetBuiltinPrototype", 2)(proto, inherited);
+  didCreateBuiltin(inherited);
+  setBuiltinPrototype(proto, inherited);
 }
 
 injectFakeEmitter(_MessagePort);

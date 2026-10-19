@@ -932,7 +932,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetStackTraceLimitOverride, (JSC::JSGlobalObj
 {
     std::optional<unsigned> previous = globalObject->stackTraceLimitOverride();
     JSValue limit = callFrame->argument(0);
-    globalObject->setStackTraceLimitOverride(limit.isUInt32() ? std::optional<unsigned>(limit.asUInt32()) : std::nullopt);
+    bool isLimit = limit.isNumber() && !std::isnan(limit.asNumber());
+    globalObject->setStackTraceLimitOverride(isLimit ? std::optional<unsigned>(clampToUnsigned(limit.asNumber())) : std::nullopt);
     return JSValue::encode(previous ? jsNumber(*previous) : jsUndefined());
 }
 

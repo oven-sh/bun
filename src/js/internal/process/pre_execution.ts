@@ -4,8 +4,7 @@
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
 
-const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
-const { setStackTraceLimitOverride } = require("internal/shared");
+const { defineBuiltinProperty, setStackTraceLimitOverride } = require("internal/shared");
 
 let writeSync: typeof import("node:fs").writeSync;
 let envTracePrintMessage = false;
@@ -130,8 +129,12 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
       // proxy trap, and the Error line); widen the limit so the user still
       // sees `Error.stackTraceLimit` real frames.
       const previousOverride = setStackTraceLimitOverride(Error.stackTraceLimit + 3);
-      const stack = new Error().stack!.split("\n");
-      setStackTraceLimitOverride(previousOverride);
+      let stack: string[];
+      try {
+        stack = new Error().stack!.split("\n");
+      } finally {
+        setStackTraceLimitOverride(previousOverride);
+      }
       // stack[0] = "Error", [1] = printEnvTrace, [2] = the proxy trap.
       let corrected = false;
       for (let i = 3; i < stack.length; i++) {

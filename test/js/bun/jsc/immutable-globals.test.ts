@@ -66,13 +66,13 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         "process.fresh = 1",
         "process.exit = 1",
         "fetch.fresh = 1",
-        // What a name means
+        // The global object itself: no global can be added, replaced or deleted
         "globalThis.fresh = 1",
         "globalThis.Array = 1",
         "globalThis.JSON = {}",
         "globalThis.fetch = 1",
         "delete globalThis.Bun",
-        // What inherits from a built-in
+        // A program's own objects can still shadow what they inherit from a built-in
         "({}).toString = 1",
         "(class extends Array {}).prototype.map = 1",
         "new Error('x').name = 'y'",
@@ -362,12 +362,12 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         "process.versions": process.versions,
         "process.report": process.report,
         "process.config.variables": process.config.variables,
-        // State, not API.
+        // These hold state, so they stay mutable.
         "Bun.env": Bun.env,
         "Bun.argv": Bun.argv,
         "Bun.stdout": Bun.stdout,
         "process.argv": process.argv,
-        // Globals of their own.
+        // Each of these follows the opt-out of its own global, not -Bun or -process.
         "Request.prototype": Request.prototype,
         "Buffer.prototype": Buffer.prototype,
         "Object.prototype": Object.prototype,
@@ -425,7 +425,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     });
 
     test("covers what belongs to a global nothing has read, and a constructor only its prototype leads to", async () => {
-      // Of Bun's globals, this names only Response and Request.
+      // The script reads no global of Bun's but Response and Request, so the others have not been created when it reaches their objects.
       const script = `
         const prototypeOf = Object.getPrototypeOf;
         const objects = {
@@ -944,6 +944,25 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
     expect(trace(immutable.stderr)).toEqual(['[--trace-env] get "TRACED"', expect.stringContaining("at reader (")]);
     expect(trace(mutable.stderr)).toEqual(trace(immutable.stderr));
     expect(immutable.exitCode).toBe(0);
+  });
+
+  test("--trace-env-js-stack takes a fractional Error.stackTraceLimit, and leaves the limit in force if it throws", async () => {
+    using dir = tempDir("immutable-globals-trace-env", {
+      "index.cjs": `
+        function deep(n, f) { return n ? deep(n - 1, f) : f(); }
+        Error.stackTraceLimit = 4.5;
+        deep(20, () => process.env.TRACED);
+        Error.prepareStackTrace = (error, callSites) => callSites;
+        try { process.env.TRACED; } catch {}
+        Error.prepareStackTrace = undefined;
+        Error.stackTraceLimit = 1;
+        console.log(deep(20, () => new Error().stack).split("\\n").length - 1);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(undefined, ["--trace-env-js-stack", "index.cjs"], String(dir));
+    expect(stderr.split("\n").filter(line => line.includes("at deep (")).length).toBe(4);
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
   });
 
   test("node:repl reports an await that SIGINT interrupts when Error is immutable", async () => {

@@ -190,6 +190,13 @@ const setStackTraceLimitOverride = $newCppFunction(
   1,
 ) as (limit: number | undefined) => number | undefined;
 
+// Object.defineProperty(), `delete` and Object.setPrototypeOf() that also work on what BUN_JSC_immutableGlobals covers.
+const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
+const deleteBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDeleteBuiltinProperty", 2);
+const setBuiltinPrototype = $newCppFunction("BunClientData.cpp", "jsFunctionSetBuiltinPrototype", 2);
+// Makes immutable, if BUN_JSC_immutableGlobals is on, an object a built-in module creates for a native class.
+const didCreateBuiltin = $newCppFunction("BunClientData.cpp", "jsFunctionDidCreateBuiltin", 1);
+
 // Port of node's IsInsideNodeModules: first real user frame inside node_modules?
 // https://github.com/nodejs/node/blob/main/src/node_util.cc
 function isInsideNodeModules(frameLimit: number): boolean {
@@ -424,6 +431,10 @@ export default {
   guardCallback,
   captureCallSites,
   setStackTraceLimitOverride,
+  defineBuiltinProperty,
+  deleteBuiltinProperty,
+  setBuiltinPrototype,
+  didCreateBuiltin,
   isInsideNodeModules,
   resistStopPropagation,
 

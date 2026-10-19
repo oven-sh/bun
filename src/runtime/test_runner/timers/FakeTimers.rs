@@ -356,7 +356,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
-    // A program may have given the global another value, which gets no more than the program can do itself.
+    // Only Bun's own function: a program can put another built-in under that name, which must stay immutable.
     let allow_materialization = Bun__isSetTimeoutFunction(set_timeout_fn)
         .then(|| global.vm().allow_lazy_materialization_of_immutable_properties());
     if enabled {

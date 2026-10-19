@@ -6,6 +6,7 @@ const {
   hasObserver,
   PerformanceNodeEntry,
   kEmptyObject,
+  defineBuiltinProperty,
 } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
@@ -300,7 +301,6 @@ if (Performance) {
       value: eventLoopUtilization,
     },
   };
-  const defineBuiltinProperty = $newCppFunction("BunClientData.cpp", "jsFunctionDefineBuiltinProperty", 3);
   const prototype = $cpp("BunClientData.cpp", "performancePrototype");
   for (const name in additions) defineBuiltinProperty(prototype, name, additions[name]);
 }

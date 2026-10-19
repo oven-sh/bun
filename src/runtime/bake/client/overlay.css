@@ -351,6 +351,9 @@ nav code {
   font-size: 12px;
   color: var(--fg-muted);
 }
+.trace-frame.library-frame {
+  opacity: 0.5;
+}
 .function-name {
   color: var(--fg);
 }

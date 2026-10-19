@@ -175,9 +175,9 @@ impl Checker<'_, '_> {
             level,
         );
         // `r.overflow`: that is the diagnostic, about the two types passed in.
-        if let Some(code @ (2859 | 2321)) = lines.first().map(|line| line.code) {
+        if lines.first().is_some_and(|line| line.code == 2859) {
             let types = [Arg::Type(static_type), Arg::Type(printed)];
-            let diagnostic = self.new_diagnostic(at, code, &types);
+            let diagnostic = self.new_diagnostic(at, 2859, &types);
             self.add_diagnostic(diagnostic);
             return;
         }

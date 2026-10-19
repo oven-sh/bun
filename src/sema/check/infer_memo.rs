@@ -151,7 +151,7 @@ const TRACES: [&str; 14] = [
     "incomplete_flow_taints",
     "reported",
     "diagnostics",
-    "relation_too_complex and relation_too_deep",
+    "relation_too_complex",
     "unresolved_renamed_params",
 ];
 
@@ -455,8 +455,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// - A variance computation is in progress.
     /// - A check is in progress that neither reads nor stores expression types, or that reads them from
     ///   `rechecked_members`.
-    /// - A caller hasn't read an overflow flag yet. A comparison overwrites `relation_too_deep` and can set
-    ///   `relation_too_complex`.
+    /// - A caller hasn't read `relation_too_complex` yet. A comparison can set it.
     /// - `infer_reverse_mapped_type` is in progress.
     /// - An intersection is being reduced. Looking up a property during the reduction creates the property again.
     /// - A type parameter default or an identical base type is being resolved.
@@ -476,7 +475,6 @@ impl<'p, 's> Checker<'p, 's> {
         let is_at_rest = !self.is_rechecking()
             && !self.pulls_contextual_types()
             && !self.relation_too_complex
-            && !self.relation_too_deep
             && self.reverse_mapped_source_stack.is_empty()
             && self.never_in_progress.is_empty()
             && self.defaults_in_progress.is_empty()
@@ -537,7 +535,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.incomplete_flow_taints,
             self.reported.len() as u64,
             self.task.diagnostics.len() as u64,
-            u64::from(self.relation_too_complex) | u64::from(self.relation_too_deep) << 1,
+            u64::from(self.relation_too_complex),
             self.unresolved_renamed_params.len() as u64,
         ]
     }

@@ -863,7 +863,6 @@ impl<'s> Program<'s> {
             inherited_name_set: None,
             cond_distributive_memo: Default::default(),
             relation_too_complex: false,
-            relation_too_deep: false,
             current_source_element: None,
             is_type_checked: false,
             is_emitting: false,
@@ -1657,8 +1656,6 @@ pub struct Checker<'p, 's> {
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
-    /// Whether the last `checkTypeRelatedToEx` reached 100 nested comparisons (2321).
-    pub(super) relation_too_deep: bool,
     /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
     pub(super) current_source_element: Option<CurrentNode>,
     /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
@@ -3804,8 +3801,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.task.hold_back();
     }
 
-    /// The checker has given up: at a limit of instantiation (2589), of the size of a union (2590) or of a comparison (2859,
-    /// 2321), for lack of native stack, or at a depth at which a query is refused. What it returns then is no function
+    /// The checker has given up: at a limit of instantiation (2589), of the size of a union (2590) or of a comparison
+    /// (2859), for lack of native stack, or at a depth at which a query is refused. What it returns then is no function
     /// of the question alone. How far from the limit a computation begins, and how much of it is left to do, depends on
     /// what was computed before, which for a task that sees commits includes what it has found. Such a task is lost.
     /// `limit`: its name, for `--timing`.

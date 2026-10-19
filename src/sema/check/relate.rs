@@ -99,8 +99,6 @@ pub(super) const FAILED: u8 = 2;
 const REPORTS_UNMEASURABLE: u8 = 8;
 const REPORTS_UNRELIABLE: u8 = 16;
 pub(super) const COMPLEXITY_OVERFLOW: u8 = 32;
-pub(super) const STACK_DEPTH_OVERFLOW: u8 = 64;
-const OVERFLOW: u8 = COMPLEXITY_OVERFLOW | STACK_DEPTH_OVERFLOW;
 
 // VarianceFlags
 pub(super) const INVARIANT: u8 = 0;
@@ -227,8 +225,6 @@ pub(super) struct Relater {
     pub(super) overflow: bool,
     /// A cached `COMPLEXITY_OVERFLOW` entry answered one of the comparisons.
     hit_cached_overflow: bool,
-    /// `len(r.sourceStack)` or `len(r.targetStack)` reached 100, which is why `overflow` is set.
-    is_too_deep: bool,
     /// `related` has already applied its own rules to `top_source` and `top_target`: no simple rule
     /// relates them, and they are not an object type and a primitive. Consumed by the first
     /// comparison.
@@ -273,7 +269,6 @@ impl Relater {
             expanding: 0,
             overflow: false,
             hit_cached_overflow: false,
-            is_too_deep: false,
             is_from_related: false,
             top_key: None,
             relation_count: 2_000_000,
@@ -1192,10 +1187,9 @@ impl<'p, 's> Checker<'p, 's> {
         r.caches_failures = is_trial;
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
         let overflow = r.overflow;
-        // `relationCount <= 0`. Running out of nesting depth or native stack is not a complexity overflow.
+        // `relationCount <= 0`. Running out of native stack is not a complexity overflow.
         let is_too_complex = overflow && r.relation_count <= 0 && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
-        let is_too_deep = overflow && std::mem::take(&mut r.is_too_deep) && !is_trial;
         r.is_from_related = false;
         r.top_key = None;
         r.maybe_keys.clear();
@@ -1211,17 +1205,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.free_relaters.push(r);
         self.end_comparison(is_outermost);
-        self.relation_too_deep = is_too_deep;
-        if is_too_complex || is_too_deep {
-            let (code, kind) = match is_too_complex {
-                true => (2859, COMPLEXITY_OVERFLOW),
-                false => (2321, STACK_DEPTH_OVERFLOW),
-            };
-            self.set_relation_overflow(source, target, relation, kind);
-            self.relation_too_complex |= is_too_complex;
+        if is_too_complex {
+            self.set_relation_overflow(source, target, relation);
+            self.relation_too_complex = true;
             if !is_trial {
                 let types = [Arg::Type(source), Arg::Type(target)];
-                self.error_about_comparison_at_current_node(code, &types);
+                self.error_about_comparison_at_current_node(2859, &types);
             }
         } else if hit_cached_overflow && !overflow && !result.holds() {
             // `reportRelationError`: the overflow replaces the relation error only if it was recorded for `source` and `target`.
@@ -4218,16 +4207,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if let Some(entry) = cached
             // A cached failure is recomputed to produce its error elaboration.
-            && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
+            && !(REPORT && entry & FAILED != 0 && entry & COMPLEXITY_OVERFLOW == 0)
         {
             self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
-            if REPORT && entry & OVERFLOW != 0 {
-                let code = if entry & COMPLEXITY_OVERFLOW != 0 {
-                    2859
-                } else {
-                    2321
-                };
-                self.report_error(r, code, &[Arg::Type(source), Arg::Type(target)]);
+            if REPORT && entry & COMPLEXITY_OVERFLOW != 0 {
+                self.report_error(r, 2859, &[Arg::Type(source), Arg::Type(target)]);
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
                 // The comparison was aborted when it ran.
@@ -4253,10 +4237,15 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::MAYBE;
             }
         }
-        let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
-        if is_too_deep || self.is_stack_low() {
-            self.note_gave_up("the depth of a comparison");
-            r.is_too_deep |= is_too_deep;
+        // As in TypeScript 7.1. 7.0 gives up here and reports 2321. Which comparison is the 100th depends on where the
+        // outermost one started, so the results that follow from this one stay in the task, like those of `REC_BOTH` below.
+        if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
+            self.comparisons_of_deeply_nested_types += 1;
+            self.task.hold_back();
+            return Ternary::MAYBE;
+        }
+        if self.is_stack_low() {
+            self.note_gave_up("the native stack in a comparison");
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -4337,7 +4326,7 @@ impl<'p, 's> Checker<'p, 's> {
             // A result that is false under assumptions is false without them, and so is one that
             // an overflow has cut off. Not so where the native stack ran low, which is no overflow
             // in typescript-go.
-            let is_cut_short = r.overflow && !r.is_too_deep && r.relation_count > 0;
+            let is_cut_short = r.overflow && r.relation_count > 0;
             if r.caches_failures {
                 if !is_cut_short {
                     r.failed.insert(key);
@@ -4371,29 +4360,21 @@ impl<'p, 's> Checker<'p, 's> {
         source: TypeId,
         target: TypeId,
     ) -> Option<u32> {
-        let (code, kind) = match () {
-            _ if r.relation_count <= 0 => (2859, COMPLEXITY_OVERFLOW),
-            _ if r.is_too_deep => (2321, STACK_DEPTH_OVERFLOW),
-            _ => return None,
-        };
-        self.set_relation_overflow(source, target, r.relation, kind);
-        Some(code)
+        if r.relation_count > 0 {
+            return None;
+        }
+        self.set_relation_overflow(source, target, r.relation);
+        Some(2859)
     }
 
-    /// `relation.set(id, RelationComparisonResultFailed|kind)` of `checkTypeRelatedToEx`. It
-    /// replaces the plain failure that `recursive_type_related_to` has stored for the two types.
-    fn set_relation_overflow(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        relation: Relation,
-        kind: u8,
-    ) {
+    /// `relation.set(id, RelationComparisonResultFailed|RelationComparisonResultComplexityOverflow)` of
+    /// `checkTypeRelatedToEx`. It replaces the plain failure that `recursive_type_related_to` has stored for the two types.
+    fn set_relation_overflow(&mut self, source: TypeId, target: TypeId, relation: Relation) {
         self.note_gave_up("a comparison that overflowed");
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {
-            self.set_relation(key, FAILED | kind, stored);
+            self.set_relation(key, FAILED | COMPLEXITY_OVERFLOW, stored);
         }
     }
 

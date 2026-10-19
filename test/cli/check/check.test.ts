@@ -8911,7 +8911,8 @@ a[k] += "s";
       expect(exitCode).toBe(1);
     });
 
-    test("a comparison without an error node that exceeds the depth limit is reported at the type reference", async () => {
+    // TypeScript 7.0 reports TS2321 at the type reference. 7.1 assumes that the types are related at 100 levels.
+    test("a comparison without an error node that is over 100 levels deep reports nothing", async () => {
       using dir = project({
         "a.ts": `type UnionToIntersect<U> = (U extends unknown ? (arg: U) => 0 : never) extends (arg: infer I) => 0 ? I : never;
 type UnionLast<U> = UnionToIntersect<U extends unknown ? (x: U) => 0 : never> extends (x: infer L) => 0 ? L : never;
@@ -8924,10 +8925,8 @@ export type Result<T extends string> = Wrap<Assert<UnionToTuple<{ [K in T]: Lite
 `,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(
-        `"a.ts(8,40): error TS2321: Excessive stack depth comparing types 'UnionToTuple<{ [K in T]: Literal<K>; }[T], UnionLast<{ [K in T]: Literal<K>; }[T]>>' and 'Schema[]'."`,
-      );
-      expect(exitCode).toBe(1);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
     });
 
     test("a call of a variable without an annotation, in a loop that assigns the result to it", async () => {
@@ -11177,7 +11176,7 @@ export declare const o: { readonly L: unique symbol };
 
     // 200 comparisons deep. The stack frames of a debug build are several times larger, and it runs out of stack first.
     test.skipIf(isDebug || isASAN)(
-      "a comparison that exceeds the depth limit while its error is elaborated",
+      "a comparison that is over 100 levels deep while its error is elaborated",
       async () => {
         using dir = project({
           "a.ts": `interface T0<A> { a: A; next: T1<A[]> | null; take(x: T1<A>): void }
@@ -11236,11 +11235,8 @@ export const v: T0<string> = null! as T0<unknown>;
         });
         const { stdout, exitCode } = await check(dir);
         expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(51,14): error TS2321: Excessive stack depth comparing types 'T0<string>' and 'T0<unknown>'.
-        a.ts(51,14): error TS2321: Excessive stack depth comparing types 'T49<?>' and 'T49<?>'.
-        a.ts(52,14): error TS2322: Type 'T0<unknown>' is not assignable to type 'T0<string>'.
-          Types of property 'a' are incompatible.
-            Type 'unknown' is not assignable to type 'string'."
+        "a.ts(52,14): error TS2322: Type 'T0<unknown>' is not assignable to type 'T0<string>'.
+          Type 'unknown' is not assignable to type 'string'."
       `);
         expect(exitCode).toBe(1);
       },
@@ -14250,29 +14246,6 @@ export const c${i}: never = handle(typed);`,
 (+2,14): error TS2322: Type 'number' is not assignable to type 'never'.
 (+2,57): error TS2322: Type 'string' is not assignable to type 'number'.
 (+3,14): error TS2322: Type 'number' is not assignable to type 'never'.
-`,
-        },
-        "after a comparison that was too deep": {
-          sizes: [14, 15, 16, 17, 40],
-          declarations: count => `
-interface Target<T> { ${properties(count, () => "T")} }
-interface A { ${properties(count, () => "string")} }
-declare function take<T>(x: Target<T>): T[];
-declare const a: A;
-take(a);
-take(a);
-take(a);
-take(a);
-interface Deep<in out T> { next: Deep<T[]> | null }
-declare let narrow: Deep<{ a: 1; b: 2 }>, wide: Deep<{ a: 1 }>;
-wide = narrow;`,
-          round: i => `
-export const a${i}: never = take(a);`,
-          declared: `
-(12,1): error TS2321: Excessive stack depth comparing types 'Deep<{ a: 1; b: 2; }>' and 'Deep<{ a: 1; }>'.
-`,
-          repeated: `
-(+1,14): error TS2322: Type 'string[]' is not assignable to type 'never'.
 `,
         },
         // A walk ends when it has been everywhere, however long that takes: "last" is in the last of 211,600 pairs.
@@ -23461,7 +23434,7 @@ describe.concurrent("--check", () => {
     // these comparisons takes about 45,000. After 110 of them every instantiation in the file gave the error type, to
     // which anything is assignable.
     test.skipIf(isDebug || isASAN).each([130])(
-      "%i comparisons that reach the depth limit do not hide the next error",
+      "%i comparisons that are over 100 levels deep do not hide the next error",
       async n => {
         using dir = project({
           "tsconfig.json": JSON.stringify({
@@ -23480,16 +23453,16 @@ describe.concurrent("--check", () => {
         const errors = stdout
           .split("\n")
           .flatMap(line => /^index\.ts\((\d+),\d+\): error (TS\d+)/.exec(line)?.slice(1, 3).join(" ") ?? []);
-        expect(errors).toEqual([...range(n).map(i => `${i + 2} TS2321`), `${n + 2} TS2322`]);
+        expect(errors).toEqual(range(n + 1).map(i => `${i + 2} TS2322`));
         expect(exitCode).toBe(1);
       },
     );
 
-    // `j0 = i0` caches the pairs from `I0` and `J0` to `I99` and `J99` as failed. `j70 = i70` repeats one of those
-    // comparisons to report the error. It starts 70 levels further down, so it succeeds, and tsc replaces the cached
-    // failures from `I70` and `J70` on.
+    // At 100 levels TypeScript 7.1 assumes that the types are related. 7.0 gives up there, reports TS2321 and caches the
+    // pairs from `I0` and `J0` to `I99` and `J99` as failed, so what it says about `I69` and `J69` depends on what it
+    // compared before.
     test.each([0, 800])(
-      "reports the same errors as tsc for types that are compared again %i statements after a depth limit error",
+      "types over 100 levels deep are related, and still are when they are compared again %i statements later",
       async n => {
         const chain = (name: string) =>
           `${range(100)
@@ -23503,19 +23476,36 @@ ${range(n)
   .map(i => `export const u${i}: number = ${i};`)
   .join("\n")}
 export const j70: J70 = i70;
-export const replaced: I70 extends J70 ? 1 : 2 = 0;
-export const kept: I69 extends J69 ? 1 : 2 = 0;
+export const near: I70 extends J70 ? 1 : 2 = 0;
+export const far: I69 extends J69 ? 1 : 2 = 0;
 `,
         });
         const { stdout, exitCode } = await check(dir);
         expect(stdout.split("\n").map(line => line.replace(/^index\.ts\(\d+,\d+\): error /, ""))).toEqual([
-          "TS2321: Excessive stack depth comparing types 'I0' and 'J0'.",
           "TS2322: Type '0' is not assignable to type '1'.",
-          "TS2322: Type '0' is not assignable to type '2'.",
+          "TS2322: Type '0' is not assignable to type '1'.",
         ]);
         expect(exitCode).toBe(1);
       },
     );
+
+    // In 7.0 each file gets a TS2321. `second.ts` first compares two types from the middle of the other file's chains.
+    test("two files that each compare types over 100 levels deep report nothing", async () => {
+      const chain = (name: string) =>
+        `${range(100)
+          .map(i => `interface ${name}${i} { n: ${name}${i + 1} }`)
+          .join("\n")}\ninterface ${name}100 { v: 1 }\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["chains.d.ts", "first.ts", "second.ts"] }),
+        "chains.d.ts": ["I", "J", "P", "Q"].map(chain).join(""),
+        "first.ts": `declare const i0: I0;\nconst j0: J0 = i0;\n`,
+        "second.ts": `declare const i70: I70;\nconst j70: J70 = i70;\ndeclare const p0: P0;\nconst q0: Q0 = p0;\n`,
+      });
+      for (const { stdout, exitCode } of await Promise.all([1, 2, 8].map(n => check(dir, ["--threads", String(n)])))) {
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(0);
+      }
+    });
 
     // A parser as PEG.js generates it, as in the release bundle of Yarn: rules that call each other in a ring and collect
     // what they get in arrays, in loops. It took seven times as long for each alternative of the last rule.

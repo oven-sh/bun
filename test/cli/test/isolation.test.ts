@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1607,6 +1608,74 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // An import() that a finished file left fetching its module ends while the next file runs. What it fetched is
+  // from before the swap, and goes in no table by key: the SourceProvider cache keeps what the running file put
+  // there. The file of the module is a named pipe, so the fetch (a transpiler job) ends when the next file writes.
+  // Off Linux the resolver opens what the symlink names to stat it, and that blocks on a pipe with no writer.
+  test.skipIf(!isLinux).each(["mjs", "cjs"])(
+    "a finished file's import() of a .%s module that ends in the next file leaves the SourceProvider cache alone",
+    async EXT => {
+      using dir = tempDir("isolate-late-import", {
+        "a-import.test.ts": `
+          import { test } from "bun:test";
+          import { openSync, promises, writeFileSync } from "node:fs";
+
+          const held = import.meta.dir + "/node_modules/held/index.${EXT}"; // a symlink to the pipe
+
+          test("leaves an import() fetching its module", async () => {
+            import(held).catch(() => {});
+            // Resolves when the transpiler job has the pipe open: the fetch is in flight.
+            const writeEnd = await promises.open(held, "w");
+            // A raw descriptor stays open past this file. The next file gets its number.
+            writeFileSync(import.meta.dir + "/write-end", String(openSync(held, "w")));
+            await writeEnd.close();
+          });
+        `,
+        "b-import.test.ts": `
+          import { test, expect } from "bun:test";
+          import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+          import { closeSync, readFileSync, renameSync, writeFileSync, writeSync } from "node:fs";
+
+          const held = import.meta.dir + "/node_modules/held/index.${EXT}";
+          const pipe = import.meta.dir + "/node_modules/pipes/held.${EXT}";
+          const text = (v: number) => "${EXT === "cjs" ? "exports.v = " : "export const v = "}" + v + ";";
+
+          test("imports the module, then A's fetch of it ends", async () => {
+            // From here on the path is a file with the new text. A's job keeps the pipe open.
+            writeFileSync(pipe + ".new", text(1));
+            renameSync(pipe + ".new", pipe);
+            const module = await import(held);
+            expect(module.v ?? module.default.v).toBe(1);
+            const key = require.resolve(held);
+            const cached = isolatedModuleCacheSourceType(key);
+            expect(cached).not.toBeNull();
+
+            // What A's fetch reads.
+            const writeEnd = Number(readFileSync(import.meta.dir + "/write-end", "utf8"));
+            writeSync(writeEnd, text(0));
+            closeSync(writeEnd);
+            // Round-trip the thread pool, so that A's fetch gets every chance to end here.
+            for (let i = 0; i < 20; i++) await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+            expect(isolatedModuleCacheSourceType(key)).toBe(cached);
+          });
+        `,
+        "node_modules/held/package.json": `{"name":"held"}`,
+        "node_modules/pipes/package.json": `{"name":"pipes"}`,
+      });
+      mkfifo(join(String(dir), "node_modules", "pipes", "held." + EXT));
+      fs.symlinkSync("../pipes/held." + EXT, join(String(dir), "node_modules", "held", "index." + EXT));
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        ["./a-import.test.ts", "./b-import.test.ts"],
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // Each of these leaked handles used to pin its test file's ENTIRE global

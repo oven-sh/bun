@@ -49,6 +49,8 @@ pub struct AsyncModule {
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// See [`InitOpts::is_static`].
     is_static: bool,
+    /// See `TranspilerJob::registry_epoch`.
+    registry_epoch: u32,
 
     // This is the specific state for making it async
     pub(crate) poll_ref: KeepAlive,
@@ -160,6 +162,7 @@ impl AsyncModule {
     /// `RuntimeTranspilerStore::run_from_js_thread` and `on_done` when a
     /// concurrent transpile job finishes.
     /// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
+    /// `registry_epoch`: its `registryEpoch()` as the fetch started.
     pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
@@ -168,6 +171,7 @@ impl AsyncModule {
         specifier: &BunString,
         referrer: &BunString,
         log: &mut bun_ast::Log,
+        registry_epoch: u32,
     ) -> JsResult<()> {
         jsc::mark_binding();
         let mut errorable = match result {
@@ -193,6 +197,7 @@ impl AsyncModule {
                 &mut errorable,
                 specifier,
                 referrer,
+                registry_epoch,
             )
         })
     }
@@ -216,6 +221,7 @@ unsafe extern "C" {
         res: &mut ErrorableResolvedSource,
         specifier: &BunString,
         referrer: &BunString,
+        registry_epoch: u32,
     );
 }
 
@@ -574,6 +580,11 @@ impl AsyncModule {
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
             is_static: opts.is_static,
+            // Only the global object's loader resolves packages asynchronously (`Bun__transpileFile`).
+            registry_epoch: crate::cpp::Bun__moduleLoaderRegistryEpoch(
+                global_object,
+                JSValue::ZERO,
+            ),
             poll_ref: KeepAlive::default(),
         })
     }
@@ -618,6 +629,7 @@ impl AsyncModule {
             &spec,
             &referrer,
             &mut log,
+            this.registry_epoch,
         )
     }
 

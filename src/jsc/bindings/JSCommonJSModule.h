@@ -166,12 +166,17 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
+// `isStaleLoad`: the require cache was cleared while the file was fetched
+// (JSModuleLoader::registryEpoch()). What was fetched then goes in no table by key. A record
+// made from the returned source code takes the module the require cache holds at that time,
+// or, when it holds none, a module of its own that runs what was fetched.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,
     JSC::JSString* specifierValue,
     ResolvedSource& source,
-    bool isBuiltIn);
+    bool isBuiltIn,
+    bool isStaleLoad = false);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,

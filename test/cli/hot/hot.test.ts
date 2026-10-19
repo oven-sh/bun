@@ -1,7 +1,8 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -828,6 +829,182 @@ it(
   },
   timeout,
 );
+
+// What such a fetch ends with, a module or an error, is from before the reload. It goes in no table by key: not
+// the module registry, not the require cache. An import() that was waiting for it loads the module again.
+describe.concurrent("a fetch from before a hot reload that ends after it", () => {
+  // `fifo`: a named pipe that stands in for the file of the module "held".
+  async function run(files: Record<string, string>, env: Record<string, string>, fifo?: string) {
+    using dir = tempDir("hot-reload-fetch-in-flight", files);
+    if (fifo) {
+      mkfifo(join(String(dir), "node_modules", "pipes", fifo));
+      symlinkSync("../pipes/" + fifo, join(String(dir), "node_modules", "held", "index." + fifo.split(".").pop()));
+    }
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.mjs"],
+      cwd: String(dir),
+      // With a compile cache a module is transpiled on the main thread, not by a job on the thread pool.
+      env: { ...bunEnv, NODE_COMPILE_CACHE: undefined, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+      // A fetch that never ends would hang the child. The timeout only turns that hang into a failure.
+      timeout: 120_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout,
+      stderr: stderr.split("\n").filter(line => line && !line.startsWith("DEBUG: ")),
+      exitCode,
+      signalCode: proc.signalCode,
+    };
+  }
+  const exited = (stdout: string) => ({ stdout, stderr: [], exitCode: 0, signalCode: null });
+
+  // An onLoad holds the fetch of a.mjs open across the reload, as in the tests above.
+  const heldByPlugin = {
+    "a.mjs": `export {};`,
+    "imports-a.mjs": `export * from "./a.mjs";`,
+    "entry.mjs": `
+      import { readFileSync, writeFileSync } from "node:fs";
+      const CASE = process.env.CASE;
+      const reload = () => writeFileSync(import.meta.path, readFileSync(import.meta.path));
+      const outcome = promise => promise.then(m => "fetch " + m.fetch + ", evaluation " + m.evaluation, e => "rejected: " + e.message);
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      if (globalThis.runs === 1) {
+        let fetches = 0;
+        const held = (globalThis.held = []);
+        Bun.plugin({
+          name: "hold the fetch of a.mjs open until the reload",
+          setup(build) {
+            build.onLoad({ filter: /[\\\\/]a\\.mjs$/ }, () => {
+              // The module says which fetch it is from.
+              const loaded = { contents: "export const fetch = " + ++fetches + ", evaluation = (globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);", loader: "js" };
+              if (globalThis.runs > 1) return loaded;
+              const { promise, resolve, reject } = Promise.withResolvers();
+              held.push({ resolve: () => resolve(loaded), reject });
+              if (CASE === "joined") {
+                // This fetch is for the import in imports-a.mjs. When onLoad has returned, an import() of a.mjs joins it.
+                queueMicrotask(() => {
+                  globalThis.inFlight.push(import("./a.mjs"));
+                  reload();
+                });
+              } else if (held.length === (CASE === "twice" ? 2 : 1)) reload();
+              return promise;
+            });
+          },
+        });
+        globalThis.inFlight = [];
+        globalThis.inFlight.push(import(CASE === "joined" ? "./imports-a.mjs" : "./a.mjs"));
+        if (CASE === "twice") globalThis.inFlight.push(import("./a.mjs"));
+        for (const promise of globalThis.inFlight) promise.catch(() => {});
+      } else {
+        const inFlight = globalThis.inFlight;
+        if (CASE === "new-first-old-fails") console.log("new:", await outcome(import("./a.mjs")));
+        for (const fetch of globalThis.held) CASE.endsWith("fails") ? fetch.reject(new Error("from before the reload")) : fetch.resolve();
+        for (const promise of inFlight) console.log("in flight:", await outcome(promise));
+        if (CASE === "twice") console.log((await inFlight[0]) === (await inFlight[1]) ? "one module" : "two modules");
+        console.log("next:", await outcome(import("./a.mjs")));
+        process.exit(0);
+      }
+    `,
+  };
+
+  it.each([
+    // The test above, with the fetch of a.mjs itself in flight at the reload: the module is fetched again.
+    ["own", "in flight: fetch 2, evaluation 1\nnext: fetch 2, evaluation 1\n"],
+    // Two import() of one module end with one module.
+    [
+      "twice",
+      "in flight: fetch 3, evaluation 1\nin flight: fetch 3, evaluation 1\none module\nnext: fetch 3, evaluation 1\n",
+    ],
+    ["fails", "in flight: fetch 2, evaluation 1\nnext: fetch 2, evaluation 1\n"],
+    // The module from after the reload is loaded first. The error from before it is not left on that module.
+    [
+      "new-first-old-fails",
+      "new: fetch 2, evaluation 1\nin flight: fetch 2, evaluation 1\nnext: fetch 2, evaluation 1\n",
+    ],
+    // The first import is of imports-a.mjs, which was in the registry at the reload: it goes on with what it has.
+    ["joined", "in flight: fetch 1, evaluation 1\nin flight: fetch 2, evaluation 2\nnext: fetch 2, evaluation 2\n"],
+  ])(
+    "held by a plugin: %s",
+    async (CASE, stdout) => {
+      expect(await run(heldByPlugin, { CASE })).toEqual(exited(stdout));
+    },
+    timeout,
+  );
+
+  // No plugin is registered, so the fetch is a transpiler job on the thread pool. The file of the module is a named
+  // pipe: the job's read of it ends when the script writes.
+  const heldOnThreadPool = {
+    "imports-cjs.mjs": `import held from "held/index.cjs"; export const v = held.v, id = held.id;`,
+    "imports-mjs.mjs": `export { v, id } from "held/index.mjs";`,
+    "node_modules/held/package.json": `{"name":"held"}`,
+    "node_modules/pipes/package.json": `{"name":"pipes"}`,
+    "entry.mjs": `
+      import { readFileSync, writeFileSync, renameSync, promises } from "node:fs";
+      const EXT = process.env.EXT, CASE = process.env.CASE;
+      const held = import.meta.dir + "/node_modules/held/index." + EXT; // a symlink to the pipe
+      const pipe = import.meta.dir + "/node_modules/pipes/held." + EXT;
+      const importer = "./imports-" + EXT + ".mjs";
+      // The module says which text it runs (v) and which evaluation it is (id).
+      const text = v => (EXT === "cjs" ? "exports.v = " + v + "; exports.id = " : "export const v = " + v + "; export const id = ") + "(globalThis.evaluations = (globalThis.evaluations ?? 0) + 1);";
+      const show = m => "v=" + (m.v ?? m.default?.v) + " id=" + (m.id ?? m.default?.id);
+      const outcome = promise => promise.then(show, e => "rejected: " + e.message);
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      if (globalThis.runs === 1) {
+        globalThis.inFlight = [import(CASE.startsWith("own") ? held : importer)];
+        // Resolves when the transpiler job has the pipe open: the fetch is in flight.
+        globalThis.writeEnd = await promises.open(held, "w");
+        // Joins the fetch that the importer started for its dependency.
+        if (CASE === "joined") globalThis.inFlight.push(import(held));
+        for (const promise of globalThis.inFlight) promise.catch(() => {});
+        // From here on the path is a file with the new text. The job keeps the pipe open.
+        writeFileSync(pipe + ".new", text(1));
+        renameSync(pipe + ".new", pipe);
+        writeFileSync(import.meta.path, readFileSync(import.meta.path)); // reloads
+      } else {
+        if (CASE === "dependency-new-first") console.log("new:", show(require(held)));
+        // What the fetch from before the reload reads.
+        await globalThis.writeEnd.write(
+          CASE === "own-old-does-not-parse" ? "const = ;"
+          : CASE === "dependency-old-requires-itself-and-throws" ? "require(__filename); throw new Error('from before the reload');"
+          : text(0));
+        await globalThis.writeEnd.close();
+        for (const promise of globalThis.inFlight) console.log("in flight:", await outcome(promise));
+        console.log("next:", await outcome(import(CASE.startsWith("dependency") ? importer : held)));
+        if (EXT === "cjs") console.log("require:", show(require(held)));
+        process.exit(0);
+      }
+    `,
+  };
+
+  // Off Linux the resolver opens what the symlink names to stat it, and that blocks on a pipe with no writer.
+  it.skipIf(!isLinux).each([
+    ["mjs", "own", "in flight: v=1 id=1\nnext: v=1 id=1\n"],
+    ["mjs", "own-old-does-not-parse", "in flight: v=1 id=1\nnext: v=1 id=1\n"],
+    // The first import is of the importer, which was in the registry at the reload: it goes on with what it has.
+    ["mjs", "joined", "in flight: v=0 id=1\nin flight: v=1 id=2\nnext: v=1 id=2\n"],
+    ["cjs", "own", "in flight: v=1 id=1\nnext: v=1 id=1\nrequire: v=1 id=1\n"],
+    ["cjs", "own-old-does-not-parse", "in flight: v=1 id=1\nnext: v=1 id=1\nrequire: v=1 id=1\n"],
+    ["cjs", "dependency", "in flight: v=0 id=1\nnext: v=1 id=2\nrequire: v=1 id=2\n"],
+    ["cjs", "joined", "in flight: v=0 id=1\nin flight: v=1 id=2\nnext: v=1 id=2\nrequire: v=1 id=2\n"],
+    // The require cache has the module from after the reload when the importer from before it gets its dependency.
+    ["cjs", "dependency-new-first", "new: v=1 id=1\nin flight: v=1 id=1\nnext: v=1 id=1\nrequire: v=1 id=1\n"],
+    // The module from before the reload puts the one from after it in the require cache, and leaves it there.
+    [
+      "cjs",
+      "dependency-old-requires-itself-and-throws",
+      "in flight: rejected: from before the reload\nnext: v=1 id=1\nrequire: v=1 id=1\n",
+    ],
+  ])(
+    "held on the thread pool: .%s, %s",
+    async (EXT, CASE, stdout) => {
+      expect(await run(heldOnThreadPool, { CASE, EXT }, "held." + EXT)).toEqual(exited(stdout));
+    },
+    timeout,
+  );
+});
 
 it("holds the promise of the entry point itself, which it looks at on every tick", async () => {
   const source = (comment: string) => `

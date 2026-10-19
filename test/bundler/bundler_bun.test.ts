@@ -523,7 +523,7 @@ error: Hello World`,
       "/defined-name.js": `// @bun\nvar definedName = import.meta.require;\nconsole.log("defined name", definedName("./dep.cjs").x);`,
       "/defined-property.js": `// @bun\nvar definedRoot = import.meta.require;\nconsole.log("defined property", definedRoot("./dep.cjs").x, typeof definedRoot.resolve);`,
       "/optional-chain.js": `// @bun\nvar load = import.meta?.require;\nconsole.log("optional chain", load("./dep.cjs").x);`,
-      "/other-property.js": `// @bun\nvar locate = import.meta.resolve;\nconsole.log("other property", typeof locate("./dep.cjs"));`,
+      "/other-property.js": `// @bun\nimport.meta.load = x => ({ x: "own " + x });\nvar load = import.meta.load;\nconsole.log("other property", load("./dep.cjs").x);`,
       "/other-object.js": `// @bun\nvar host = { require: x => ({ x: "host " + x }) };\nvar load = host.require;\nconsole.log("other object", load("./dep.cjs").x, typeof import.meta.url);`,
       "/lib/bundled.cjs": `exports.x = "bundled";`,
       "/dep.cjs": `exports.x = "left";`,
@@ -551,7 +551,7 @@ error: Hello World`,
         "defined name left",
         "defined property left function",
         "optional chain left",
-        "other property string",
+        "other property own ./dep.cjs",
         "other object host ./dep.cjs string",
       ].join("\n"),
     },
@@ -639,7 +639,11 @@ error: Hello World`,
       "/entry.js": /* js */ `
         import.meta.require;
         var unused = import.meta.require;
-        console.log("built");
+        function build() {
+          import.meta.require;
+          return "built";
+        }
+        console.log(build());
       `,
     },
     target: "node",
@@ -874,7 +878,7 @@ error: Hello World`,
         const name = "./run-time" + Math.random().toString().slice(0, 0) + ".cjs";
         if (false) console.log(import.meta.require(name).x);
         console.log(/* @__PURE__ */ import.meta.require("node:path") ? "built" : "");
-        /* @__PURE__ */ import.meta.require("./not-there.cjs");
+        const unused = /* @__PURE__ */ import.meta.require("./not-there.cjs");
       `,
     },
     target: "node",
@@ -908,23 +912,28 @@ error: Hello World`,
       api.expectFile("/out.js").not.toContain("loaded");
     },
   });
-  // Iife output has no `__require`, so `import.meta.require` keeps its own value there. A string call is still read.
-  itBundled("bun/RequireWrittenByBunIife", {
-    files: {
-      "/entry.js": `import { sep, name } from "./dist/index.js"; console.log("app: " + sep() + " " + name);`,
-      "/dist/index.js": `// @bun\nvar __require = import.meta.require;\nfunction sep() {\n  return __require("path").posix.sep;\n}\nvar name = __require("./config.json").name;\nexport {\n  sep,\n  name\n};\n`,
-      "/dist/config.json": `{ "name": "world" }`,
-    },
-    target: "bun",
-    format: "iife",
-    run: { stdout: "app: / world" },
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("world");
-      expect(out).toContain("var __require = import.meta.require;");
-      expect(out).toContain('return __require("path").posix.sep;');
-    },
-  });
+  // Iife output has no `__require` for a value, so `import.meta.require` keeps its own value there. A string call is still read.
+  for (const [form, sep, kept] of [
+    ["", `__require("path")`, `return __require("path").posix.sep;`],
+    ["WithAName", `__require(["path"][0])`, `return __require(["path"][0]).posix.sep;`],
+  ] as const) {
+    itBundled(`bun/RequireWrittenByBunIife${form}`, {
+      files: {
+        "/entry.js": `import { sep, name } from "./dist/index.js"; console.log("app: " + sep() + " " + name);`,
+        "/dist/index.js": `// @bun\nvar __require = import.meta.require;\nfunction sep() {\n  return ${sep}.posix.sep;\n}\nvar name = __require("./config.json").name;\nexport {\n  sep,\n  name\n};\n`,
+        "/dist/config.json": `{ "name": "world" }`,
+      },
+      target: "bun",
+      format: "iife",
+      run: { stdout: "app: / world" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("world");
+        expect(out).toContain("var __require = import.meta.require;");
+        expect(out).toContain(kept);
+      },
+    });
+  }
   // A direct `eval` in the file changes nothing: the declaration is there for it.
   for (const [target, format] of [
     ["node", "esm"],

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunRun, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -853,6 +853,54 @@ console.log("✓ Both import types work correctly");
     expect(stderr).toBe("");
     const manifest = expectPageManifest(stdout);
     expect(manifest.files.map(f => f.path)).not.toContain(sharedChunk);
+    expect(exitCode).toBe(0);
+  });
+
+  // Two server files reach one page: one with a static import, the other with
+  // import() or require(). The two files are parsed in parallel, and the file
+  // whose parse result arrives first is the one that creates the manifest module.
+  // The bundle must not depend on which file that is: every build of the same
+  // sources is the same bundle.
+  test.each([
+    ["import()", "dynamic-import", "other.ts", `export const other = import("./page.html").then(m => m.default);`],
+    ["require()", "require-call", "other.cjs", `exports.other = require("./page.html");`],
+  ])("html-import/static-import-and-%s-in-two-files", async (_, otherKind, otherFile, otherSource) => {
+    await using dir = tempDir("html-import-two-importers", {
+      ...pageFiles,
+      "static.ts": `import page from "./page.html"; export const viaStatic = page;`,
+      [otherFile]: otherSource,
+      "server.ts": `
+        import { viaStatic } from "./static.ts";
+        import { other } from "./${otherFile}";
+        const manifest = await other;
+        console.log(manifest === viaStatic);
+        console.log(JSON.stringify(manifest));
+      `,
+    });
+
+    const builds: { kinds: Record<string, string>; code: string }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const result = await buildServer(dir, ["server.ts"], { metafile: true });
+      const kinds: Record<string, string> = {};
+      for (const [path, input] of Object.entries(result.metafile!.inputs)) {
+        for (const { kind, original } of input.imports) {
+          if (original === "./page.html") kinds[basename(path)] = kind;
+        }
+      }
+      builds.push({ kinds, code: readFileSync(join(dir, "out", "server.js"), "utf8") });
+    }
+
+    // Each importer keeps its own kind in every build, whichever one came first.
+    expect(builds.map(build => build.kinds)).toEqual(
+      builds.map(() => ({ "static.ts": "import-statement", [otherFile]: otherKind })),
+    );
+    expect(new Set(builds.map(build => build.code)).size).toBe(1);
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
+    expect(stderr).toBe("");
+    const [sameObject, manifestJson] = stdout.split("\n");
+    expect(sameObject).toBe("true");
+    expectPageManifest(manifestJson);
     expect(exitCode).toBe(0);
   });
 });

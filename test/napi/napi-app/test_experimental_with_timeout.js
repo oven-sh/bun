@@ -3,12 +3,15 @@ const { spawn } = require('child_process');
 const path = require('path');
 
 const modulePath = path.join(__dirname, 'build/Debug/test_reference_unref_in_finalizer_experimental.node');
+// The exported function to call, and the one argument it takes, if any
+const functionName = process.argv[2] ?? 'test_reference_unref_in_finalizer_experimental';
+const functionArgument = process.argv[3] === undefined ? '' : JSON.stringify(process.argv[3]);
 
 // Spawn the test process
 const proc = spawn(process.argv[0], ['--expose-gc', '-e', `
 const m = require("${modulePath}");
 console.log('Loading experimental module...');
-let arr = m.test_reference_unref_in_finalizer_experimental();
+let arr = m.${functionName}(${functionArgument});
 console.log('Test function returned');
 arr = null;
 global.gc ? global.gc() : (process.isBun && Bun.gc ? Bun.gc(true) : null);

@@ -130,6 +130,41 @@ static napi_value test_reference_unref_in_finalizer_experimental(napi_env env, n
   return objects_array;
 }
 
+// napi_run_script CANNOT be called from a finalizer that runs during garbage
+// collection either: it would run JavaScript inside the collector.
+// A finalizer cannot make a string there, so it runs this one. The reference
+// made for it keeps the string alive.
+static napi_value script_for_finalizer;
+
+static void finalizer_run_script(napi_env env, void *data, void *hint) {
+  (void)data;
+  (void)hint;
+  printf("Finalizer called, attempting napi_run_script...\n");
+
+  napi_value result;
+  // This call should ABORT the process for experimental NAPI versions during GC
+  napi_status status = napi_run_script(env, script_for_finalizer, &result);
+
+  printf("ERROR: napi_run_script returned status %d but should have aborted!\n", status);
+  exit(1);
+}
+
+static napi_value test_run_script_in_finalizer_experimental(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+  script_for_finalizer = argv[0];
+  napi_ref script_ref;
+  NODE_API_CALL(env, napi_create_reference(env, argv[0], 1, &script_ref));
+
+  napi_value wrapper_obj;
+  NODE_API_CALL(env, napi_create_object(env, &wrapper_obj));
+  NODE_API_CALL(env, napi_add_finalizer(env, wrapper_obj, NULL, finalizer_run_script, NULL, NULL));
+
+  printf("Created 1 object with a finalizer (experimental mode)\n");
+  return wrapper_obj;
+}
+
 static napi_value init(napi_env env, napi_value exports) {
   // Suppress core dumps when testing
   suppress_core_dumps();
@@ -139,6 +174,11 @@ static napi_value init(napi_env env, napi_value exports) {
                                           NAPI_AUTO_LENGTH, test_reference_unref_in_finalizer_experimental, 
                                           NULL, &test_fn));
   NODE_API_CALL(env, napi_set_named_property(env, exports, "test_reference_unref_in_finalizer_experimental", test_fn));
+
+  NODE_API_CALL(env, napi_create_function(env, "test_run_script_in_finalizer_experimental",
+                                          NAPI_AUTO_LENGTH, test_run_script_in_finalizer_experimental,
+                                          NULL, &test_fn));
+  NODE_API_CALL(env, napi_set_named_property(env, exports, "test_run_script_in_finalizer_experimental", test_fn));
   
   return exports;
 }

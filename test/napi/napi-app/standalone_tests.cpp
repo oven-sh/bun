@@ -763,6 +763,58 @@ test_napi_run_script_exception_value(const Napi::CallbackInfo &info) {
   return exc;
 }
 
+// An addon that handles a failed napi_run_script by clearing the exception and
+// returning normally. A termination (worker.terminate(), a node:vm timeout) is
+// not an exception an addon can clear: the JS caller must not run on.
+static napi_value
+test_napi_run_script_clear_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(env, info[1], &ret);
+  napi_value exc = nullptr;
+  (void)napi_get_and_clear_last_exception(env, &exc);
+  return nullptr;
+}
+
+// The addon fetches what a failed napi_run_script threw and throws it again.
+static napi_value
+test_napi_run_script_rethrow(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value ret = nullptr;
+  // info[0] is the GC callback
+  (void)napi_run_script(env, info[1], &ret);
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  NODE_API_CALL(env, napi_throw(env, exc));
+  return nullptr;
+}
+
+// While what a failed napi_run_script threw is pending, napi_call_function is
+// refused and does not run its function, and the exception can still be
+// fetched afterwards.
+static napi_value
+test_napi_run_script_then_call(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value global;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+
+  napi_value ret = nullptr;
+  (void)napi_run_script(env, info[1], &ret);
+  // info[0] is the GC callback: it prints a line if it runs
+  napi_value call_result = nullptr;
+  napi_status call_status =
+      napi_call_function(env, global, info[0], 0, nullptr, &call_result);
+  printf("call status=%d\n", (int)call_status);
+
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  bool is_error = false;
+  NODE_API_CALL(env, napi_is_error(env, exc, &is_error));
+  printf("is_error=%d\n", (int)is_error);
+  return exc;
+}
+
 static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_status status = napi_throw(env, nullptr);
@@ -4663,6 +4715,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
   REGISTER_FUNCTION(env, exports, test_napi_run_script_exception_value);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_clear_exception);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_rethrow);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_then_call);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);

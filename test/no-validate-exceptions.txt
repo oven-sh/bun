@@ -18,7 +18,7 @@ test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/remix/remix.test.ts
 
 # napi entry points that declare a plain ThrowScope and return a status to the
-# addon with the exception pending (napi_run_script, napi_create_bigint_words,
+# addon with the exception pending (napi_create_bigint_words,
 # napi_create_dataview, napi_create_buffer, NapiEnv::throwPendingException) and
 # napi_get_all_property_names' unchecked get/toPropertyKey.
 test/napi/napi.test.ts

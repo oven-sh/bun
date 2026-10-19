@@ -1237,24 +1237,45 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
-    it("hands the thrown value to napi_get_and_clear_last_exception", async () => {
-      const result = await checkSameOutput("test_napi_run_script_exception_value", ['throw new RangeError("boom")']);
-      expect(result).toContain("run status=9 pending=1");
-      expect(result).toContain("typeof status=0 type=6 is_error=1");
-      expect(result).toContain("message=boom");
+    // The addon prints the status, then the napi_typeof of what napi_get_and_clear_last_exception handed it, then
+    // its message if it is an object. main.js throws a truthy return value as an Error.
+    it.each([
+      [
+        'throw new RangeError("boom")',
+        [
+          "typeof status=0 type=6 is_error=1",
+          "message=boom",
+          'synchronously threw Error: message "RangeError: boom", code undefined',
+        ],
+      ],
+      ["throw 42", ["typeof status=0 type=3 is_error=0", 'synchronously threw Error: message "42", code undefined']],
+      ["throw undefined", ["typeof status=0 type=0 is_error=0"]],
+      ["throw null", ["typeof status=0 type=1 is_error=0"]],
+    ])("hands what `%s` threw to napi_get_and_clear_last_exception", async (script, lines) => {
+      const result = await checkSameOutput("test_napi_run_script_exception_value", [script]);
+      expect(result.split(/\r?\n/)).toEqual(["run status=9 pending=1", ...lines]);
     });
     it("hands a syntax error to napi_get_and_clear_last_exception", async () => {
       // V8 and JSC word the SyntaxError message differently, so only bun's output is checked
       const result = await runOn(bunExe(), "test_napi_run_script_exception_value", ["1+"]);
-      expect(result).toContain("run status=9 pending=1");
-      expect(result).toContain("typeof status=0 type=6 is_error=1");
-      expect(result).toContain('synchronously threw Error: message "SyntaxError:');
+      expect(result.trim().split(/\r?\n/)).toEqual([
+        "run status=9 pending=1",
+        "typeof status=0 type=6 is_error=1",
+        "message=Unexpected end of script",
+        'synchronously threw Error: message "SyntaxError: Unexpected end of script", code undefined',
+      ]);
     });
-    it("hands a thrown primitive to napi_get_and_clear_last_exception", async () => {
-      const result = await checkSameOutput("test_napi_run_script_exception_value", ["throw 42"]);
-      expect(result).toContain("run status=9 pending=1");
-      expect(result).toContain("typeof status=0 type=3 is_error=0");
-      expect(result).toContain('synchronously threw Error: message "42"');
+    it("throws what it handed over when the addon passes it to napi_throw", async () => {
+      const result = await checkSameOutput("test_napi_run_script_rethrow", ['throw new RangeError("boom")']);
+      expect(result).toBe('synchronously threw RangeError: message "boom", code undefined');
+    });
+    it("refuses napi_call_function while the exception is pending, then hands it over", async () => {
+      const result = await checkSameOutput("test_napi_run_script_then_call", ['throw new RangeError("boom")']);
+      expect(result.split(/\r?\n/)).toEqual([
+        "call status=10",
+        "is_error=1",
+        'synchronously threw Error: message "RangeError: boom", code undefined',
+      ]);
     });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
@@ -1268,10 +1289,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
 
     // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
-    async function runFixtureWith(executable: string, flag: string, fixture: string) {
-      using dir = tempDir("napi-run-script-code-generation", { "fixture.cjs": fixture });
+    async function runFixtureWith(executable: string, flags: string[], fixture: string) {
+      using dir = tempDir("napi-run-script-fixture", { "fixture.cjs": fixture });
       await using proc = spawn({
-        cmd: [executable, flag, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+        cmd: [executable, ...flags, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -1283,7 +1304,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     const runScriptWith = (executable: string, flag: string) =>
       runFixtureWith(
         executable,
-        flag,
+        [flag],
         `
           const { test_napi_run_script } = require(process.argv[2]);
           let evaluated, ran;
@@ -1322,7 +1343,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("hands the EvalError of --disallow-code-generation-from-strings=strict to napi_get_and_clear_last_exception", async () => {
       const { stdout, stderr, exitCode } = await runFixtureWith(
         bunExe(),
-        "--disallow-code-generation-from-strings=strict",
+        ["--disallow-code-generation-from-strings=strict"],
         `
           const { test_napi_run_script_exception_value } = require(process.argv[2]);
           const refusal = test_napi_run_script_exception_value(() => {}, "5 * (1 + 2)");
@@ -1343,6 +1364,37 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+    it.each([
+      ["leaves it pending", "test_napi_run_script"],
+      ["clears it with napi_get_and_clear_last_exception", "test_napi_run_script_clear_exception"],
+    ])("a termination that interrupts the script ends the JS caller when the addon %s", async (_, addonFunction) => {
+      const fixture = `
+        const vm = require("vm");
+        const { ${addonFunction}: runScript } = require(process.argv[2]);
+        globalThis.run = () => runScript(() => {}, "for (;;) {}");
+        globalThis.ran = [];
+        let code;
+        try {
+          vm.runInThisContext(
+            'try { run(); ran.push("after the call"); } catch { ran.push("catch"); } finally { ran.push("finally"); }',
+            { timeout: 100 },
+          );
+        } catch (e) {
+          code = e.code;
+        }
+        console.log(JSON.stringify({ code, ran }));
+      `;
+      const [node, bun] = await Promise.all([
+        runFixtureWith(await nodeExeMatchingAbi(), [], fixture),
+        runFixtureWith(bunExe(), [], fixture),
+      ]);
+      expect(bun).toEqual({
+        stdout: JSON.stringify({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT", ran: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(bun).toEqual(node);
     });
   });
 
@@ -2058,13 +2110,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(result).toContain("Test completed:");
   }, 10_000);
 
-  it.todoIf(
-    // The test does not properly avoid the non-zero exit code on Windows.
-    isWindows,
-  )(
-    "napi_reference_unref is blocked from finalizers in experimental modules",
-    async () => {
-      // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+  it
+    .todoIf(
+      // The test does not properly avoid the non-zero exit code on Windows.
+      isWindows,
+    )
+    .each([
+      ["napi_reference_unref", "test_reference_unref_in_finalizer_experimental", []],
+      ["napi_run_script", "test_run_script_in_finalizer_experimental", ["globalThis.ranInFinalizer = true"]],
+    ])(
+    "%s is blocked from finalizers in experimental modules",
+    async (_blocked, functionName, functionArguments) => {
+      // Experimental NAPI modules should NOT be able to call these functions from finalizers
       // The process should crash/abort when this is attempted
       // This matches Node.js behavior for experimental modules
 
@@ -2077,7 +2134,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // to avoid hanging on llvm-symbolizer
       const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
       const bunProc = spawn({
-        cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
+        cmd: [
+          bunExe(),
+          join(__dirname, "napi-app/test_experimental_with_timeout.js"),
+          functionName,
+          ...functionArguments,
+        ],
         env: {
           ...rest,
           BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",

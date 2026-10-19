@@ -3,7 +3,8 @@ use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TsSkipError,
+    TypeParameterFlag,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
@@ -309,8 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
                         && self.lexer.token == T::TColon
                     {
-                        self.log()
-                            .add_range_error(Some(self.source), r, b"Unexpected \"const\"");
+                        self.add_type_script_skip_error(r, TsSkipError::UnexpectedConst);
                     }
                 }
 
@@ -1166,6 +1166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_in = false;
             let mut has_out = false;
             let mut expect_identifier = true;
+            let mut is_named_out = false;
 
             let mut invalid_modifier_range = bun_ast::Range::NONE;
 
@@ -1211,19 +1212,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if self.lexer.is_contextual_keyword(b"out") {
                     let r = self.lexer.range();
-                    if invalid_modifier_range.len == 0
-                        && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
-                    {
-                        // Valid:
-                        //   "type Foo<out T> = T"
-                        // Invalid:
-                        //   "type Foo<out out T> = T"
-                        //   "type Foo<in out T> = T"
-                        invalid_modifier_range = r;
-                    }
-
                     self.lexer.next()?;
-                    if invalid_modifier_range.len == 0
+
+                    if !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS) {
+                        // Unlike esbuild, decide the way TypeScript does: "out" is a
+                        // modifier only when a token that can follow a modifier comes
+                        // next on the same line. Otherwise "out" is the name.
+                        //
+                        // Valid:
+                        //   "function foo<out>() {}"
+                        //   "<out, T>() => {}"
+                        //   "<out>x"
+                        // Invalid:
+                        //   "function foo<out T>() {}"
+                        //   "function foo<out extends T>() {}"
+                        if self.lexer.has_newline_before || !self.can_follow_modifier() {
+                            is_named_out = true;
+                            break;
+                        }
+                        if invalid_modifier_range.len == 0 {
+                            invalid_modifier_range = r;
+                        }
+                    } else if invalid_modifier_range.len == 0
                         && has_out
                         && (self.lexer.token == T::TIn || self.lexer.token == T::TIdentifier)
                     {
@@ -1248,19 +1258,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Only report an error for the first invalid modifier
             if invalid_modifier_range.len > 0 {
-                self.log().add_range_error_fmt(
-                    Some(self.source),
+                self.add_type_script_skip_error(
                     invalid_modifier_range,
-                    format_args!(
-                        "The modifier \"{}\" is not valid here",
-                        bstr::BStr::new(self.source.text_for_range(invalid_modifier_range)),
-                    ),
+                    TsSkipError::InvalidModifier,
                 );
             }
 
             // expectIdentifier => Mandatory identifier (e.g. after "type Foo <in ___")
             // !expectIdentifier => Optional identifier (e.g. after "type Foo <out ___" since "out" may be the identifier)
-            if expect_identifier || self.lexer.token == T::TIdentifier {
+            if !is_named_out && (expect_identifier || self.lexer.token == T::TIdentifier) {
                 self.lexer.expect(T::TIdentifier)?;
             }
 
@@ -1292,6 +1298,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.lexer.expect_greater_than::<false>()?;
         Ok(result)
+    }
+
+    /// TypeScript's `canFollowModifier`: whether the current token makes the
+    /// contextual keyword before it a modifier instead of a name.
+    fn can_follow_modifier(&self) -> bool {
+        self.lexer.is_identifier_or_keyword()
+            || matches!(
+                self.lexer.token,
+                T::TOpenBracket
+                    | T::TOpenBrace
+                    | T::TAsterisk
+                    | T::TDotDotDot
+                    | T::TPrivateIdentifier
+                    | T::TStringLiteral
+                    | T::TNumericLiteral
+                    | T::TBigIntegerLiteral
+            )
     }
 
     pub(crate) fn skip_type_script_type_stmt(
@@ -1459,6 +1482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let old_deferred_errors_len = self.ts_deferred_errors.len();
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
         let mut exhausted = None;
@@ -1476,6 +1500,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.restore(&old_lexer);
         }
         self.lexer.is_log_disabled = old_log_disabled;
+        if self.ts_deferred_errors.len() != old_deferred_errors_len {
+            self.settle_ts_deferred_errors(old_deferred_errors_len, backtrack);
+        }
         if let Some(err) = exhausted {
             return Err(err);
         }
@@ -1491,6 +1518,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.mark_type_script_only();
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let old_deferred_errors_len = self.ts_deferred_errors.len();
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
         let mut exhausted = None;
@@ -1509,11 +1537,61 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.restore(&old_lexer);
         }
         self.lexer.is_log_disabled = old_log_disabled;
+        if self.ts_deferred_errors.len() != old_deferred_errors_len {
+            self.settle_ts_deferred_errors(old_deferred_errors_len, backtrack);
+        }
         if let Some(err) = exhausted {
             return Err(err);
         }
 
         Ok(result)
+    }
+
+    /// Reports an error of the type skipper. While the lexer's log is disabled the
+    /// type is read speculatively, so the error waits in `ts_deferred_errors` until
+    /// that reading is kept or thrown away.
+    #[cold]
+    #[inline(never)]
+    fn add_type_script_skip_error(&mut self, r: bun_ast::Range, error: TsSkipError) {
+        if self.lexer.is_log_disabled {
+            self.ts_deferred_errors.push((r, error));
+        } else {
+            debug_assert!(self.ts_deferred_errors.is_empty());
+            self.log_type_script_skip_error(r, error);
+        }
+    }
+
+    fn log_type_script_skip_error(&self, r: bun_ast::Range, error: TsSkipError) {
+        match error {
+            TsSkipError::InvalidModifier => self.log().add_range_error_fmt(
+                Some(self.source),
+                r,
+                format_args!(
+                    "The modifier \"{}\" is not valid here",
+                    bstr::BStr::new(self.source.text_for_range(r)),
+                ),
+            ),
+            TsSkipError::UnexpectedConst => {
+                self.log()
+                    .add_range_error(Some(self.source), r, b"Unexpected \"const\"");
+            }
+        }
+    }
+
+    /// Ends a `lexer_backtracker_*` attempt during which the type skipper reported
+    /// errors. `old_len` is the length of `ts_deferred_errors` before the attempt.
+    #[cold]
+    #[inline(never)]
+    fn settle_ts_deferred_errors(&mut self, old_len: usize, backtrack: bool) {
+        if backtrack {
+            self.ts_deferred_errors.truncate(old_len);
+        } else if !self.lexer.is_log_disabled {
+            // No enclosing attempt can still throw this reading away.
+            debug_assert!(old_len == 0);
+            for (r, error) in core::mem::take(&mut self.ts_deferred_errors) {
+                self.log_type_script_skip_error(r, error);
+            }
+        }
     }
 
     pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(

@@ -171,6 +171,7 @@ pub(crate) struct ParserSnapshot<'a> {
     log_msgs_len: usize,
     log_errors: u32,
     log_warnings: u32,
+    ts_deferred_errors_len: usize,
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
@@ -393,6 +394,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// once for real, which is exponential in the nesting depth. Kept sorted for
     /// binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
+
+    /// What the type skipper reported while `lexer.is_log_disabled` was set, in the
+    /// order reported (`add_type_script_skip_error`). The type was being read
+    /// speculatively, so its errors reach the log only when that reading is kept:
+    /// `lexer_backtracker_*` logs them when the attempt succeeds and no attempt
+    /// encloses it, and truncates them when the attempt backtracks. Empty whenever
+    /// the lexer's log is enabled.
+    pub(crate) ts_deferred_errors: Vec<(bun_ast::Range, crate::TsSkipError)>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -8219,6 +8228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log_msgs_len: log.msgs.len(),
             log_errors: log.errors,
             log_warnings: log.warnings,
+            ts_deferred_errors_len: self.ts_deferred_errors.len(),
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
@@ -8252,6 +8262,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         log.msgs.truncate(snapshot.log_msgs_len);
         log.errors = snapshot.log_errors;
         log.warnings = snapshot.log_warnings;
+        self.ts_deferred_errors
+            .truncate(snapshot.ts_deferred_errors_len);
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
@@ -9686,6 +9698,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
+            ts_deferred_errors: Vec::new(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

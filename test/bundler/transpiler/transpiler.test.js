@@ -1760,6 +1760,176 @@ function foo() {}
       });
     });
 
+    describe("in and out that are not variance modifiers", () => {
+      // Every message of a failed transform, not only the first one.
+      const errors = code => {
+        try {
+          transpiler.transformSync(code, "ts");
+        } catch (e) {
+          return (e instanceof AggregateError ? e.errors : [e]).map(e => e.message);
+        }
+        return [];
+      };
+
+      it("a type parameter is named out where variance annotations are not allowed", () => {
+        const exp = ts.expectPrinted_;
+
+        exp("function f<out>(a: out): out { return a; }", "function f(a) {\n  return a;\n}");
+        exp("function f<out, T>() {}", "function f() {}");
+        exp("function f<T, out>() {}", "function f() {}");
+        exp("function f<out = X>() {}", "function f() {}");
+        exp("function f<const out>() {}", "function f() {}");
+        exp("function f<out\nextends X>() {}", "function f() {}");
+        exp("foo = function <out>() {}", "foo = function() {}");
+        exp("export default function f<out>() {}", "export default function f() {}");
+        exp("declare function foo<out>(): void", "");
+        exp("class Foo { bar<out>() {} }", "class Foo {\n  bar() {}\n}");
+        exp("foo = { bar<out>() {} }", "foo = { bar() {} }");
+        exp("let x: <out>() => void", "let x;\n");
+        exp("let x: new <out>() => void", "let x;\n");
+        exp("let x: { y<out>(): void }", "let x;\n");
+        exp("foo<<out>() => void>()", "foo();\n");
+        exp("x = <out>() => {}", "x = () => {};\n");
+        exp("x = <out,>() => {}", "x = () => {};\n");
+        exp("x = <out, T>(y) => y", "x = (y) => y;\n");
+        exp("x = <out = X>(y) => y", "x = (y) => y;\n");
+        exp("x = <out>(y: out): out => y", "x = (y) => y;\n");
+        exp("x = async <out>() => {}", "x = async () => {};\n");
+        expect(transpiler.transformSync("x = <out,>() => {}", "tsx")).toBe("x = () => {};\n");
+      });
+
+      it("a type assertion names the type out", () => {
+        const exp = ts.expectPrinted_;
+
+        exp("type out = number; const v = <out>x;", "const v = x;\n");
+        exp("x = <out>(y)", "x = y;\n");
+        exp("x = <out[]>y", "x = y;\n");
+        exp("x = <out | null>y", "x = y;\n");
+        exp("x = <out.T>y", "x = y;\n");
+        exp("x = <out<T>>y", "x = y;\n");
+        exp("x = <out extends X ? A : B>y", "x = y;\n");
+        exp("x = a < <out>b > c", "x = a < b > c;\n");
+        exp("x = a ? (b) : <out>c", "x = a ? b : c;\n");
+      });
+
+      it("a variable named out follows `<` or `<<`", () => {
+        const exp = ts.expectPrinted_;
+
+        exp("x = 1 << out", "x = 1 << out;\n");
+        exp("x = 1 << out as number", "x = 1 << out;\n");
+        exp("x = 1 << out satisfies number", "x = 1 << out;\n");
+        exp("x = 1 << out in y", "x = 1 << out in y;\n");
+        exp("x = 1 << out[0]", "x = 1 << out[0];\n");
+        exp("x = 1 << out * 2", "x = 1 << out * 2;\n");
+        exp("x = 1 << out\nconst y = 2", "x = 1 << out;\nconst y = 2;\n");
+        exp("x = async < out[0]", "x = async < out[0];\n");
+        exp("v = async <out\nT>(x);", "v = async < out;\nT > x;\n");
+        exp(
+          "function f(i, out) { switch (i) { case (A): { return i < out[i]; } } }",
+          "function f(i, out) {\n  switch (i) {\n    case A: {\n      return i < out[i];\n    }\n  }\n}",
+        );
+      });
+
+      it("a property named in follows `<<`", () => {
+        const exp = ts.expectPrinted_;
+
+        exp("x = { a: 1 << b, in: 2 }", "x = { a: 1 << b, in: 2 };\n");
+        exp("x = { a: 1 << b, in() {} }", "x = { a: 1 << b, in() {} };\n");
+        exp('x = { mask: 1 << pin, in: "a", out: "b" }', 'x = { mask: 1 << pin, in: "a", out: "b" };\n');
+        exp(
+          "enum E { A = 1 << B, in = 2 }",
+          'var E;\n((E) => {\n  E[E["A"] = 1 << B] = "A";\n  E[E["in"] = 2] = "in";\n})(E ||= {});\n',
+        );
+      });
+
+      it("a JSX element named in or out follows `<`", () => {
+        const tsx = code => transpiler.transformSync(code, "tsx");
+
+        expect(tsx("x = a < <in T/>;")).toBe(
+          'x = a < jsxDEV_7x81h0kn("in", {\n  T: true\n}, undefined, false, undefined, this);\n',
+        );
+        expect(tsx("x = a < <out T></out>;")).toBe(
+          'x = a < jsxDEV_7x81h0kn("out", {\n  T: true\n}, undefined, false, undefined, this);\n',
+        );
+      });
+
+      it("out before the name of a type parameter is a misplaced modifier", () => {
+        const err = ts.expectParseError;
+
+        err("function f<out extends X>() {}", 'The modifier "out" is not valid here');
+        err("x = <out extends X>() => {}", 'The modifier "out" is not valid here');
+        err("function f<out const T>() {}", 'The modifier "out" is not valid here');
+        err("function f<const out T>() {}", 'The modifier "out" is not valid here');
+        err("function f<out in T>() {}", 'The modifier "out" is not valid here');
+        err("function f<out out>() {}", 'The modifier "out" is not valid here');
+        err("function f<in out>() {}", 'The modifier "in" is not valid here');
+        err("foo<<out T>() => void>()", 'The modifier "out" is not valid here');
+        err("function f<out\nT>() {}", 'Expected ">" but found "T"');
+      });
+
+      it("a reading that is thrown away reports nothing", () => {
+        // An attempt at type parameters fails, the type assertion reports.
+        expect(errors("x = <in>y")).toEqual(["Unexpected in"]);
+        expect(errors("x = <out T>y")).toEqual(['Expected ">" but found "T"']);
+        // An attempt at type arguments fails, the expression reports.
+        expect(errors("x = a < [const: number] > b")).toEqual(["Unexpected const"]);
+        // The type is read again by the parse that is kept, which reports once.
+        expect(errors("type A<T> = T extends [infer U extends (<in V>() => void) ? 1 : 2] ? U : never")).toEqual([
+          'The modifier "in" is not valid here',
+        ]);
+        expect(errors("class A extends B<{ m<out T>(): void }> {}")).toEqual(['The modifier "out" is not valid here']);
+        // An attempt that is kept reports what it read.
+        expect(errors("x = <out T>() => {}")).toEqual(['The modifier "out" is not valid here']);
+        expect(errors("x = a ? (b) : <out T>(c) => c")).toEqual(['The modifier "out" is not valid here']);
+        expect(errors("x = a ? (b): <out T>() => void => c : d")).toEqual(['The modifier "out" is not valid here']);
+      });
+
+      it("every API accepts it", async () => {
+        const code = "type out = number;\nconst out = 2;\nexport const v = [<out>x, 1 << out, <out,>(a: out) => a];\n";
+        const actual = {};
+        for (const api of ["scan", "scanImports", "transformSync", "transform"]) {
+          try {
+            await transpiler[api](code, "ts");
+            actual[api] = "did not throw";
+          } catch (e) {
+            actual[api] = e.message;
+          }
+        }
+        expect(actual).toEqual({
+          scan: "did not throw",
+          scanImports: "did not throw",
+          transformSync: "did not throw",
+          transform: "did not throw",
+        });
+      });
+
+      it("bun run and bun build accept it", async () => {
+        using dir = tempDir("ts-name-out", {
+          "in.ts": "type out = number;\nconst x: unknown = 1;\nconst out = 2;\nconsole.log(<out>x, 1 << out);\n",
+        });
+        const results = await Promise.all(
+          [
+            ["run", "in.ts"],
+            ["build", "--no-bundle", "in.ts"],
+          ].map(async args => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: { ...bunEnv, NO_COLOR: "1" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { stdout, stderr, exitCode };
+          }),
+        );
+        expect(results).toEqual([
+          { stdout: "1 4\n", stderr: "", exitCode: 0 },
+          { stdout: "const x = 1;\nconst out = 2;\nconsole.log(x, 1 << out);\n", stderr: "", exitCode: 0 },
+        ]);
+      });
+    });
+
     it("non-null assertion with new operator", () => {
       const exp = ts.expectPrinted_;
 

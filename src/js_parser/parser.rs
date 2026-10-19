@@ -466,6 +466,15 @@ pub enum SkipTypeParameterResult {
     DefinitelyTypeParameters,
 }
 
+/// An error that the TypeScript type skipper reports. See `P::ts_deferred_errors`.
+#[derive(Clone, Copy)]
+pub(crate) enum TsSkipError {
+    /// `The modifier "in" is not valid here`, with the text of the error's range
+    InvalidModifier,
+    /// `Unexpected "const"`
+    UnexpectedConst,
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct TypeParameterFlag: u8 {

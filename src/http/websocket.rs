@@ -143,15 +143,6 @@ impl WebsocketHeader {
     }
 
     pub fn write_header(self, writer: &mut impl std::io::Write, n: usize) -> std::io::Result<()> {
-        // packed structs are sometimes buggy
-        // lets check it worked right
-        if cfg!(debug_assertions) {
-            let buf = self.0.to_be_bytes();
-            let casted = u16::from_be_bytes(buf);
-            debug_assert!(casted == self.0);
-            debug_assert!(WebsocketHeader(casted) == self);
-        }
-
         writer.write_all(&self.0.to_be_bytes())?;
         debug_assert!(self.len() == Self::pack_length(n));
         Ok(())

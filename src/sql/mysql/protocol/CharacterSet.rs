@@ -251,13 +251,6 @@ character_sets! {
 impl CharacterSet {
     pub(crate) const DEFAULT: CharacterSet = CharacterSet::utf8mb4_general_ci;
 
-    /// Construct from a raw protocol byte: every byte is valid and unknown
-    /// ids are kept
-    /// as-is (they round-trip back onto the wire unchanged).
-    pub(crate) const fn from_raw(b: u8) -> Self {
-        Self(b)
-    }
-
     /// The raw wire byte.
     pub const fn to_int(self) -> u8 {
         self.0

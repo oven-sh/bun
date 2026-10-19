@@ -607,7 +607,7 @@ impl AnyRoute {
         //    "/index-abc.js" -> "/index-abc.js"
         //    "index-abc.js" -> "/index-abc.js"
         //
-        let base_dir = bundle_dir.unwrap_or(FileSystem::instance().top_level_dir);
+        let base_dir = bundle_dir.unwrap_or_else(|| FileSystem::instance().top_level_dir);
         let path_slice = path.path().slice();
         let route_root: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()

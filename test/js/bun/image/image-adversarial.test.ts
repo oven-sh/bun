@@ -78,6 +78,59 @@ function makePng(
 
 const tinyPng = makePng(2, 2, (x, y) => [x * 255, y * 255, 128, 255]);
 
+/// A PNG of colour type 0 (gray), 3 (palette) or 4 (gray+alpha) whose pixel
+/// bytes follow no pattern. libspng has row routines for these layouts.
+/// `chunks` is what goes between IHDR and IDAT, in order. `idat` gives the
+/// data of each IDAT chunk.
+type RowsPng = {
+  type: 0 | 3 | 4;
+  depth: number;
+  w: number;
+  h: number;
+  interlace?: boolean;
+  chunks?: [string, number][];
+  idat?: (rows: Buffer) => Uint8Array[];
+};
+function rowsPng(o: RowsPng): Buffer {
+  const passes = o.interlace
+    ? [
+        [0, 0, 8, 8],
+        [4, 0, 8, 8],
+        [0, 4, 4, 8],
+        [2, 0, 4, 4],
+        [0, 2, 2, 4],
+        [1, 0, 2, 2],
+        [0, 1, 1, 2],
+      ]
+    : [[0, 0, 1, 1]];
+  const bits = o.depth * (o.type === 4 ? 2 : 1);
+  const rows: Uint8Array[] = [];
+  for (const [x0, y0, dx, dy] of passes) {
+    const width = Math.ceil((o.w - x0) / dx);
+    if (width <= 0) continue;
+    for (let y = y0; y < o.h; y += dy) {
+      const row = new Uint8Array(1 + Math.ceil((width * bits) / 8));
+      for (let i = 1; i < row.length; i++) row[i] = (Math.imul(i + y * 7 + x0, 0x9e3779b1) >>> 24) & 255;
+      rows.push(row);
+    }
+  }
+  const ihdr = new Uint8Array(13);
+  const dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, o.w);
+  dv.setUint32(4, o.h);
+  ihdr.set([o.depth, o.type, 0, 0, o.interlace ? 1 : 0], 8);
+  const chunks: [string, number][] = o.chunks ?? (o.type === 3 ? [["PLTE", 3 << o.depth]] : []);
+  const filler = (length: number) => Uint8Array.from({ length }, (_, i) => (i * 37 + 11) & 255);
+  const idat = o.idat ?? (data => [zlib.deflateSync(data)]);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    ...chunks.map(([type, length]) => pngChunk(type, filler(length))),
+    ...idat(Buffer.concat(rows)).map(data => pngChunk("IDAT", data)),
+    pngChunk("IEND", new Uint8Array(0)),
+  ]);
+}
+
 /// Decode any image to RGBA via Bun.Image→PNG, then walk the PNG ourselves
 /// (filter de-prediction included) so assertions are against ground truth,
 /// not against another Bun.Image call. Hoisted to file scope so the
@@ -438,6 +491,67 @@ describe("malformed PNG structure", () => {
     // assertion is "doesn't allocate 10 MB worth of pixels for an 8×8".
     const meta = await new Bun.Image(png).metadata();
     expect(meta.width).toBe(8);
+  });
+
+  test.each([
+    ["a palette image with no PLTE", []],
+    ["a PLTE with more entries than the depth can index", [["PLTE", 3 * 5]]],
+  ] as [string, [string, number][]][])("%s rejects", async (_name, chunks) => {
+    const png = rowsPng({ type: 3, depth: 2, w: 13, h: 4, chunks });
+    expect(await survives(new Bun.Image(png).bytes())).toBe("rejected");
+  });
+
+  // libspng drops an ancillary chunk that it cannot accept and decodes the
+  // rest: the pixels are those of the file without the chunk.
+  async function ignoresTrns(chunks: [string, number][]) {
+    const png = (list: [string, number][]) => rowsPng({ type: 3, depth: 2, w: 13, h: 4, chunks: list });
+    const rgba = await rgbaOf(png(chunks));
+    expect(rgba).toEqual(await rgbaOf(png(chunks.filter(([type]) => type !== "tRNS"))));
+    expect(everyAlphaOpaque(rgba)).toBe(true);
+  }
+  test("a tRNS before the PLTE is ignored", async () => {
+    await ignoresTrns([
+      ["tRNS", 2],
+      ["PLTE", 3 * 4],
+    ]);
+  });
+  test("a tRNS longer than the PLTE is ignored", async () => {
+    await ignoresTrns([
+      ["PLTE", 3 * 2],
+      ["tRNS", 3],
+    ]);
+  });
+
+  // The damage is in the pixel rows of a layout that has a row routine in
+  // libspng, so some rows are decoded before libspng finds it.
+  const layouts: [string, RowsPng][] = [
+    ["palette 1-bit", { type: 3, depth: 1, w: 37, h: 64 }],
+    ["palette 2-bit, Adam7", { type: 3, depth: 2, w: 21, h: 64, interlace: true }],
+    ["gray 4-bit", { type: 0, depth: 4, w: 19, h: 64 }],
+    ["gray 8-bit, Adam7", { type: 0, depth: 8, w: 19, h: 64, interlace: true }],
+    ["gray+alpha 8-bit", { type: 4, depth: 8, w: 19, h: 64 }],
+  ];
+  // The names of the layouts whose damaged file does not reject.
+  async function accepted(damage: (layout: RowsPng) => Uint8Array) {
+    const names: string[] = [];
+    for (const [name, layout] of layouts) {
+      if ((await survives(new Bun.Image(damage(layout)).bytes())) !== "rejected") names.push(name);
+    }
+    return names;
+  }
+
+  test("a deflate stream that ends after half the rows rejects", async () => {
+    const half = (rows: Buffer) => [zlib.deflateSync(rows.subarray(0, rows.length >> 1))];
+    expect(await accepted(layout => rowsPng({ ...layout, idat: half }))).toEqual([]);
+  });
+
+  test("a file that ends inside its second IDAT rejects", async () => {
+    const two = (rows: Buffer) => {
+      const stream = zlib.deflateSync(rows);
+      return [stream.subarray(0, stream.length >> 1), stream.subarray(stream.length >> 1)];
+    };
+    // The file ends with the CRC of the second IDAT (4 bytes) and IEND (12). Cut 8 bytes of IDAT data too.
+    expect(await accepted(layout => rowsPng({ ...layout, idat: two }).subarray(0, -24))).toEqual([]);
   });
 });
 
@@ -1249,6 +1363,9 @@ describe("random-byte fuzz", () => {
   // codec parsers that trust a length/type byte without bounds-checking.
   for (const [name, fixture] of [
     ["png", tinyPng],
+    ["png, palette 1-bit", rowsPng({ type: 3, depth: 1, w: 37, h: 9 })],
+    ["png, gray 2-bit, Adam7", rowsPng({ type: 0, depth: 2, w: 21, h: 11, interlace: true })],
+    ["png, gray+alpha 8-bit", rowsPng({ type: 4, depth: 8, w: 9, h: 5 })],
     ["jpeg", tinyJpeg],
     ["webp-lossless", tinyWebpLossless],
   ] as const) {

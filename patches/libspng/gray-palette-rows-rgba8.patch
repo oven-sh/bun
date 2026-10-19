@@ -1,0 +1,150 @@
+Expand gray and palette rows of at most 8 bits to RGBA8 with one routine per row.
+
+spng_decode_scanline() has a row routine for three layouts when the output is
+SPNG_FMT_RGBA8: RGBA8 (memcpy), RGB8 (rgb8_row_to_rgba8) and 8-bit palette
+(expand_row). Every other layout runs the generic loop, which branches on the
+colour type, the depth and the format once per pixel. A gray row of at most 8
+bits and a 1, 2 or 4-bit palette row also call get_sample() once per pixel,
+and a 1, 2 or 4-bit gray row then takes a second pass through scale_row() and
+sample_to_target().
+
+This patch chooses a routine for those rows once, in spng_decode_image(). It
+sets the existing `unpack` flag, so the row leaves the loop at the existing
+unpack exit, and unpack_scanline() gets the RGBA8 case:
+
+- 1, 2 and 4-bit rows: expand_packed_row() writes 8 pixels per iteration from
+  ctx->decode_plte. For a palette image that table already holds the PLTE
+  entries with their tRNS alpha. For a gray image the patch fills the first
+  2, 4 or 16 entries with the gray ramp: the value that scale_row() gives each
+  sample, with alpha 0 for the tRNS sample.
+- 8-bit gray and gray+alpha rows: gray8_row_to_rgba8() copies the gray sample
+  to the three colours. The alpha is the second sample, or 0 for the tRNS
+  sample.
+
+The output is byte for byte what the generic loop writes. That includes the
+loop's test of the gray tRNS sample: it compares the whole 16-bit value and
+does not mask it to the bit depth, which the PNG specification says a decoder
+must do. The ramp and the call of gray8_row_to_rgba8() make the same test. If
+one of the three changes, change the others.
+
+SPNG_DECODE_USE_SBIT, every other output format and the 16-bit layouts keep
+the generic loop.
+
+unpack_scanline() takes the context as its last parameter. The call in
+spng_decode_scanline() then keeps its other arguments in place, and the
+compiler emits the same code as before for every other layout (measured: the
+same instructions per pixel on x64 and arm64 for Linux, macOS and Windows).
+Other ways to reach the routines from that function changed its register
+allocation and cost gray and 16-bit rows 1 to 3 instructions per pixel on
+some targets.
+
+Upstream: spng.c at master (46c81dc2, 2026-08-31) is the same file as at
+v0.7.4 (2023-05-08). There is no upstream issue for this loop.
+
+--- a/spng/spng.c
++++ b/spng/spng.c
+@@ -1979,9 +1979,63 @@
+     }
+ }
+ 
++/* Bun: RGBA8 pixels of 1/2/4-bit samples that index *plte, 8 pixels per iteration. `depth` is a constant in each copy. */
++static inline void expand_packed_row_n(unsigned char *row, const unsigned char *scanline, const struct spng_plte_entry *plte, uint32_t width, const unsigned depth)
++{
++    const unsigned per = 8 / depth, mask = (1 << depth) - 1;
++    const uint32_t groups = width / 8;
++    uint32_t i, k;
++    unsigned j, b;
++
++    for(i=0; i < groups; i++)
++    {
++        struct spng_plte_entry px[8];
++
++        for(b=0; b < depth; b++)
++        {
++            const unsigned packed = scanline[(size_t)i * depth + b];
++
++            for(j=0; j < per; j++) px[b * per + j] = plte[(packed >> (8 - depth * (j + 1))) & mask];
++        }
++
++        memcpy(row + (size_t)i * 32, px, 32);
++    }
++
++    for(k = groups * 8; k < width; k++) memcpy(row + (size_t)k * 4, &plte[(scanline[k / per] >> (8 - depth * (k % per + 1))) & mask], 4);
++}
++
++static void expand_packed_row(unsigned char *row, const unsigned char *scanline, const struct spng_plte_entry *plte, uint32_t width, unsigned depth)
++{
++    if(depth == 1) expand_packed_row_n(row, scanline, plte, width, 1);
++    else if(depth == 2) expand_packed_row_n(row, scanline, plte, width, 2);
++    else expand_packed_row_n(row, scanline, plte, width, 4);
++}
++
++/* Bun: RGBA8 pixels of an 8-bit gray row (`n` 1) or gray+alpha row (`n` 2). `key` is the tRNS sample of a gray row, or 256. */
++static inline void gray8_row_to_rgba8(unsigned char *row, const unsigned char *scanline, uint32_t width, const unsigned n, const unsigned key)
++{
++    uint32_t i;
++
++    for(i=0; i < width; i++)
++    {
++        const unsigned gray = scanline[(size_t)i * n];
++
++        row[(size_t)i * 4] = row[(size_t)i * 4 + 1] = row[(size_t)i * 4 + 2] = gray;
++        row[(size_t)i * 4 + 3] = (n == 2) ? scanline[(size_t)i * 2 + 1] : (gray == key) ? 0 : 255;
++    }
++}
++
+ /* Unpack 1/2/4/8-bit samples to G8/GA8/GA16 or G16 -> GA16 */
+-static void unpack_scanline(unsigned char *out, const unsigned char *scanline, uint32_t width, unsigned bit_depth, int fmt)
++static void unpack_scanline(unsigned char *out, const unsigned char *scanline, uint32_t width, unsigned bit_depth, int fmt, const spng_ctx *ctx)
+ {
++    if(fmt == SPNG_FMT_RGBA8)
++    {/* Bun: the rows that spng_decode_image() sets `unpack` for when the output is RGBA8 */
++        if(bit_depth < 8) expand_packed_row(out, scanline, ctx->decode_plte.rgba, width, bit_depth);
++        else if(ctx->ihdr.color_type == SPNG_COLOR_TYPE_GRAYSCALE_ALPHA) gray8_row_to_rgba8(out, scanline, width, 2, 256);
++        else gray8_row_to_rgba8(out, scanline, width, 1, ctx->decode_flags.apply_trns ? ctx->trns.gray : 256);
++        return;
++    }
++
+     struct spng__iter iter = spng__iter_init(bit_depth, scanline);
+     uint32_t i;
+     uint16_t sample, alpha = 65535;
+@@ -3348,7 +3402,7 @@
+ 
+         if(f.unpack)
+         {
+-            unpack_scanline(out, scanline, width, ihdr->bit_depth, fmt);
++            unpack_scanline(out, scanline, width, ihdr->bit_depth, fmt, ctx);
+             break;
+         }
+ 
+@@ -3913,6 +3967,30 @@
+         f.apply_trns = 0;
+     }
+ 
++    if(fmt == SPNG_FMT_RGBA8 && !f.use_sbit)
++    {/* Bun: unpack_scanline() has a row routine for gray and palette rows of at most 8 bits (expand_row() has the 8-bit palette) */
++        if(ihdr->bit_depth < 8)
++        {/* Indexed or gray. A gray sample indexes a ramp of 2, 4 or 16 entries:
++            the pixel that the decode loop, its tRNS test and scale_row() give that sample. */
++            if(!f.indexed)
++            {
++                const unsigned levels = 1u << ihdr->bit_depth;
++                unsigned i;
++
++                for(i=0; i < levels; i++)
++                {
++                    plte[i].red = plte[i].green = plte[i].blue = i * (255 / (levels - 1));
++                    plte[i].alpha = (f.apply_trns && ctx->trns.gray == i) ? 0 : 255;
++                }
++
++                f.do_scaling = 0;
++            }
++
++            f.unpack = 1;
++        }
++        else if(ihdr->bit_depth == 8 && (ihdr->color_type == SPNG_COLOR_TYPE_GRAYSCALE || ihdr->color_type == SPNG_COLOR_TYPE_GRAYSCALE_ALPHA)) f.unpack = 1;
++    }
++
+     unsigned char *trns_px = ctx->trns_px;
+ 
+     if(f.apply_trns)

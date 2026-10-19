@@ -27,6 +27,9 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a decode on that signal
 (a JPEG with junk before EOI, no EOI, or truncated scan data) and reads it through
 `tj3BunCompletedWithWarning`, which the patch adds, so a build without the patch fails to link.
+`patches/libspng/gray-palette-rows-rgba8.patch` gives gray rows of at most 8 bits and 1, 2 and 4-bit
+palette rows a row routine in the RGBA8 decode. It changes speed only: the pixels are those of an
+unpatched libspng.
 
 ## Adding a chainable op
 

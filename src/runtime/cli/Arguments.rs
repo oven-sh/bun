@@ -1097,6 +1097,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
         ctx.debug.no_clear_screen = args.flag(b"--no-clear-screen");
+        ctx.debug.watch_flag = args.flag(b"--watch");
         ctx.debug.watch_kill_signal_arg = args.option(b"--watch-kill-signal").map(Into::into);
 
         if let Some(origin) = args.option(b"--origin") {
@@ -1196,7 +1197,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        // Without a flag, `install.prefer` of bunfig.toml stays.
+        // Without a flag, `install.prefer` from bunfig.toml is kept.
         if args.flag(b"--prefer-offline") {
             ctx.debug.offline_mode_setting =
                 Some(bun_options_types::offline_mode::OfflineMode::Offline);
@@ -1241,7 +1242,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if ctx.runtime_options.check {
             super::watch_instead_of_hot_for_check(ctx);
         }
-        super::apply_watch_mode_flags(ctx);
+        let restarts = ctx.debug.hot_reload == HotReload::Watch;
+        super::apply_watch_mode_flags(ctx, restarts);
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));

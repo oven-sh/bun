@@ -367,8 +367,7 @@ fn entries_in_order(
         }
     };
     // What the parser has left behind where it backtracked is part of nothing.
-    let is_in_tree =
-        |s: hir::StmtId| !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None));
+    let is_in_tree = |s: hir::StmtId| !matches!(bound.parent_of_stmt(s), Parent::None);
     let mut passed = Vec::new();
     for (i, pat) in hir.pats.iter().enumerate() {
         let PatKind::Ident(name) = pat.kind else {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import vm from "node:vm";
 
 describe("Bun.Transpiler replMode", () => {
@@ -59,10 +60,10 @@ describe("Bun.Transpiler replMode", () => {
     // https://github.com/oven-sh/bun/issues/31225
     test("top-level `this` is preserved (not rewritten to `exports`)", () => {
       const result = transpiler.transformSync("this");
-      // In REPL mode, top-level `this` must survive the visit pass so the
-      // surrounding arrow IIFE inherits `this` from the global scope.
-      // Before the fix, it was rewritten to `exports`, which isn't bound in
-      // the IIFE and blew up with `ReferenceError: exports is not defined`.
+      // In REPL mode, top-level `this` must survive the visit pass: the input
+      // runs as a script, or in an arrow IIFE that inherits `this` from it.
+      // Before the fix, it was rewritten to `exports`, which REPL input does
+      // not bind, and blew up with `ReferenceError: exports is not defined`.
       expect(result).toContain("this");
       expect(result).not.toContain("exports");
     });
@@ -288,6 +289,288 @@ describe("Bun.Transpiler replMode", () => {
       // await inside arrow function doesn't trigger TLA transform
       expect(result).not.toMatch(/^\(async\s*\(\)/);
     });
+  });
+
+  // A sloppy input with no top-level await, import or return is the statements of a
+  // script, not the body of a function. It declares what the same text declares as a script.
+  describe("sloppy input as a script", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    /**
+     * Evaluates each line as one REPL input, all in one fresh context. Gives what the
+     * last line evaluated to, or "!Name" if it threw an error of that name.
+     */
+    async function lastOf(lines: string[]) {
+      const ctx = vm.createContext({});
+      let last: unknown;
+      for (const line of lines) {
+        try {
+          const result = await vm.runInContext(transpiler.transformSync(line), ctx);
+          last = result !== null && typeof result === "object" ? result.value : result;
+        } catch (e) {
+          last = `!${(e as Error)?.name}`;
+        }
+      }
+      return last;
+    }
+
+    const redefinition = [
+      "function rate() { return 3 }; function price(n) { return n * rate() }",
+      "function rate() { return 5 }",
+      "price(10)",
+    ];
+
+    describe("a top-level function", () => {
+      test.each<[string, string[], unknown]>([
+        ["is the one that a function of its input calls, after a new declaration", redefinition, 50],
+        [
+          "is the one that a function of its input calls, after an assignment",
+          ["function a() { return b() }; function b() { return 1 }", "b = () => 2", "a()"],
+          2,
+        ],
+        [
+          "calls its replacement when it calls itself by name",
+          [
+            "var calls = 0; function fib(n) { calls++; return n < 2 ? n : fib(n - 1) + fib(n - 2) }",
+            "var slow = fib, seen = new Map(); fib = n => seen.get(n) ?? (seen.set(n, slow(n)), seen.get(n))",
+            "fib(20); calls",
+          ],
+          21,
+        ],
+        ["is the variable of its name: an assignment to it stays", ["function cnt() {}; cnt = 5", "cnt"], 5],
+        ["is declared before its input runs", ["throw 1; function late() {}", "typeof late"], "function"],
+      ])("%s", async (_, lines, expected) => {
+        expect(await lastOf(lines)).toBe(expected);
+      });
+
+      // An input that runs in a function declares its functions in that function, and
+      // copies each one out once. Node.js does the same for an input with `await`.
+      test("beside a top-level await is a copy that a later declaration does not replace", async () => {
+        const [first, ...rest] = redefinition;
+        expect(await lastOf([`await 1; ${first}`, ...rest])).toBe(30);
+      });
+
+      test.failing("in a strict input is the one that a function of its input calls", async () => {
+        const [first, ...rest] = redefinition;
+        expect(await lastOf([`"use strict"; ${first}`, ...rest])).toBe(50);
+      });
+    });
+
+    describe("a direct eval", () => {
+      test.each<[string, string[], unknown]>([
+        ["a var", ['eval("var q = 1")', "q"], 1],
+        ["a function", ['eval("function q() { return 2 }")', "q()"], 2],
+        ["a var, called as (eval)(..)", ['(eval)("var q = 3")', "q"], 3],
+        ["a var, from inside a block", ['if (1) { eval("var q = 4") }', "q"], 4],
+        ["a var that reads a `let` of its block", ['{ let secret = 5; eval("var q = secret") };', "q"], 5],
+        ["a var, from an initializer", ['var a = eval("var q = 6; 7")', "a + q"], 13],
+        ["a var that an earlier input declared", ["var q = 1", 'eval("var q = 2")', "q"], 2],
+        ["a function in a block of the evaluated code", ['eval("if (1) { function q() { return 8 } }")', "q()"], 8],
+        ["a var, in a loop with a `let` head", ['for (let i = 0; i < 3; i++) eval("var q = i")', "q"], 2],
+        [
+          "a var that `delete` removes again",
+          ['eval("var q = 1")', "[typeof q, delete q, typeof q].join()"],
+          "number,true,undefined",
+        ],
+      ])("declares %s in the session", async (_, lines, expected) => {
+        expect(await lastOf(lines)).toBe(expected);
+      });
+
+      // These inputs run in a function, and that function is the scope of the eval.
+      // Node.js loses the `var` beside a top-level await too.
+      test.each<[string, string[]]>([
+        ["in a strict input", ['"use strict"; eval("var q = 1")', "typeof q"]],
+        ["beside a top-level await", ['await 1; eval("var q = 1")', "typeof q"]],
+        ["beside a top-level return", ['if (0) return; eval("var q = 1")', "typeof q"]],
+      ])("keeps what it declares %s", async (_, lines) => {
+        expect(await lastOf(lines)).toBe("undefined");
+      });
+    });
+
+    // The visit pass makes a plain function in a block a `let`, unless the block holds a
+    // direct eval. Only a declaration gets its `var` from the engine (ECMA-262 Annex B.3.3).
+    describe("a function in a block", () => {
+      test("beside a direct eval in its block is a function in the next input", async () => {
+        expect(await lastOf(['if (1) { eval("0"); function w() {} }', "typeof w"])).toBe("function");
+        expect(await lastOf(['if (1) { function w() { return eval("1") } }', "typeof w"])).toBe("function");
+      });
+
+      // https://github.com/oven-sh/bun/issues/23633
+      test.failing("with no direct eval in its block is a function in the next input", async () => {
+        expect(await lastOf(["if (1) { function w() {} }", "typeof w"])).toBe("function");
+      });
+    });
+
+    describe("the value of an input", () => {
+      const run = (code: string, ctx = vm.createContext({})) => vm.runInContext(transpiler.transformSync(code), ctx);
+
+      test("is undefined when the last statement is not an expression", () => {
+        expect([
+          run("1; function f() {}"),
+          run("x = { value: 1 }; if (1) {}"),
+          run("if (1) { Promise.resolve(5) }"),
+          run("if (1) { 5 }"),
+          run("var x"),
+        ]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+      });
+
+      test("holds a promise or an object with a `value` as it is", async () => {
+        const promise = run("Promise.resolve(5)");
+        expect(Object.keys(promise)).toEqual(["value"]);
+        expect(await promise.value).toBe(5);
+        expect(run("({ value: 1 })")).toEqual({ value: { value: 1 } });
+      });
+
+      test("is what a top-level return gives", () => {
+        expect([run("return 5"), run("if (1) { return 6 }"), run("var x = 1; return x + 6")]).toEqual([5, 6, 7]);
+      });
+
+      test("is the directive of a lone 'use strict'", () => {
+        expect(run('"use strict"')).toEqual({ value: "use strict" });
+      });
+    });
+
+    test("an input is wrapped in a function only for await, strict code or a return", () => {
+      const wrapped = (code: string) => /^\((async )?\(\) => \{$/m.test(transpiler.transformSync(code));
+      expect({
+        expression: wrapped("1 + 1"),
+        declarations: wrapped("var a = 1; let b = 2; const c = 3; function f() {} class C {}"),
+        directEval: wrapped('eval("var q = 1")'),
+        returnInFunction: wrapped("function f() { return 1 }"),
+        await: wrapped("await 1"),
+        strict: wrapped('"use strict"; 1'),
+        return: wrapped("return 1"),
+        nestedReturn: wrapped("for (;;) { if (1) { return 1 } }"),
+      }).toEqual({
+        expression: false,
+        declarations: false,
+        directEval: false,
+        returnInFunction: false,
+        await: true,
+        strict: true,
+        return: true,
+        nestedReturn: true,
+      });
+    });
+
+    // A strict script that runs through an indirect eval keeps its `var`s to itself,
+    // so the declarations of a strict input stay outside of the strict code.
+    test.each([
+      ["strict", '"use strict"; var a = 1; let b = 2; function f() {} class C {}'],
+      ["sloppy", "var a = 1; let b = 2; function f() {} class C {}"],
+    ])("the declarations of a %s input reach a context that runs the text with an indirect eval", (_, input) => {
+      const ctx = vm.createContext({});
+      vm.runInContext(`(0, eval)(${JSON.stringify(transpiler.transformSync(input))})`, ctx);
+      expect([ctx.a, ctx.b, typeof ctx.f, typeof ctx.C]).toEqual([1, 2, "function", "function"]);
+    });
+
+    // node:vm mirrors only the first two writes of a global variable to the context
+    // object, and a function declaration is one write:
+    // https://github.com/oven-sh/bun/issues/45116
+    test.failing("a function declared three times is the last one on the context object", () => {
+      const ctx = vm.createContext({});
+      for (const n of [1, 2, 3]) vm.runInContext(transpiler.transformSync(`function g() { return ${n} }`), ctx);
+      expect([vm.runInContext("g()", ctx), ctx.g()]).toEqual([3, 3]);
+    });
+
+    // Seeded sessions of sloppy script code. Each input runs as written and as replMode
+    // text, both as a script in this global. Both sessions must log and leave the same.
+    // Replay a failure with BUN_REPL_FUZZ_SEED=<seed>.
+    test("a session leaves the state that its inputs leave as written", () => {
+      const seed = Number(process.env.BUN_REPL_FUZZ_SEED ?? 0x7265706c) >>> 0;
+      const sessions = Number(process.env.BUN_REPL_FUZZ_ITERS ?? (isDebug || isASAN ? 30 : 150));
+      const different: unknown[] = [];
+      for (let i = 0; i < sessions; i++) {
+        const inputs = generateSession(seed + i);
+        const asWritten = runSession(inputs, `_w${i}`, input => input);
+        const asRepl = runSession(inputs, `_r${i}`, input => transpiler.transformSync(input));
+        if (asWritten !== asRepl) different.push({ seed: seed + i, inputs, asWritten, asRepl });
+      }
+      expect(different.slice(0, 3)).toEqual([]);
+    });
+
+    // F and G are the names a session declares, LOG is what it records, K is a new number.
+    // A function in a block is not generated: see "a function in a block" above.
+    function generateSession(seed: number): string[] {
+      let state = seed >>> 0;
+      const random = () => {
+        state = (state + 0x6d2b79f5) | 0;
+        let t = Math.imul(state ^ (state >>> 15), 1 | state);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
+      let k = 0;
+      const name = () => pick(["F", "G"]);
+      const simple = (): string =>
+        pick([
+          () => `var ${name()} = ${++k}`,
+          () => `var ${name()}`,
+          () => `${name()} = ${++k}`,
+          () => `LOG.push(typeof ${name()})`,
+          () => `LOG.push(typeof globalThis.${name()})`,
+          () => `LOG.push(typeof ${name()} === "function" ? ${name()}() : ${++k})`,
+          () => `eval("var ${name()} = ${++k}")`,
+          () => `eval("function ${name()}() { return ${++k} }")`,
+          () => `eval("${name()} = ${++k}")`,
+          () => `eval("LOG.push(typeof ${name()})")`,
+          () => `(eval)("var ${name()} = ${++k}")`,
+          () => `(0, eval)("var ${name()} = ${++k}")`,
+          () => `((p = eval("var ${name()} = ${++k}")) => LOG.push(typeof ${name()}))()`,
+          () => `(function () { eval("var ${name()} = ${++k}"); LOG.push(typeof ${name()}) })()`,
+          () => `{ let B = ${++k}; eval("var ${name()} = B") }`,
+        ])();
+      const nested = (depth: number): string => {
+        const list = () => statements(depth - 1, 2).join("; ");
+        return pick([
+          () => `{ ${list()} }`,
+          () => `if (${pick([0, 1])}) { ${list()} } else { ${list()} }`,
+          () => `try { ${list()}; ${pick(["", "throw 1"])} } catch (e) { ${list()} } finally { ${list()} }`,
+          () =>
+            `switch (${pick([0, 1, 2])}) { case 0: ${list()}; ${pick(["break", ""])}; case 1: ${list()}; default: ${list()} }`,
+          () => `L: { ${list()}; ${pick(["break L", ""])}; ${list()} }`,
+          () => `for (var I = 0; I < 2; I++) { ${list()} }`,
+        ])();
+      };
+      const statements = (depth: number, max: number): string[] =>
+        Array.from({ length: 1 + Math.floor(random() * max) }, () =>
+          depth > 0 && random() < 0.3 ? nested(depth) : simple(),
+        );
+      const topLevel = (): string =>
+        random() < 0.3
+          ? pick([
+              () => `function ${name()}() { return ${++k} }`,
+              () => `function ${name()}() { return typeof ${name()} === "function" ? ${++k} : ${++k} }`,
+              () => `throw ${++k}`,
+            ])()
+          : statements(2, 1)[0];
+      return Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
+        ["void 0", ...Array.from({ length: 1 + Math.floor(random() * 4) }, topLevel)].join("; "),
+      );
+    }
+
+    // Runs the inputs in this global under names that no other session uses. Gives the
+    // errors, the log and the final F and G as one string.
+    function runSession(inputs: string[], suffix: string, text: (input: string) => string): string {
+      const evaluate = (source: string) => vm.runInThisContext(source.replace(/\b(F|G|LOG|I)\b/g, `$1${suffix}`));
+      (globalThis as any)[`LOG${suffix}`] = [];
+      const errors = inputs.map(input => {
+        try {
+          evaluate(text(input));
+          return "";
+        } catch (e) {
+          return (e as Error)?.name ?? String(e);
+        }
+      });
+      const final = ["F", "G"].map(name =>
+        evaluate(
+          `["${name}" in globalThis, typeof ${name} === "function" ? "fn" + ${name}() : typeof ${name} === "undefined" ? "undefined" : String(${name})].join()`,
+        ),
+      );
+      const log = (globalThis as any)[`LOG${suffix}`].join();
+      delete (globalThis as any)[`LOG${suffix}`];
+      return JSON.stringify({ errors, log, final });
+    }
   });
 
   describe("replMode option", () => {

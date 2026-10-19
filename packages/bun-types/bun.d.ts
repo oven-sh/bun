@@ -3052,11 +3052,19 @@ declare module "bun" {
     logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
 
     /**
-     * Enable REPL mode transforms:
+     * Transform one input of a REPL session. Run the output of each input as a script in the
+     * same context, for example with `vm.runInContext(code, context)`. The exact output text
+     * is not specified.
+     *
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
-     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
-     * - Wraps last expression in { __proto__: null, value: expr } for result capture
-     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     * - Top-level declarations stay in the context for later inputs. `let`, `const` and `class`
+     *   become `var`, so that a later input can declare the name again
+     * - The result is `{ __proto__: null, value }` with the value of the last expression, or
+     *   `undefined` if the input does not end with an expression
+     * - An input with a top-level `await`, an `import`, or syntax that Bun lowers with a runtime
+     *   helper (`using`, decorators) runs inside an async function: the result is a promise.
+     *   An input with `"use strict"` or a top-level `return` runs inside a function too.
+     *   A direct `eval` in such an input declares in that function, not in the context
      *
      * @default false
      */

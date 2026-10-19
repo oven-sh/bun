@@ -2,8 +2,9 @@
 //!
 //! This module provides transformations for REPL mode:
 //! - Wraps the last expression in { value: expr } for result capture
-//! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
+//! - Wraps code with await or an import in an async IIFE, and strict code or code
+//!   with a top-level return in a sync one. Other code stays the statements of a script.
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -16,32 +17,43 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 use crate::p::P;
 
+/// The function that the statements of a REPL input run in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplWrapper {
+    /// No function: the statements are the script. A function is then the variable of
+    /// its name, and the engine gives a direct `eval` the global scope to declare in.
+    None,
+    /// `(() => { ... })()`. A `return` needs a function. A strict input needs one to hold
+    /// its directive: the hoisted `var`s must stay sloppy code, because a strict script
+    /// that runs through an indirect `eval` keeps what it declares to itself.
+    Arrow,
+    /// `(async () => { ... })()`, for top-level await and imports.
+    AsyncArrow,
+}
+
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
-    /// - Wraps code with await in async IIFE with variable hoisting
+    /// - Hoists declarations out of the IIFE that wraps some inputs (see `ReplWrapper`)
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Skip transform if there's a top-level return (indicates module pattern)
-        if self.has_top_level_return {
-            return Ok(());
-        }
-
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
             total_stmts_count += part.stmts.len();
         }
 
+        let is_strict =
+            self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
+
         // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
         // node's repl still evaluates the directive as a string expression. Reinject it at the
         // front, like the CJS wrapper's preserve_strict_mode.
-        let reinject_strict = self.module_scope().strict_mode
-            == js_ast::StrictModeKind::ExplicitStrictMode
+        let reinject_strict = is_strict
             && !(!parts.is_empty()
                 && !parts[0].stmts.is_empty()
                 && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
@@ -79,18 +91,60 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // Apply transform with is_async based on presence of top-level await
-        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
+        let wrapper = if has_top_level_await {
+            ReplWrapper::AsyncArrow
+        } else if is_strict || all_stmts.iter().any(|stmt| self.repl_has_return(*stmt)) {
+            ReplWrapper::Arrow
+        } else {
+            ReplWrapper::None
+        };
+
+        self.repl_transform_with_hoisting(parts, all_stmts, bump, wrapper)
     }
 
-    /// Transform code with hoisting and IIFE wrapper
-    /// `is_async`: true for async IIFE (when top-level await present), false for sync IIFE
+    /// Whether `stmt` is or holds a `return` of the input itself. The walk enters no
+    /// function, class or expression: a `return` there is not one of the input.
+    fn repl_has_return(&self, stmt: Stmt) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(stmt.loc);
+            return false;
+        }
+        let any = |stmts: js_ast::StmtNodeList| {
+            stmts.slice().iter().any(|stmt| self.repl_has_return(*stmt))
+        };
+        match stmt.data {
+            StmtData::SReturn(_) => true,
+            StmtData::SBlock(block) => any(block.stmts),
+            StmtData::SIf(if_) => {
+                self.repl_has_return(if_.yes) || if_.no.is_some_and(|no| self.repl_has_return(no))
+            }
+            StmtData::SFor(for_) => self.repl_has_return(for_.body),
+            StmtData::SForIn(for_in) => self.repl_has_return(for_in.body),
+            StmtData::SForOf(for_of) => self.repl_has_return(for_of.body),
+            StmtData::SWhile(while_) => self.repl_has_return(while_.body),
+            StmtData::SDoWhile(do_while) => self.repl_has_return(do_while.body),
+            StmtData::SWith(with) => self.repl_has_return(with.body),
+            StmtData::SLabel(label) => self.repl_has_return(label.stmt),
+            StmtData::STry(try_) => {
+                any(try_.body)
+                    || try_.catch.as_ref().is_some_and(|catch| any(catch.body))
+                    || try_
+                        .finally
+                        .as_ref()
+                        .is_some_and(|finally| any(finally.stmts))
+            }
+            StmtData::SSwitch(switch) => switch.cases.slice().iter().any(|case| any(case.body)),
+            _ => false,
+        }
+    }
+
+    /// Transform code with hoisting and the IIFE wrapper that `wrapper` names.
     fn repl_transform_with_hoisting<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         all_stmts: &[Stmt],
         bump: &'bump Bump,
-        is_async: bool,
+        wrapper: ReplWrapper,
     ) -> Result<(), bun_alloc::AllocError> {
         if all_stmts.is_empty() {
             return Ok(());
@@ -147,10 +201,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     }
                 }
                 StmtData::SFunction(func) => {
-                    // For function declarations:
+                    // For function declarations in a wrapper:
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
-                    if let Some(name_loc) = func.func.name {
+                    // With no wrapper the declaration is one of the script already.
+                    if wrapper != ReplWrapper::None
+                        && let Some(name_loc) = func.func.name
+                    {
                         let name_ref = name_loc.ref_;
                         hoisted_stmts.push(self.s(
                             S::Local {
@@ -485,45 +542,45 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             }
         }
 
-        // Wrap the last expression in return { value: expr }
-        self.repl_wrap_last_expression_with_return(&mut inner_stmts, bump);
+        // Make the last expression the value of the input: { value: expr }
+        self.repl_wrap_last_expression(&mut inner_stmts, wrapper, bump);
 
-        // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
-        let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
-        let arrow = self.new_expr(
-            E::Arrow {
-                body: G::FnBody {
-                    loc: bun_ast::Loc::EMPTY,
-                    stmts: bun_ast::StoreSlice::new_mut(inner_slice),
+        // Final output: hoisted declarations, then the statements or the IIFE call
+        let mut final_stmts = hoisted_stmts;
+        if wrapper == ReplWrapper::None {
+            final_stmts.extend_from_slice(&inner_stmts);
+        } else {
+            // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
+            let inner_slice: &mut [Stmt] = inner_stmts.into_bump_slice_mut();
+            let arrow = self.new_expr(
+                E::Arrow {
+                    body: G::FnBody {
+                        loc: bun_ast::Loc::EMPTY,
+                        stmts: bun_ast::StoreSlice::new_mut(inner_slice),
+                    },
+                    is_async: wrapper == ReplWrapper::AsyncArrow,
+                    ..Default::default()
                 },
-                is_async,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
+                bun_ast::Loc::EMPTY,
+            );
 
-        let iife = self.new_expr(
-            E::Call {
-                target: arrow,
-                args: bun_alloc::AstAlloc::vec(),
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
+            let iife = self.new_expr(
+                E::Call {
+                    target: arrow,
+                    args: bun_alloc::AstAlloc::vec(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
 
-        // Final output: hoisted declarations + IIFE call
-        let final_stmts_count = hoisted_stmts.len() + 1;
-        let mut final_stmts = BumpVec::with_capacity_in(final_stmts_count, bump);
-        for stmt in hoisted_stmts.iter() {
-            final_stmts.push(*stmt);
+            final_stmts.push(self.s(
+                S::SExpr {
+                    value: iife,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
         }
-        final_stmts.push(self.s(
-            S::SExpr {
-                value: iife,
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
         // Update parts. Input consisting solely of a consumed "use strict"
@@ -657,10 +714,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Ok(())
     }
 
-    /// Wrap the last expression in return { value: expr }
-    fn repl_wrap_last_expression_with_return<'bump>(
+    /// Wrap the last expression: `return { value: expr }` in a wrapper, and the
+    /// statement `void 0, { value: expr }` with no wrapper
+    fn repl_wrap_last_expression<'bump>(
         &mut self,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
+        wrapper: ReplWrapper,
         bump: &'bump Bump,
     ) {
         if !inner_stmts.is_empty() {
@@ -671,20 +730,57 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 match last_stmt.data {
                     StmtData::SEmpty(_) | StmtData::SComment(_) => continue,
                     StmtData::SExpr(expr_data) => {
-                        // Wrap in return { value: expr }
                         let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
-                        inner_stmts[last_idx] = self.s(
-                            S::Return {
-                                value: Some(wrapped),
-                            },
-                            last_stmt.loc,
-                        );
-                        break;
+                        inner_stmts[last_idx] = if wrapper == ReplWrapper::None {
+                            // An object literal that starts a statement needs parentheses.
+                            // After `void 0,` it needs none.
+                            let value = self.repl_void_0(last_stmt.loc).join_with_comma(wrapped);
+                            self.s(
+                                S::SExpr {
+                                    value,
+                                    ..Default::default()
+                                },
+                                last_stmt.loc,
+                            )
+                        } else {
+                            self.s(
+                                S::Return {
+                                    value: Some(wrapped),
+                                },
+                                last_stmt.loc,
+                            )
+                        };
+                        return;
                     }
                     _ => break,
                 }
             }
         }
+
+        if wrapper == ReplWrapper::None {
+            // A script evaluates to the value of its last statement that has one, which
+            // can be any earlier statement. Only { value: expr } may be the value of an input.
+            let value = self.repl_void_0(bun_ast::Loc::EMPTY);
+            inner_stmts.push(self.s(
+                S::SExpr {
+                    value,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
+        }
+    }
+
+    fn repl_void_0(&mut self, loc: bun_ast::Loc) -> Expr {
+        let zero = self.new_expr(E::Number::new(0.0), loc);
+        self.new_expr(
+            E::Unary {
+                op: js_ast::OpCode::UnVoid,
+                value: zero,
+                flags: E::UnaryFlags::default(),
+            },
+            loc,
+        )
     }
 
     /// Extract individual identifiers from a binding pattern for hoisting

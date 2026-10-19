@@ -917,18 +917,8 @@ impl ServerWebSocket {
             let _loop_guard = vm.enter_event_loop_scope();
 
             // Before the abort listeners run: they can tick the loop and overwrite `message`.
-            let message_js = match bun_string_jsc::create_utf8_for_js(global_object, message) {
-                Ok(v) => v,
-                Err(e) => {
-                    let err = global_object.take_error(e);
-                    bun_output::scoped_log!(
-                        WebSocketServer,
-                        "onClose error (message) {}",
-                        was_not_empty
-                    );
-                    return handler.run_error_callback(on_error, global_object, cached_this, err);
-                }
-            };
+            let message_js = bun_string_jsc::create_utf8_for_js(global_object, message)
+                .map_err(|e| global_object.take_error(e));
 
             if let Some(sig) = signal {
                 // `sig` is held alive by the +1 ref released in `_cleanup`;
@@ -938,6 +928,18 @@ impl ServerWebSocket {
                     sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
             }
+
+            let message_js = match message_js {
+                Ok(v) => v,
+                Err(err) => {
+                    bun_output::scoped_log!(
+                        WebSocketServer,
+                        "onClose error (message) {}",
+                        was_not_empty
+                    );
+                    return handler.run_error_callback(on_error, global_object, cached_this, err);
+                }
+            };
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {

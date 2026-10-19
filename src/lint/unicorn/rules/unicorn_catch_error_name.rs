@@ -33,6 +33,11 @@ impl CatchErrorName {
         is_qualified || self.ignore.iter().any(|it| it.test(name))
     }
 
+    /// True if renaming `symbol` can't collide with another binding. oxlint doesn't check this.
+    fn can_rename(&self, symbol: Symbol<'_>) -> bool {
+        utils::names::is_free(self.name.as_bytes(), symbol.scope(), symbol.references().map(Reference::scope))
+    }
+
     fn check_binding_identifier<'a>(&self, pat: Pat<'a>, cx: &Cx<'a, Self>) {
         let Some(name) = pat.as_ident().filter(|it| !self.is_name_allowed(it.bytes())) else {
             return;
@@ -51,12 +56,19 @@ impl CatchErrorName {
             .data("expected_name", self.name.clone())
             // Of one replacement oxlint says what it says of any.
             .help_with(|| match references().next() {
-                Some(_) => format!("Rename `{caught}` to `{}`", self.name),
-                None => String::new(),
+                Some(_) if self.can_rename(symbol) => format!("Rename `{caught}` to `{}`", self.name),
+                _ => String::new(),
             })
             .fix(|fixer| {
-                let places = std::iter::once(pat.span()).chain(references().map(Reference::span));
-                places.map(|it| fixer.replace(it, self.name.as_str())).collect::<Vec<_>>()
+                let uses = references().map(|it| match it.expr().map(Expr::parent) {
+                    // `{ e }` becomes `{ e: error }`, so the key stays the same.
+                    Some(Node::Prop(prop)) if prop.kind() == PropKind::Shorthand => {
+                        fixer.replace(it, format!("{caught}: {}", self.name))
+                    }
+                    _ => fixer.replace(it, self.name.as_str()),
+                });
+                let fixes = std::iter::once(fixer.replace(pat, self.name.as_str())).chain(uses);
+                self.can_rename(symbol).then(|| fixes.collect::<Vec<_>>())
             });
     }
 

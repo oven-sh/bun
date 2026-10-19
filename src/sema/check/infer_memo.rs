@@ -168,6 +168,11 @@ const DISTURBANCES: [&str; 9] = [
     "times_forgotten",
 ];
 
+/// The index in `DISTURBANCES` of what other tasks do.
+pub(in super::super) const COMMITS: usize = 7;
+
+const _: () = assert!(matches!(DISTURBANCES[COMMITS].as_bytes(), b"commits"));
+
 /// Snapshot of every value that a trace would change. One is recorded before the walk and one after it.
 struct Readings {
     traces: [u64; TRACES.len()],

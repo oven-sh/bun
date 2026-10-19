@@ -12,7 +12,7 @@ use smallvec::{SmallVec, smallvec};
 #[path = "infer_memo.rs"]
 mod memo;
 pub use memo::INFERENCE_WALK_COUNTS;
-pub(super) use memo::InferenceMemo;
+pub(super) use memo::{COMMITS, InferenceMemo};
 
 /// The members of a union or an intersection during iteration.
 pub(super) type Parts = SmallVec<[TypeId; 8]>;

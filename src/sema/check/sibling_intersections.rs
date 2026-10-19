@@ -27,6 +27,7 @@
 //!
 //! The facts belong to one `Checker`. No other task sees them.
 
+use super::super::infer::COMMITS;
 use super::super::instantiate::PropInstantiation;
 use super::super::*;
 use super::{Members, PropOfConstituent};
@@ -91,8 +92,6 @@ impl Fact {
 }
 
 type Disturbances = [u64; 9];
-/// The index in `Disturbances` of what other tasks do.
-const COMMITS: usize = 7;
 
 #[derive(Default)]
 pub(in super::super) struct SiblingIntersections<'p> {

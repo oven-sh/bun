@@ -210,6 +210,9 @@ void us_connecting_socket_free(struct us_connecting_socket_t *c) {
 void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->closed) return;
     c->closed = 1;
+    /* `c` stays linked until its owner has heard the error below, and the owner
+     * may run the loop from that callback. No address is tried from here on. */
+    c->next_attempt_ns = 0;
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
         us_internal_socket_group_unlink_socket(s->group, s);
 

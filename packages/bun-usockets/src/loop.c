@@ -184,7 +184,7 @@ void us_internal_connect_attempts_if_due(struct us_loop_t *loop) {
     long long next = -1;
     for (struct us_socket_group_t *group = loop->data.head; group; group = group->next) {
         for (struct us_connecting_socket_t *c = group->head_connecting_sockets; c; c = c->next_pending) {
-            if (c->next_attempt_ns <= 0) {
+            if (c->next_attempt_ns <= 0 || c->closed) {
                 continue;
             }
             /* A connecting socket with a scheduled attempt always has at least

@@ -185,6 +185,16 @@ describe("console.dir with customInspect: false", () => {
       }
     }
     const jsx = (type, props) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props });
+    // A JSX element whose first hook read says "no hook" and whose second read returns the hook.
+    const flipping = () => {
+      let reads = 0;
+      return Object.defineProperty(jsx("b", {}), custom, {
+        get() {
+          gets++;
+          return reads++ === 0 ? undefined : hook;
+        },
+      });
+    };
     const errorWith = p => Object.assign(new Error("boom"), { p });
     // The global of another context: the same kind of value as globalThis, with a short listing.
     const vmGlobal = require("node:vm").runInNewContext("globalThis");
@@ -214,15 +224,6 @@ describe("console.dir with customInspect: false", () => {
 
   it.concurrent("runs no hook anywhere in the value", async () => {
     const { stderr, exitCode } = await run(/* js */ `
-      // The first read says "no hook", the second read returns the hook.
-      let reads = 0;
-      const flipping = Object.defineProperty(jsx("b", {}), custom, {
-        get() {
-          gets++;
-          return reads++ === 0 ? undefined : hook;
-        },
-      });
-
       report({
         "top level": () => console.dir(new K(), off),
         "accessor hook": () => console.dir(new G(), off),
@@ -236,7 +237,7 @@ describe("console.dir with customInspect: false", () => {
         "Proxy target in an array": () => console.dir([new Proxy(new K(), {})], off),
         "toJSON() result": () => console.dir(Object.assign(new URLSearchParams("a=1"), { toJSON: () => new G() }), off),
         "JSX children": () => console.dir(jsx("div", { children: new G() }), off),
-        "JSX child that is classified twice": () => console.dir(jsx("div", { children: flipping }), off),
+        "JSX child that is classified twice": () => console.dir(jsx("div", { children: flipping() }), off),
         "global object": () => console.dir(vmGlobal, off),
         "Proxy of a global object": () => console.dir(new Proxy(vmGlobal, {}), off),
         "error property": () => console.dir(errorWith(new K()), off),
@@ -423,7 +424,7 @@ describe("console.dir with customInspect: false", () => {
     });
   });
 
-  // The error printer turns the hooks off for an error's own properties, but not behind a Proxy.
+  // In an error's own properties the hooks are off, but not behind a Proxy, in a toJSON() result or in JSX children.
   it.concurrent("does not change how an error prints without the option", async () => {
     const { stdout, stderr, exitCode } = await run(/* js */ `
       const behindProxy = errorWith(new Proxy(new K(), {}));
@@ -437,6 +438,9 @@ describe("console.dir with customInspect: false", () => {
         "console.table cell": () => console.table([{ error: behindProxy }]),
         "direct property": () => console.log(errorWith(new K())),
         "JSX children": () => console.log(errorWith(jsx("div", { children: new G() }))),
+        "JSX child that is classified twice": () => console.log(errorWith(jsx("div", { children: flipping() }))),
+        "toJSON() result": () =>
+          console.log(errorWith(Object.assign(new URLSearchParams("a=1"), { toJSON: () => new G() }))),
       });
     `);
 
@@ -450,6 +454,8 @@ describe("console.dir with customInspect: false", () => {
         "console.table cell: calls=1 gets=0",
         "direct property: calls=0 gets=0",
         "JSX children: calls=0 gets=1",
+        "JSX child that is classified twice: calls=1 gets=2",
+        "toJSON() result: calls=1 gets=1",
       ),
       exitCode: 0,
     });
@@ -483,6 +489,14 @@ describe("console.dir with customInspect: false", () => {
       };
       show("in a group", inGroup());
       show("in a group, off", inGroup(off));
+      // A Proxy records each key that the call reads from its options.
+      const optionReads = customInspect => () => {
+        const keys = [];
+        console.dir(1, new Proxy({ customInspect }, { get: (target, key) => (keys.push(String(key)), target[key]) }));
+        console.log(keys.join(","));
+      };
+      show("option reads", optionReads(true));
+      show("option reads, off", optionReads(false));
     `);
     const text = Object.fromEntries(
       stdout
@@ -513,6 +527,8 @@ describe("console.dir with customInspect: false", () => {
       "colors, off",
       "in a group",
       "in a group, off",
+      "option reads",
+      "option reads, off",
     ]);
 
     // The native formatter lists prototype members (https://github.com/oven-sh/bun/issues/1713),
@@ -551,24 +567,28 @@ describe("console.dir with customInspect: false", () => {
       "Proxy of a global object, off": globalThatHasNoHook,
     });
 
-    // The other options apply as they do without `customInspect`.
+    // The other options apply as they do without `customInspect`, and the call reads the same options.
     expect({
-      "string": text["string"],
       "depth": text["depth"],
       "in a group": text["in a group"],
+      "option reads": text["option reads"],
       "string, off": text["string, off"],
       "depth, off": text["depth, off"],
       "colors, off": text["colors, off"],
       "in a group, off": text["in a group, off"],
+      "option reads, off": text["option reads, off"],
     }).toEqual({
-      "string": "text\n",
       "depth": "{\n  a: [Object ...],\n}\n",
       "in a group": "group\n  {\n    a: 1,\n  }\n",
+      "option reads": "1\ndepth,colors,customInspect\n",
       "string, off": text["string"],
       "depth, off": text["depth"],
       "colors, off": text["colors"],
       "in a group, off": text["in a group"],
+      "option reads, off": text["option reads"],
     });
+    // Quotes or no quotes is https://github.com/oven-sh/bun/issues/13878.
+    expect(text["string"]).toMatch(/^(["']?)text\1\n$/);
     expect(text["colors"]).toContain("\x1b[");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });

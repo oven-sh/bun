@@ -515,6 +515,7 @@ fn message_with_type_and_level_(
     if message_type == MessageType::Dir && len >= 2 {
         print_length = 1;
         let opts = vals_slice[1];
+        let mut inspect_custom = true;
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
@@ -533,16 +534,17 @@ fn message_with_type_and_level_(
             if let Some(custom_inspect) =
                 opts.get_common_string(global, crate::CommonString::InspectOptionCustomInspect)?
             {
-                if !custom_inspect.to_boolean() {
-                    return format_without_inspect_custom(
-                        level,
-                        global,
-                        vals_slice[0],
-                        writer,
-                        print_options,
-                    );
-                }
+                inspect_custom = custom_inspect.to_boolean();
             }
+        }
+        if !inspect_custom {
+            return format_without_inspect_custom(
+                level,
+                global,
+                vals_slice[0],
+                writer,
+                print_options,
+            );
         }
     }
 
@@ -2122,7 +2124,7 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
-        // Not inlined: as a tail call in `get_advanced` it is a loop that LLVM specializes on `opts`, and every caller pays.
+        // Out of line: as a self tail call, LLVM turns `get_advanced` into a loop unswitched on `opts`, and a primitive costs about 10 more instructions.
         #[inline(never)]
         fn get_global_proxy_target(
             value: JSValue,

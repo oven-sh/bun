@@ -1319,7 +1319,7 @@ impl Task {
         match script_mode {
             Some(PostinstallOptimizer::Ignore) => return Ok(false),
             Some(PostinstallOptimizer::NativeBinlink) => {
-                // A redirect of the bins into the awaited platform package stands in for the scripts.
+                // A redirect into the awaited platform package stands in for the scripts.
                 if installer.awaited_platform_entry(self.entry_id).is_some()
                     && let Some(own_name) = installer
                         .entry_store_node_modules_package_name(self.entry_id)

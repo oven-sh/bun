@@ -1,19 +1,5 @@
 #!/usr/bin/env bun
-/**
- * Generates the fixture packages for the native binlink tests in which the platform package
- * decides whether the lifecycle scripts run:
- *
- * - test-native-binlink-scripts-native@1.0.0
- *     os/cpu-gated package that ships `bin/cmd.js`, and a `tools` folder with no file in it
- * - test-native-binlink-scripts, every version with a postinstall that writes `postinstall-ran`
- *   and an optional dependency on test-native-binlink-scripts-native@1.0.0
- *     1.0.0  bin `./bin/missing.js`, which the platform package does not ship, and a preinstall
- *            that writes `preinstall-ran`
- *     2.0.0  no bin
- *     3.0.0  two bins, and the platform package ships only `./bin/cmd.js`
- *     4.0.0  `directories.bin` is `./tools`
- *     5.0.0  bin `./bin/cmd.js`, which the platform package ships, and a preinstall
- */
+// Generates test-native-binlink-scripts and its platform package for bun-install-native-binlink.test.ts.
 
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
@@ -35,6 +21,7 @@ const native = "test-native-binlink-scripts-native";
 const optionalDependencies = { [native]: "1.0.0" };
 const packages: Record<string, Record<string, Version>> = {
   [native]: {
+    // Ships `bin/cmd.js`, and a `tools` folder with no file in it.
     "1.0.0": {
       pkgJson: { os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"] },
       files: {
@@ -44,6 +31,7 @@ const packages: Record<string, Record<string, Version>> = {
     },
   },
   "test-native-binlink-scripts": {
+    // The platform package does not ship this bin.
     "1.0.0": {
       pkgJson: {
         bin: { "scripts-test-cmd": "./bin/missing.js" },
@@ -56,6 +44,7 @@ const packages: Record<string, Record<string, Version>> = {
       pkgJson: { scripts: { postinstall }, optionalDependencies },
       files: {},
     },
+    // The platform package ships one of the two bins.
     "3.0.0": {
       pkgJson: {
         bin: { "scripts-test-cmd": "./bin/cmd.js", "scripts-test-other": "./bin/other.js" },
@@ -68,6 +57,7 @@ const packages: Record<string, Record<string, Version>> = {
       pkgJson: { directories: { bin: "./tools" }, scripts: { postinstall }, optionalDependencies },
       files: { "tools/scripts-test-tool": script("tool") },
     },
+    // The platform package ships the bin.
     "5.0.0": {
       pkgJson: {
         bin: { "scripts-test-cmd": "./bin/cmd.js" },

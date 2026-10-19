@@ -1548,8 +1548,7 @@ impl<'a> Linker<'a> {
     ///      so the redirect still resolves when cross-installing with
     ///      `--os win32`.
     ///
-    /// `None`: a redirect found none of them, or the path does not fit `buf`. Callers treat both
-    /// as a missing bin, so the `skipped_due_to_missing_bin` retry-without-redirect path fires.
+    /// `None`: a redirect found none, or `buf` is too small. Callers treat both as a missing bin.
     fn resolve_bin_target<'b>(
         is_native_binlink_redirect: bool,
         package_dir: &[u8],

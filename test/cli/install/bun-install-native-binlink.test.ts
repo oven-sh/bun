@@ -545,9 +545,7 @@ describe.concurrent("native binlink optimization", () => {
     });
   });
 
-  // The platform package stands in for the lifecycle scripts of a nativeDependencies package only
-  // when the bins are redirected into it. In every other case the package needs its own scripts.
-  // The postinstall of esbuild, for example, fetches the binary when the platform package is missing.
+  // The platform package stands in for the scripts of a nativeDependencies package only when the bins redirect into it.
   describe("lifecycle scripts follow the redirect of the bins", () => {
     const skip = "test-postinstall-skip";
     const skipNative = "test-postinstall-skip-native";
@@ -689,7 +687,11 @@ describe.concurrent("native binlink optimization", () => {
       });
 
       test(`the platform package does not have the bin (${linker})`, async () => {
-        const { install, run, ran, hasBeside } = await setup({ linker, deps: { [scripts]: "1.0.0" }, native: [scripts] });
+        const { install, run, ran, hasBeside } = await setup({
+          linker,
+          deps: { [scripts]: "1.0.0" },
+          native: [scripts],
+        });
 
         await install();
         expect({ platform: hasBeside(scriptsNative), ran: ran(), bin: await run("scripts-test-cmd") }).toEqual({
@@ -751,8 +753,7 @@ describe.concurrent("native binlink optimization", () => {
         expect({ ran: ran(), bin: await run("scripts-test-cmd") }).toEqual({ ran: [], bin: "native" });
       });
 
-      // `--omit=optional` cuts the platform package out of the dependencies of the package, and the
-      // root still installs it.
+      // `--omit=optional` cuts the platform package out of the package's dependencies. The root still installs it.
       test(`--omit=optional with the platform package as a direct dependency (${linker})`, async () => {
         const { install, run, ran } = await setup({
           linker,
@@ -762,6 +763,27 @@ describe.concurrent("native binlink optimization", () => {
 
         await install("--omit=optional");
         expect({ ran: ran(), bin: await run("skip-test-cmd") }).toEqual({ ran: [], bin: "native v2.0.0" });
+      });
+
+      // The second copy does not get the name in `.bin`. The platform package still has the bin.
+      test(`a bin name that another copy of the package has taken changes nothing (${linker})`, async () => {
+        const { nodeModules, install, run, ran } = await setup({
+          linker,
+          deps: { "aaa-skip": `npm:${skip}@2.0.0`, [skip]: "2.0.0" },
+          native: [skip],
+        });
+        const state = async () => ({
+          copy: ran(join(nodeModules, "aaa-skip")),
+          skip: ran(),
+          bin: await run("skip-test-cmd"),
+        });
+
+        await install();
+        expect(await state()).toEqual({ copy: [], skip: [], bin: "native v2.0.0" });
+
+        await rm(nodeModules, { recursive: true, force: true });
+        await install("--omit=optional");
+        expect(await state()).toEqual({ copy: ["postinstall"], skip: ["postinstall"], bin: "shim v2.0.0" });
       });
 
       test(`two packages in one node_modules and a nested copy each get their own answer (${linker})`, async () => {
@@ -797,8 +819,7 @@ describe.concurrent("native binlink optimization", () => {
         expect(await state()).toEqual(expected);
       });
 
-      // Hoisted: the platform package of the nested copy is in a node_modules below it, which is
-      // placed later. The answer waits for it.
+      // Hoisted: the platform package of the nested copy is in a node_modules that is placed later.
       test(`the platform package of a nested copy fails to download (${linker})`, async () => {
         using registry = failDownloadOf(`${skipNative}-1.0.0.tgz`);
         const { nodeModules, install, run, ran, scopeOf } = await setup({
@@ -890,9 +911,7 @@ describe.concurrent("native binlink optimization", () => {
       });
     }
 
-    // The nested copy waits for the `node_modules` below it, so its scripts are not decided when the
-    // script of the other package fails. It goes, like a package whose scripts did not all run: in
-    // place it would count as installed, and the next install would give it no answer.
+    // The nested copy still waits for its answer when the other script fails. In place it would count as installed.
     test("a failed script removes a package whose answer waits (hoisted)", async () => {
       const failing = "lifecycle-failing-postinstall";
       const deps = { [skip]: "2.0.0", [skipParent]: "1.0.0" };

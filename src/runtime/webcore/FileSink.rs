@@ -72,6 +72,74 @@ pub struct FileSink {
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
     /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
     abort_handle: bun_jsc::AbortHandle,
+    /// `Bun.write(path, stream)` replaced the contents of a file that is not polled: its fd,
+    /// which [`CloseReplacedFile`] closes and not the writer. `Fd::INVALID` for every other sink.
+    #[cfg(unix)]
+    replaced_file: Cell<Fd>,
+}
+
+/// The close of a file whose contents `Bun.write(path, stream)` replaced, on the work pool.
+/// ext4 writes a file out at the close that follows a truncate (`auto_da_alloc`): milliseconds
+/// per megabyte, and seconds while the disk is busy. The sink reports through `pipe_stream`'s
+/// promise, so the report waits for the job: [`FileSink::report_closed`] runs in
+/// [`then`](bun_jsc::JobContext::then).
+#[cfg(unix)]
+struct CloseReplacedFile;
+
+/// Closes on drop as well: a job that is released unrun still closes its file.
+#[cfg(unix)]
+struct ReplacedFile(Fd);
+
+#[cfg(unix)]
+impl Drop for ReplacedFile {
+    fn drop(&mut self) {
+        let fd = core::mem::replace(&mut self.0, Fd::INVALID);
+        if fd != Fd::INVALID {
+            fd.close();
+        }
+    }
+}
+
+/// One ref on the sink whose file is being closed.
+#[cfg(unix)]
+struct ClosingSink(*mut FileSink);
+
+// SAFETY: a `FileSink` ref; used and dropped on the sink's JS thread only.
+#[cfg(unix)]
+unsafe impl bun_jsc::job::JsAffine for ClosingSink {}
+
+#[cfg(unix)]
+impl Drop for ClosingSink {
+    fn drop(&mut self) {
+        // A job whose context stopped is released without `then`: nothing is reported, and
+        // the pipe and the keep-alive ref are let go here.
+        // SAFETY: the ref `on_close` took for this job keeps the sink live until the `deref`.
+        unsafe {
+            (*self.0).release_pipe();
+            FileSink::clear_keep_alive_ref(self.0);
+            FileSink::deref(self.0);
+        }
+    }
+}
+
+#[cfg(unix)]
+impl bun_jsc::JobContext for CloseReplacedFile {
+    type OffThread = ReplacedFile;
+    type Js = ClosingSink;
+
+    fn run(
+        file: &mut ReplacedFile,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        core::mem::replace(&mut file.0, Fd::INVALID).close();
+        Some(done)
+    }
+
+    fn then(_: ReplacedFile, sink: ClosingSink, _: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        // SAFETY: `sink` holds a ref, on the canonical pointer `on_close` was called with.
+        unsafe { FileSink::report_closed(sink.0) };
+        Ok(())
+    }
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -180,21 +248,17 @@ impl Default for Options {
     }
 }
 
-impl Options {
-    pub(crate) fn flags(&self) -> i32 {
-        let flags =
-            bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
-        if self.truncate {
-            flags | bun_sys::O::TRUNC
-        } else {
-            flags
-        }
-    }
-}
-
 impl Drop for FileSink {
     fn drop(&mut self) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
+        // Never ended, so `on_close` never ran and nothing is told that this file is closed.
+        #[cfg(unix)]
+        {
+            let fd = self.replaced_file.replace(Fd::INVALID);
+            if fd != Fd::INVALID {
+                bun_io::Closer::close(fd, ());
+            }
+        }
         self.release_pipe();
         if let Some(global) = self.js_global() {
             let vm = global.bun_vm().as_mut();
@@ -546,6 +610,39 @@ impl FileSink {
             let mut src = *(*this).source.get();
             src.close(err);
 
+            #[cfg(unix)]
+            {
+                let fd = (*this).replaced_file.replace(Fd::INVALID);
+                if fd != Fd::INVALID {
+                    let vm = (*this)
+                        .js_global()
+                        .filter(|g| !g.bun_vm().is_shutting_down());
+                    let Some(global) = vm else {
+                        // No loop for a job to come back to.
+                        fd.close();
+                        return FileSink::report_closed(this);
+                    };
+                    (*this).ref_();
+                    bun_jsc::Job::<CloseReplacedFile>::schedule(
+                        &global.js_thread_of_caller_no_frame(),
+                        ReplacedFile(fd),
+                        ClosingSink(this),
+                    );
+                    return;
+                }
+            }
+            FileSink::report_closed(this);
+        }
+    }
+
+    /// The fd is closed: settle `Bun.write(path, stream)`'s promise and let go of the pipe.
+    ///
+    /// # Safety
+    /// As [`on_close`](Self::on_close), and the caller holds a ref of its own across the call:
+    /// the one released here can be the last other one.
+    unsafe fn report_closed(this: *mut FileSink) {
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        unsafe {
             (*this).settle_stream_done();
             (*this).release_pipe();
 
@@ -694,14 +791,19 @@ impl FileSink {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
             PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
         };
-        let open = |pollable_out: &mut bool,
-                    is_socket_out: &mut bool,
-                    nonblocking_out: &mut bool,
-                    is_tty_out: &mut bool| {
+        let open_with = |flags: i32,
+                         pollable_out: &mut bool,
+                         is_socket_out: &mut bool,
+                         nonblocking_out: &mut bool,
+                         is_tty_out: &mut bool| {
             bun_io::open_for_writing(
                 Fd::cwd(),
                 &io_path,
-                options.flags(),
+                bun_sys::O::NONBLOCK
+                    | bun_sys::O::CLOEXEC
+                    | bun_sys::O::CREAT
+                    | bun_sys::O::WRONLY
+                    | flags,
                 options.mode,
                 pollable_out,
                 is_socket_out,
@@ -716,6 +818,37 @@ impl FileSink {
                 },
                 is_pollable,
             )
+        };
+        // `truncate`: create the file, or replace the contents of one that exists. Which of the
+        // two it was decides where the file is closed (see `CloseReplacedFile`).
+        let replaces = Cell::new(false);
+        let open = |pollable_out: &mut bool,
+                    is_socket_out: &mut bool,
+                    nonblocking_out: &mut bool,
+                    is_tty_out: &mut bool| {
+            if !options.truncate {
+                return open_with(0, pollable_out, is_socket_out, nonblocking_out, is_tty_out);
+            }
+            replaces.set(false);
+            match open_with(
+                bun_sys::O::EXCL,
+                pollable_out,
+                is_socket_out,
+                nonblocking_out,
+                is_tty_out,
+            ) {
+                sys::Result::Err(err) if err.get_errno() == sys::E::EEXIST => {
+                    replaces.set(true);
+                    open_with(
+                        bun_sys::O::TRUNC,
+                        pollable_out,
+                        is_socket_out,
+                        nonblocking_out,
+                        is_tty_out,
+                    )
+                }
+                result => result,
+            }
         };
         let mut result = open(
             &mut pollable_out,
@@ -823,6 +956,12 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Fifo);
+                    }
+
+                    let replaced = replaces.get() && !self.pollable.get();
+                    self.writer.with_mut(|w| w.close_fd = !replaced);
+                    if replaced {
+                        self.replaced_file.set(fd);
                     }
                 }
             }
@@ -1656,6 +1795,8 @@ impl FileSink {
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
+            #[cfg(unix)]
+            replaced_file: Cell::new(Fd::INVALID),
         }
     }
 }

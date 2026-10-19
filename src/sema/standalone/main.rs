@@ -23,8 +23,7 @@ fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
 }
 
-/// `--timing`: the ten tables whose shared parts use the most memory. Without `--keep` the tasks of
-/// the last step, which has most of the files, publish no entries, so theirs are not counted.
+/// `--timing`: the ten tables whose shared parts use the most memory.
 fn list_largest_tables(program: &bun_sema::check::Program) {
     let mut tables = program.table_footprints();
     tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
@@ -171,9 +170,6 @@ fn run(args: &[String]) {
             // `--progress`: as `bun check` displays it on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
             let is_timed = args.iter().any(|a| a == "--timing");
-            // `--task-instructions`, with `--timing --threads=1`: every task is listed, with its
-            // instructions in place of its time (1 s = 1 G).
-            let task_instructions = || bun_sema_standalone::instructions_and_cycles().0;
             let progress = (shows_progress || is_timed)
                 .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
             // `--timing`: the instruction count of loading, so that checking can be measured
@@ -238,24 +234,7 @@ fn run(args: &[String]) {
             type AfterFile<'a> = &'a (
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
                 );
-            // `--file-instructions`, with `--threads=1 --checkers=1`: the instructions since the
-            // previous file was checked, for each file. One checker in program order charges what
-            // several files need to the first of them, as typescript-go's `--singleThreaded` does.
-            let instructions_so_far = std::sync::atomic::AtomicU64::new(0);
-            let note_instructions =
-                |checker: &mut bun_sema::check::Checker<'_, '_>,
-                 file: bun_sema::program::FileId| {
-                    let now = bun_sema_standalone::instructions_and_cycles().0;
-                    let before =
-                        instructions_so_far.swap(now, std::sync::atomic::Ordering::Relaxed);
-                    let path = text(checker.p.files.modules[file.idx()].file_name());
-                    error_line!("file {:.4} G {path}", (now - before) as f64 / 1e9);
-                };
-            let after_file = if has("--file-instructions") {
-                Some(&note_instructions as AfterFile<'_>)
-            } else {
-                has("--error-types").then_some(&note_error_types as AfterFile<'_>)
-            };
+            let after_file = has("--error-types").then_some(&note_error_types as AfterFile<'_>);
             // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each at
             // its absolute path inside that directory.
             let declarations_out =
@@ -268,44 +247,14 @@ fn run(args: &[String]) {
                 );
                 write_file_to_look_at(&path, text);
             };
-            // For tuning the constants of the plan without rebuilding. To be removed once the
-            // constants are chosen.
             let number = |name: &str, default: usize| {
                 let actual = args.iter().find_map(|a| a.strip_prefix(name));
                 actual.map_or(default, |n| n.parse().expect(name))
             };
             let defaults = bun_sema_driver::PlanOptions::default();
             let plan_options = bun_sema_driver::PlanOptions {
-                step_growth: number("--step-growth=", defaults.step_growth),
-                warm_up_files: number("--warm-up-files=", defaults.warm_up_files),
-                warm_up_max_bytes: number("--warm-up-max-bytes=", defaults.warm_up_max_bytes),
-                chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
-                min_tasks: number("--min-tasks=", defaults.min_tasks),
-                tasks_on_one_thread: has("--tasks-on-one-thread"),
-                one_thread_task_cost: number(
-                    "--one-thread-task-cost=",
-                    defaults.one_thread_task_cost,
-                ),
-                one_thread_max_cost: number("--one-thread-max-cost=", defaults.one_thread_max_cost),
-                type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
-                split_files: number("--split-files=", defaults.split_files as usize) as u32,
-                split_tolerates: number("--split-tolerates=", 0) as u8,
-                split_publishes_everything: has("--split-publishes-everything"),
-                checkers: number("--checkers=", defaults.checkers),
-                reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
-                after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
-                checks_only_named: defaults.checks_only_named,
-                reads_sources_of_references: defaults.reads_sources_of_references,
-                current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
-                project_is_for_the_rest: defaults.project_is_for_the_rest,
-                reports_nothing_about_files: defaults.reports_nothing_about_files,
-                only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
-                refuses_broken_configurations: defaults.refuses_broken_configurations,
-                prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
-                shares_every_file: defaults.shares_every_file,
-                only_the_globals: defaults.only_the_globals,
-                memory: defaults.memory,
+                ..defaults
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,
@@ -338,9 +287,6 @@ fn run(args: &[String]) {
                     .find_map(|a| a.strip_prefix("--order="))
                     .and_then(|n| n.parse().ok())
                     .unwrap_or(1),
-                digests: is_timed && !has("--task-instructions"),
-                task_clock: has("--task-instructions")
-                    .then_some(&task_instructions as &(dyn Fn() -> u64 + Sync)),
                 plan_options,
                 script_kinds: &[],
                 script_kinds_by_extension: &[],
@@ -383,7 +329,11 @@ fn run(args: &[String]) {
                     bun_sema_standalone::current_memory() >> 20
                 );
             }
-            bun_sema_driver::check_then(&request, |report| {
+            let provided = bun_sema_driver::host::Provided {
+                ends_the_process: true,
+                ..Default::default()
+            };
+            bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
                     layout: if has("--plain") {
@@ -452,131 +402,35 @@ fn run(args: &[String]) {
                         "peak of loading {:.2} GB",
                         peak as f64 / (1u64 << 30) as f64
                     );
-                    let seconds = |of: fn(&bun_sema_driver::StepReport) -> std::time::Duration| {
-                        report
-                            .steps
-                            .iter()
-                            .map(of)
-                            .sum::<std::time::Duration>()
-                            .as_secs_f64()
-                    };
-                    let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
-                        report.steps.iter().map(of).sum::<u64>()
-                    };
-                    // fan/r7/tools/oracle.py reads these lines. It compares the counts between
-                    // runs: they are deterministic for a given program.
-                    error_line!(
-                        "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
-                        plan_options.step_growth,
-                        plan_options.warm_up_files,
-                        plan_options.warm_up_max_bytes,
-                        plan_options.chunk_bytes,
-                        plan_options.min_tasks
-                    );
-                    error_line!("steps: {}", report.steps.len());
-                    error_line!("tasks: {}", count(|step| step.tasks as u64));
-                    error_line!("seconds in steps: {:.3}", seconds(|step| step.in_tasks));
-                    error_line!("seconds in link: {:.3}", seconds(|step| step.in_link));
-                    error_line!(
-                        "seconds in publishes: {:.3}",
-                        seconds(|step| step.in_publish)
-                    );
-                    error_line!("seconds idle at barriers: {:.3}", seconds(|step| step.idle));
-                    error_line!("entries buffered: {}", count(|step| step.entries.buffered));
-                    error_line!(
-                        "entries published: {}",
-                        count(|step| step.entries.published)
-                    );
-                    error_line!("entries lost: {}", count(|step| step.entries.lost));
-                    error_line!(
-                        "records linked: {}, joined: {}",
-                        count(|step| step.records.linked.iter().sum::<usize>() as u64),
-                        count(|step| step.records.joined.iter().sum::<usize>() as u64)
-                    );
-                    let by_kind = bun_sema::types::LinkCounts::NAMES.iter().enumerate();
-                    let by_kind = by_kind.map(|(kind, name)| {
-                        let sum = |of: fn(&bun_sema::types::LinkCounts) -> &[usize]| {
-                            report
-                                .steps
-                                .iter()
-                                .map(|step| of(&step.records)[kind])
-                                .sum::<usize>()
-                        };
-                        format!("{name} {} / {}", sum(|it| &it.linked), sum(|it| &it.joined))
-                    });
-                    error_line!(
-                        "records linked / joined by kind: {}",
-                        by_kind.collect::<Vec<String>>().join(", ")
-                    );
-                    error_line!(
-                        "generic relation entries not published: {}",
-                        count(|step| step.generic_relation_entries_not_published)
-                    );
-                    // What a task computed about a source file of another component. The first eight kinds are inference. The others are
-                    // type syntax.
-                    let kinds = bun_sema::check::FOREIGN_EVALUATION_KINDS;
-                    let foreign: Vec<u64> = (0..kinds.len())
-                        .map(|kind| {
-                            report
-                                .steps
-                                .iter()
-                                .map(|step| step.foreign_evaluations[kind])
-                                .sum()
-                        })
+                    let walks = bun_sema::check::INFERENCE_WALK_COUNTS.iter();
+                    let walks: Vec<String> = (walks.zip(report.inference_walks))
+                        .map(|(name, count)| format!("{name} {count}"))
                         .collect();
-                    error_line!(
-                        "foreign evaluations: {} inference, {} type syntax",
-                        foreign[..8].iter().sum::<u64>(),
-                        foreign[8..].iter().sum::<u64>()
-                    );
-                    let by_kind: Vec<String> = (kinds.iter().zip(&foreign))
-                        .map(|(kind, count)| format!("{kind} {count}"))
+                    error_line!("inference walks: {}", walks.join(", "));
+                    let members = bun_sema::check::MEMBER_COUNTS.iter();
+                    let members: Vec<String> = (members.zip(report.members))
+                        .map(|(name, count)| format!("{name} {count}"))
                         .collect();
-                    error_line!("foreign evaluations by kind: {}", by_kind.join(", "));
-                    let by_step = report.steps.iter().map(|step| step.entries.published);
-                    let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
-                    error_line!("entries published by step: {}", by_step.join(" "));
-                    // The ten tables with the most duplicated work.
-                    let names = bun_sema::check::task::table_names();
-                    let mut by_table = vec![(0u64, 0u64); names.len()];
-                    for step in &report.steps {
-                        for (sum, more) in by_table.iter_mut().zip(&step.entries.by_table) {
-                            (sum.0, sum.1) = (sum.0 + more.0, sum.1 + more.1);
-                        }
-                    }
-                    let mut by_table: Vec<(&str, (u64, u64))> =
-                        names.into_iter().zip(by_table).collect();
-                    by_table.sort_by_key(|(_, (buffered, published))| {
-                        std::cmp::Reverse(buffered - published)
-                    });
-                    for (name, (buffered, published)) in by_table.iter().take(10) {
-                        error_line!("lost {name}: {} of {buffered}", buffered - published);
-                    }
-                    for (number, step) in report.steps.iter().enumerate() {
+                    error_line!("members: {}", members.join(", "));
+                    for (number, round) in report.rounds.iter().enumerate() {
                         error_line!(
-                            "step {number}: {} tasks, {} files, {:.3} s, link {:.3}, publish {:.3}, idle {:.3}, entries {} / {} / {}, records {} / {}, digest {:016x}",
-                            step.tasks,
-                            step.files,
-                            step.in_tasks.as_secs_f64(),
-                            step.in_link.as_secs_f64(),
-                            step.in_publish.as_secs_f64(),
-                            step.idle.as_secs_f64(),
-                            step.entries.buffered,
-                            step.entries.published,
-                            step.entries.lost,
-                            step.records.linked.iter().sum::<usize>(),
-                            step.records.joined.iter().sum::<usize>(),
-                            step.entries.digest
+                            "round {number}: {} tasks, {} files, {:.3} s, idle {:.3}, keys logged {}, entries stored {}",
+                            round.tasks,
+                            round.files,
+                            round.elapsed.as_secs_f64(),
+                            round.idle.as_secs_f64(),
+                            round.logged,
+                            round.stored
                         );
-                        if step.ranges != 0 {
-                            let [cycle, limit, nesting] = step.ranges_by_obstacle;
-                            error_line!(
-                                "  ranges checked ahead {}, not published {}; met a cycle {cycle}, a limit {limit}, a cut at nested types {nesting}",
-                                step.ranges,
-                                step.ranges_dropped
-                            );
+                        let [for_commits, in_commits, for_claims] =
+                            round.waits.map(|it| it.as_secs_f64());
+                        error_line!(
+                            "  summed over the tasks: waiting for the commit mutex {for_commits:.3} s, in commits {in_commits:.3}, waiting for claims {for_claims:.3}"
+                        );
+                        for (path, why) in &round.lost {
+                            error_line!("  lost to {why}: {}", text(path));
                         }
-                        for (elapsed, files, path) in &step.slowest_tasks {
+                        for (elapsed, files, path) in &round.slowest_tasks {
                             error_line!(
                                 "  task {:.3} s, {files} files, from {}",
                                 elapsed.as_secs_f64(),

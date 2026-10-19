@@ -897,6 +897,35 @@ describe("scripted server", () => {
     });
   }
 
+  // Before the handshake no capability is agreed on, so a server leaves out the '#' and the SQLSTATE.
+  test.each([
+    ["as a server writes it", mysqlRawPacket(0, Buffer.from("\xff\x10\x04Too many connections", "latin1")), undefined],
+    ["with an SQLSTATE", mysqlErrPacket(0, 1040, "08004", "Too many connections"), "08004"],
+  ])("an ERR packet in the place of the greeting, %s, is the server's error", async (_, refusal, sqlState) => {
+    let connections = 0;
+    const closed = Promise.withResolvers<any>();
+    const { port, server } = await listeningServer(socket => {
+      connections++;
+      socket.on("error", () => {});
+      socket.end(refusal);
+    });
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1, onclose: closed.resolve });
+      const err: any = await sql`SELECT 1`.catch(err => err);
+      expect(err).toBeInstanceOf(SQL.MySQLError);
+      expect({ code: err.code, errno: err.errno, sqlState: err.sqlState, message: err.message, connections }).toEqual({
+        code: "ERR_MYSQL_SERVER_ERROR",
+        errno: 1040,
+        sqlState,
+        message: "Too many connections",
+        connections: 1,
+      });
+      expect(await closed.promise).toBe(err);
+    } finally {
+      server.close();
+    }
+  });
+
   test("a connection that the server ends in the read that established it is not given to a query", async () => {
     let connected = 0;
     const { port, server } = await mysqlServer({

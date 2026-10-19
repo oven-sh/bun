@@ -2651,6 +2651,26 @@ pub mod parse_worker {
             }
         });
 
+        // The browser copy of a page of a `clientPages` router: its data functions run on the
+        // server only.
+        if target == options::Target::Browser
+            && topts
+                .framework
+                .is_some_and(|f| f.is_client_page_file(task.path.text))
+        {
+            for name in [
+                &b"getServerSideProps"[..],
+                b"getStaticProps",
+                b"getStaticPaths",
+            ] {
+                bun_core::handle_oom(
+                    opts.features
+                        .replace_exports
+                        .put(name, bun_ast::runtime::ReplaceableExport::Delete),
+                );
+            }
+        }
+
         opts.ignore_dce_annotations =
             topts.ignore_dce_annotations && !task.source_index.is_runtime();
 

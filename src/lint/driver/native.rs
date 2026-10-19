@@ -106,6 +106,17 @@ pub(crate) enum NamedBy {
 /// Error message for `id`, which isn't the name of any rule. Goes after `error: `.
 pub(crate) fn unknown_rule(registry: &Registry, id: &[u8], named_by: NamedBy) -> Vec<u8> {
     let prefix = parse_rule_id(id).0;
+    // A rule for JSON or Markdown. `--rules` lists it, but only an ESLint config can assign its language to files.
+    if let Some(language) = registry.find(id).and_then(|it| it.meta.languages.first()) {
+        return [
+            b"\"",
+            id,
+            b"\" needs an ESLint config\n  Set language: \"",
+            language.as_bytes(),
+            b"\" for the files in an eslint.config.js",
+        ]
+        .concat();
+    }
     match registry.why_missing(id) {
         Missing::Formatting => {
             [b"\"", id, b"\" is a formatting rule\n  bun fmt does that"].concat()
@@ -247,7 +258,7 @@ fn check(
     for (at, (id, setting)) in rules.iter().enumerate() {
         // `--rule` may have replaced this entry, so its bunfig.toml location no longer applies.
         let written = places.get(at);
-        let written = written.filter(|it| it.setting == *setting);
+        let written = written.filter(|it| it.setting.as_ref() == Some(setting));
         let parts: &[Json] = match setting {
             Json::Array(items) => items,
             setting => std::slice::from_ref(setting),

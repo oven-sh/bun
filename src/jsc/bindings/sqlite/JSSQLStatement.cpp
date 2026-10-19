@@ -570,7 +570,6 @@ public:
     size_t extraMemorySize() const { return stmt ? m_statementSize : 0; }
 
     // After a sqlite3_step() that returned a row: the first one of a run, or one after dropRowShape().
-    // What columnNameTransform throws ends the run.
     void updateRowShape(JSC::JSGlobalObject*);
     void dropRowShape();
 
@@ -823,7 +822,6 @@ void JSSQLStatement::buildRowShape(JSC::JSGlobalObject* globalObject)
         auto name = columnKey(globalObject, i);
         if (scope.exception()) [[unlikely]] {
             dropRowShape();
-            sqlite3_reset(stmt);
             return;
         }
         // As in { a: 1, b: 2, a: 3 }: the key stays where it first was, and the last value wins.
@@ -2113,45 +2111,49 @@ static JSSQLStatement* resetAndBind(JSC::JSGlobalObject* lexicalGlobalObject, JS
     return castedThis;
 }
 
-// SQLITE_ROW or SQLITE_DONE. Anything else is thrown, and ends the run. What a user function threw is pending already.
-static int step(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
+// In the host function that runs a statement. However that call is left, the run ends with it: every RETURN_IF_EXCEPTION can raise
+// the termination of a Worker, and a write that stayed on a row would be committed by whatever ended it later.
+class StatementRun {
+public:
+    // Null once there is nothing to end.
+    sqlite3_stmt* stmt;
+
+    ~StatementRun()
+    {
+        if (stmt) [[unlikely]]
+            sqlite3_reset(stmt);
+    }
+};
+
+// Not inline: the registers that this needs would be saved and restored for every row.
+static NEVER_INLINE void throwStepError(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
+{
+    // What a user function threw is pending already.
+    if (!scope.exception())
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
+}
+
+// SQLITE_ROW or SQLITE_DONE. Anything else is thrown.
+static ALWAYS_INLINE int step(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
 {
     int status = sqlite3_step(stmt);
-    if (status != SQLITE_ROW && status != SQLITE_DONE) [[unlikely]] {
-        if (!scope.exception())
-            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
-        sqlite3_reset(stmt);
-    }
+    if (status != SQLITE_ROW && status != SQLITE_DONE) [[unlikely]]
+        throwStepError(lexicalGlobalObject, scope, stmt);
     return status;
 }
 
 static JSC::EncodedJSValue collectRows(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSSQLStatement* castedThis, int status, const auto& constructRow)
 {
     auto* stmt = castedThis->stmt;
-    JSC::JSArray* rows = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
-    if (scope.exception()) [[unlikely]] {
-        sqlite3_reset(stmt);
-        return {};
-    }
+    JSC::JSArray* rows = JSC::JSArray::create(JSC::getVM(lexicalGlobalObject), lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
 
     while (status == SQLITE_ROW) {
         JSC::JSValue row = constructRow();
-        if (scope.exception()) [[unlikely]] {
-            sqlite3_reset(stmt);
-            return {};
-        }
+        RETURN_IF_EXCEPTION(scope, {});
 
-        // An indexed setter on Array.prototype runs script here, which can finalize the statement.
-        rows->push(lexicalGlobalObject, row);
-        if (castedThis->stmt != stmt) [[unlikely]] {
-            if (!scope.exception())
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, finalizedMessage(castedThis)));
-            return {};
-        }
-        if (scope.exception()) [[unlikely]] {
-            sqlite3_reset(stmt);
-            return {};
-        }
+        // Not push(): an indexed setter on a prototype would get the row in place of the array, and the array as `this`.
+        rows->putDirectIndex(lexicalGlobalObject, rows->length(), row);
+        RETURN_IF_EXCEPTION(scope, {});
 
         status = step(lexicalGlobalObject, scope, stmt);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2189,11 +2191,11 @@ static int runCount(sqlite3_stmt* stmt)
     return sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_RUN, 0);
 }
 
+// The next row, or null at the end.
 template<bool isFirstStep>
 static JSC::EncodedJSValue stepIterator(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSSQLStatement* castedThis)
 {
-    auto* stmt = castedThis->stmt;
-    int status = step(lexicalGlobalObject, scope, stmt);
+    int status = step(lexicalGlobalObject, scope, castedThis->stmt);
     RETURN_IF_EXCEPTION(scope, {});
     if (status == SQLITE_DONE)
         return JSValue::encode(jsNull());
@@ -2204,12 +2206,7 @@ static JSC::EncodedJSValue stepIterator(JSC::JSGlobalObject* lexicalGlobalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSValue row = constructResultObject(lexicalGlobalObject, castedThis);
-    if (scope.exception()) [[unlikely]] {
-        sqlite3_reset(stmt);
-        return {};
-    }
-    return JSValue::encode(row);
+    return JSValue::encode(constructResultObject(lexicalGlobalObject, castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2220,7 +2217,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     if (!castedThis)
         return {};
 
-    RELEASE_AND_RETURN(scope, stepIterator<true>(lexicalGlobalObject, scope, castedThis));
+    StatementRun run { castedThis->stmt };
+    JSC::EncodedJSValue row = stepIterator<true>(lexicalGlobalObject, scope, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    // iterateNext() goes on from this row.
+    run.stmt = nullptr;
+    return row;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateNext, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2239,7 +2241,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateNext, (JSC::JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, stepIterator<false>(lexicalGlobalObject, scope, castedThis));
+    StatementRun run { stmt };
+    JSC::EncodedJSValue row = stepIterator<false>(lexicalGlobalObject, scope, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    run.stmt = nullptr;
+    return row;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateEnd, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2272,6 +2278,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     if (!castedThis)
         return {};
 
+    StatementRun run { castedThis->stmt };
     int status = step(lexicalGlobalObject, scope, castedThis->stmt);
     RETURN_IF_EXCEPTION(scope, {});
     if (status == SQLITE_ROW) {
@@ -2279,9 +2286,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (castedThis->useBigInt64)
-        RELEASE_AND_RETURN(scope, collectRows(lexicalGlobalObject, scope, castedThis, status, [&] { return constructResultObject<true>(lexicalGlobalObject, castedThis); }));
-    RELEASE_AND_RETURN(scope, collectRows(lexicalGlobalObject, scope, castedThis, status, [&] { return constructResultObject<false>(lexicalGlobalObject, castedThis); }));
+    JSC::EncodedJSValue rows = castedThis->useBigInt64
+        ? collectRows(lexicalGlobalObject, scope, castedThis, status, [&] { return constructResultObject<true>(lexicalGlobalObject, castedThis); })
+        : collectRows(lexicalGlobalObject, scope, castedThis, status, [&] { return constructResultObject<false>(lexicalGlobalObject, castedThis); });
+    RETURN_IF_EXCEPTION(scope, {});
+    // At SQLITE_DONE.
+    run.stmt = nullptr;
+    return rows;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2292,14 +2303,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     if (!castedThis)
         return {};
 
+    auto* stmt = castedThis->stmt;
+    StatementRun run { stmt };
     JSC::EncodedJSValue row = stepIterator<true>(lexicalGlobalObject, scope, castedThis);
     RETURN_IF_EXCEPTION(scope, {});
-    if (JSValue::decode(row).isNull())
+    if (JSValue::decode(row).isNull()) {
+        run.stmt = nullptr;
         return row;
+    }
 
     // The other rows are not read. For INSERT ... RETURNING, which has made all its changes by now, this is the commit.
-    auto* stmt = castedThis->stmt;
-    int status = sqlite3_reset(stmt);
+    int status = sqlite3_reset(std::exchange(run.stmt, nullptr));
     RETURN_IF_EXCEPTION(scope, {});
     if (status != SQLITE_OK) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
@@ -2317,9 +2331,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     if (!castedThis)
         return {};
 
-    if (castedThis->useBigInt64)
-        RELEASE_AND_RETURN(scope, (collectArrays<toJS<true, Bun::SqliteColumn>>(lexicalGlobalObject, scope, castedThis)));
-    RELEASE_AND_RETURN(scope, (collectArrays<toJS<false, Bun::SqliteColumn>>(lexicalGlobalObject, scope, castedThis)));
+    StatementRun run { castedThis->stmt };
+    JSC::EncodedJSValue rows = castedThis->useBigInt64
+        ? collectArrays<toJS<true, Bun::SqliteColumn>>(lexicalGlobalObject, scope, castedThis)
+        : collectArrays<toJS<false, Bun::SqliteColumn>>(lexicalGlobalObject, scope, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    run.stmt = nullptr;
+    return rows;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2330,7 +2348,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
     if (!castedThis)
         return {};
 
-    RELEASE_AND_RETURN(scope, collectArrays<toJSAsBuffer>(lexicalGlobalObject, scope, castedThis));
+    StatementRun run { castedThis->stmt };
+    JSC::EncodedJSValue rows = collectArrays<toJSAsBuffer>(lexicalGlobalObject, scope, castedThis);
+    RETURN_IF_EXCEPTION(scope, {});
+    run.stmt = nullptr;
+    return rows;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -2347,11 +2369,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     const bool canWrite = !sqlite3_stmt_readonly(stmt);
     const int64_t totalChangesBefore = canWrite ? sqlite3_total_changes64(db) : 0;
 
+    StatementRun run { stmt };
     int status;
     do {
         status = step(lexicalGlobalObject, scope, stmt);
         RETURN_IF_EXCEPTION(scope, {});
     } while (status == SQLITE_ROW);
+    run.stmt = nullptr;
 
     putChanges(lexicalGlobalObject, scope, callFrame->argument(0), db, canWrite ? changesSince(db, totalChangesBefore) : 0, castedThis->useBigInt64);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
@@ -2453,6 +2477,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
         return {};
     }
 
+    StatementRun run { stmt };
     int status = step(lexicalGlobalObject, scope, stmt);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2481,7 +2506,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
             break;
         }
     }
-    sqlite3_reset(stmt);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), args)));
 }

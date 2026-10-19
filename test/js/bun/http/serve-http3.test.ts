@@ -1764,7 +1764,11 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       const clock = await text(read);
       // The two hold 2 MiB that nothing has read, and the connection's window is 1.5 MiB.
       const sibling = await text(await client.createBidirectionalStream({ headers: requestHeaders("/hello") }));
-      const parked = held.map(stream => Math.ceil(Number(stream.stats.bytesSent) / (64 * 1024)));
+      // In units of 64 KiB. A stream that no window stops is past 16 by now: it was offered
+      // the body in step with the one that was read. A stream that its window stops gets to 16.
+      const units = (stream: Stream) => Math.ceil(Number(stream.stats.bytesSent) / (64 * 1024));
+      while (held.some(stream => units(stream) < 16)) await turn();
+      const parked = held.map(units);
       gate.resolve();
       const lengths = await Promise.all(held.map(text));
       await sent;
@@ -1772,7 +1776,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
       expect({ clock, parked, sibling, lengths }).toEqual({
         clock: String(body.length),
-        // In units of 64 KiB: all of the first window, and nothing past it.
+        // All of the first window, and nothing past it.
         parked: [16, 16],
         sibling: "hello",
         lengths: [String(body.length), String(body.length)],

@@ -15,12 +15,13 @@ const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWar
 const kRejection = SymbolFor("nodejs.rejection");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
 
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
 const EventEmitter = function EventEmitter(opts) {
-  if (this._events === undefined || this._events === this.__proto__._events) {
+  if (this._events === undefined || this._events === ObjectGetPrototypeOf(this)._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;
   }
@@ -30,7 +31,7 @@ const EventEmitter = function EventEmitter(opts) {
     this.emit = emitWithRejectionCapture;
   }
 };
-const EventEmitterPrototype = (EventEmitter.prototype = {});
+const EventEmitterPrototype = EventEmitter.prototype;
 
 EventEmitterPrototype._events = undefined;
 EventEmitterPrototype._eventsCount = 0;
@@ -40,8 +41,6 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   this._maxListeners = n;
   return this;
 };
-
-EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return this?._maxListeners ?? defaultMaxListeners;

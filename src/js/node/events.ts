@@ -102,7 +102,7 @@ declare class EventEmitter {
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
-  if (this._events === undefined || this._events === this.__proto__._events) {
+  if (this._events === undefined || this._events === ($getPrototypeOf(this) as EventEmitter)._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
@@ -127,8 +127,8 @@ function EventEmitter(opts) {
     }
   }
 }
-Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {} as EventEmitter);
+$toClass(EventEmitter, "EventEmitter");
+const EventEmitterPrototype = EventEmitter.prototype;
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
@@ -136,8 +136,6 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   return this;
 };
 Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "setMaxListeners" });
-
-EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return _getMaxListeners(this);

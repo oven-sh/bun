@@ -355,8 +355,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     return Shell;
   }
 
-  Shell.prototype = ShellPrototype.prototype;
-  Object.setPrototypeOf(Shell, ShellPrototype);
+  $toClass(Shell, "Shell", ShellPrototype, ShellPrototype.prototype);
   Object.setPrototypeOf(BunShell, ShellPrototype.prototype);
 
   BunShell[cwdSymbol] = defaultCwd;

@@ -975,14 +975,7 @@ function validateStringOrSymbol(value: unknown, name: string) {
 // default original is a plain `function () {}`, so give it one explicitly.
 function createDefaultOriginal(): Function {
   const original = function () {};
-  Object.defineProperty(original, "prototype", {
-    // @ts-ignore
-    __proto__: null,
-    value: {},
-    writable: true,
-    enumerable: false,
-    configurable: false,
-  });
+  $toClass(original, "original");
   return original;
 }
 

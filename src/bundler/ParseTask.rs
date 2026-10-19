@@ -2442,20 +2442,16 @@ pub mod parse_worker {
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // SAFETY: the bytes outlive this `Source`, which goes into `graph.input_files` on
-            // `Ok` and dies here on `Err`. A file read is in the worker arena. Plugin and
-            // in-memory contents are in `graph.input_files` or `BundleV2.free_list`. A native
-            // plugin's buffer is freed by `BundleV2.finalizers`. Each of them lasts until
-            // `deinit_without_freeing_arena`.
+            // SAFETY: the bytes outlive this `Source`. Until `deinit_without_freeing_arena` they
+            // are in the worker arena (a file read), in `graph.input_files` or `free_list`
+            // (plugin and in-memory contents), or with `finalizers` (a native plugin).
             contents: std::borrow::Cow::Borrowed(unsafe {
                 bun_ptr::detach_lifetime(entry_contents)
             }),
             contents_is_recycled: false,
             ..Default::default()
         });
-        // An AST string holds less than 4 GiB (`StoreStr::MAX_LEN`), and a parser
-        // stops at 2 GiB by itself (`Source::check_parseable_len`). Only a file that
-        // the bundle copies as-is is longer: none of its bytes go into the AST.
+        // Past `StoreStr::MAX_LEN`, only a file whose bytes stay out of the AST can build.
         let too_large: Option<[&'static str; 2]> = match topts.compile_mode {
             _ if entry_contents.len() <= ast::StoreStr::MAX_LEN => None,
             // The page holds every file as a `data:` URL.

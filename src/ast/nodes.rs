@@ -152,8 +152,7 @@ const fn empty_arena_str() -> ArenaStr {
 // (~100 types, 12 downstream crates) — that cascade is the follow-up round
 // once `StoreRef` itself carries `'arena`.
 // Layout matches `StoreSlice<u8>`: `packed(4)` lowers `NonNull<u8>` to align 4
-// so the struct is 12 bytes instead of 16. `new` asserts that the length fits
-// the `u32` in debug builds only. `try_new` checks it.
+// so the struct is 12 bytes instead of 16.
 #[derive(Copy, Clone)]
 #[repr(C, packed(4))]
 pub struct StoreStr {
@@ -196,9 +195,7 @@ impl StoreStr {
         }
     }
 
-    /// [`Self::new`] for bytes whose length comes from outside: a whole file, a
-    /// response body. `None` when they do not fit, where a release build of
-    /// `new` keeps the first `len mod 2^32` of them.
+    /// `None` past [`Self::MAX_LEN`], which [`Self::new`] checks in debug builds only.
     #[inline]
     pub const fn try_new(s: &[u8]) -> Option<Self> {
         if s.len() > Self::MAX_LEN {

@@ -565,7 +565,8 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
 
     // Not fixed yet. The 'finish' of the socket fires when its end() starts to wait for the bytes, not when the FIN
     // leaves. A tunnel whose client ended first then has both sides ended, and its auto-destroy closes the socket
-    // in front of the bytes that still wait. Node sends every byte.
+    // in front of the bytes that still wait. Observed: 163712 to 262144 of the 1048576 body bytes, then the FIN.
+    // Node sends every byte.
     test.todo("a tunnel whose client ended first still sends the response before it", async () => {
       await using server = createServer((req, res) => {
         res.on("error", () => {});
@@ -573,6 +574,7 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       });
       server.on("connect", (req, socket) => {
         socket.on("error", () => {});
+        socket.resume();
         socket.end();
       });
       const { client, outcome, body } = await connect(server);

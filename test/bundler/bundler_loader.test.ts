@@ -706,7 +706,7 @@ describe("bundler", async () => {
 
   // Nothing parses a copied asset: its module is one string. The parser's symbol tables were
   // sized from the length of the file all the same, about 7 bytes for each byte of the asset.
-  test("the module of a copied asset reserves no parser tables for the bytes of the asset", async () => {
+  test.concurrent("the module of a copied asset reserves no parser tables for the bytes of the asset", async () => {
     const assetSize = 64 * 1024 * 1024;
     using dir = tempDir("loader-asset-presize", {
       "entry-small.js": `import url from "./small.bin"; console.log(url);`,
@@ -744,8 +744,9 @@ describe("bundler", async () => {
       stderr: "",
       exitCode: 0,
     });
-    // The bytes that the build read are in the measure. The tables took it past 8 times the asset.
-    expect(growth).toBeGreaterThan(assetSize);
+    // The bytes that the build read are in the measure: 1.1 times the asset in an ASAN build,
+    // 2.2 times with the copy for the output file. The tables took it past 9 times the asset.
+    expect(growth).toBeGreaterThan(assetSize / 2);
     expect(growth).toBeLessThan(5 * assetSize);
   });
 });

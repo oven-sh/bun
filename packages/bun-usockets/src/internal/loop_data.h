@@ -94,6 +94,11 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* Total time spent blocked in epoll/kqueue */
+    uint64_t idle_time_ns;
+    /* Monotonic time (ns) of the first us_loop_run_bun_tick on this loop, or 0
+     * if it has not run yet. Used with idle_time_ns for eventLoopUtilization(). */
+    uint64_t loop_start_ns;
 };
 
 #endif // LOOP_DATA_H

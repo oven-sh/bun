@@ -262,110 +262,132 @@ describe.concurrent("an eslint.config.js", () => {
       ].join("\n"),
     };
 
-    test("its rules run natively, with types, and are called what the configuration calls them", async () => {
-      const { problems, raw, stderr, exitCode } = await lint(files, ["a.ts"]);
-      expect(stderr).toBe("Linted 1 file");
-      expect(problems).toEqual(
-        [
-          // Built in, with types: what the package's rules would need types for.
-          "a.ts:2:29 ts/await-thenable",
-          "a.ts:2:38 ts/no-floating-promises",
-          "a.ts:2:43 node/no-process-exit",
-          "a.ts:3:15 ts/no-explicit-any",
-          // Of the package, in JavaScript: the rule is not built in, or the package is another.
-          "a.ts:2:59 node/no-deprecated-api",
-          "a.ts:2:59 import/first",
-          // The name of the configuration is the rule's name, as with ESLint.
-          "a.ts:5:15 ts/no-explicit-any",
-          "a.ts:5:24 @typescript-eslint/no-explicit-any",
-        ].sort(),
-      );
-      const messages = JSON.parse(raw).results[0].messages.map((it: { ruleId: string | null; message: string }) => [
-        it.ruleId,
-        it.message,
-      ]);
-      expect(messages).toContainEqual(["ts/no-explicit-any", "Unexpected any. Specify a different type."]);
-      expect(messages).toContainEqual(["node/no-deprecated-api", "from JavaScript"]);
-      expect(messages).toContainEqual([
-        "@typescript-eslint/no-explicit-any",
-        "Definition for rule '@typescript-eslint/no-explicit-any' was not found.",
-      ]);
-      expect(exitCode).toBe(1);
-    }, timeout);
+    test(
+      "its rules run natively, with types, and are called what the configuration calls them",
+      async () => {
+        const { problems, raw, stderr, exitCode } = await lint(files, ["a.ts"]);
+        expect(stderr).toBe("Linted 1 file");
+        expect(problems).toEqual(
+          [
+            // Built in, with types: what the package's rules would need types for.
+            "a.ts:2:29 ts/await-thenable",
+            "a.ts:2:38 ts/no-floating-promises",
+            "a.ts:2:43 node/no-process-exit",
+            "a.ts:3:15 ts/no-explicit-any",
+            // Of the package, in JavaScript: the rule is not built in, or the package is another.
+            "a.ts:2:59 node/no-deprecated-api",
+            "a.ts:2:59 import/first",
+            // The name of the configuration is the rule's name, as with ESLint.
+            "a.ts:5:15 ts/no-explicit-any",
+            "a.ts:5:24 @typescript-eslint/no-explicit-any",
+          ].sort(),
+        );
+        const messages = JSON.parse(raw).results[0].messages.map((it: { ruleId: string | null; message: string }) => [
+          it.ruleId,
+          it.message,
+        ]);
+        expect(messages).toContainEqual(["ts/no-explicit-any", "Unexpected any. Specify a different type."]);
+        expect(messages).toContainEqual(["node/no-deprecated-api", "from JavaScript"]);
+        expect(messages).toContainEqual([
+          "@typescript-eslint/no-explicit-any",
+          "Definition for rule '@typescript-eslint/no-explicit-any' was not found.",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
 
-    test("--native-plugin-rules and --doctor know the plugin by its package", async () => {
-      const [only, none, doctor] = await Promise.all([
-        lint(files, ["a.ts", "--native-plugin-rules=n"]),
-        lint(files, ["a.ts", "--no-native-plugin-rules"]),
-        lint(files, ["--doctor"]),
-      ]);
-      const refused =
-        "2 rules did not run because rules that run in JavaScript cannot use type information: ts/await-thenable, ts/no-floating-promises";
-      expect(only.stderr).toContain(refused);
-      expect(only.problems).toContain("a.ts:2:43 node/no-process-exit");
-      expect(only.problems).toContain("a.ts:3:15 ts/no-explicit-any");
-      expect(only.exitCode).toBe(2);
-      expect(none.stderr).toContain(refused);
-      expect(none.problems).toContain("a.ts:2:59 node/no-process-exit");
-      expect(none.exitCode).toBe(2);
-      expect(doctor.stdout).toContain("4 rules run natively");
-      expect(doctor.stdout).toContain("2 rules run in JavaScript");
-      expect(doctor.exitCode).toBe(0);
-    }, timeout);
+    test(
+      "--native-plugin-rules and --doctor know the plugin by its package",
+      async () => {
+        const [only, none, doctor] = await Promise.all([
+          lint(files, ["a.ts", "--native-plugin-rules=n"]),
+          lint(files, ["a.ts", "--no-native-plugin-rules"]),
+          lint(files, ["--doctor"]),
+        ]);
+        const refused =
+          "2 rules did not run because rules that run in JavaScript cannot use type information: ts/await-thenable, ts/no-floating-promises";
+        expect(only.stderr).toContain(refused);
+        expect(only.problems).toContain("a.ts:2:43 node/no-process-exit");
+        expect(only.problems).toContain("a.ts:3:15 ts/no-explicit-any");
+        expect(only.exitCode).toBe(2);
+        expect(none.stderr).toContain(refused);
+        expect(none.problems).toContain("a.ts:2:59 node/no-process-exit");
+        expect(none.exitCode).toBe(2);
+        expect(doctor.stdout).toContain("4 rules run natively");
+        expect(doctor.stdout).toContain("2 rules run in JavaScript");
+        expect(doctor.exitCode).toBe(0);
+      },
+      timeout,
+    );
 
-    test("the usual name and another name of one plugin are two plugins, as with ESLint", async () => {
-      const { problems, raw, exitCode } = await lint(
-        {
-          "eslint.config.mjs": `const tsPlugin = { meta: { name: "@typescript-eslint/eslint-plugin", version: "8.71.1" }, rules: {} };
+    test(
+      "the usual name and another name of one plugin are two plugins, as with ESLint",
+      async () => {
+        const { problems, raw, exitCode } = await lint(
+          {
+            "eslint.config.mjs": `const tsPlugin = { meta: { name: "@typescript-eslint/eslint-plugin", version: "8.71.1" }, rules: {} };
             export default [{
               files: ["**/*.ts"],
               plugins: { ts: tsPlugin, "@typescript-eslint": tsPlugin },
               rules: { "ts/no-explicit-any": "error", "@typescript-eslint/no-explicit-any": "warn" },
             }];`,
-          "a.ts": "export let a: any = 1;\nexport let b: any = 2; // eslint-disable-line ts/no-explicit-any\n",
-        },
-        ["a.ts"],
-      );
-      expect(problems).toEqual([
-        "a.ts:1:15 @typescript-eslint/no-explicit-any",
-        "a.ts:1:15 ts/no-explicit-any",
-        "a.ts:2:15 @typescript-eslint/no-explicit-any",
-      ]);
-      const severities = JSON.parse(raw).results[0].messages.map((it: { ruleId: string; severity: number }) => [
-        it.ruleId,
-        it.severity,
-      ]);
-      expect(severities.sort()).toEqual([
-        ["@typescript-eslint/no-explicit-any", 1],
-        ["@typescript-eslint/no-explicit-any", 1],
-        ["ts/no-explicit-any", 2],
-      ]);
-      expect(exitCode).toBe(1);
-    }, timeout);
+            "a.ts": "export let a: any = 1;\nexport let b: any = 2; // eslint-disable-line ts/no-explicit-any\n",
+          },
+          ["a.ts"],
+        );
+        expect(problems).toEqual([
+          "a.ts:1:15 @typescript-eslint/no-explicit-any",
+          "a.ts:1:15 ts/no-explicit-any",
+          "a.ts:2:15 @typescript-eslint/no-explicit-any",
+        ]);
+        const severities = JSON.parse(raw).results[0].messages.map((it: { ruleId: string; severity: number }) => [
+          it.ruleId,
+          it.severity,
+        ]);
+        expect(severities.sort()).toEqual([
+          ["@typescript-eslint/no-explicit-any", 1],
+          ["@typescript-eslint/no-explicit-any", 1],
+          ["ts/no-explicit-any", 2],
+        ]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
 
-    test("without types, a comment that disables a rule that needs them is not unused", async () => {
-      const { problems, exitCode } = await lint(
-        {
-          ...files,
-          "a.ts": "export async function f() { return 1 }\nexport function g() { f(); } // eslint-disable-line ts/no-floating-promises\nexport function h() { f(); }\n",
-        },
-        ["a.ts", "--no-type-aware"],
-      );
-      expect(problems).toEqual([]);
-      expect(exitCode).toBe(0);
-    }, timeout);
+    test(
+      "without types, a comment that disables a rule that needs them is not unused",
+      async () => {
+        const { problems, exitCode } = await lint(
+          {
+            ...files,
+            "a.ts":
+              "export async function f() { return 1 }\nexport function g() { f(); } // eslint-disable-line ts/no-floating-promises\nexport function h() { f(); }\n",
+          },
+          ["a.ts", "--no-type-aware"],
+        );
+        expect(problems).toEqual([]);
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
 
-    test("a comment turns on a rule under the other name", async () => {
-      const { problems, exitCode } = await lint(
-        {
-          "eslint.config.mjs": `export default [{ files: ["**/*.ts"], plugins: { ts: { meta: { name: "@typescript-eslint/eslint-plugin" }, rules: {} } } }];`,
-          "a.ts": "/* eslint ts/no-explicit-any: error */\nexport let a: any = 1;\nexport let b: any = 2; // eslint-disable-line ts/no-explicit-any\n",
-        },
-        ["a.ts"],
-      );
-      expect(problems).toEqual(["a.ts:2:15 ts/no-explicit-any"]);
-      expect(exitCode).toBe(1);
-    }, timeout);
+    test(
+      "a comment turns on a rule under the other name",
+      async () => {
+        const { problems, exitCode } = await lint(
+          {
+            "eslint.config.mjs": `export default [{ files: ["**/*.ts"], plugins: { ts: { meta: { name: "@typescript-eslint/eslint-plugin" }, rules: {} } } }];`,
+            "a.ts":
+              "/* eslint ts/no-explicit-any: error */\nexport let a: any = 1;\nexport let b: any = 2; // eslint-disable-line ts/no-explicit-any\n",
+          },
+          ["a.ts"],
+        );
+        expect(problems).toEqual(["a.ts:2:15 ts/no-explicit-any"]);
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
   });
 
   // What ESLint 10.12 reports.

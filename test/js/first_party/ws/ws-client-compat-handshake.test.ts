@@ -40,8 +40,10 @@ const requestLines = (conn: RawSocket) =>
 const withExtraHeaders = (headers: string[]) => (conn: RawSocket) => response101(conn, headers);
 const withReplacedHeaders = (replace: Record<string, string | null>) => (conn: RawSocket) =>
   response101(conn, [], replace);
+const forbidden = (length: number) => `HTTP/1.1 403 Forbidden\r\nContent-Length: ${length}\r\n\r\nno`;
+const redirect = (location: string) => `HTTP/1.1 302 Found\r\nLocation: ${location}\r\nContent-Length: 0\r\n\r\n`;
 
-describe.each(implementations)("ws client opening handshake ($name)", ({ ws: implementation, builtin, specifier }) => {
+describe.each(implementations)("ws client opening handshake ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   // A bare client, without connectClient()'s peer and event log. Disposing it terminates the socket.
@@ -559,78 +561,6 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       expect(conn.socketEvents).toEqual(["end"]);
     });
 
-    // The throw skips the validation, so the socket never opens. node:http has already dropped the request's timeout: a
-    // leaked `handshakeTimeout` timer would fire before the process exits and show up in the output.
-    test.concurrent.each([
-      {
-        then: "the peer closes the connection",
-        onUpgrade: "",
-        peerCloses: true,
-        lines: ["readyState 0 on exit"],
-      },
-      {
-        then: "terminate() is called",
-        onUpgrade: `setImmediate(() => {
-          console.log("readyState " + ws.readyState + " before terminate()");
-          ws.terminate();
-        });`,
-        peerCloses: false,
-        lines: [
-          "readyState 0 before terminate()",
-          'error Error "WebSocket was closed before the connection was established"',
-          "close 1006",
-          "readyState 3 on exit",
-        ],
-      },
-    ])(
-      "stays CONNECTING after an 'upgrade' listener throws, until $then",
-      async ({ onUpgrade, peerCloses, lines }) => {
-        await using peer = await createPeer({ afterUpgrade: encodeFrame(OP.text, "dropped") });
-        const script = `
-          const ws = new WebSocket(process.env.PEER_URL, { handshakeTimeout: 5000 });
-          ws.on("open", () => console.log("open"));
-          ws.on("message", data => console.log("message " + data));
-          ws.on("error", error => console.log("error " + showError(error)));
-          ws.on("close", code => console.log("close " + code));
-          ws.on("upgrade", () => {
-            ${onUpgrade}
-            throw new Error("thrown by the listener");
-          });
-          process.on("exit", () => console.log("readyState " + ws.readyState + " on exit"));
-        `;
-        const child = runScript({ specifier }, script, { PEER_URL: peer.url });
-        const conn = await peer.connection();
-        if (peerCloses) conn.end();
-        expect(await conn.remainingFrames()).toEqual([]);
-        expect((await child).lines).toEqual(['uncaught Error "thrown by the listener"', ...lines]);
-        expect(conn.socketEvents).toContain("end");
-      },
-      scriptTimeout,
-    );
-
-    // After a 101, npm ws forwards the socket's own 'error' and 'close' events, so a throw from one doesn't skip the other.
-    // That holds on Node. On Bun, node:net doesn't emit 'close' after an 'error' listener throws.
-    test.skipIf(!builtin)(
-      "emits 'close' after a rejected 101 even if the 'error' listener throws",
-      async () => {
-        await using peer = await createPeer({ respond: withReplacedHeaders({ "Sec-WebSocket-Accept": "AAAA" }) });
-        const script = `
-          const ws = new WebSocket(process.env.PEER_URL);
-          ws.on("error", error => {
-            console.log("error " + showError(error));
-            throw new Error("thrown by the listener");
-          });
-          ws.on("close", code => console.log("close " + code + " readyState " + ws.readyState));
-        `;
-        expect((await runScript({ specifier }, script, { PEER_URL: peer.url })).lines).toEqual([
-          'error Error "Invalid Sec-WebSocket-Accept header"',
-          'uncaught Error "thrown by the listener"',
-          "close 1006 readyState 3",
-        ]);
-      },
-      scriptTimeout,
-    );
-
     test("a response that isn't HTTP", async () => {
       await using client = await connectClient(implementation, {}, { respond: () => "garbage\r\n\r\n" });
       await client.closed;
@@ -658,8 +588,6 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
 
     // In node:http it's the socket's inactivity timeout, which stays armed until the response has been read.
     describe("handshakeTimeout after 'unexpected-response'", () => {
-      const forbidden = (length: number) => `HTTP/1.1 403 Forbidden\r\nContent-Length: ${length}\r\n\r\nno`;
-
       test.concurrent.each([
         { label: "a complete response isn't read", response: forbidden(2), read: false },
         { label: "an empty response isn't read", response: forbidden(0).slice(0, -2), read: false },
@@ -683,56 +611,7 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
           break;
         }
       });
-
-      // The peer closes the connection, so only a leaked timer could keep the process alive. It would fire before the
-      // process exits and show up in the output.
-      test.concurrent.each([
-        { label: "the response was read to the end", listener: "response.resume();" },
-        { label: "request.abort()", listener: "request.abort();" },
-      ])(
-        "doesn't fire after $label",
-        async ({ listener }) => {
-          await using peer = await createPeer({ respond: conn => (conn.socket.end(forbidden(2)), null) });
-          const script = `
-            const ws = new WebSocket(process.env.PEER_URL, { handshakeTimeout: 5000 });
-            ws.on("error", error => console.log("error " + showError(error)));
-            ws.on("close", code => console.log("close " + code));
-            ws.on("unexpected-response", (request, response) => {
-              console.log("unexpected-response");
-              ${listener}
-            });
-            process.on("exit", () => console.log("readyState " + ws.readyState + " on exit"));
-          `;
-          const { lines, exitCode } = await runScript({ specifier }, script, { PEER_URL: peer.url });
-          expect(lines).toEqual(["unexpected-response", "readyState 0 on exit"]);
-          expect(exitCode).toBe(0);
-        },
-        scriptTimeout,
-      );
     });
-
-    // A leaked timer would fire before the process exits and show up in the output. With a proxy the built-in uses its
-    // native client even when `finishRequest` is set.
-    test.each([
-      { label: "", options: "" },
-      { label: " with `finishRequest`", options: "finishRequest: request => request.end()," },
-      { label: " with `finishRequest` and a proxy", options: 'finishRequest: request => request.end(), proxy: "http://127.0.0.1:9",' }, // prettier-ignore
-    ])(
-      "clears the `handshakeTimeout` timer when the constructor throws$label",
-      async ({ options }) => {
-        const { lines, exitCode } = await runScript(
-          { specifier },
-          `try {
-           new WebSocket("ws://127.0.0.1:9", { ${options} handshakeTimeout: 50, headers: { "X-Bad": "a\\r\\nb" } });
-         } catch (error) {
-           console.log("threw " + error.name);
-         }`,
-        );
-        expect(lines).toEqual(["threw TypeError"]);
-        expect(exitCode).toBe(0);
-      },
-      scriptTimeout,
-    );
 
     test.each([
       { label: "", options: {} },
@@ -763,33 +642,6 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       await client.closed;
       expect(client.events).toEqual([expect.stringMatching(/^error TypeError .* rs=2$/), abnormalClose]);
     });
-
-    // The global WebSocket has a built-in handshake timeout, so it serves as the clock. It's created after the `ws`
-    // socket, so a timeout on the `ws` socket would have fired first.
-    test.concurrent(
-      "without handshakeTimeout the client outlasts the global WebSocket's handshake timeout",
-      async () => {
-        await using peer = await createPeer({ respond: () => null });
-        const script = `
-          const ws = new WebSocket(process.env.PEER_URL + "/ws");
-          ws.on("error", error => console.log("error", showError(error)));
-          ws.on("open", () => {
-            console.log("open");
-            ws.terminate();
-          });
-          const clock = new globalThis.WebSocket(process.env.PEER_URL + "/clock");
-          clock.onclose = () => console.log("the global WebSocket gave up, readyState", ws.readyState);
-        `;
-        const child = runScript({ specifier }, script, { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" });
-        const connections = [await peer.connection(), await peer.connection()];
-        const conn = connections.find(connection => connection.headLines[0].startsWith("GET /ws "))!;
-        const clock = connections.find(connection => connection !== conn)!;
-        await clock.ended;
-        conn.write(response101(conn));
-        expect((await child).lines).toEqual(["the global WebSocket gave up, readyState 0", "open"]);
-      },
-      scriptTimeout,
-    );
 
     describe("every listener style gets the same error, then 'close' 1006", () => {
       // No Content-Length, so the body ends when the connection closes.
@@ -881,8 +733,6 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
   });
 
   describe("redirects", () => {
-    const redirect = (location: string) => `HTTP/1.1 302 Found\r\nLocation: ${location}\r\nContent-Length: 0\r\n\r\n`;
-
     test("followRedirects emits 'redirect', then connects to the new URL", async () => {
       await using target = await createPeer();
       await using client = await connectClient(
@@ -949,23 +799,6 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
         abnormalClose,
       ]);
     });
-
-    // A leaked timer would fire before the process exits and show up in the output.
-    test.skipIf(!builtin)(
-      "Location: ws+unix::/x (no socket path) clears the `handshakeTimeout` timer",
-      async () => {
-        await using peer = await createPeer({ respond: () => redirect("ws+unix::/x") });
-        const { lines, exitCode } = await runScript(
-          { specifier },
-          `const ws = new WebSocket(${JSON.stringify(peer.url)}, { followRedirects: true, handshakeTimeout: 2000 });
-         ws.on("error", error => console.log("error " + error.name));
-         ws.on("close", code => console.log("close " + code));`,
-        );
-        expect(lines).toEqual(["error SyntaxError", "close 1006"]);
-        expect(exitCode).toBe(0);
-      },
-      scriptTimeout,
-    );
 
     const headers = { Authorization: "Basic Zm9vOmJhcg==", Cookie: "foo=bar", Host: "example.test", "X-Other": "1" };
     const allHeaders = { authorization: "Basic Zm9vOmJhcg==", cookie: "foo=bar", host: "example.test", other: "1" };
@@ -1152,3 +985,217 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
     });
   });
 });
+
+// Each test below runs a script in a child process. They are apart from the tests above so that both implementations
+// run them as one concurrent group: one script takes 8 seconds, and the other scripts run during that wait. That script
+// comes first for both implementations, because an ASAN build runs only 5 tests of a group at a time.
+describe.concurrent.each(implementations)("ws client opening handshake in a child process ($name)", ({ specifier }) => {
+  describe("failed handshake", () => {
+    // The global WebSocket has a built-in handshake timeout, so it serves as the clock. It's created after the `ws`
+    // socket, so a timeout on the `ws` socket would have fired first. The clock takes 8 seconds: the timeout of 1 second
+    // is padded to 5, and sockets are checked for timeouts every 4 seconds.
+    test(
+      "without handshakeTimeout the client outlasts the global WebSocket's handshake timeout",
+      async () => {
+        await using peer = await createPeer({ respond: () => null });
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL + "/ws");
+          ws.on("error", error => console.log("error", showError(error)));
+          ws.on("open", () => {
+            console.log("open");
+            ws.terminate();
+          });
+          const clock = new globalThis.WebSocket(process.env.PEER_URL + "/clock");
+          clock.onerror = event => console.log("the global WebSocket failed:", showError(event.error));
+          clock.onclose = () => console.log("the global WebSocket gave up, readyState", ws.readyState);
+        `;
+        const child = runScript({ specifier }, script, { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" });
+        const connections = [await peer.connection(), await peer.connection()];
+        const conn = connections.find(connection => connection.headLines[0].startsWith("GET /ws "))!;
+        const clock = connections.find(connection => connection !== conn)!;
+        await clock.ended;
+        conn.write(response101(conn));
+        expect(await child).toEqual({
+          lines: [
+            `the global WebSocket failed: Error "WebSocket connection to 'ws://127.0.0.1:PORT/clock' failed: Timeout"`,
+            "the global WebSocket gave up, readyState 0",
+            "open",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      scriptTimeout,
+    );
+  });
+});
+
+// The `handshakeTimeout` of a script that checks for a leaked timer. The response must arrive before it fires, and a
+// debug build on a busy machine takes seconds to get one. A leaked timer still fires well within `scriptTimeout`.
+const longHandshakeTimeout = scriptTimeout / 3;
+
+describe.concurrent.each(implementations)(
+  "ws client opening handshake in a child process ($name)",
+  ({ builtin, specifier }) => {
+    describe("failed handshake", () => {
+      // The throw skips the validation, so the socket never opens. node:http has already dropped the request's timeout:
+      // a leaked `handshakeTimeout` timer would fire before the process exits and show up in the output.
+      test.each([
+        {
+          then: "the peer closes the connection",
+          onUpgrade: "",
+          peerCloses: true,
+          lines: ["readyState 0 on exit"],
+        },
+        {
+          then: "terminate() is called",
+          onUpgrade: `setImmediate(() => {
+            console.log("readyState " + ws.readyState + " before terminate()");
+            ws.terminate();
+          });`,
+          peerCloses: false,
+          lines: [
+            "readyState 0 before terminate()",
+            'error Error "WebSocket was closed before the connection was established"',
+            "close 1006",
+            "readyState 3 on exit",
+          ],
+        },
+      ])(
+        "stays CONNECTING after an 'upgrade' listener throws, until $then",
+        async ({ onUpgrade, peerCloses, lines }) => {
+          await using peer = await createPeer({ afterUpgrade: encodeFrame(OP.text, "dropped") });
+          const script = `
+            const ws = new WebSocket(process.env.PEER_URL, { handshakeTimeout: ${longHandshakeTimeout} });
+            ws.on("open", () => console.log("open"));
+            ws.on("message", data => console.log("message " + data));
+            ws.on("error", error => console.log("error " + showError(error)));
+            ws.on("close", code => console.log("close " + code));
+            ws.on("upgrade", () => {
+              ${onUpgrade}
+              throw new Error("thrown by the listener");
+            });
+            process.on("exit", () => console.log("readyState " + ws.readyState + " on exit"));
+          `;
+          const child = runScript({ specifier }, script, { PEER_URL: peer.url });
+          const conn = await peer.connection();
+          if (peerCloses) conn.end();
+          expect(await conn.remainingFrames()).toEqual([]);
+          expect(await child).toEqual({
+            lines: ['uncaught Error "thrown by the listener"', ...lines],
+            stderr: "",
+            exitCode: 0,
+          });
+          expect(conn.socketEvents).toContain("end");
+        },
+        scriptTimeout,
+      );
+
+      // After a 101, npm ws forwards the socket's own 'error' and 'close' events, so a throw from one doesn't skip the
+      // other. That holds on Node. On Bun, node:net doesn't emit 'close' after an 'error' listener throws.
+      test.skipIf(!builtin)(
+        "emits 'close' after a rejected 101 even if the 'error' listener throws",
+        async () => {
+          await using peer = await createPeer({ respond: withReplacedHeaders({ "Sec-WebSocket-Accept": "AAAA" }) });
+          const script = `
+            const ws = new WebSocket(process.env.PEER_URL);
+            ws.on("error", error => {
+              console.log("error " + showError(error));
+              throw new Error("thrown by the listener");
+            });
+            ws.on("close", code => console.log("close " + code + " readyState " + ws.readyState));
+          `;
+          expect(await runScript({ specifier }, script, { PEER_URL: peer.url })).toEqual({
+            lines: [
+              'error Error "Invalid Sec-WebSocket-Accept header"',
+              'uncaught Error "thrown by the listener"',
+              "close 1006 readyState 3",
+            ],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+        scriptTimeout,
+      );
+
+      // The peer closes the connection, so only a leaked timer could keep the process alive. It would fire before the
+      // process exits and show up in the output.
+      describe("handshakeTimeout after 'unexpected-response'", () => {
+        test.each([
+          { label: "the response was read to the end", listener: "response.resume();" },
+          { label: "request.abort()", listener: "request.abort();" },
+        ])(
+          "doesn't fire after $label",
+          async ({ listener }) => {
+            await using peer = await createPeer({ respond: conn => (conn.socket.end(forbidden(2)), null) });
+            const script = `
+              const ws = new WebSocket(process.env.PEER_URL, { handshakeTimeout: ${longHandshakeTimeout} });
+              ws.on("error", error => console.log("error " + showError(error)));
+              ws.on("close", code => console.log("close " + code));
+              ws.on("unexpected-response", (request, response) => {
+                console.log("unexpected-response");
+                ${listener}
+              });
+              process.on("exit", () => console.log("readyState " + ws.readyState + " on exit"));
+            `;
+            expect(await runScript({ specifier }, script, { PEER_URL: peer.url })).toEqual({
+              lines: ["unexpected-response", "readyState 0 on exit"],
+              stderr: "",
+              exitCode: 0,
+            });
+          },
+          scriptTimeout,
+        );
+      });
+
+      // A leaked timer would fire before the process exits and show up in the output. With a proxy the built-in uses
+      // its native client even when `finishRequest` is set.
+      test.each([
+        { label: "", options: "" },
+        { label: " with `finishRequest`", options: "finishRequest: request => request.end()," },
+        { label: " with `finishRequest` and a proxy", options: 'finishRequest: request => request.end(), proxy: "http://127.0.0.1:9",' }, // prettier-ignore
+      ])(
+        "clears the `handshakeTimeout` timer when the constructor throws$label",
+        async ({ options }) => {
+          const script = `
+            try {
+              new WebSocket("ws://127.0.0.1:9", { ${options} handshakeTimeout: 50, headers: { "X-Bad": "a\\r\\nb" } });
+            } catch (error) {
+              console.log("threw " + error.name);
+            }
+          `;
+          expect(await runScript({ specifier }, script)).toEqual({
+            lines: ["threw TypeError"],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+        scriptTimeout,
+      );
+    });
+
+    describe("redirects", () => {
+      // A leaked timer would fire before the process exits and show up in the output.
+      test.skipIf(!builtin)(
+        "Location: ws+unix::/x (no socket path) clears the `handshakeTimeout` timer",
+        async () => {
+          await using peer = await createPeer({ respond: () => redirect("ws+unix::/x") });
+          const script = `
+            const ws = new WebSocket(process.env.PEER_URL, {
+              followRedirects: true,
+              handshakeTimeout: ${longHandshakeTimeout},
+            });
+            ws.on("error", error => console.log("error " + error.name));
+            ws.on("close", code => console.log("close " + code));
+          `;
+          expect(await runScript({ specifier }, script, { PEER_URL: peer.url })).toEqual({
+            lines: ["error SyntaxError", "close 1006"],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+        scriptTimeout,
+      );
+    });
+  },
+);

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isASAN,
+  isDebug,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -477,6 +486,185 @@ describe("Bun.Transpiler", () => {
       }
       exp(`x = ${kept}`, `x = ${keptOut};\n`);
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+    });
+
+    it("parentheses that cannot be parameters are not an arrow function with a return type", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // A cast, "!", type arguments or more parentheses cannot stand in a parameter, so the ":"
+      // behind them is not a return type.
+      exp("x = a ? () => (b as B) : d => e", "x = a ? () => b : (d) => e;\n");
+      exp("x = a ? (v: V) => (v as T) : v => f(v)", "x = a ? (v) => v : (v) => f(v);\n");
+      exp("x = a ? q => (b as B) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => (b satisfies B) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => (b!) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => (<B>b) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => (<B>(b)) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => ((b)) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => (b<T>) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q => (b<<T>() => void>) : d => e", "x = a ? (q) => b : (d) => e;\n");
+      exp("x = a ? q = (b!) : d => e", "x = a ? q = b : (d) => e;\n");
+      exp("x = y ? a ? (b as B) : c => d : e", "x = y ? a ? b : (c) => d : e;\n");
+      exp("x = y ? a ? ((b)) : c => d : e", "x = y ? a ? b : (c) => d : e;\n");
+      exp("switch (x) { case (b as B): d => e; }", "switch (x) {\n  case b:\n}");
+
+      // Without the rule these two printed "a ? p : (R) => (b) => e" and "a ? async() : (T) => (b) => e"
+      exp("x = a ? (p): R => (b as B) : d => e", "x = a ? (p) => b : (d) => e;\n");
+      exp("x = a ? async (): T => (b as B) : d => e", "x = a ? async () => b : (d) => e;\n");
+
+      // One of several items, or inside an array or an object
+      exp("x = y ? a ? (b, c!) : d => e : f", "x = y ? a ? (b, c) : (d) => e : f;\n");
+      exp("x = y ? a ? (b, c<T>) : d => e : f", "x = y ? a ? (b, c) : (d) => e : f;\n");
+      exp("x = y ? a ? ((b), c) : d => e : f", "x = y ? a ? (b, c) : (d) => e : f;\n");
+      exp("x = y ? a ? (c, <B>(b)) : d => e : f", "x = y ? a ? (c, b) : (d) => e : f;\n");
+      exp("x = y ? a ? (b = c, d!) : e => f : g", "x = y ? a ? (b = c, d) : (e) => f : g;\n");
+      exp("x = y ? a ? ([<B>(b)]) : d => e : f", "x = y ? a ? [b] : (d) => e : f;\n");
+      exp("x = y ? a ? ({ b: (c) }) : d => e : f", "x = y ? a ? { b: c } : (d) => e : f;\n");
+      exp("x = y ? a ? ({ k: <B>(b) }) : d => e : f", "x = y ? a ? { k: b } : (d) => e : f;\n");
+      exp("x = a ? () => ([b!] = c) : d => e", "x = a ? () => [b] = c : (d) => e;\n");
+      exp("x = a ? () => ({ b: c! } = d) : e => f", "x = a ? () => ({ b: c } = d) : (e) => f;\n");
+
+      // A default value may hold any of them
+      exp("x = a ? (b = c as C): T => d : e", "x = a ? (b = c) => d : e;\n");
+      exp("x = a ? (b = (c), { d = (e) }): T => f : g", "x = a ? (b = c, { d = e }) => f : g;\n");
+
+      // TypeScript reports an error for each of these
+      err("x = (b as B): T => c", 'Expected ";" but found ":"');
+      err("x = (b!): T => c", 'Expected ";" but found ":"');
+      err("x = (<B>(b)): T => c", 'Expected ";" but found ":"');
+      err("x = (b<<T>() => void>): U => c", 'Expected ";" but found ":"');
+      err("x = a ? (b as B) : c => d : e", 'Expected ";" but found ":"');
+      err("x = a ? ((b)) : c => d : e", 'Expected ";" but found ":"');
+      err("x = a ? (b, c as C) : d => e : f", 'Expected ";" but found ":"');
+      err("x = a ? ({ b: (c) }) : d => e : f", 'Expected ";" but found ":"');
+
+      // A cast in parentheses before "=>" is read as it was
+      exp("x = a ? (b as B) => c : d", "x = a ? (b) => c : d;\n");
+    });
+
+    it("parentheses that can only be parameters are an arrow function without a second ':'", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // "()", a rest item and an item with a type are parameters or an error. The arrow function
+      // is taken as it stands, and the conditional reports its missing ":".
+      exp("x = a ? (): T => b : c", "x = a ? () => b : c;\n");
+      exp("x = a ? (b: B): T => c : d", "x = a ? (b) => c : d;\n");
+      exp("x = a ? (b, c: C): T => d : e", "x = a ? (b, c) => d : e;\n");
+      exp("x = a ? (b, ...c): T => d : e", "x = a ? (b, ...c) => d : e;\n");
+      exp("x = a ? async (b: B): T => c : d", "x = a ? async (b) => c : d;\n");
+      err("x = a ? (): T => b", 'Expected ":" but found end of file');
+      err("x = a ? (b: B): T => c", 'Expected ":" but found end of file');
+      err("x = a ? (b, c: C): T => d", 'Expected ":" but found end of file');
+      err("x = a ? (b, ...c): T => d", 'Expected ":" but found end of file');
+      err("x = a ? async (b: B): T => c", 'Expected ":" but found end of file');
+
+      // "async()" is also a call
+      exp("x = a ? async() : b => c", "x = a ? async() : (b) => c;\n");
+      exp("x = a ? async (): T => b : c", "x = a ? async () => b : c;\n");
+    });
+
+    // TypeScript is the oracle: no expectation is stored. Loading it takes a debug build about a minute.
+    it.skipIf(isDebug || isASAN)("prints what TypeScript prints for parentheses that hold a cast", () => {
+      const typescript = require("typescript");
+      const wrapped = item => [
+        `${item} as B`,
+        `${item} satisfies B`,
+        `${item}!`,
+        `<B>${item}`,
+        `<B[]>${item}`,
+        `${item}<T>`,
+        `${item}<<T>() => void>`,
+      ];
+      const items = ["(b)", ...wrapped("b"), ...wrapped("(b)")];
+      const heads = items.flatMap(item => [`(${item})`, `(c, ${item})`, `([${item}])`, `({ k: ${item} })`]);
+      const positions = [
+        head => `x = a ? ${head} : d => e;`,
+        head => `x = a ? ${head} : d => e : f;`,
+        head => `x = a ? ${head}: T => c : d;`,
+        head => `x = a ? ${head}: T => c : d => e;`,
+        head => `x = a ? ${head} => c : d;`,
+        head => `x = a ? ${head} : d => (e): T => f;`,
+        head => `x = a ? ${head} : d;`,
+        head => `x = a ? async ${head} : d => e;`,
+        head => `x = y ? a ? ${head} : d => e : f;`,
+        head => `x = a ? p ? c : ${head} : d => e;`,
+        head => `x = a ? () => ${head} : d => e;`,
+        head => `x = a ? (v: V) => ${head} : d => e;`,
+        head => `x = a ? q => ${head} : d => e;`,
+        head => `x = a ? q = ${head} : d => e;`,
+        head => `x = a ? (p): R => ${head} : d => e;`,
+        head => `x = a ? [${head}: T => c] : d;`,
+        head => `x = a ? q => { return ${head}; } : d => e;`,
+        head => `switch (x) { case ${head}: d => e; }`,
+        head => `x = ${head}: T => c;`,
+        head => `x = ${head} => c;`,
+        head => `x = ${head};`,
+      ];
+      const inputs = heads.flatMap(head => positions.map(position => position(head)));
+      const accepted = inputs.filter(
+        code => typescript.createSourceFile("x.ts", code, typescript.ScriptTarget.ESNext).parseDiagnostics.length === 0,
+      );
+      expect(accepted.length).toBeGreaterThan(inputs.length / 2);
+      const emitted = typescript
+        .transpileModule(accepted.map((code, i) => `"#${i}";\n${code}\n`).join(""), {
+          compilerOptions: { target: "esnext", module: "esnext" },
+        })
+        .outputText.split(/^"#\d+";\n/m)
+        .slice(1);
+      expect(emitted.length).toBe(accepted.length);
+
+      const asTypeScript = new Bun.Transpiler({ loader: "ts", deadCodeElimination: false });
+      const asJavaScript = new Bun.Transpiler({ loader: "js", deadCodeElimination: false });
+      const print = (transpiler, code) => {
+        try {
+          return transpiler.transformSync(code);
+        } catch (e) {
+          return `error: ${(e instanceof AggregateError ? e.errors[0] : e).message}`;
+        }
+      };
+      const different = accepted.filter((code, i) => print(asTypeScript, code) !== print(asJavaScript, emitted[i]));
+      expect(different).toEqual([]);
+    });
+
+    it("parses a decorated class in a typed arrow function of a true branch once", async () => {
+      using dir = tempDir("ts-conditional-typed-arrow", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+        }),
+        "index.ts": `
+          function Column(): PropertyDecorator {
+            return () => {};
+          }
+          const withAudit = process.argv.length > 0;
+          const empty = withAudit
+            ? (): new () => object => {
+                class Audited {
+                  @Column() createdAt: Date;
+                }
+                return Audited;
+              }
+            : null;
+          const typed = withAudit
+            ? (b: unknown): new () => object => {
+                class Audited {
+                  @Column() createdAt: Date;
+                }
+                return Audited;
+              }
+            : null;
+          console.log(typeof empty, typeof typed, new Date(0).getTime());
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function function 0\n", stderr: "", exitCode: 0 });
     });
 
     it("type-only import syntax", () => {

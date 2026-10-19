@@ -571,8 +571,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && invalid_log.is_empty() {
-                if opts.is_after_question_and_before_colon {
+            if Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && invalid_log.is_empty()
+                && !errors.is_not_binding
+            {
+                // A type on an item, "()" and a rest item are parameters or an error, never an expression. "async()" and "async(...a)" are also calls.
+                let is_parameter_list = type_colon_range.len > 0
+                    || (!opts.is_async && (items.is_empty() || spread_range.len > 0));
+                if opts.is_after_question_and_before_colon && !is_parameter_list {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(

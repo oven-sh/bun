@@ -377,7 +377,6 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         bun_alloc::ArenaVec::new_in(heap),
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
-    let source_path: &'static [u8] = source.path.text;
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
@@ -395,11 +394,9 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         &mut barrel_ir,
         PatchImportRecordsCtx {
             source_index: Index::init(barrel_idx),
-            source_path,
             loader,
             target,
             only_records: Some(un_deferred),
-            ..Default::default()
         },
     );
 

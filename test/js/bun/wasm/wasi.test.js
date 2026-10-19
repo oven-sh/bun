@@ -277,11 +277,12 @@ async function pathOpenFixture(exe) {
   }
 }
 
-it("path_open stores the requested rights masked by the maximum of the file type", async () => {
+it.concurrent("path_open stores the requested rights masked by the maximum of the file type", async () => {
   expect(await pathOpenFixture(bunExe())).toEqual(expectedPathOpenRows);
 });
 
-it.skipIf(isWindows || !nodeExe())("node prints the same rows for path_open", async () => {
+// Not on Windows: the rows come from Node.js on POSIX, and Node.js on Windows was not run.
+it.concurrent.skipIf(isWindows || !nodeExe())("node prints the same rows for path_open", async () => {
   expect(await pathOpenFixture(nodeExe())).toEqual(expectedPathOpenRows);
 });
 
@@ -297,73 +298,8 @@ const RIGHT = {
 const FILETYPE = { CHARACTER_DEVICE: 2, DIRECTORY: 3 };
 const WASI_O_DIRECTORY = 1 << 1;
 
-// path_open under `dirfd`. Returns the errno, or the new descriptor with its file type and rights.
-function pathOpen(wasi, dirfd, guestPath, { oflags = 0, base = 0n, inheriting = 0n } = {}) {
-  const memory = Buffer.from(wasi.memory.buffer);
-  const view = new DataView(wasi.memory.buffer);
-  const pathPtr = 1024;
-  const fdPtr = 1536;
-  const statPtr = 2048;
-  const sentinel = 0x12345678;
-
-  const len = memory.write(guestPath, pathPtr);
-  view.setUint32(fdPtr, sentinel, true);
-  const errno = wasi.wasiImport.path_open(dirfd, 0, pathPtr, len, oflags, base, inheriting, 0, fdPtr);
-  const fd = view.getUint32(fdPtr, true);
-  if (errno !== 0) {
-    expect(fd).toBe(sentinel);
-    return { errno };
-  }
-  // The entry is complete when path_open returns: the table and fd_fdstat_get agree.
-  const entry = wasi.FD_MAP.get(fd);
-  const stored = { filetype: entry.filetype, base: entry.rights.base, inheriting: entry.rights.inheriting };
-  expect(wasi.wasiImport.fd_fdstat_get(fd, statPtr)).toBe(0);
-  expect({
-    filetype: view.getUint8(statPtr),
-    base: view.getBigUint64(statPtr + 8, true),
-    inheriting: view.getBigUint64(statPtr + 16, true),
-  }).toEqual(stored);
-  return { fd, ...stored };
-}
-
-// The default bindings of node:wasi, with some replaced. The constructor takes the whole object.
-function bindingsWith(overrides) {
-  return {
-    hrtime: () => process.hrtime.bigint(),
-    exit: code => process.exit(code),
-    kill: signal => process.kill(process.pid, signal),
-    randomFillSync: array => crypto.getRandomValues(array),
-    isTTY: fd => tty.isatty(fd),
-    fs,
-    path,
-    ...overrides,
-  };
-}
-
-it.skipIf(isWindows)("path_open asks isTTY about the descriptor of the host, for a character device only", () => {
-  using dir = tempDir("wasi-path-open-istty", { "file.txt": "file data\n" });
-  const isTTYCalls = [];
-  const isTTY = fd => {
-    isTTYCalls.push(fd);
-    return tty.isatty(fd);
-  };
-  const wasi = new WASI({ preopens: { "/": String(dir), "/dev": "/dev" }, bindings: bindingsWith({ isTTY }) });
-  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
-
-  const preopenFd = 3;
-  const devFd = 4;
-  const base = RIGHT.FD_READ | RIGHT.FD_SEEK;
-
-  pathOpen(wasi, preopenFd, "file.txt", { base });
-  expect(isTTYCalls).toEqual([]);
-
-  const devNull = pathOpen(wasi, devFd, "null", { base });
-  expect(devNull).toEqual({ fd: 6, filetype: FILETYPE.CHARACTER_DEVICE, base, inheriting: 0n });
-  expect(isTTYCalls).toEqual([wasi.FD_MAP.get(devNull.fd).real]);
-});
-
-it.skipIf(isWindows)("path_open gives a terminal no seek right, no tell right and no rights to pass on", async () => {
-  // The child has a pty as its controlling terminal. It opens that terminal as "tty" on a preopen of /dev.
+// POSIX only: the child opens its controlling terminal, a pty, as "tty" on a preopen of /dev.
+it.concurrent.skipIf(isWindows)("path_open gives a terminal no seek right and no rights to pass on", async () => {
   const childSrc = `
     const { WASI } = require("node:wasi");
     const wasi = new WASI({ preopens: { "/dev": "/dev" } });
@@ -422,6 +358,81 @@ it.skipIf(isWindows)("path_open gives a terminal no seek right, no tell right an
   expect(await proc.exited).toBe(0);
 });
 
+// path_open under `dirfd`. Returns the errno, or the new descriptor with its file type and rights.
+function pathOpen(wasi, dirfd, guestPath, { oflags = 0, base = 0n, inheriting = 0n } = {}) {
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+  const pathPtr = 1024;
+  const fdPtr = 1536;
+  const statPtr = 2048;
+  const sentinel = 0x12345678;
+
+  const len = memory.write(guestPath, pathPtr);
+  view.setUint32(fdPtr, sentinel, true);
+  const errno = wasi.wasiImport.path_open(dirfd, 0, pathPtr, len, oflags, base, inheriting, 0, fdPtr);
+  const fd = view.getUint32(fdPtr, true);
+  if (errno !== 0) {
+    expect(fd).toBe(sentinel);
+    return { errno };
+  }
+  // The entry is complete when path_open returns: the table and fd_fdstat_get agree.
+  const entry = wasi.FD_MAP.get(fd);
+  const stored = { filetype: entry.filetype, base: entry.rights.base, inheriting: entry.rights.inheriting };
+  expect(wasi.wasiImport.fd_fdstat_get(fd, statPtr)).toBe(0);
+  expect({
+    filetype: view.getUint8(statPtr),
+    base: view.getBigUint64(statPtr + 8, true),
+    inheriting: view.getBigUint64(statPtr + 16, true),
+  }).toEqual(stored);
+  return { fd, ...stored };
+}
+
+// Closes the host descriptors that this WASI opened: the preopens, and what path_open added.
+function closeDescriptors(wasi) {
+  for (const fd of wasi.FD_MAP.keys()) if (fd > 2) wasi.wasiImport.fd_close(fd);
+}
+
+// The default bindings of node:wasi, with some replaced. The constructor takes the whole object.
+function bindingsWith(overrides) {
+  return {
+    hrtime: () => process.hrtime.bigint(),
+    exit: code => process.exit(code),
+    kill: signal => process.kill(process.pid, signal),
+    randomFillSync: array => crypto.getRandomValues(array),
+    isTTY: fd => tty.isatty(fd),
+    fs,
+    path,
+    ...overrides,
+  };
+}
+
+// POSIX only: the character device is /dev/null.
+it.skipIf(isWindows)("path_open asks isTTY about the descriptor of the host, for a character device only", () => {
+  using dir = tempDir("wasi-path-open-istty", { "file.txt": "file data\n" });
+  const isTTYCalls = [];
+  const isTTY = fd => {
+    isTTYCalls.push(fd);
+    return tty.isatty(fd);
+  };
+  const wasi = new WASI({ preopens: { "/": String(dir), "/dev": "/dev" }, bindings: bindingsWith({ isTTY }) });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+
+  const preopenFd = 3;
+  const devFd = 4;
+  const base = RIGHT.FD_READ | RIGHT.FD_SEEK;
+
+  try {
+    pathOpen(wasi, preopenFd, "file.txt", { base });
+    expect(isTTYCalls).toEqual([]);
+
+    const devNull = pathOpen(wasi, devFd, "null", { base });
+    expect(devNull).toEqual({ fd: 6, filetype: FILETYPE.CHARACTER_DEVICE, base, inheriting: 0n });
+    expect(isTTYCalls).toEqual([wasi.FD_MAP.get(devNull.fd).real]);
+  } finally {
+    closeDescriptors(wasi);
+  }
+});
+
 it("path_open closes the host descriptor and adds no entry when the check of the file type fails", () => {
   using dir = tempDir("wasi-path-open-type-check", {
     "file.txt": "file data\n",
@@ -457,27 +468,39 @@ it("path_open closes the host descriptor and adds no entry when the check of the
   // The first host descriptor is the preopen.
   expect(opened).toHaveLength(1);
 
-  failFstat = true;
-  const fstatFails = pathOpen(wasi, preopenFd, "file.txt", { base: FD_READ });
-  failFstat = false;
-  expect({
-    "fstat fails": fstatFails,
-    "O_DIRECTORY on a file": pathOpen(wasi, preopenFd, "file.txt", { oflags: WASI_O_DIRECTORY, base: FD_READDIR }),
-  }).toEqual({
-    "fstat fails": { errno: WASI_EIO },
-    "O_DIRECTORY on a file": { errno: WASI_ENOTDIR },
-  });
-  expect(opened).toHaveLength(3);
-  expect(closed).toEqual(opened.slice(1));
-  expect([...wasi.FD_MAP.keys()]).toEqual([0, 1, 2, 3]);
+  try {
+    failFstat = true;
+    const fstatFails = pathOpen(wasi, preopenFd, "file.txt", { base: FD_READ });
+    failFstat = false;
+    expect({
+      "fstat fails": fstatFails,
+      "O_DIRECTORY on a file": pathOpen(wasi, preopenFd, "file.txt", { oflags: WASI_O_DIRECTORY, base: FD_READDIR }),
+    }).toEqual({
+      "fstat fails": { errno: WASI_EIO },
+      "O_DIRECTORY on a file": { errno: WASI_ENOTDIR },
+    });
 
-  // A directory passes the same check.
-  expect(pathOpen(wasi, preopenFd, "dir", { oflags: WASI_O_DIRECTORY, base: FD_READDIR })).toEqual({
-    fd: 4,
-    filetype: FILETYPE.DIRECTORY,
-    base: FD_READDIR,
-    inheriting: 0n,
-  });
+    // The table of the guest has no number left.
+    wasi.getUnusedFileDescriptor = () => {
+      throw new Error("no available file descriptors");
+    };
+    expect(() => pathOpen(wasi, preopenFd, "file.txt", { base: FD_READ })).toThrow("no available file descriptors");
+    delete wasi.getUnusedFileDescriptor;
+
+    expect(opened).toHaveLength(4);
+    expect(closed).toEqual(opened.slice(1));
+    expect([...wasi.FD_MAP.keys()]).toEqual([0, 1, 2, 3]);
+
+    // A directory passes the same check.
+    expect(pathOpen(wasi, preopenFd, "dir", { oflags: WASI_O_DIRECTORY, base: FD_READDIR })).toEqual({
+      fd: 4,
+      filetype: FILETYPE.DIRECTORY,
+      base: FD_READDIR,
+      inheriting: 0n,
+    });
+  } finally {
+    closeDescriptors(wasi);
+  }
 });
 
 it("poll_oneoff waits on a clock subscription and reports the event", () => {

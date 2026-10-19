@@ -1415,17 +1415,18 @@ class WASI {
             }
             // uvwasi stores the request masked by the maximum of the file type: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2131-L2143
             let max;
+            let newfd;
             try {
               max = translateFileAttributes(this, realfd, this.fstatSync(realfd));
               // Not every host has O_DIRECTORY: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2114-L2129
               if ((oflags & WASI_O_DIRECTORY) !== 0 && max.filetype !== WASI_FILETYPE_DIRECTORY) {
                 throw new WASIError(WASI_ENOTDIR);
               }
+              newfd = this.getUnusedFileDescriptor();
             } catch (e) {
               fs.closeSync(realfd);
               throw e;
             }
-            const newfd = this.getUnusedFileDescriptor();
             this.FD_MAP.set(newfd, {
               real: realfd,
               filetype: max.filetype,

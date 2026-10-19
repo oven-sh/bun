@@ -522,6 +522,9 @@ collected. `Drop` gets no capability, so it cannot touch the JS heap, and no Rus
 runs on the collector's threads. The collector is not told of memory the payload owns
 outside the object: there is no `estimatedSize` yet.
 
+A struct that is not freed when its object is, because a timer, a thread or a C library
+still points at it, is a separate allocation: the class is [`refCounted`](#refcounted).
+
 | Key              | What it declares                                                                               |
 | ---------------- | ---------------------------------------------------------------------------------------------- |
 | `rustPath`       | the struct                                                                                     |
@@ -530,6 +533,9 @@ outside the object: there is no `estimatedSize` yet.
 | `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`      |
 | `internalFields` | JS values the object holds                                                                     |
 | `configurable`   | `false` makes the native properties non-configurable                                           |
+| `refCounted`     | the object holds a `RefPtr` to the struct, which [outlives it](#refcounted)                    |
+| `finalize`       | with `refCounted`: the struct is told when the object is collected                             |
+| `fromJS`         | `Name::from_js(heap, value)`: the wrapper, if `value` is an instance                           |
 
 Code that has the global object and no capability makes one with
 `payload.into_js_value(global)`, which returns a `JSValue`.
@@ -545,6 +551,7 @@ A property of `proto` is one of:
 | `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js` |
 | `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                      |
 | `{ getter: T, cache: true \| "field", .. }` | an accessor that returns an [internal field](#internalfields); no setter |
+| `{ internalField: "field", setter }`        | an accessor that is an [internal field](#internalfields), with no Rust   |
 | `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`             |
 | `[{ rustName, args, .. }, ..]`              | a native function with [overloads](#overloads)                           |
 
@@ -552,6 +559,12 @@ The properties are in the order of the schema, which `for-in` and `Object.keys` 
 function is named after the property. `rustName` names it otherwise, which tells apart the
 overloads of a function, and two members of `proto` and `static` that share a name. An accessor of `static`
 ignores its receiver, so a subclass inherits it.
+
+A function written at `"@@dispose"` is keyed by `Symbol.dispose` and named `[Symbol.dispose]`. It is not enumerable.
+Its Rust function is `dispose`.
+
+A native function called on anything else than an instance throws `ERR_INVALID_THIS`. With
+`invalidThis: "undefined"` it returns `undefined`, as some of Node's do.
 
 If any member has `throws: true`, the trait has a
 `type Error<'a>: bindgen::IntoError<'a>` that they all fail with. `b.self` is the
@@ -566,11 +579,12 @@ table of the object that has the class:
 
 ### The receiver
 
-| The method is                    | It receives                 |
-| -------------------------------- | --------------------------- |
-| `capability: "none"` or `"heap"` | `&self`                     |
-| …with `mutates: true`            | `&mut self`                 |
-| `capability: "js"`               | `this: JsWrapper<'a, Self>` |
+| The method is                          | It receives                 |
+| -------------------------------------- | --------------------------- |
+| `capability: "none"` or `"heap"`       | `&self`                     |
+| …with `mutates: true`                  | `&mut self`                 |
+| `capability: "js"`                     | `this: JsWrapper<'a, Self>` |
+| of a [`refCounted`](#refcounted) class | `&self`                     |
 
 A method that can run JavaScript can be re-entered, by a callback that calls
 another method of the same object. A `&mut self` held across that would be
@@ -604,6 +618,77 @@ returns it. While the field is `undefined` the getter calls Rust and stores the 
 `this.set_tag_field(heap, JsLocal::UNDEFINED)` makes the next read of `tag` compute it again.
 `cache: "tag"` on another getter declares nothing: it returns that field, of a getter or of
 `internalFields`, and fills it from its own Rust function.
+
+`{ internalField: "listener" }` is an accessor that returns the field and calls no Rust. With `setter: true`
+it stores whatever is assigned. An accessor that does more is a `getter` with `passThis: true`.
+
+### `refCounted`
+
+One question decides where the struct is: **is it freed when its object is freed?** If it is, it goes
+inside the object. If something else can still hold it then, it outlives the object and is a separate
+allocation, which the object holds one ref on:
+
+```ts
+export const CronJob = b.class({
+  rustPath: "crate::api::cron::CronJob",
+  refCounted: true,
+  finalize: true,
+  internalFields: ["callback", "pendingPromise", "cron"],
+  proto: {
+    cron: { internalField: "cron" },
+    stop: { returns: b.self, passThis: true, capability: "heap" },
+  },
+});
+```
+
+The struct counts its own refs (`bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`), and the payload
+is a `RefPtr` to it. The trait is still the struct's:
+
+```rust
+impl CronJobClass for CronJob {
+    fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
+    }
+
+    fn stop<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, _: &JsHeap<'a>) -> JsWrapper<'a, RefPtr<Self>> {
+        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
+        this
+    }
+}
+```
+
+- **Every member takes `&self`**, with `capability: "js"` too. What is shared keeps its state in `Cell` and `JsCell`,
+  so there is never a `&mut` to it for a re-entrant call to alias. `mutates: true` is refused, and a setter takes
+  `&self`. The wrapper comes with `passThis: true`.
+- **The pointer in the object never changes and is never null**, which is why `&self` lasts the call: the frame holds
+  the object and the object holds a ref. So `with_mut` does not exist on these wrappers. A class that has to say
+  "closed" says it in its own state.
+- `ref_ptr.into_js(heap)` makes the object and gives it that ref. `construct` returns a `RefPtr<Self>`.
+- `finalize: true` adds `fn finalize(&self)`, which runs when the object is collected, before its ref is dropped.
+  `Drop` runs at the last ref, which can be much later. Like `Drop`, it gets no capability.
+- C++ reads the pointer with `wrapper->wrapped()`.
+
+The struct reaches its own object through a `JsWrapperRef<RefPtr<Self>>`, which is strong while native work needs the
+object and weak otherwise. `finalize` clears it:
+
+```rust
+this_value: JsCell<JsWrapperRef<RefPtr<CronJob>>>,
+```
+
+What the event loop calls has no capability. It enters a scope, and the rest of it is written as any other body:
+
+```rust
+pub(crate) fn on_timer_fire(this: ThisPtr<Self>, vm: &VirtualMachine) {
+    // SAFETY: the event loop runs a timer on the JS thread, with no other scope in use.
+    unsafe { JsScope::with(this.global.as_mut_ptr(), |cx| Self::fire(this, vm, cx)) }
+}
+
+fn fire(this: ThisPtr<Self>, vm: &VirtualMachine, cx: &mut JsScope<'_>) {
+    let Some(js_this) = this.this_value.get().get(&cx.heap) else { return };
+    let callback = js_this.callback_field(&cx.heap);
+    // ..
+}
+```
 
 ### Staying alive
 

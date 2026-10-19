@@ -1,16 +1,18 @@
 //! This namespace is used to test binding generator
 
+use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::JSString;
 use crate::bindgen::{
     self, BufferSource, IntoError as _, JsBytes, JsHeap, JsLocal, JsPayload as _, JsScope,
-    JsWrapper, JsWrapperStrong, PinnedBytes, StringOrJsBytes,
+    JsWrapper, JsWrapperStrong, PinnedBytes, RefPtr, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
     TestCounterInternalFields as _, TestFailure, TestFlag, TestHolderClass, TestNames, TestOptions,
-    TestOptionsEcho, TestOuter, TestTextOrBytes, TestTokenClass, TestValue,
+    TestOptionsEcho, TestOuter, TestSharedClass, TestSharedInternalFields as _, TestTextOrBytes,
+    TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -489,6 +491,107 @@ impl TestHolderClass for TestHolder {
     fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> i32 {
         let counter = this.with(&cx.payloads, |holder| holder.counter.get(&cx.heap));
         counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
+    }
+}
+
+static SHARED_ALIVE: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static KEPT: RefCell<Option<RefPtr<TestShared>>> = const { RefCell::new(None) };
+}
+
+#[derive(bun_ptr::CellRefCounted)]
+pub(crate) struct TestShared {
+    ref_count: Cell<u32>,
+    value: Cell<i32>,
+    finalized: Cell<bool>,
+}
+
+impl Drop for TestShared {
+    fn drop(&mut self) {
+        SHARED_ALIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl TestSharedClass for TestShared {
+    type Error<'a> = bindgen::Error<'a>;
+
+    fn finalize(&self) {
+        self.finalized.set(true);
+    }
+
+    fn constructor(value: i32) -> RefPtr<Self> {
+        SHARED_ALIVE.fetch_add(1, Ordering::SeqCst);
+        RefPtr::new(TestShared {
+            ref_count: Cell::new(1),
+            value: Cell::new(value),
+            finalized: Cell::new(false),
+        })
+    }
+
+    fn value(&self) -> i32 {
+        self.value.get()
+    }
+
+    fn set_value(&self, value: i32) {
+        self.value.set(value);
+    }
+
+    fn listener<'a>(&self, this: JsWrapper<'a, RefPtr<Self>>, heap: &JsHeap<'a>) -> JsLocal<'a> {
+        this.listener_field(heap)
+    }
+
+    fn set_listener<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        heap: &JsHeap<'a>,
+        value: JsLocal<'a>,
+    ) {
+        this.set_listener_field(heap, value);
+    }
+
+    fn notify<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        cx: &mut JsScope<'a>,
+    ) -> bindgen::Result<'a, i32> {
+        if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
+            listener.call(cx, this.as_value(), &[])?;
+        }
+        Ok(self.value.get())
+    }
+
+    fn keep(&self) {
+        // SAFETY: `self` is a live `TestShared` made by `RefPtr::new`.
+        let kept = unsafe { RefPtr::init_ref(core::ptr::from_ref(self).cast_mut()) };
+        KEPT.set(Some(kept));
+    }
+
+    fn dispose(&self) {
+        self.value.set(-1);
+    }
+
+    fn lenient(&self) -> i32 {
+        self.value.get()
+    }
+
+    fn kept() -> impl IntoIterator<Item = i32> {
+        KEPT.with_borrow(|kept| match kept {
+            Some(kept) => vec![kept.value.get(), i32::from(kept.finalized.get())],
+            None => Vec::new(),
+        })
+    }
+
+    fn release() {
+        KEPT.set(None);
+    }
+
+    fn alive() -> usize {
+        SHARED_ALIVE.load(Ordering::SeqCst)
+    }
+
+    fn value_of<'a>(cx: &mut JsScope<'a>, shared: JsLocal<'a>) -> Option<i32> {
+        let shared = Self::from_js(&cx.heap, shared.to_js())?;
+        Some(shared.with(&cx.payloads, |shared| shared.value.get()))
     }
 }
 

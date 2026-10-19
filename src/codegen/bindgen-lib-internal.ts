@@ -1855,8 +1855,10 @@ export class FunctionDefinition {
 export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   /** `&mut self` instead of `&self`. Not with `capability: "js"`, which gets the wrapper. */
   mutates?: boolean;
-  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it. */
+  /** Also pass the wrapper, for its `internalFields`. `capability: "js"` always gets it, unless the class is `refCounted`. */
   passThis?: boolean;
+  /** Called on anything else than an instance, it returns `undefined` instead of throwing. */
+  invalidThis?: "undefined";
   /** Key the function by this private builtin name (`$name` in src/js) instead of a string. */
   privateSymbol?: string;
   /** The trait's function. Defaults to the property's name in snake_case. */
@@ -1872,7 +1874,15 @@ export interface GetterField {
   capability?: Capability;
   throws?: boolean;
   /** As a function's. */
+  passThis?: boolean;
+  /** As a function's. */
   rustName?: string;
+}
+
+/** An accessor that is an internal field, with no Rust. With `setter: true` it holds whatever is assigned. */
+export interface InternalFieldField {
+  internalField: string;
+  setter?: true;
 }
 
 /** A function written in JavaScript: the export of this name in `src/js/builtins/<class name>.ts`. */
@@ -1881,14 +1891,21 @@ export interface BuiltinField {
   length: number;
 }
 
-/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. */
-export type Field = FunctionField | readonly FunctionField[] | GetterField | BuiltinField;
+/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A function at `@@name` is keyed by `Symbol.name`. */
+export type Field = FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField;
 export type StaticField =
-  Omit<FunctionField, "mutates" | "passThis" | "privateSymbol"> | Omit<GetterField, "setter" | "cache">;
+  | Omit<FunctionField, "mutates" | "passThis" | "invalidThis" | "privateSymbol">
+  | Omit<GetterField, "setter" | "cache" | "passThis">;
 
 export interface ClassOptions {
   /** Path of the Rust struct. It implements the generated `${name}Class` trait. */
   rustPath: string;
+  /** The struct is not freed with the object: the object holds a `RefPtr` to it, and every member takes `&self`. */
+  refCounted?: boolean;
+  /** With `refCounted`: `fn finalize(&self)` runs when the object is collected, before its ref is dropped. */
+  finalize?: boolean;
+  /** Generate `from_js(heap, value)` on the struct: the wrapper, if `value` is an instance. */
+  fromJS?: boolean;
   /** Absent: JavaScript cannot construct one, and there is no constructor object. */
   construct?: Omit<SignatureOptions, "rustPath" | "returns">;
   /** Properties of the prototype. */
@@ -1901,6 +1918,15 @@ export interface ClassOptions {
   configurable?: boolean;
 }
 
+/** A property's name as part of an identifier. */
+export const memberIdentifier = (name: string) => name.replace(/^(_+|@@)/, "");
+/** `iterator` for a property written `@@iterator`. */
+export const wellKnownSymbol = (name: string) => (name.startsWith("@@") ? name.slice(2) : undefined);
+
+export type Receiver = "ref" | "mut" | "wrapper" | "static";
+const memberReceiver = (isStatic: boolean, refCounted: boolean, capability: Capability, mutates: boolean): Receiver =>
+  isStatic ? "static" : refCounted ? "ref" : capability === "js" ? "wrapper" : mutates ? "mut" : "ref";
+
 function memberRustName(name: string): string {
   assert(/^[a-z_][a-z0-9_]*$/.test(name), `${name}: rustName is written in snake_case`);
   return rustIdent(name);
@@ -1909,20 +1935,27 @@ function memberRustName(name: string): string {
 export class Method extends Signature {
   readonly name: string;
   readonly rustName: string;
-  readonly receiver: "ref" | "mut" | "wrapper" | "static";
+  readonly receiver: Receiver;
   readonly passThis: boolean;
+  readonly invalidThis: "throws" | "undefined";
   readonly privateSymbol: string | undefined;
-  constructor(name: string, options: FunctionField, isStatic = false) {
+  constructor(name: string, options: FunctionField, isStatic = false, refCounted = false) {
     super(options);
     this.name = name;
-    this.rustName = memberRustName(options.rustName ?? snakeCase(name.replace(/^_+/, "")));
+    this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     assert(
       !(options.mutates && this.capability === "js"),
       `${name}: a method that can run JavaScript gets the wrapper, not &mut self`,
     );
-    this.receiver = isStatic ? "static" : this.capability === "js" ? "wrapper" : options.mutates ? "mut" : "ref";
-    this.passThis = !isStatic && this.capability !== "js" && !!options.passThis;
+    assert(
+      !(options.mutates && refCounted),
+      `${name}: what a refCounted class wraps is shared, so there is no &mut self`,
+    );
+    this.receiver = memberReceiver(isStatic, refCounted, this.capability, !!options.mutates);
+    this.passThis = this.receiver !== "static" && this.receiver !== "wrapper" && !!options.passThis;
+    this.invalidThis = options.invalidThis ?? "throws";
     this.privateSymbol = options.privateSymbol;
+    assert(!(this.privateSymbol && wellKnownSymbol(name)), `${name}: keyed by a symbol already`);
   }
 }
 
@@ -1936,12 +1969,21 @@ export class Getter {
   readonly declaresInternalField: boolean;
   readonly isStatic: boolean;
   readonly rustName: string;
-  constructor(name: string, options: GetterField, isStatic = false) {
+  readonly setterRustName: string;
+  readonly receiver: Receiver;
+  readonly setterReceiver: Receiver;
+  readonly passThis: boolean;
+  constructor(name: string, options: GetterField, isStatic = false, refCounted = false) {
     this.name = name;
     this.isStatic = isStatic;
-    this.rustName = memberRustName(options.rustName ?? snakeCase(name));
+    const rustName = options.rustName ?? snakeCase(memberIdentifier(name));
+    this.rustName = memberRustName(rustName);
+    this.setterRustName = `set_${rustName}`;
     this.type = options.getter;
     this.capability = options.capability ?? "none";
+    this.receiver = memberReceiver(isStatic, refCounted, this.capability, false);
+    this.setterReceiver = memberReceiver(isStatic, refCounted, this.capability, true);
+    this.passThis = this.receiver === "ref" && !!options.passThis;
     this.throws = options.throws ?? false;
     this.hasSetter = options.setter ?? false;
     assert(!(options.cache && options.setter), `${name}: a cached getter has no setter`);
@@ -1956,6 +1998,17 @@ export class Getter {
   }
 }
 
+export class InternalFieldAccessor {
+  readonly name: string;
+  readonly internalField: string;
+  readonly hasSetter: boolean;
+  constructor(name: string, options: InternalFieldField) {
+    this.name = name;
+    this.internalField = options.internalField;
+    this.hasSetter = options.setter ?? false;
+  }
+}
+
 export class Builtin {
   readonly name: string;
   readonly length: number;
@@ -1965,7 +2018,7 @@ export class Builtin {
   }
 }
 
-export type ClassMember = FunctionDefinition | Getter | Builtin;
+export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | Builtin;
 
 /** Stands for the class being declared, in its own signatures. */
 class SelfType extends Type {
@@ -1991,10 +2044,14 @@ export const selfType = new SelfType();
 /** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. */
 export class ClassType extends NamedType {
   readonly rustPath: string;
+  readonly refCounted: boolean;
+  readonly finalize: boolean;
+  readonly fromJS: boolean;
   readonly construct: Signature | null;
   /** The native functions of the prototype. The signatures of each are `Method`s. */
   readonly functions: readonly FunctionDefinition[];
   readonly getters: readonly Getter[];
+  readonly internalFieldAccessors: readonly InternalFieldAccessor[];
   readonly staticFunctions: readonly FunctionDefinition[];
   readonly staticGetters: readonly Getter[];
   readonly builtins: readonly Builtin[];
@@ -2009,6 +2066,10 @@ export class ClassType extends NamedType {
   constructor(options: ClassOptions) {
     super();
     this.rustPath = options.rustPath;
+    this.refCounted = options.refCounted ?? false;
+    this.finalize = options.finalize ?? false;
+    this.fromJS = options.fromJS ?? false;
+    assert(this.refCounted || !this.finalize, "finalize: a struct that is freed with the object has Drop for that");
     const own = (type: Type) => (type === selfType ? this : type);
     const resolve = <T extends SignatureOptions>(signature: T): T => ({
       ...signature,
@@ -2022,16 +2083,23 @@ export class ClassType extends NamedType {
           assert(!isStatic, `${name}: a builtin is a property of the prototype`);
           return new Builtin(name, field.length);
         }
+        if ("internalField" in field) {
+          assert(!isStatic, `${name}: the constructor has no internal fields`);
+          return new InternalFieldAccessor(name, field);
+        }
         if ("getter" in field) {
           assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
-          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic);
+          return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.refCounted);
         }
         const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
         assert(
           overloads.every(overload => overload.privateSymbol === overloads[0]?.privateSymbol),
           `${name}: its overloads have one privateSymbol`,
         );
-        const fn = new FunctionDefinition(overloads.map(overload => new Method(name, resolve(overload), isStatic)));
+        assert(!(isStatic && wellKnownSymbol(name)), `${name}: a property of the prototype`);
+        const fn = new FunctionDefinition(
+          overloads.map(overload => new Method(name, resolve(overload), isStatic, this.refCounted)),
+        );
         fn.name = name;
         return fn;
       });
@@ -2039,6 +2107,7 @@ export class ClassType extends NamedType {
     this.staticMembers = members(options.static ?? {}, true);
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
+    this.internalFieldAccessors = this.protoMembers.filter(member => member instanceof InternalFieldAccessor);
     this.builtins = this.protoMembers.filter(member => member instanceof Builtin);
     this.staticFunctions = this.staticMembers.filter(member => member instanceof FunctionDefinition);
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
@@ -2048,7 +2117,7 @@ export class ClassType extends NamedType {
       ...(options.internalFields ?? []),
       ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
     ];
-    for (const { name, internalField } of getters)
+    for (const { name, internalField } of [...getters, ...this.internalFieldAccessors])
       assert(
         internalField === undefined || this.internalFields.includes(internalField),
         `${name}: there is no internal field ${internalField}`,
@@ -2061,7 +2130,7 @@ export class ClassType extends NamedType {
         ...this.methods.map(method => method.rustName),
         ...[...getters, ...this.staticGetters].flatMap(getter => [
           getter.rustName,
-          ...(getter.hasSetter ? [`set_${snakeCase(getter.name)}`] : []),
+          ...(getter.hasSetter ? [getter.setterRustName] : []),
         ]),
       ],
       "members' Rust functions",
@@ -2108,11 +2177,15 @@ export class ClassType extends NamedType {
   rustExternType(): string {
     return "*mut core::ffi::c_void";
   }
+  /** What the object holds. */
+  get payloadPath(): string {
+    return this.refCounted ? `bindgen::RefPtr<${this.rustPath}>` : this.rustPath;
+  }
   rustType(): string {
-    return `bindgen::JsWrapper<'a, ${this.rustPath}>`;
+    return `bindgen::JsWrapper<'a, ${this.payloadPath}>`;
   }
   rustFromExtern(expr: string): string {
-    return `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap)`;
+    return `bindgen::JsWrapper::<${this.payloadPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap)`;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value}.as_value())`;

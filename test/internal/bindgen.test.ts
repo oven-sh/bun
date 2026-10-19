@@ -1941,4 +1941,118 @@ describe("classes", () => {
     Bun.gc(true);
     expect(TestCounter.alive()).toBeLessThan(count);
   });
+
+  describe("refCounted", () => {
+    const { TestShared } = bindgen as any;
+
+    it("reads and writes what it wraps", () => {
+      const shared = new TestShared(3);
+      expect(shared).toBeInstanceOf(TestShared);
+      expect(shared.value).toBe(3);
+      shared.value = 4;
+      expect(shared.value).toBe(4);
+      expect(new TestShared().value).toBe(0);
+    });
+
+    it("an accessor with passThis reaches the internal fields", () => {
+      const shared = new TestShared();
+      expect(shared.listener).toBeUndefined();
+      const listener = () => {};
+      shared.listener = listener;
+      Bun.gc(true);
+      expect(shared.listener).toBe(listener);
+    });
+
+    it("an accessor can be an internal field", () => {
+      const shared = new TestShared();
+      expect(shared.sameListener).toBeUndefined();
+      const value = { any: "value" };
+      shared.sameListener = value;
+      Bun.gc(true);
+      expect([shared.sameListener, shared.readOnlyListener, shared.listener]).toEqual([value, value, value]);
+      expect(shared.sameListener).toBe(value);
+      expect(() => {
+        "use strict";
+        shared.readOnlyListener = 1;
+      }).toThrow(TypeError);
+      const { get, set } = Object.getOwnPropertyDescriptor(TestShared.prototype, "sameListener")!;
+      expect(() => get!.call({})).toThrow(TypeError);
+      expect(() => set!.call({}, 1)).toThrow(TypeError);
+      expect(Object.getOwnPropertyDescriptor(TestShared.prototype, "readOnlyListener")!.set).toBeUndefined();
+    });
+
+    it("lets JavaScript re-enter a method that runs it", () => {
+      const shared = new TestShared(1);
+      const receivers: unknown[] = [];
+      shared.listener = function (this: unknown) {
+        receivers.push(this);
+        shared.value += 10;
+        if (receivers.length < 3) shared.notify();
+      };
+      expect(shared.notify()).toBe(31);
+      expect(receivers).toEqual([shared, shared, shared]);
+      shared.listener = () => {
+        throw new RangeError("from the listener");
+      };
+      expect(() => shared.notify()).toThrow(new RangeError("from the listener"));
+    });
+
+    it("a function at @@name is keyed by the symbol", () => {
+      const shared = new TestShared(5);
+      expect(Object.getOwnPropertyDescriptor(TestShared.prototype, Symbol.dispose)).toEqual({
+        value: expect.any(Function),
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(TestShared.prototype[Symbol.dispose].name).toBe("[Symbol.dispose]");
+      expect(TestShared.prototype[Symbol.dispose].length).toBe(0);
+      expect(Object.getOwnPropertyNames(TestShared.prototype)).not.toContain("dispose");
+      {
+        using _ = shared;
+      }
+      expect(shared.value).toBe(-1);
+    });
+
+    it('invalidThis: "undefined" returns undefined for another receiver', () => {
+      const { lenient, keep } = TestShared.prototype;
+      expect(lenient.call(new TestShared(6))).toBe(6);
+      for (const receiver of [undefined, null, 1, {}, Object.create(TestShared.prototype)])
+        expect(lenient.call(receiver)).toBeUndefined();
+      expect(() => keep.call({})).toThrow(TypeError);
+    });
+
+    it("fromJS: Rust finds out whether a value is an instance", () => {
+      expect(TestShared.valueOf(new TestShared(9))).toBe(9);
+      class Derived extends TestShared {}
+      expect(TestShared.valueOf(new Derived(10))).toBe(10);
+      for (const other of [undefined, null, 1, "9", {}, Object.create(TestShared.prototype), new TestCounter(9)])
+        expect(TestShared.valueOf(other)).toBeNull();
+    });
+
+    it("what Rust holds outlives the object, and is told when the object is collected", () => {
+      const keepOne = (value: number) => void new TestShared(value).keep();
+      let collected: number[] | undefined;
+      for (let i = 0; i < 100 && !collected; i++) {
+        keepOne(i);
+        Bun.gc(true);
+        if (TestShared.kept()[1] === 1) collected = [i, ...TestShared.kept()];
+      }
+      expect(collected).toEqual([collected![0], collected![0], 1]);
+      const before = TestShared.alive();
+      TestShared.release();
+      expect(TestShared.kept()).toEqual([]);
+      expect(TestShared.alive()).toBe(before - 1);
+    });
+
+    it("frees what nothing else holds when the object is collected", () => {
+      const count = 1000;
+      let all: unknown[] | null = Array.from({ length: count }, (_, i) => new TestShared(i));
+      Bun.gc(true);
+      expect(TestShared.alive()).toBeGreaterThanOrEqual(all.length);
+      all = null;
+      Bun.gc(true);
+      expect(TestShared.alive()).toBeLessThan(count);
+    });
+  });
 });

@@ -236,6 +236,36 @@ export const TestHolder = b.class({
   },
 });
 
+/** Is not freed with its object: Rust can hold a ref too. */
+export const TestShared = b.class({
+  rustPath: "crate::bindgen_test::TestShared",
+  refCounted: true,
+  finalize: true,
+  fromJS: true,
+  construct: { args: { value: b.i32.default(0) } },
+  internalFields: ["listener"],
+  proto: {
+    value: { getter: b.i32, setter: true },
+    listener: { getter: b.any, setter: true, capability: "heap", passThis: true },
+    sameListener: { internalField: "listener", setter: true },
+    readOnlyListener: { internalField: "listener" },
+    /** Calls the listener, which may call back into this object, then returns the value. */
+    notify: { returns: b.i32, capability: "js", passThis: true, throws: true },
+    /** Rust holds a ref until `TestShared.release()`. */
+    keep: {},
+    "@@dispose": {},
+    lenient: { returns: b.i32, invalidThis: "undefined" },
+  },
+  static: {
+    /** The one Rust holds: its value, and whether its object was collected. */
+    kept: { returns: b.array(b.i32) },
+    release: {},
+    alive: { returns: b.usize },
+    /** The value of `shared` if it is an instance, found by Rust. */
+    valueOf: { args: { shared: b.any }, returns: b.i32.nullable, capability: "js" },
+  },
+});
+
 /** Only native code makes one. */
 export const TestToken = b.class({
   rustPath: "crate::bindgen_test::TestToken",

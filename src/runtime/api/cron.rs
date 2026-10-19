@@ -22,10 +22,11 @@ use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, JsWrapperRef};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
-    JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult,
+    JSGlobalObject, JSObject, JSValue, JsCell, JsResult,
 };
 use bun_paths as path;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
@@ -38,6 +39,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
 };
+use crate::generated_bindgen::cron::{CronJobClass, CronJobInternalFields as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 use bun_core::strings;
@@ -1367,7 +1369,6 @@ impl Drop for CronRemoveJob {
 // re-entry is Stacked-Borrows UB and an LLVM-level miscompile hazard. `&self`
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
-#[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
 pub(crate) struct CronJob {
@@ -1387,7 +1388,7 @@ pub(crate) struct CronJob {
     // Read-only after construction.
     tz: CronTz,
     poll_ref: JsCell<KeepAlive>,
-    this_value: JsCell<JsRef>,
+    this_value: JsCell<JsWrapperRef<RefPtr<CronJob>>>,
     stopped: Cell<bool>,
     /// Last computed wall-clock fire target (ms epoch); floors the next search
     /// so monotonic-vs-wall skew can't recompute the same minute.
@@ -1419,13 +1420,6 @@ bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
     )
 });
 
-pub(crate) mod js {
-    // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
-    // `src/codegen/generate-classes.ts` from `cron.classes.ts`; bind the extern
-    // contract via the proc-macro so the symbol names line up.
-    bun_jsc::codegen_cached_accessors!("CronJob"; callback, cron, pendingPromise);
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub(crate) enum ClearMode {
     Reload,
@@ -1439,7 +1433,7 @@ impl CronJob {
     fn maybe_downgrade(&self) {
         if self.stopped.get()
             && self.tick_cell.get().is_empty()
-            && !matches!(self.this_value.get(), JsRef::Finalized)
+            && !self.this_value.get().is_finalized()
         {
             self.this_value.with_mut(|v| v.downgrade());
         }
@@ -1448,7 +1442,7 @@ impl CronJob {
     /// The job's script is gone (its context stopped): nothing reads the wrapper again, so the
     /// callback and what it closes over are not kept for a tick whose promise may never settle.
     fn let_go_of_wrapper(&self) {
-        if !matches!(self.this_value.get(), JsRef::Finalized) {
+        if !self.this_value.get().is_finalized() {
             self.this_value.with_mut(|v| v.downgrade());
         }
     }
@@ -1591,10 +1585,6 @@ impl CronJob {
         }
     }
 
-    pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
-    }
-
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
         // Cron occurrences are calendar-based (epoch); the timer heap is
         // monotonic. Anchor both to the same clock (mocked when fake timers
@@ -1641,6 +1631,12 @@ impl CronJob {
     /// The tick's callback runs here as a top-level call (what it throws
     /// synchronously is reported), and the job is rescheduled either way.
     pub(crate) fn on_timer_fire(this: ThisPtr<Self>, vm: &VirtualMachine) {
+        // SAFETY: the event loop runs a timer on the JS thread, with no other scope in use.
+        unsafe { JsScope::with(this.global.as_mut_ptr(), |cx| Self::fire(this, vm, cx)) }
+    }
+
+    fn fire(this: ThisPtr<Self>, vm: &VirtualMachine, cx: &mut JsScope<'_>) {
+        let heap = &cx.heap;
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // Timer heap holds the entry; `this` is live until the guard drops.
@@ -1660,14 +1656,11 @@ impl CronJob {
             return;
         }
 
-        let Some(js_this) = this.this_value.get().try_get() else {
+        let Some(js_this) = this.this_value.get().get(heap) else {
             Self::self_stop(this, vm);
             return;
         };
-        let Some(cb) = js::callback_get_cached(js_this) else {
-            Self::self_stop(this, vm);
-            return;
-        };
+        let cb = js_this.callback_field(heap);
         if cb.is_undefined() {
             Self::self_stop(this, vm);
             return;
@@ -1687,9 +1680,9 @@ impl CronJob {
         // rejected tick.
         let result = vm.event_loop_mut().run_callback_with_result(
             this.context,
-            cb,
+            cb.to_js(),
             &this.global,
-            js_this,
+            js_this.as_value().to_js(),
             &[],
         );
         this.in_fire.set(false);
@@ -1708,7 +1701,7 @@ impl CronJob {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Pending => {
-                    js::pending_promise_set_cached(js_this, &this.global, result);
+                    js_this.set_pending_promise_field(heap, JsLocal::new(heap, result));
                     // The reactions own the job's ref through their cell, not a raw pointer: a
                     // promise that settles after the job stopped finds the job, and one that
                     // never settles releases it when it is collected.
@@ -1721,7 +1714,7 @@ impl CronJob {
                     // `then_with_value()` returns `()`, so re-check the VM status and recover on
                     // termination: the reactions will not run.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
-                        js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
+                        js_this.set_pending_promise_field(heap, JsLocal::UNDEFINED);
                         Self::reclaim_tick_claim(this);
                         Self::schedule_next(this, vm);
                     } else if this.abort_handle.context_stopped() {
@@ -1756,33 +1749,19 @@ impl CronJob {
         Self::schedule_next(this, vm);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn stop(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
-        Ok(frame.this())
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        if !self.stopped.get() {
-            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+    /// The promise of the pending tick, which the wrapper holds no longer.
+    fn take_pending_promise(&self) -> JSValue {
+        // SAFETY: a reaction of that promise runs on the JS thread, with no other scope in use.
+        unsafe {
+            JsScope::with(self.global.as_mut_ptr(), |cx| {
+                let Some(js_this) = self.this_value.get().get(&cx.heap) else {
+                    return JSValue::UNDEFINED;
+                };
+                let promise = js_this.pending_promise_field(&cx.heap).to_js();
+                js_this.set_pending_promise_field(&cx.heap, JsLocal::UNDEFINED);
+                promise
+            })
         }
-        Ok(frame.this())
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
-        &self,
-        _global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        Ok(frame.this())
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_cron(_this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED) // unreachable — register() pre-populates the cache via cronSetCached
     }
 
     pub(crate) fn register(
@@ -1821,7 +1800,7 @@ impl CronJob {
             parsed,
             tz,
             poll_ref: JsCell::new(KeepAlive::default()),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsCell::new(JsWrapperRef::empty()),
             stopped: Cell::new(false),
             last_next_ms: Cell::new(0.0),
             tick_cell: Cell::new(JSValue::ZERO),
@@ -1847,16 +1826,20 @@ impl CronJob {
             }
         }
 
-        // `job`'s ref moves to the JS wrapper (released via `finalize`).
-        let js_value = Self::to_js_nonnull(job.as_non_null(), global);
-        let job = job.into_this_ptr();
-        job.this_value.with_mut(|v| v.set_strong(js_value, global));
-        js::cron_set_cached(js_value, global, schedule_arg);
-        js::callback_set_cached(
-            js_value,
-            global,
-            callback_arg.with_async_context_if_needed(global),
-        );
+        let callback = callback_arg.with_async_context_if_needed(global);
+        let this = job.this_ptr();
+        // SAFETY: `cx` is the JS thread's, and the host function that has it holds no other scope.
+        let js_value = unsafe {
+            JsScope::with(global.as_mut_ptr(), |cx| {
+                let heap = &cx.heap;
+                let wrapper = job.into_js(heap);
+                this.this_value.with_mut(|v| v.set_strong(heap, wrapper));
+                wrapper.set_cron_field(heap, JsLocal::new(heap, schedule_arg));
+                wrapper.set_callback_field(heap, JsLocal::new(heap, callback));
+                wrapper.as_value().to_js()
+            })
+        };
+        let job = this;
 
         job.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         // SAFETY: heap-allocated (`RefPtr`); `stop_internal` leaves the context before the job is released.
@@ -1869,6 +1852,49 @@ impl CronJob {
         );
 
         Ok(js_value)
+    }
+}
+
+impl CronJobClass for CronJob {
+    fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
+    }
+
+    fn stop<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> JsWrapper<'a, RefPtr<Self>> {
+        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
+        this
+    }
+
+    fn dispose<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        heap: &JsHeap<'a>,
+    ) -> JsWrapper<'a, RefPtr<Self>> {
+        self.stop(this, heap)
+    }
+
+    fn do_ref<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> JsWrapper<'a, RefPtr<Self>> {
+        if !self.stopped.get() {
+            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        }
+        this
+    }
+
+    fn do_unref<'a>(
+        &self,
+        this: JsWrapper<'a, RefPtr<Self>>,
+        _: &JsHeap<'a>,
+    ) -> JsWrapper<'a, RefPtr<Self>> {
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this
     }
 }
 
@@ -1886,9 +1912,7 @@ pub(crate) fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) ->
     let this = unsafe { ThisPtr::new(job.as_ptr()) };
     let _guard = scopeguard::guard(this, CronJob::tick_settled);
     let vm = this.global.bun_vm();
-    if let Some(js_this) = this.this_value.get().try_get() {
-        js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
-    }
+    this.take_pending_promise();
     CronJob::schedule_next(this, vm);
     Ok(JSValue::UNDEFINED)
 }
@@ -1906,11 +1930,7 @@ pub(crate) fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> 
     let _guard = scopeguard::guard(this, CronJob::tick_settled);
     let vm = this.global.bun_vm().as_mut();
     let err = args[0];
-    let mut promise_value = JSValue::UNDEFINED;
-    if let Some(js_this) = this.this_value.get().try_get() {
-        promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
-        js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
-    }
+    let promise_value = this.take_pending_promise();
     // `vm.global()` returns `&'static`, so the borrow is already decoupled
     // from `vm` and `unhandled_rejection(&mut self, ...)` can reborrow.
     let global_ref = vm.global();

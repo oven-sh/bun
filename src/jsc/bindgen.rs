@@ -6,10 +6,13 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::EncodedSlice;
+use bun_ptr::AnyRefCounted;
+pub use bun_ptr::RefPtr;
 
 use crate::{
     ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
-    JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    JSValue, JsError, JsRef, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated,
+    ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -585,7 +588,8 @@ impl core::ops::Deref for PinnedBytes {
 
 // ───────────────────────────── classes ─────────────────────────────
 
-/// The Rust struct of a generated class, stored inside its JS wrapper and dropped by the sweeper.
+/// What the JS wrapper of a generated class stores, and the sweeper drops: the Rust struct that is freed with it, or a
+/// [`RefPtr`] to the one that is not.
 ///
 /// # Safety
 /// Implemented by generated code only: the offsets describe the generated C++ cell.
@@ -612,6 +616,35 @@ pub unsafe trait JsPayload: Sized + 'static {
         // SAFETY: a `JsHeap` is the global object, and the wrapper leaves as a `JSValue`.
         let heap = unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() };
         self.into_js(heap).as_value().to_js()
+    }
+}
+
+/// A payload [`JsWrapper::with_mut`] lends. A [`RefPtr`] is not one: replacing it frees what a `&self` refers to.
+pub trait JsMutablePayload: JsPayload {}
+
+/// The Rust struct of a `refCounted` class. Its wrapper stores a [`RefPtr`] to it.
+///
+/// # Safety
+/// As [`JsPayload`].
+pub unsafe trait JsRefCountedPayload: AnyRefCounted + 'static {
+    #[doc(hidden)]
+    const PAYLOAD_OFFSET: usize;
+    #[doc(hidden)]
+    const INTERNAL_FIELDS_OFFSET: usize;
+    /// # Safety
+    /// As [`JsPayload::create_cell`].
+    #[doc(hidden)]
+    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
+}
+
+// SAFETY: forwarded.
+unsafe impl<T: JsRefCountedPayload> JsPayload for RefPtr<T> {
+    const PAYLOAD_OFFSET: usize = T::PAYLOAD_OFFSET;
+    const INTERNAL_FIELDS_OFFSET: usize = T::INTERNAL_FIELDS_OFFSET;
+    #[inline(always)]
+    unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void> {
+        // SAFETY: forwarded.
+        unsafe { T::create_cell(global, structure) }
     }
 }
 
@@ -696,7 +729,10 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 
     /// As [`with`](Self::with), exclusively.
     #[inline(always)]
-    pub fn with_mut<R>(self, _: &mut JsPayloads<'a>, f: impl FnOnce(&mut T) -> R) -> R {
+    pub fn with_mut<R>(self, _: &mut JsPayloads<'a>, f: impl FnOnce(&mut T) -> R) -> R
+    where
+        T: JsMutablePayload,
+    {
         // SAFETY: the exclusive borrow of `JsPayloads` excludes every other payload reference.
         let result = f(unsafe { &mut *self.payload() });
         self.as_value().0.ensure_still_alive();
@@ -759,6 +795,41 @@ impl<T: JsPayload> JsWrapperStrong<T> {
                 heap,
             )
         }
+    }
+}
+
+/// A [`JsRef`] on a wrapper: how what a `refCounted` class wraps reaches its own object. Its `finalize` calls [`finalize`](Self::finalize).
+pub struct JsWrapperRef<T: JsPayload>(JsRef, PhantomData<*const T>);
+impl<T: JsPayload> JsWrapperRef<T> {
+    #[inline]
+    pub fn empty() -> Self {
+        JsWrapperRef(JsRef::empty(), PhantomData)
+    }
+    /// `None`: never set, or collected.
+    #[inline]
+    pub fn get<'a>(&self, heap: &JsHeap<'a>) -> Option<JsWrapper<'a, T>> {
+        let value = self.0.try_get()?;
+        // SAFETY: set from a `JsWrapper<T>`; a cell value is its pointer.
+        Some(unsafe {
+            JsWrapper::from_extern(NonNull::new_unchecked(value.encoded() as *mut c_void), heap)
+        })
+    }
+    #[inline]
+    pub fn set_strong<'a>(&mut self, heap: &JsHeap<'a>, wrapper: JsWrapper<'a, T>) {
+        self.0
+            .set_strong(wrapper.as_value().0, heap.global_object());
+    }
+    #[inline]
+    pub fn downgrade(&mut self) {
+        self.0.downgrade();
+    }
+    #[inline]
+    pub fn finalize(&mut self) {
+        self.0.finalize();
+    }
+    #[inline]
+    pub fn is_finalized(&self) -> bool {
+        self.0.is_finalized()
     }
 }
 

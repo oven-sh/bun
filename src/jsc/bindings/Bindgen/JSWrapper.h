@@ -100,6 +100,12 @@ public:
     static size_t allocationSize() { return offsetOfPayload() + Traits::payloadSize(); }
 
     void* payload() { return std::bit_cast<char*>(this) + offsetOfPayload(); }
+    // The Rust struct of a refCounted class, whose payload is the pointer to it.
+    void* wrapped()
+        requires Traits::refCounted
+    {
+        return *static_cast<void**>(payload());
+    }
     JSC::WriteBarrier<JSC::Unknown>& internalField(unsigned index)
     {
         ASSERT(index < numberOfInternalFields);

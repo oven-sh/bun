@@ -94,12 +94,13 @@ test.concurrent("a tsconfig `paths` alias with a target that is not relative is 
     "main.ts": `import "no-deps/index";`,
     "bunfig.toml": registry.bunfig,
   });
-  const { stdout, exitCode } = await runAutoInstall(String(dir), "main.ts");
+  const result = await runAutoInstall(String(dir), "main.ts");
 
-  expect({ stdout, requests: registry.requests, exitCode }).toEqual({
+  expect({ ...result, requests: registry.requests }).toEqual({
     stdout: "the project's own file\n",
-    requests: [],
+    stderr: "",
     exitCode: 0,
+    requests: [],
   });
 });
 

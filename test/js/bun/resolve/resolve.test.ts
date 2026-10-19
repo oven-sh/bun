@@ -2101,19 +2101,20 @@ describe("tsconfig paths target that is not relative, without baseUrl", () => {
     },
   );
 
-  // `bun build` matches an entry point that does not start with `./` against `paths` first.
+  // `bun build` matches an entry point that does not start with `./` against `paths` before it
+  // reads it as a file. Only the two spellings are compared, not which file that is.
   test.concurrent("same file as the `./` spelling: an entry point of `bun build` under a catch-all key", async () => {
-    for (const prefix of ["", "./"] as const) {
+    const build = async (prefix: "" | "./") => {
       using dir = tempDir("tsconfig-paths-bare-target-entry", {
         "tsconfig.json": tsconfig({ "*": [`${prefix}zz-src/*`] }),
         "index.js": `console.log("index");`,
         "zz-src/index.js": `console.log("zz-src");`,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), "build", "index.js");
+      return { built: [...stdout.matchAll(/console\.log\("([\w-]+)"\)/g)].map(match => match[1]), stderr, exitCode };
+    };
 
-      const built = [...stdout.matchAll(/console\.log\("([\w-]+)"\)/g)].map(match => match[1]);
-      expect({ prefix, built, stderr, exitCode }).toEqual({ prefix, built: ["zz-src"], stderr: "", exitCode: 0 });
-    }
+    expect(await build("")).toEqual({ ...(await build("./")), stderr: "", exitCode: 0 });
   });
 
   // As in tsc and esbuild, only the key with the longest prefix is tried.

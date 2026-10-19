@@ -938,7 +938,8 @@ describe("bundler", () => {
   });
   // In esbuild this case warns and does not resolve: it drops a target that is not
   // relative when no file of the chain sets "baseUrl". Bun joins it onto the folder
-  // of the file that declares "paths".
+  // of the file that declares "paths". esbuild's case writes "./base/defaults". Here
+  // "extends" has ".json", because Bun does not follow one without it.
   itBundled("tsconfig/NoBaseURLExtendsPaths", {
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `

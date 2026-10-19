@@ -11,7 +11,7 @@ std::span<char8_t> JSStringUTF8View::tryAllocate(size_t size)
     if (size <= m_inlineBuffer.size())
         return m_inlineBuffer;
     m_heapBuffer = MallocSpan<char8_t>::tryMalloc(size);
-    return m_heapBuffer.mutableSpan();
+    return m_heapBuffer->mutableSpan();
 }
 
 bool JSStringUTF8View::convert()

@@ -4128,6 +4128,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
+            if path.text == b"bun:bundle" {
+                self.log().add_error(
+                    Some(self.source),
+                    path.loc,
+                    b"\"bun:bundle\" cannot be imported as a macro",
+                );
+                return Ok(self.s(S::Empty {}, loc));
+            }
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = crate::Macro::NAMESPACE;
             self.import_records.items_mut()[id as usize]
@@ -4183,6 +4191,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // that provides static feature flag checking at bundle time.
         // We handle it here at parse time (similar to macros) rather than at visit time.
         if path.text == b"bun:bundle" {
+            if stmt.default_name.is_some() || !stmt.star_name_loc.is_empty() {
+                self.reject_bun_bundle_default_or_namespace_import(&stmt);
+            }
             // Look for the "feature" import and validate specifiers
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a;
             // loop body only reads from `item`, so a shared borrow suffices and
@@ -4485,6 +4496,139 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
         Ok(self.s(stmt, loc))
+    }
+
+    #[cold]
+    fn reject_bun_bundle_default_or_namespace_import(&mut self, stmt: &S::Import) {
+        if let Some(default_name) = stmt.default_name {
+            self.log().add_error(
+                Some(self.source),
+                default_name.loc,
+                b"\"bun:bundle\" has no export named \"default\"",
+            );
+        }
+        if let Some(star) = stmt.star_name_loc.to_nullable() {
+            let mut notes = vec![bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                b"\"bun:bundle\" does not exist at runtime. Use a named import: import { feature } from \"bun:bundle\"",
+            )];
+            if TYPESCRIPT {
+                let mut type_only = Vec::<u8>::new();
+                let _ = write!(
+                    &mut type_only,
+                    "To use only its types, write: import type * as {} from \"bun:bundle\"",
+                    bstr::BStr::new(self.load_name_from_ref(stmt.namespace_ref))
+                );
+                notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, type_only));
+            }
+            self.log().add_range_error_with_notes(
+                Some(self.source),
+                bun_ast::Range {
+                    loc: star,
+                    ..Default::default()
+                },
+                b"\"bun:bundle\" cannot be imported as a namespace",
+                notes.into_boxed_slice(),
+            );
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn reject_bun_bundle_reexport(&mut self, path_loc: bun_ast::Loc) {
+        self.log().add_error(
+            Some(self.source),
+            path_loc,
+            b"\"bun:bundle\" does not exist at runtime and cannot be re-exported",
+        );
+    }
+
+    /// A replaced call un-counts its target, so a use that a part keeps is not a call.
+    #[cold]
+    pub(crate) fn reject_bundler_feature_value_uses(&mut self, parts: [&[js_ast::Part]; 3]) {
+        let r#ref = self.bundler_feature_flag_ref;
+        let name: &'a [u8] = self.symbols[r#ref.inner_index() as usize]
+            .original_name
+            .slice();
+        let import_loc = match self.module_scope().members.get(name) {
+            Some(member) if member.ref_.eql(r#ref) => member.loc,
+            _ => bun_ast::Loc::EMPTY,
+        };
+        // Otherwise the whole file is one part and its first statement says nothing.
+        let one_statement_per_part =
+            self.options.tree_shaking && !self.will_wrap_module_in_try_catch_for_using;
+        for part in parts.into_iter().flatten() {
+            if part
+                .symbol_uses
+                .get(&r#ref)
+                .is_none_or(|uses| uses.count_estimate() == 0)
+            {
+                continue;
+            }
+            let mut note = Vec::<u8>::new();
+            let _ = write!(
+                &mut note,
+                "\"bun:bundle\" does not exist at runtime, so \"{}\" has no value there",
+                bstr::BStr::new(name)
+            );
+            let stmt_loc = part
+                .stmts
+                .slice()
+                .first()
+                .map(|stmt| stmt.loc)
+                .filter(|loc| one_statement_per_part && !loc.is_empty());
+            let (loc, place, note) = match stmt_loc {
+                Some(loc) => (
+                    loc,
+                    " in this statement",
+                    bun_ast::range_data(
+                        Some(self.source),
+                        bun_ast::Range {
+                            loc: import_loc,
+                            ..Default::default()
+                        },
+                        note,
+                    ),
+                ),
+                None => (
+                    import_loc,
+                    "",
+                    bun_ast::range_data(None, bun_ast::Range::NONE, note),
+                ),
+            };
+            self.log().add_range_error_fmt_with_notes(
+                Some(self.source),
+                bun_ast::Range {
+                    loc,
+                    ..Default::default()
+                },
+                Box::new([note]),
+                format_args!(
+                    "\"{0}\" from \"bun:bundle\" is used as a value{1}, but it can only be called directly, as in {0}(\"FLAG\")",
+                    bstr::BStr::new(name),
+                    place
+                ),
+            );
+        }
+    }
+
+    /// A type named before the import statement is an unbound symbol linked to the binding.
+    fn is_bundler_feature_flag_ref(&self, r#ref: Ref) -> bool {
+        if !self.bundler_feature_flag_ref.is_valid() {
+            return false;
+        }
+        let mut r#ref = r#ref;
+        loop {
+            if r#ref.eql(self.bundler_feature_flag_ref) {
+                return true;
+            }
+            let symbol = &self.symbols[r#ref.inner_index() as usize];
+            if !symbol.has_link() {
+                return false;
+            }
+            r#ref = symbol.link.get();
+        }
     }
 
     #[cold]
@@ -7837,6 +7981,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.maybe_defined_helper(e)?
             }
             M::MPromise => ident!(b"Promise"),
+            // The "bun:bundle" binding has no value at runtime.
+            M::MIdentifier(ref_) if self.is_bundler_feature_flag_ref(ref_) => ident!(b"Object"),
+            M::MDot(ref refs) if self.is_bundler_feature_flag_ref(refs[0]) => ident!(b"Object"),
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {

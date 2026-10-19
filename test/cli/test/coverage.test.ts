@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, runCommandMaxRSS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -715,21 +715,6 @@ test("calls first of each file", () => {
   console.log(JSON.stringify({ plain: codeCoverageForFile(Bun.resolveSync("./dist/plain.js", import.meta.dir), false) }));
 });
 `,
-    // On Linux the peak RSS of a child starts at the RSS of its parent, and the process that runs
-    // this file is large. So a small process starts the two runs to compare.
-    "peak-rss-fixture.ts": `
-async function run(config: string) {
-  const proc = Bun.spawn({
-    cmd: [process.execPath, "--config=" + config, "test", "--coverage", "./built.test.ts"],
-    cwd: import.meta.dir,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  const exitCode = await proc.exited;
-  return { maxRSS: proc.resourceUsage()!.maxRSS, exitCode };
-}
-const [withTheMap, withoutTheMap] = await Promise.all([run("bunfig.toml"), run("ignore-maps.toml")]);
-console.log(JSON.stringify({ withTheMap, withoutTheMap }));
-`,
   };
   for (const [name, text] of Object.entries(handMadeMaps)) {
     files[`dist/${name}.js`] = handMade(name);
@@ -801,16 +786,9 @@ console.log(JSON.stringify({ withTheMap, withoutTheMap }));
     ]);
     bundleMappings = JSON.parse(readFileSync(path.join(cwd, "dist", "bundle", "short.js.map"), "utf-8")).mappings;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "peak-rss-fixture.ts"],
-      env: bunEnv,
-      cwd,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    const { withTheMap, withoutTheMap } = JSON.parse(stdout);
+    const run = (config: string) =>
+      runCommandMaxRSS({ cmd: [bunExe(), `--config=${config}`, "test", "--coverage", "./built.test.ts"], cwd });
+    const [withTheMap, withoutTheMap] = await Promise.all([run("bunfig.toml"), run("ignore-maps.toml")]);
     // Each run reports that `second` was never called, which is below the threshold.
     expect([withTheMap.exitCode, withoutTheMap.exitCode]).toEqual([1, 1]);
     // The run with the map took 768 MiB more. Both runs are the same build, so the difference

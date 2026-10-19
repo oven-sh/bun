@@ -55,7 +55,7 @@ use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
 };
-use installer::{CompleteState, PatchInfo, Step, TaskError, Which};
+use installer::{AutoPath, CompleteState, PatchInfo, Step, TaskError, Which};
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1617,13 +1617,19 @@ fn move_entries_aside(
         }
 
         let (from_len, to_len) = (from.len(), to.len());
-        from.append(name).assume_ok();
-        to.append(name).assume_ok();
-
-        if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
+        let moved = if from.try_append(name).is_err() || to.try_append(name).is_err() {
+            Err(sys::Error::from_code(
+                sys::E::ENAMETOOLONG,
+                sys::Tag::rename,
+            ))
+        } else if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
             move_entries_aside(from, to, keep_links, log_level);
             let _ = sys::rmdir(from.slice_z());
-        } else if let Err(err) = move_or_delete(from.slice_z(), to.slice_z())
+            Ok(())
+        } else {
+            move_or_delete(from.slice_z(), to.slice_z())
+        };
+        if let Err(err) = moved
             && log_level != LogLevel::Silent
         {
             bun_core::warn!(
@@ -2327,9 +2333,10 @@ pub(crate) fn install_isolated_packages(
                     // copied the project into the store, so that copy is deleted.
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
-                        let mut old_copy: AbsPath = AbsPath::init_top_level_dir();
-                        installer.append_local_store_entry_path(&mut old_copy, entry_id);
-                        let _ = Fd::cwd().delete_tree(old_copy.slice());
+                        let mut old_copy = AutoPath::init();
+                        let _ = installer
+                            .append_local_store_entry_path(&mut old_copy, entry_id)
+                            .and_then(|()| Fd::cwd().delete_tree(old_copy.slice()));
                     }
                     installer.set_step(entry_id, Step::Done);
                     installer.on_task_complete(entry_id, CompleteState::Skipped);
@@ -2347,8 +2354,10 @@ pub(crate) fn install_isolated_packages(
                 ResolutionTag::Symlink => {
                     // Same target check as the hoisted linker's `install_from_link`.
                     let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
-                    installer.append_store_path(&mut link_target, entry_id);
-                    match expect_directory(link_target.slice_z()) {
+                    match installer
+                        .append_store_path(&mut link_target, entry_id)
+                        .and_then(|()| expect_directory(link_target.slice_z()))
+                    {
                         Ok(()) => installer.start_link_task(entry_id, link_target.slice_z()),
                         Err(err) => installer.on_task_fail(entry_id, &TaskError::LinkPackage(err)),
                     }
@@ -2384,10 +2393,12 @@ pub(crate) fn install_isolated_packages(
 
                     // folders are always hardlinked to keep them up-to-date
                     if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
-                        let mut store_path: AbsPath = AbsPath::init_top_level_dir();
-                        installer.append_real_store_path(&mut store_path, entry_id, Which::Final);
-                        if let (Ok(src), Ok(dest)) =
-                            (sys::Dir::open(folder), sys::Dir::open(store_path.slice()))
+                        let mut store_path = AutoPath::init();
+                        if installer
+                            .append_real_store_path(&mut store_path, entry_id, Which::Final)
+                            .is_ok()
+                            && let (Ok(src), Ok(dest)) =
+                                (sys::Dir::open(folder), sys::Dir::open(store_path.slice()))
                             && crate::package_install::is_linked_folder(&src, &dest)
                         {
                             installer.start_relink_task(entry_id);
@@ -2420,18 +2431,21 @@ pub(crate) fn install_isolated_packages(
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, PatchInfo::Remove)
                         || 'needs_install: {
-                            let mut store_path: AbsPath = AbsPath::init_top_level_dir();
+                            let mut store_path = AutoPath::init();
                             if uses_global_store {
                                 // Global entries are built under a per-process
                                 // staging path and renamed into place as the
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
-                                installer.append_global_store_entry_path(&mut store_path, entry_id, Which::Final);
-                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
+                                break 'needs_install !installer
+                                    .append_global_store_entry_path(&mut store_path, entry_id, Which::Final)
+                                    .and_then(|()| sys::directory_exists_at(Fd::cwd(), store_path.slice_z()))
                                     .unwrap_or(false);
                             }
                             // Likewise, the package directory appears here only once fully linked.
-                            installer.append_local_store_entry_path(&mut store_path, entry_id);
+                            if installer.append_local_store_entry_path(&mut store_path, entry_id).is_err() {
+                                break 'needs_install true;
+                            }
                             let local_entry_len = store_path.len();
                             store_path.append(b"node_modules").assume_ok();
                             store_path.append(pkg_name.slice(string_buf)).assume_ok();

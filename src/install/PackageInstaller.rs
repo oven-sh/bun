@@ -206,6 +206,8 @@ impl DeferredLinks {
     }
 }
 
+const NAME_TOO_LONG: crate::Error = crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG);
+
 /// A cheaper `join_z_buf` for two paths that are already normalized. A warm install calls this for
 /// every package.
 fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> &'b ZStr {
@@ -351,12 +353,19 @@ impl NodeModulesFolder {
         res.map_err(|e| e.to_zig_err().into())
     }
 
+    #[cfg(unix)]
+    fn path_z<'b>(&self, buf: &'b mut PathBuffer) -> crate::Result<&'b ZStr> {
+        if self.path.len() >= MAX_PATH_BYTES {
+            return Err(NAME_TOO_LONG);
+        }
+        Ok(bun_paths::resolve_path::z(self.path.as_slice(), buf))
+    }
+
     pub(crate) fn open_dir(&self, root: &Dir) -> crate::Result<Dir> {
         #[cfg(unix)]
         {
-            // Copy into a NUL-terminated PathBuffer.
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
+            let path_z = self.path_z(&mut path_buf)?;
             return root
                 .open_at_with(path_z.as_bytes(), 0)
                 .map_err(|e| e.to_zig_err().into());
@@ -385,7 +394,7 @@ impl NodeModulesFolder {
                 return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            let path = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
+            let path = self.path_z(&mut path_buf)?;
             Ok(package_install::make_open_real_dir(root, path)?)
         }
 
@@ -499,7 +508,7 @@ fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
-) -> AbsPath {
+) -> Option<AbsPath> {
     let mut rel_buf = bun_paths::path_buffer_pool::get();
     rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
     let mut depth_buf = lockfile::tree::depth_buf_uninit();
@@ -515,8 +524,8 @@ fn abs_node_modules_path(
         &mut depth_buf,
     );
     let mut abs = AbsPath::init_top_level_dir();
-    abs.append(rel.as_bytes()).unwrap_or_oom();
-    abs
+    abs.try_append(rel.as_bytes()).ok()?;
+    Some(abs)
 }
 
 /// For a workspace or a `link:` package, this only removes the link.
@@ -525,8 +534,10 @@ pub(crate) fn remove_placed_package(
     tree_id: lockfile::tree::Id,
     alias: &[u8],
 ) {
-    let path = abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
-    let Ok(node_modules) = Dir::open(path.slice()) else {
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let Some(Ok(node_modules)) =
+        abs_node_modules_path(lockfile, string_buf, tree_id).map(|path| Dir::open(path.slice()))
+    else {
         return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
@@ -814,11 +825,11 @@ impl<'a> PackageInstaller<'a> {
                                         defer_this_bin = true;
                                         break 'native_binlink_optimization;
                                     }
-                                    target_node_modules_path_opt = Some(abs_node_modules_path(
-                                        lockfile,
-                                        string_buf,
-                                        target_tree_id,
-                                    ));
+                                    target_node_modules_path_opt =
+                                        abs_node_modules_path(lockfile, string_buf, target_tree_id);
+                                    if target_node_modules_path_opt.is_none() {
+                                        break 'native_binlink_optimization;
+                                    }
                                 }
 
                                 let replacement_name =
@@ -1022,7 +1033,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
-        let name = entry.list.package_name.clone();
+        let (name, tree_id) = (entry.list.package_name.clone(), entry.tree_id);
         let output_in_foreground = false;
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,
@@ -1034,7 +1045,7 @@ impl<'a> PackageInstaller<'a> {
                 unfinished: std::rc::Rc::clone(&self.unfinished_scripts),
             }),
         ) {
-            self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
+            self.on_scripts_error(log_level, "spawn life-cycle", tree_id, &name, err);
         }
     }
 
@@ -1043,9 +1054,12 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         log_level: Options::LogLevel,
         action: &str,
+        tree_id: lockfile::tree::Id,
         name: &[u8],
         err: crate::Error,
     ) {
+        // A placed package counts as installed, so the next install would not run its scripts.
+        remove_placed_package(self.lockfile(), tree_id, name);
         let name = bstr::BStr::new(name);
         if log_level.show_progress() {
             if Output::enable_ansi_colors_stderr() {
@@ -1642,6 +1656,15 @@ impl<'a> PackageInstaller<'a> {
                 dependency_id,
             ));
         }
+    }
+
+    /// The absolute path of `alias` in the current tree's `node_modules`.
+    fn package_path(&self, alias: &[u8]) -> crate::Result<AutoAbsPath> {
+        let mut path = AutoAbsPath::init();
+        path.try_append(self.node_modules.path.as_slice())
+            .and_then(|()| path.try_append(alias))
+            .map_err(|_| NAME_TOO_LONG)?;
+        Ok(path)
     }
 
     fn get_installed_package_scripts_count(
@@ -2486,18 +2509,17 @@ impl<'a> PackageInstaller<'a> {
                     && self.metas[package_id as usize].has_install_script()
                 {
                     // `hasInstallScript` is a false positive when binding.gyp is not published.
-                    let mut folder_path =
-                        AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                    folder_path
-                        .append(alias.slice(string_buf!()))
-                        .unwrap_or_oom();
-
-                    let count = self.get_installed_package_scripts_count(
-                        alias.slice(string_buf!()),
-                        package_id,
-                        resolution.tag,
-                        &mut folder_path,
-                        log_level,
+                    let count = self.package_path(alias.slice(string_buf!())).map_or(
+                        0,
+                        |mut folder_path| {
+                            self.get_installed_package_scripts_count(
+                                alias.slice(string_buf!()),
+                                package_id,
+                                resolution.tag,
+                                &mut folder_path,
+                                log_level,
+                            )
+                        },
                     );
                     if count > 0 {
                         if log_level.is_verbose() {
@@ -2640,8 +2662,13 @@ impl<'a> PackageInstaller<'a> {
         let (alias, alias_hash) = (dep.name, dep.name_hash);
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
-        let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-        folder_path.append(alias.slice(string_buf)).unwrap_or_oom();
+        let mut folder_path = match self.package_path(alias.slice(string_buf)) {
+            Ok(folder_path) => folder_path,
+            Err(err) => {
+                let (tree_id, name) = (self.current_tree_id, alias.slice(string_buf));
+                return self.on_scripts_error(log_level, "enqueue lifecycle", tree_id, name, err);
+            }
+        };
 
         if self
             .manager()
@@ -2724,7 +2751,8 @@ impl<'a> PackageInstaller<'a> {
             Ok(Some(list)) => list,
             Ok(None) => return false,
             Err(err) => {
-                self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
+                let tree_id = self.current_tree_id;
+                self.on_scripts_error(log_level, "enqueue lifecycle", tree_id, folder_name, err);
                 return false;
             }
         };

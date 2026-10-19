@@ -679,7 +679,7 @@ impl ArrayBuffer {
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
-/// GC-roots the cell. `Drop` releases both. Constructed and dropped on the JS
+/// GC-roots the cell. `Drop` releases what was taken. Constructed and dropped on the JS
 /// thread.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
